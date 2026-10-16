@@ -4671,7 +4671,7 @@ window.assistant.onEvent((event) => {
       settleThinking();
       endStream();
       turn.text = null; // next text starts a fresh block after any tool steps
-      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
+      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (narration does not end the card either: one turn is one card, which stays until the turn ends, see step-ui.js endCard)
       turn.textSource = '';
       turn.thinking = null;
       break;

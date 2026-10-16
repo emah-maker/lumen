@@ -9450,6 +9450,8 @@ const tabMarker = new Proxy({}, { get: (_t, k) => require('./renderer/tab-marker
 const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
+  const touch = (id) => { if (Number.isInteger(id) && id >= 0 && !d.touched.includes(id) && d.touched.length < 24) d.touched.push(id); }; // [activity cards] the card's Tabs list: every tab the turn used, first touched first
+  if (msg.type === 'tool') { try { for (const id of tabMarker.stepTabs(msg.name, msg.input)) touch(id); } catch { /* none */ } } else if (msg.type === 'thumb' || msg.type === 'tool_done') touch(msg.tabId);
   if (msg.type === 'thinking') {
     if (!d.thinkingSince) d.thinkingSince = Date.now();
     if (d.thinking.length < 20000) d.thinking += msg.text || '';
@@ -9491,19 +9493,68 @@ if (TEST) {
   // n captures of the tab in front, each sent to the UI as the chat gets it, one after another (a test measures the main process meanwhile)
   global.__thumbsState.burst = async (n) => { let bytes = 0; for (let i = 0; i < n; i++) { const wc = activeTab()?.webContents; const data = wc ? await require('./features/tab-capture').captureThumb(wc) : null; if (data) { bytes += data.length; ui()?.send('thumb:probe', { type: 'thumb', data, url: wc.getURL(), tabId: activeId, aiTabs: 0 }); } await new Promise((r) => setTimeout(r, 30)); } return bytes; };
 }
-async function captureRunThumb(run) {
-  const id = agent.runTabIdFor(run.messages) ?? run.tabId;
+// The tab (or site) a run's latest browser step works on. A tool that names a tab (tab_id, switch_tab, read_tabs) acts there; the others act in
+// the tab the run is pinned to (which is not the one the user looks at); a step that reads addresses without a tab (read_urls) has none: a site.
+function thumbTargetOf(run, name, input) {
+  const bare = String(name || '').replace(/^mcp__lumen__/, '');
+  const inp = input && typeof input === 'object' ? input : {};
+  if (bare === 'read_urls') {
+    const first = (Array.isArray(inp.urls) ? inp.urls : [inp.url]).find((u) => /^https?:\/\//i.test(String(u || '')));
+    if (first) { let host = ''; try { host = new URL(String(first)).host.replace(/^www\./, ''); } catch { /* none */ } return { kind: 'site', url: String(first).slice(0, 500), host }; }
+  }
+  const named = bare === 'read_tabs' ? (Array.isArray(inp.ids) ? inp.ids : []).find(Number.isInteger) : Number.isInteger(inp.tab_id) ? inp.tab_id : null;
+  if (Number.isInteger(named)) return { kind: 'tab', tabId: named };
+  const pinned = agent.runTabIdFor(run.messages) ?? run.tabId;
+  return pinned != null ? { kind: 'tab', tabId: pinned } : run.thumbTarget || null;
+}
+const thumbKey = (t) => (!t ? '' : t.kind === 'site' ? 'site:' + t.url : 'tab:' + t.tabId);
+function thumbTabOf(run) {
+  const t = run.thumbTarget;
+  const id = t?.kind === 'tab' ? t.tabId : t?.kind === 'site' ? null : (agent.runTabIdFor(run.messages) ?? run.tabId);
+  if (id != null && run.thumbHold === id) return null; // (a step is closing this tab: nothing is asked of a page on its way out)
   const hit = id != null ? tabAnywhere(id) : null;
-  if (!hit || !alive(hit.t)) return null;
-  const wc = hit.t.view.webContents;
+  return hit && alive(hit.t) ? { id, wc: hit.t.view.webContents, favicon: hit.t.favicon || null } : null;
+}
+// What the card shows right away when the target changes (before the new picture): the tab's name for the chip, or "Reading <site>".
+function thumbTargetEvent(run) {
+  const t = run.thumbTarget;
+  if (!t) return null;
+  if (t.kind === 'site') {
+    let icon = null;
+    try { icon = faviconFile(faviconStore.get(hostOf(t.url))) || null; } catch { /* none */ }
+    return { type: 'thumb', kind: 'site', data: '', url: t.url, title: t.host, tabId: null, favicon: icon };
+  }
+  const tab = thumbTabOf(run);
+  if (!tab) return { type: 'thumb', kind: 'pending', data: '', url: '', title: '', tabId: t.tabId };
+  return { type: 'thumb', kind: 'pending', data: '', url: tab.wc.getURL(), title: tab.wc.getTitle?.() || '', tabId: tab.id };
+}
+async function captureRunThumb(run) {
+  const tab = thumbTabOf(run);
+  if (!tab) return null;
+  const wc = tab.wc;
   const url = wc.getURL();
-  if (!/^(https?|file):/i.test(url) || aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
-  const data = await require('./features/tab-capture').captureThumb(wc);
-  return data ? { data, url, title: wc.getTitle?.() || '', tabId: id } : null;
+  if (aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
+  const named = { url, title: wc.getTitle?.() || '', tabId: tab.id, favicon: typeof tab.favicon === 'string' ? tab.favicon : null };
+  if (!/^(https?|file|lumen-pdf):/i.test(url)) return { blank: true, ...named }; // (one of Lumen's own pages: no picture of it, its name)
+  const lowRes = graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false; // (Light graphics or software drawing: the small picture)
+  const state = {};
+  const data = await require('./features/tab-capture').captureThumb(wc, { lowRes, state });
+  if (data) return { data, ...named };
+  return state.blank ? { blank: true, ...named } : null;
+}
+// A tiny signature of the page the card shows (address, scroll, size, how much is on it): a frame is taken when it moves (features/step-thumbs.js).
+const THUMB_PROBE = '(()=>{try{const d=document,e=d.scrollingElement||d.documentElement;return location.href+"|"+d.readyState+"|"+Math.round(e.scrollTop)+"|"+Math.round(e.scrollLeft)+"|"+e.scrollHeight+"|"+innerWidth+"x"+innerHeight+"|"+d.getElementsByTagName("*").length+"|"+d.title}catch(_){return ""}})()';
+async function probeRunThumb(run) {
+  const tab = thumbTabOf(run);
+  if (!tab || tab.wc.isLoading?.()) return tab ? 'loading' : null; // (a page still loading changes by the moment: a frame while it does)
+  const url = tab.wc.getURL();
+  if (!/^(https?|file|lumen-pdf):/i.test(url) || aiSites.isOff(url)) return null;
+  const sig = await tab.wc.executeJavaScript(THUMB_PROBE, false);
+  return typeof sig === 'string' ? tab.id + '|' + sig : null;
 }
 async function timedCapture(run) {
   const t0 = performance.now();
-  try { return await captureRunThumb(run); } finally { if (TEST) (global.__thumbsState.windows ||= []).push([t0, performance.now()]); } // (a test checks the main process stayed free while these ran)
+  try { return await captureRunThumb(run); } finally { if (TEST) { (global.__thumbsState.windows ||= []).push([t0, performance.now()]); global.__thumbsState.captures = (global.__thumbsState.captures || 0) + 1; } } // (a test checks the main process stayed free while these ran)
 }
 // Called for every event of a run (emit): starts, nudges and ends the run's thumbnailer.
 function noteThumbs(run, msg, push) {
@@ -9511,14 +9562,32 @@ function noteThumbs(run, msg, push) {
     const name = String(msg.name || '');
     if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
-      (run.thumbs ||= stepThumbs.createThumbs({
-        capture: () => timedCapture(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
+      if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
+      const fresh = !run.thumbs;
+      const thumbs = (run.thumbs ||= stepThumbs.createThumbs({
+        capture: () => timedCapture(run), probe: () => probeRunThumb(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
         light: () => graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false, visible: thumbsVisible,
-        intervalMs: Number(process.env.LUMEN_THUMB_MS) || 1500,
-      })).activity();
+        intervalMs: Number(process.env.LUMEN_THUMB_MS) || (graphicsMode.light() ? 1500 : 350), // about 3 frames a second while the page changes, none while it stands still
+      }));
+      const next = thumbTargetOf(run, name, msg.input);
+      const changed = thumbKey(next) !== thumbKey(run.thumbTarget);
+      if (next) run.thumbTarget = next;
+      thumbs.activity();
+      if (changed && !fresh) { // the exact tab this step acts on: the chip and the picture switch with it
+        const ev = thumbTargetEvent(run);
+        if (ev) push(ev);
+        thumbs.retarget();
+      } else if (fresh) { const ev = thumbTargetEvent(run); if (ev) push(ev); }
     }
   } else if (msg.type === 'tool_done') {
     const name = run.toolNames?.get(msg.id);
+    if (name && /(^|__)close_tab$/.test(name)) run.thumbHold = null;
+    if (name && /(^|__)open_tab$/.test(name) && msg.ok !== false && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now
+      run.thumbTarget = { kind: 'tab', tabId: msg.tabId };
+      const ev = thumbTargetEvent(run);
+      if (ev) push(ev);
+      run.thumbs?.retarget();
+    }
     if (name) run.thumbs?.settled(stepThumbs.isNavigation(name));
   } else if (msg.type === 'done') run.thumbs?.stop();
 }
@@ -9574,6 +9643,12 @@ function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or a
   const snaps = (run.tabSnaps ||= {});
   for (const id of ids) { const snap = rt.snapshot(String(id)); if (snap) snaps[id] = snap; }
 }
+// The saved reply keeps one small frame (the live ones are sharp and bigger): scaled down once, here, not per frame.
+function savedThumb(t) {
+  if (!t || !t.data) return undefined;
+  const data = require('./features/tab-capture').shrinkThumb(t.data);
+  return data ? { ...t, data } : undefined;
+}
 function stampRun(run, done = null) {
   try {
     const d = run.details;
@@ -9582,7 +9657,7 @@ function stampRun(run, done = null) {
       for (const m of run.messages.slice(run.startLen)) if (m.role === 'assistant') for (const b of Array.isArray(m.content) ? m.content : []) if (b.type === 'text') { const ids = tabMarker.idsIn(b.text); if (ids.length) noteRunTabs(run, ids); }
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: d.thumb || undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
@@ -9609,7 +9684,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null } };
+  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
@@ -9653,14 +9728,16 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
-    noteThumbs(run, msg, (ev) => {
+    const afterMsg = []; // (the card's tab / site, said right after the step that named it: the chat has drawn the step's card by then)
+    const pushThumb = (ev) => {
       if (run.deleted) return;
       trackRunDetails(run, ev);
       out.push(ev);
       // The last frame can land just after 'done' (a capture under way when the run ended, see features/step-thumbs.js stop()): the card shows it
       // (chat-core.js) and the saved reply keeps it too, so "Open preview" and a reopened chat both name the tab the run ended in.
       if (run.doneMsg && ev.type === 'thumb') { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); }
-    });
+    };
+    try { noteThumbs(run, msg, (ev) => { if (ev.kind === 'pending' || ev.kind === 'site') afterMsg.push(ev); else pushThumb(ev); }); } catch (err) { if (TEST) (global.__thumbsState.errors ||= []).push(String(err && err.stack || err)); else console.error('[thumbs]', err && err.message); } // (a picture of the page must never cost the chat a step)
     if (msg.type === 'text') run.reply += msg.text;
     else if (msg.type === 'tool' || msg.type === 'retry') run.reply = ''; // the reply is what comes after the last step
     else if (msg.type === 'error') { run.error = msg.text || 'error'; run.errorSummary = msg.summary || ''; }
@@ -9676,6 +9753,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
     }
     out.push(msg);
+    for (const ev of afterMsg) pushThumb(ev);
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));

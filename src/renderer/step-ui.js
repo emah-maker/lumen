@@ -141,19 +141,24 @@
     el0.dataset.surface = surface;
     el0.dataset.state = ''; // (the first refresh sets it: a browser card starts being watched then)
     el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div><div class="act-tabref" hidden></div></div></div>'
-      + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"></div>'
+      + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"><div class="act-site"><img class="act-site-ico" alt="" hidden><span class="act-site-name"></span></div></div>'
+      + '<div class="act-status" hidden><span class="act-dot" aria-hidden="true"></span><span class="act-status-text"></span></div>'
+      + '<details class="act-tabs" hidden><summary class="act-tabs-head"></summary><div class="act-tabs-list"></div></details>'
       + '<div class="act-actions"><button type="button" class="act-btn" hidden></button>'
       + '<button type="button" class="act-toggle" hidden></button><button type="button" class="act-closeall" hidden></button></div>'
       + '<div class="act-tabs-note" hidden></div>'
-      + '<span class="act-live" role="status"></span>'
+      + '<span class="act-live" role="status" aria-live="polite"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
     card.toggle.onclick = () => toggleAiTabs(card);
     card.closeAll.onclick = () => closeAiTabs(card);
     card.shot.onclick = () => openIt(card); // (the picture does what the button does)
+    card.tabsHead.addEventListener('click', () => { card.tabsUser = true; }); // (a card the user opened or folded stays as they left it)
+    try { new MutationObserver(() => tabsCount(card)).observe(card.tabsList, { subtree: true, attributes: true, attributeFilter: ['data-state'] }); } catch { /* no observer */ }
+    card.img.addEventListener('load', () => capSize(card)); // (shown at or below its own pixels, see capSize)
     host.append(el0);
     turn.cards ||= [];
     turn.cards.push(card);
@@ -181,18 +186,90 @@
     if (card.sum.textContent !== sum) card.sum.textContent = sum;
     // The button: a browser card opens its tab once it has one; a file card opens its file.
     let label = '';
-    if (card.surface === 'browser' && card.tab) label = tr('card.openPreview');
+    if (card.surface === 'browser' && card.tab && !card.siteMode) label = tr('card.openPreview');
     else if (card.file) label = tr(card.file.canTab || card.file.canSystem ? 'card.openFile' : 'card.showFolder');
     card.btn.hidden = !label;
     if (label && card.btn.textContent !== label) { card.btn.textContent = label; card.btn.title = card.surface === 'browser' ? tr('card.openPreview.title') : ''; }
     refreshTabs(card, state);
     cardChip(card);
+    if (card.surface === 'browser') statusBar(card, state);
     // The screen reader hears a card's state change (Working, Needs your OK, Done, Stopped), once each, never its steps.
-    if (card.said !== state) { card.said = state; card.live.textContent = tr('card.live', { title: card.title.textContent, state: tr(`card.state.${state}`) }); }
+    else if (card.said !== state) { card.said = state; card.live.textContent = tr('card.live', { title: card.title.textContent, state: tr(`card.state.${state}`) }); }
+  }
+  // ---- the tabs this turn opened or used: chips (tab-ref.js) in the order they were first touched, each marked open or closed
+  // (a closed one reopens from its chip, an open one switches to it); folded when there are more than 4.
+  const TABS_FOLDED = 4;
+  const isClosedState = (st) => st === 'closed' || st === 'gone';
+  function tabsCount(card) {
+    if (!card.touched.length) return;
+    let closed = 0;
+    for (const w of card.tabEls.values()) {
+      const c = w.querySelector('.tab-ref');
+      const gone = Boolean(c) && isClosedState(c.dataset.state);
+      if (gone) closed++;
+      const st = gone ? 'closed' : 'open';
+      if (w.dataset.state !== st) w.dataset.state = st; // (only on a change: the observer below watches data-state, a same-value write would call it again for ever)
+      const label = tr(gone ? 'card.tabs.stateClosed' : 'card.tabs.stateOpen');
+      const mark = w.querySelector('.act-tab-state');
+      if (mark.textContent !== label) mark.textContent = label;
+    }
+    const head = closed ? tr('card.tabs.headClosed', { total: card.touched.length, closed }) : tr('card.tabs.head', { total: card.touched.length });
+    if (card.tabsHead.textContent !== head) card.tabsHead.textContent = head;
+  }
+  // ids: tab ids; snap: what is known of them ({ id: { t, u, s } }), for the chip's name before the browser answers.
+  function touchTabs(card, ids, snap) {
+    if (!card || card.surface !== 'browser' || !window.tabRef) return;
+    let added = false;
+    for (const id of ids || []) {
+      if (!Number.isInteger(id) || id < 0 || card.touched.includes(id) || card.touched.length >= 24) continue;
+      const kept = snap && (snap[id] || snap[String(id)]) || null;
+      const wrap = el('span', { className: 'act-tab' });
+      wrap.append(window.tabRef.chip({ id, s: kept?.s || '' }, kept ? { t: kept.t || '', u: kept.u || '' } : null), el('span', { className: 'act-tab-state' }));
+      card.tabsList.append(wrap);
+      card.touched.push(id);
+      card.tabEls.set(id, wrap);
+      added = true;
+    }
+    if (!added) return;
+    card.tabsBox.hidden = false;
+    if (!card.tabsUser) card.tabsBox.open = card.touched.length <= TABS_FOLDED;
+    tabsCount(card);
+  }
+  // The preview is shown at or below its own pixels: its width in CSS pixels is the picture's width over the display's scale, never above CAP.
+  const CAP = 340;
+  function capSize(card) {
+    const w = card.img.naturalWidth;
+    if (!w) return;
+    card.shot.style.maxWidth = Math.min(CAP, Math.floor(w / Math.max(1, window.devicePixelRatio || 1))) + 'px';
+  }
+  // The status bar of a Browser card: what the AI is doing right now, in the words of its steps. It replaces itself on every step; a screen
+  // reader hears it (aria-live polite on the card's hidden live region) at most every 1.5 s, and a change of state (Done, Needs you) at once.
+  const trimStep = (s) => String(s || '').replace(/[\s.\u2026]+$/, '');
+  function siteOf(card) { const t = card.tab; if (!t) return ''; try { return t.url ? new URL(t.url).host.replace(/^www\./, '') : ''; } catch { return ''; } }
+  function statusFor(card, state) {
+    const step = trimStep(card.latest);
+    if (state === 'stopped') return tr('card.status.stopped');
+    if (state === 'completed') return step ? tr('card.status.done', { result: step }) : tr('card.state.completed');
+    if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
+    if (!step) return tr('card.status.starting');
+    const site = card.siteMode ? '' : siteOf(card);
+    return site && !step.toLowerCase().includes(site.toLowerCase()) ? tr('card.status.workingOn', { step, site }) : tr('card.status.working', { step });
+  }
+  function statusBar(card, state) {
+    const text = statusFor(card, state);
+    card.status.hidden = false;
+    card.status.dataset.state = state;
+    if (card.statusText.textContent !== text) card.statusText.textContent = text;
+    if (card.liveText === text) return;
+    const write = () => { card.liveTimer = 0; card.liveAt = Date.now(); card.liveText = text; card.live.textContent = text; };
+    clearTimeout(card.liveTimer);
+    const wait = card.liveAt + 1500 - Date.now();
+    if (state !== 'working' || wait <= 0) write(); else card.liveTimer = setTimeout(() => { statusBar(card, card.el.dataset.state); }, wait);
   }
   // The tab a Browser card works in, as a chip (live title; clicking it switches to the tab).
   function cardChip(card) {
     const t = card.tab;
+    if (card.surface === 'browser' && card.siteMode) { card.tabref.hidden = true; card.tabref.dataset.sig = ''; return; }
     if (card.surface !== 'browser' || !t || !window.tabRef) return;
     const sig = `${t.tabId ?? ''}|${t.s || ''}|${t.tabId == null ? t.url : ''}`;
     if (card.tabref.dataset.sig === sig) return;
@@ -260,13 +337,52 @@
   }
   function setThumb(card, src) {
     if (!src) return;
+    card.siteMode = false;
+    card.shot.dataset.mode = 'frame';
     if (card.img.getAttribute('src') !== src) card.img.src = src;
     if (card.shot.hidden) { card.shot.hidden = false; card.img.alt = tr('card.thumb.alt'); }
+  }
+  // The AI moved to another tab: the old picture must not stay under the new tab's name. A blank (the picture comes in a moment).
+  function setPending(card) {
+    card.siteMode = false;
+    if (card.shot.hidden) return;
+    card.shot.dataset.mode = 'pending';
+    card.img.removeAttribute('src');
+  }
+  // The tab only gave blank (one-colour) frames, e.g. a viewer drawn on a canvas in a hidden view: never a solid rectangle. The last good picture
+  // of the same tab stays; otherwise "Reading <name>" with the tab's icon, while the tab's chip stays.
+  function setBlank(card, event) {
+    card.siteMode = false;
+    if (card.shot.dataset.mode === 'frame' && card.img.getAttribute('src') && card.goodTab === (event.tabId ?? null)) return;
+    card.shot.hidden = false;
+    card.shot.dataset.mode = 'site';
+    card.img.removeAttribute('src');
+    let name = event.title || '';
+    if (!name) { try { name = new URL(event.url).host; } catch { /* none */ } }
+    card.siteName.textContent = tr('card.site.reading', { site: name });
+    const icon = typeof event.favicon === 'string' ? event.favicon : '';
+    card.siteIco.hidden = !icon;
+    if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src');
+    card.shot.style.maxWidth = '';
+  }
+  // A step that reads an address with no tab (read_urls): "Reading <site>" with its icon, no picture of another tab.
+  function setSite(card, event) {
+    card.siteMode = true;
+    card.shot.hidden = false;
+    card.shot.dataset.mode = 'site';
+    card.img.removeAttribute('src');
+    card.siteName.textContent = tr('card.site.reading', { site: event.title || '' });
+    const icon = typeof event.favicon === 'string' ? event.favicon : '';
+    card.siteIco.hidden = !icon;
+    if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src');
+    card.shot.style.maxWidth = '';
   }
 
   // ---- the turn's steps
   // opts: { append(el) puts a plain node in the chat above the working line, label (the engine's own), task }
-  function endCard(turn) { if (!turn) return; const card = turn.card; turn.card = null; turn.plain = null; if (card) { card.ended = true; refreshCard(turn, card); } }
+  // The assistant said something between steps: the plain rows end there, the card does not. One AI turn is one Browser card that keeps
+  // updating until the whole turn ends (finalize); a new card starts only when the surface changes.
+  function endCard(turn) { if (!turn) return; turn.plain = null; }
   function labelFor(event) {
     const own = window.stepLabels && SL().label(event.name, event.input || {});
     return own || event.label || '';
@@ -284,6 +400,7 @@
     if (surface) {
       let card = turn.card;
       if (!card || card.surface !== surface || !card.el.isConnected) {
+        if (card && !card.ended) { card.ended = true; refreshCard(turn, card); } // (the work moved to another surface: that card is done)
         card = makeCard(turn, surface, { append: (n) => opts.append(n) });
         turn.card = card;
         if (!turn.pendingThumb) turn.pendingThumb = null;
@@ -297,6 +414,7 @@
       if (running) card.running++;
       card.latest = label;
       place(card, row, info);
+      touchTabs(card, window.tabMarker ? window.tabMarker.stepTabs(event.name, data.input) : []);
       refreshCard(turn, card);
       row._card = card;
     } else {
@@ -313,7 +431,7 @@
     if (row._s?.input) window.tabRef?.forStep(row, row._s.name, row._s.input, null);
     if (row._s?.input && !row.dataset.more) { row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-expanded', 'false'); row.dataset.more = '1'; }
     const card = row._card;
-    if (card) { card.latest = row.firstChild.textContent; if (card.count === 1) card.first = card.latest; refreshCard(turn, card); }
+    if (card) { card.latest = row.firstChild.textContent; if (card.count === 1) card.first = card.latest; if (event.input && window.tabMarker) touchTabs(card, window.tabMarker.stepTabs(row._s?.name, event.input)); refreshCard(turn, card); }
     groupRefresh(row);
   }
   function groupRefresh(row) { const g = row.parentElement?.closest?.('details.step-group.live'); if (g && g._entry) refreshEntry(g._entry); }
@@ -336,7 +454,7 @@
     }
     if (row.classList.contains('open')) buildMore(row);
     const card = row._card;
-    if (card) { if (card.running > 0) card.running--; if (event.stopped) card.stopped = true; refreshCard(turn, card); }
+    if (card) { if (card.running > 0) card.running--; if (event.stopped) card.stopped = true; if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId]); refreshCard(turn, card); }
     return plain;
   }
   // The turn ended: steps still running were stopped.
@@ -353,14 +471,16 @@
 
   // A thumbnail of the tab the AI works in: { data (base64 jpeg), url, title, tabId }.
   function thumb(turn, event) {
-    const src = `data:image/jpeg;base64,${event.data}`;
     const tab = { tabId: event.tabId ?? null, url: event.url || '', title: event.title || '' };
-    turn.lastThumb = { src, tab };
+    const kind = event.kind || 'frame'; // 'frame' (a picture), 'pending' (the tab being acted on changed), 'site' (an address read with no tab)
+    const src = kind === 'frame' && event.data ? `data:image/jpeg;base64,${event.data}` : '';
+    turn.lastThumb = kind === 'frame' ? { src, tab } : null;
     const card = [...(turn.cards || [])].reverse().find((c) => c.surface === 'browser');
     if (!card) return;
     card.tab = tab;
+    if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId], { [event.tabId]: { t: tab.title, u: tab.url } });
     if (Number.isFinite(event.aiTabs)) card.aiTabs = event.aiTabs;
-    setThumb(card, src);
+    if (kind === 'site') setSite(card, event); else if (kind === 'blank') setBlank(card, event); else if (kind === 'pending') setPending(card); else { setThumb(card, src); card.goodTab = tab.tabId; }
     refreshCard(turn, card);
   }
   // A file the AI made: the latest shell card offers it (Open file / Show in folder) and, for a picture, shows it.
@@ -399,6 +519,7 @@
         if (/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(name)) card.writes = true;
         if (!card.first) card.first = label;
         card.count++;
+        card.latest = label;
         place(card, row, info);
         row._card = card;
       } else {
@@ -422,6 +543,9 @@
       const last = [...turn.cards].reverse().find((c) => c.surface === 'browser');
       if (last) { last.tab = { tabId: Number.isInteger(t.tabId) ? t.tabId : null, s: t.s || '', url: t.url || '', title: t.title || '' }; setThumb(last, `data:image/jpeg;base64,${t.data}`); }
     }
+    const touchedIds = Array.isArray(item.touched) ? item.touched.filter(Number.isInteger) : [];
+    const lastBrowser = [...turn.cards].reverse().find((c) => c.surface === 'browser');
+    if (lastBrowser && touchedIds.length) touchTabs(lastBrowser, touchedIds, item.tabs || null);
     for (const card of turn.cards) { card.running = 0; refreshCard(turn, card); if (card.surface === 'browser' && t?.url) { /* button shown by refreshCard when a tab is known */ } }
     return out;
   }
