@@ -739,7 +739,7 @@ contextBridge.exposeInMainWorld('skillsApi', {
 });
 
 contextBridge.exposeInMainWorld('lumenFiles', {
-  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke('files:' + o, a, b)])),
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
   open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing

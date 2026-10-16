@@ -66,7 +66,7 @@ module.exports = async function filesUiUnits(check) {
   const ops = ['scan', 'restore'];
   check('files: scan and restore are ops of files.js and have a channel on all three bridges', ops.every((o) => files.OPS.includes(o) && files.channelFor.ui(o) === `files:${o}` && files.channelFor.newtab(o) === `newtab-files:${o}` && files.channelFor.settings(o) === `settings:files-${o}`), '');
   check('files: main lists the same ops and gates files:scan and files:restore to the UI', ops.every((o) => main.includes(`'files:${o}'`)) && /const OPS = \['list'[^\]]*'scan', 'restore'\]/.test(main), '');
-  const bridges = [['preload.js', /scan: \(query\) => ipcRenderer\.invoke\('files:scan'/, /restore: \(id\) => ipcRenderer\.invoke\('files:restore'/], ['files-newtab-preload.js', /scan: call\('newtab-files:scan'\)/, /restore: call\('newtab-files:restore'\)/], ['settings-preload.js', /scan: call\('settings:files-scan'\)/, /restore: call\('settings:files-restore'\)/]];
+  const bridges = [['preload.js', /'list [a-z ]*\bscan\b[a-z ]*'\.split/, /'list [a-z ]*\brestore\b[a-z ]*'\.split/], ['files-newtab-preload.js', /scan: call\('newtab-files:scan'\)/, /restore: call\('newtab-files:restore'\)/], ['settings-preload.js', /scan: call\('settings:files-scan'\)/, /restore: call\('settings:files-restore'\)/]];
   check('files: the three preload bridges carry scan and restore', bridges.every(([f, a, b]) => a.test(read('src', 'preload', f)) && b.test(read('src', 'preload', f))), '');
   check('files: a new profile (and only a new one) gets the Files card on its new-tab page', /seedFirstRunWidgets/.test(main) && /settingsFileExisted !== false/.test(main) && /!TEST\) seedFirstRunWidgets/.test(main), '');
 
