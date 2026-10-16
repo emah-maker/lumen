@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **EMF and WMF pictures in PowerPoint decks now show.** The slide viewer used to leave a placeholder and a banner ("Some pictures are in a format Lumen cannot show") for them. It now draws them with EMFJS and WMFJS (from rtf.js, MIT, about 55 KB each), loaded only when a deck has one, inside the slide page (no network, no access to the rest of Lumen), never in the main process. A file is checked first (size, record count, bitmap sizes), drawing has a time limit, and a picture that cannot be drawn (a damaged file, or an EMF+ that holds only GDI+ records) is a labelled placeholder of its own size; the banner appears only then. Covered by `test/pptx-images.js` (pixels, banner, and truncated or garbage EMF and WMF files) and `test/pptx-images-units.js`.
+
 ## 0.5.38 (2026-10-16)
 
 - **Updates no longer fail with "files were in use" because of a program Lumen started.** Lumen was started from its own install folder (the Start-menu shortcut's "Start in"), so Microsoft Teams (opened from a msteams: link), the app that opens a downloaded file, or an AI assistant inherited that folder as its working directory, and Windows kept the folder locked, and the update unable to swap it, for as long as that program ran, often days. Lumen now leaves the install folder as it starts, and nothing it starts keeps one. If an update still finds the install in use, the message names the program (for example "close Microsoft Teams and try again").
