@@ -32,6 +32,7 @@ const nameOf = (p) => path.basename(String(p).replace(/[\\/]+$/, '')) || String(
 const idFor = (p) => crypto.createHash('sha1').update(keyOf(p)).digest('hex').slice(0, 12);
 const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0);
 
+let tmpSeq = 0; // shared by every store in the process, so two stores on one file never pick the same temp name
 function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () => true, now = () => Date.now(), cap = 500, fsp = nodeFs.promises, delay = 500 } = {}) {
   const byId = new Map();
   const byKey = new Map();
@@ -158,7 +159,7 @@ function create({ file, encrypt = (t) => t, decrypt = (t) => t, available = () =
       if (!available()) return writing; // no keychain: the list lives in memory only, never in plain text
       const text = JSON.stringify({ enc: encrypt(store.serialize()) });
       writing = writing.then(async () => {
-        const tmp = `${file}.${process.pid}.tmp`;
+        const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`; // its own name per write: two writes to one file never share (and lose) a temp file
         await fsp.mkdir(path.dirname(file), { recursive: true });
         await fsp.writeFile(tmp, text);
         await fsp.rename(tmp, file);

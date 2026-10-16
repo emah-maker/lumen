@@ -20,7 +20,7 @@ const docs = path.join(dir, 'Documents');
 
 (async () => {
   // ---- pin and unpin
-  const s = mk();
+  const s = mk({ file: path.join(dir, 'pins.json') }); // its own file: its debounced save must not race the round-trip checks below
   await s.load();
   const folder = s.pin(path.join(docs, 'Course'), 'folder');
   const slides = s.pin(path.join(docs, 'Chapter 4 slides.pptx'), 'file');
