@@ -4670,6 +4670,7 @@ window.assistant.onEvent((event) => {
     case 'text_block':
       settleThinking();
       endStream();
+      if (turn.text && turn.textSource?.trim()) turn.lastSaid = { el: turn.text, text: turn.text.textContent };
       turn.text = null;
       if (event.type === 'text_block') window.stepUI?.endCard(turn);
       turn.textSource = '';
@@ -4737,7 +4738,10 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
+      const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
+      turn.lastSaid = null;
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); }
@@ -4748,6 +4752,7 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'desktop_card': {
+      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { settleThinking(); break; }
       const drawn = window.desktopCard?.update(event);
       if (!drawn) break;
       if (drawn.created) {
@@ -5643,7 +5648,20 @@ function drawEarlier(older, newest) {
   later();
 }
 function drawItems(items, userEntries, replyEntries) {
+
+
+  const narration = new Set();
+  let before = [];
+  for (const it of items) {
+    if (it.role === 'user') before = [];
+    else if (it.role === 'assistant') {
+      if (it.cards && Array.isArray(it.tools) && it.tools.length && window.stepUI) { for (const n of before) narration.add(n); before = []; }
+      else if (it.text && !it.tools?.length && !it.generated?.length && !it.outFiles?.length && !('steps' in it)) before.push(it);
+      else before = [];
+    }
+  }
   for (const item of items) {
+    if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
       bubble.className = 'msg user';
