@@ -194,7 +194,7 @@ process.stdin.on('data', async (d) => {
   const p1 = await pixel(card());
   const dpr = await ui.evaluate(() => window.devicePixelRatio);
   check('the thumbnail is not blank (a coloured page)', p1.a === 255 && Math.max(...p1.rgb) > 120 && Math.max(...p1.rgb) - Math.min(...p1.rgb) > 60, J(p1));
-  check('the thumbnail is pixel-sharp: its displayed width (340 CSS px) times the display scale, 16:10', Math.abs(p1.w - Math.round(340 * dpr)) <= 3 && Math.abs(p1.w / p1.h - 1.6) < 0.05, J({ p1, dpr }));
+  check('the thumbnail is pixel-sharp: its displayed width (340 CSS px) times the display scale, the whole viewport of the page scaled by the compositor (the card crops it to 16:10 at the top: object-fit cover), never wider than 16:10', Math.abs(p1.w - Math.round(340 * dpr)) <= 3 && p1.w / p1.h <= 1.65, J({ p1, dpr }));
   const changed = await waitFor(async () => { const src = await ui.evaluate((s) => document.querySelector(`${s} .act-thumb`)?.src, card()); return src && src !== firstThumb; }, 14000);
   check('the thumbnail updates while the AI works (its src changes)', Boolean(changed), 'same frame');
   // (the first frame can still show the page that was open before the AI navigated, or already the new one: wait for the card to follow the AI to

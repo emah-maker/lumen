@@ -7314,7 +7314,7 @@ let heldRect = null;
 let boundsHeld = false;
 function currentBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
-  const inset = document.body.classList.contains('agent-active') ? 2 : 0;
+  const inset = 2;
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
 
 

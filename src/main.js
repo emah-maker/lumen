@@ -9499,6 +9499,7 @@ const thumbsVisible = () => {
   return known ? any : true;
 };
 if (TEST) {
+  global.__tabCapture = require('./features/tab-capture'); // (a test takes captures of any tab, as the AI's tools do)
   global.__thumbsState = { visible: () => thumbsVisible(), by: () => [...thumbVisibleBy] };
   // n captures of the tab in front, each sent to the UI as the chat gets it, one after another (a test measures the main process meanwhile)
   global.__thumbsState.burst = async (n) => { let bytes = 0; for (let i = 0; i < n; i++) { const wc = activeTab()?.webContents; const data = wc ? await require('./features/tab-capture').captureThumb(wc) : null; if (data) { bytes += data.length; ui()?.send('thumb:probe', { type: 'thumb', data, url: wc.getURL(), tabId: activeId, aiTabs: 0 }); } await new Promise((r) => setTimeout(r, 30)); } return bytes; };
