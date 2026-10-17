@@ -212,6 +212,23 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   t.h.setState({ status: 'available' }); await t.u.apply(); await flush();
   check('flow failure: a failed download is shown and nothing is applied', t.u.state().status === 'error' && /checksum/.test(t.u.state().error) && t.log.quits === 0 && t.u.state().queued === false, JSON.stringify(t.u.state()));
 
+  // a download that drops: "Retrying…" while it is retried, the reason in plain words after the last try (never a Chromium code)
+  t = make(); t.h.setKind('nsis');
+  let dl;
+  t.h.useStager({ canReplace: () => true, swapPaths: () => ({ staging: '/x' }), stage: ({ onRetry, onProgress }) => new Promise((resolve, reject) => { dl = { retry: (key) => onRetry({ key }), progress: onProgress, fail: reject, done: () => resolve({}) }; }), launchSwap: () => {} });
+  t.emit('2.0.0'); await flush();
+  await t.u.apply(); await flush();
+  dl.retry('dropped'); await flush();
+  check('retry: a dropped download stays "downloading", flagged retrying with the reason in words', t.u.state().status === 'downloading' && t.u.state().retrying === 'the connection dropped', JSON.stringify(t.u.state()));
+  dl.progress(12); await flush();
+  check('retry: data flowing again clears the retrying note', t.u.state().retrying === '' && t.u.state().progress === 12, JSON.stringify(t.u.state()));
+  dl.retry('offline'); await flush();
+  check('retry: offline has its own words', t.u.state().retrying === 'there is no internet connection', t.u.state().retrying);
+  dl.fail(Object.assign(new Error('net::ERR_FAILED'), { reasonKey: 'dropped' })); await flush();
+  check('retry: after the last try the error is the plain reason (no net:: code), with Try again available', t.u.state().status === 'error' && t.u.state().error === 'the connection dropped' && t.u.state().retrying === '', JSON.stringify(t.u.state()));
+  const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+  check('retry: the locale file has every reason the main process can give, and the Retrying… strings', ['dropped', 'offline', 'timeout', 'server', 'refused', 'blocked', 'secure', 'failed'].every((k) => typeof enLoc[`updates.reason.${k}`] === 'string') && enLoc['updates.retrying'] === 'Retrying…' && /Couldn’t download the update: {reason}. Lumen will try again./.test(enLoc['updates.settings.retrying']), '');
+
   // the plain move (no update known): the native flow, with the downgrade check and errors shown
   const mv = (over = {}) => { const m = dmg(); m.h.stubIo({ exists: () => true, version: async () => null, ...over }); return m; };
   t = mv({ version: async () => '1.0.0' }); t.h.stubMove(() => { t.log.moves++; return true; });

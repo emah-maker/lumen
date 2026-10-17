@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Updates survive a bad connection.** The update download retries dropped connections, timeouts and server errors (five tries over about two minutes), waits for the network to come back when you are offline, continues a cut-off download where it stopped, and asks GitHub for a fresh download address each time. It runs in its own session that the ad blocker and Safe Browsing never see, and failures say why in plain words ("the connection dropped") instead of a Chromium error code.
+
 ## 0.5.44 (2026-10-17)
 
 - **The model menu in Settings is the sidebar's, and says what Auto is.** Settings → AI → Model now lines up its label and arrow on one line, looks like the other dropdowns, and always shows the same choice as the sidebar (pick in one, the other follows at once, even in the first second after Settings opens). Auto reads just "Auto", and after it has chosen a model it adds "last used: Haiku" in muted text, only while that model is still connected; its row explains that it picks the best connected model for each message. A model menu in Settings no longer closes by itself the moment it opens when the page sends a scroll event that moved nothing. Tests:  (Settings and sidebar agree, keyboard, centring, Auto label), 
