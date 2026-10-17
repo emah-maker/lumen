@@ -33,7 +33,7 @@ class TestApp {
       panel.Children.Add(ticker);
       int n = 0;
       System.Windows.Threading.DispatcherTimer t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-      t.Tick += delegate { n++; ticker.Text = "Tick " + n; ticker.Foreground = (n % 2 == 0) ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.Red; };
+      t.Tick += delegate { n++; ticker.Text = "Tick " + n; ticker.Foreground = (n % 2 == 0) ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.Red; w.Title = title + " - tick " + n; }; // (the title bar is painted by Windows itself and shows in a capture even when the display is asleep or the window is parked off every screen; the client area then stops updating)
       t.Start();
     }
     w.Content = panel;
