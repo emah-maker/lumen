@@ -79,7 +79,7 @@
   }
 
   // ---- grouping: consecutive rows with the same key are one entry
-  function entryLabel(entry) { return window.stepLabels && entry.members.length > 1 ? SL().groupLabel(entry.info, entry.members.length, entry.members[0]._s?.baseLabel || entry.members[0].firstChild.textContent) : entry.members[0].firstChild.textContent; }
+  function entryLabel(entry) { return window.stepLabels && entry.members.length > 1 ? SL().groupLabel(entry.info, entry.members.length, entry.members[0]._s?.baseLabel || entry.members[0].firstChild.textContent, entry.members.some((m) => m.classList.contains('running'))) : entry.members[0].firstChild.textContent; }
   function refreshEntry(entry) {
     if (entry.members.length < 2 || !entry.sum) return;
     const running = entry.members.some((m) => m.classList.contains('running'));
@@ -88,6 +88,20 @@
     const text = entryLabel(entry);
     entry.sum.firstChild.textContent = text;
     entry.sum.title = text;
+    groupTime(entry, running);
+  }
+  // A group's time: from the first member's start to the last one's end (members may run in parallel); ticking while it runs.
+  function groupTime(entry, running) {
+    const slot = entry.sum.querySelector('.step-time');
+    if (!slot) return;
+    const starts = entry.members.map((m) => Number(m.dataset.t0 || m.dataset.start || 0)).filter(Boolean);
+    if (running) { if (starts.length) entry.sum.dataset.t0 = String(Math.min(...starts)); return; } // (the step clock ticks it)
+    delete entry.sum.dataset.t0;
+    const ends = entry.members.map((m) => Number(m.dataset.t1 || 0)).filter(Boolean);
+    if (!starts.length || ends.length < entry.members.length || !window.stepTime) { slot.textContent = ''; return; }
+    const text = window.stepTime.format(Math.max(...ends) - Math.min(...starts));
+    slot.textContent = text;
+    slot.title = text ? tr('chat.step.took', { time: text }) : '';
   }
   function addToEntry(entry, row) {
     entry.members.push(row);
@@ -95,7 +109,7 @@
       const first = entry.members[0];
       const group = el('details', { className: 'step-group live' });
       const sum = el('summary', { className: 'step running' });
-      sum.innerHTML = '<span class="step-detail"></span>';
+      sum.innerHTML = '<span class="step-detail"></span><span class="step-time"></span>';
       const items = el('div', { className: 'step-items' });
       first.replaceWith(group);
       items.append(first);
@@ -510,6 +524,7 @@
     if (row.classList.contains('open')) buildMore(row);
     const card = row._card;
     if (card) { if (card.running > 0) card.running--; if (event.stopped) card.stopped = true; if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId]); refreshCard(turn, card); }
+    groupRefresh(row); // (the group this step is in: done once every member is, with its total time)
     return plain;
   }
   // The turn ended: steps still running were stopped.
@@ -622,11 +637,11 @@
           const summary = el('summary', { className: 'step done restored' });
           summary.innerHTML = '<span class="step-detail"></span>';
           group.append(summary, el('div', { className: 'step-items' }));
-          legacy = { group, summary, n: 0, items: group.lastChild };
+          legacy = { group, summary, n: 0, items: group.lastChild, entries: [] };
           out.push(group);
         }
         legacy.n++;
-        legacy.items.append(row);
+        place({ entries: legacy.entries, list: legacy.items }, row, info);
         legacy.summary.firstChild.textContent = tr(legacy.n === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: legacy.n });
       }
     }
