@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.45 (2026-10-17)
+
 - **Updates survive a bad connection.** The update download retries dropped connections, timeouts and server errors (five tries over about two minutes), waits for the network to come back when you are offline, continues a cut-off download where it stopped, and asks GitHub for a fresh download address each time. It runs in its own session that the ad blocker and Safe Browsing never see, and failures say why in plain words ("the connection dropped") instead of a Chromium error code.
 
 ## 0.5.44 (2026-10-17)
