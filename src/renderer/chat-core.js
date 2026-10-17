@@ -2645,7 +2645,7 @@ window.assistant.onSync?.(({ view } = {}) => applySync(view));
 // Asks main which chat this window's front tab shows and what its run is doing, and takes it when it is not what is shown
 // here (a tab switch can reach this view late or not at all while another chat's tool is acting). `settled` is false when it
 // changed the view.
-async function reconcile() {
+async function reconcile(late = false) {
   let answer = null;
   const seq = runStateSeq;
   try { answer = await window.assistant.resync?.(); } catch {}
@@ -2654,11 +2654,21 @@ async function reconcile() {
   // The view moved on (a run began or ended, another chat was drawn) while main was answering: that answer describes a moment that is gone.
   // Taking it redrew the chat from a snapshot taken mid-run, wiping the reply that had just finished (Send now: the follow-up and its answer).
   if (seq !== runStateSeq) return true;
-  return takeView(view);
+  return takeView(view, { late });
 }
-function takeView(view) {
+// How long a run that main says is over, in the chat shown here, may wait for its own 'done' before this view takes main's snapshot instead.
+const DONE_GRACE_MS = 1500;
+function takeView(view, { late = false } = {}) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
+  // The run just ended in main (a key refused at once, a fast failure) and its 'error' and 'done' are still on the way here, or only the 'done' is:
+  // taking main's snapshot now redrew the chat and wiped the error it had just shown. Wait for the 'done'; only a run still shown as
+  // running after DONE_GRACE_MS lost it, and then main's view is taken.
+  if (!late && running && turn && view.id === shownChatId && !view.live) {
+    const mine = runId;
+    setTimeout(() => { if (running && runId === mine) reconcile(true).catch(() => {}); }, DONE_GRACE_MS);
+    return true;
+  }
   // A reply that was just stopped (Stop, or Send now) is already over in main while its 'done' is still on the way here: that is not a stale
   // view. Taking main's view now redraws the chat and drops the message waiting to go next (Send now's follow-up never left).
   if (running && turn && (turn.stopRequested || turn.interrupted) && view.id === shownChatId && !view.live) return true;

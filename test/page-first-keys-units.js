@@ -20,20 +20,27 @@ for (const platform of ['win32', 'darwin', 'linux']) {
   }
   for (const combo of BROWSER_ONLY) check(`${platform}: ${combo} is never page-first`, classify(inputFor(combo, platform), platform) === null, combo);
 }
-for (const combo of ['mod+t', 'mod+shift+t', 'mod+w', 'mod+shift+w', 'mod+n', 'mod+shift+n', 'mod+tab', 'mod+shift+tab', 'mod+pageup', 'mod+pagedown', 'mod+1', 'mod+9', 'f11']) {
-  check(`reserved: ${combo} is the browser's, a page cannot take it`, BROWSER_ONLY.includes(combo) && classify(inputFor(combo)) === null, combo);
+const PLATFORMS = ['win32', 'darwin', 'linux'];
+// The shortcut modifier on a platform: Ctrl on Windows / Linux, Cmd (meta) on macOS (there Control is the text-editing key).
+const modOf = (platform) => (platform === 'darwin' ? { meta: true } : { control: true });
+for (const platform of PLATFORMS) {
+  const mod = platform === 'darwin' ? 'Cmd' : 'Ctrl';
+  for (const combo of ['mod+t', 'mod+shift+t', 'mod+w', 'mod+shift+w', 'mod+n', 'mod+shift+n', 'mod+tab', 'mod+shift+tab', 'mod+pageup', 'mod+pagedown', 'mod+1', 'mod+9', 'f11']) {
+    check(`${platform}: reserved: ${combo} is the browser's, a page cannot take it`, BROWSER_ONLY.includes(combo) && classify(inputFor(combo, platform), platform) === null, combo);
+  }
+  check(`${platform}: ${mod}+L, ${mod}+R, F5, zoom, Alt+Left and Alt+Right are the page first (as in Chrome)`, ['mod+l', 'mod+r', 'f5', 'mod+=', 'mod+-', 'mod+0', 'alt+arrowleft', 'alt+arrowright', 'mod+k', 'mod+e', 'f6'].every((c) => classify(inputFor(c, platform), platform) !== null));
+  check(`${platform}: ${mod}+Alt+Left (AltGr) is not Back`, classify({ type: 'keyDown', key: 'ArrowLeft', ...modOf(platform), alt: true }, platform) === null);
+  // a layout with no Latin letters: Ctrl / Cmd+W and +L go by the physical key
+  check(`${platform}: layout: ${mod}+Д (key L on a Russian layout) is ${mod}+L`, classify({ type: 'keyDown', key: 'д', code: 'KeyL', ...modOf(platform) }, platform)?.combo === 'mod+l');
+  check(`${platform}: layout: ${mod}+Ц is reserved (${mod}+W), not page-first`, classify({ type: 'keyDown', key: 'ц', code: 'KeyW', ...modOf(platform) }, platform) === null);
+  check(`${platform}: layout: plain typing of a non-Latin letter is no shortcut`, classify({ type: 'keyDown', key: 'д', code: 'KeyL' }, platform) === null);
+  check(`${platform}: Ctrl+F4 (close tab) is never page-first`, classify(inputFor('ctrl+f4', platform), platform) === null);
+  check(`${platform}: ${mod}+Alt+S (AltGr) is not Save page`, classify({ type: 'keyDown', key: 's', ...modOf(platform), alt: true }, platform) === null);
+  check(`${platform}: a key up is not a key press`, classify({ type: 'keyUp', key: 's', ...modOf(platform) }, platform) === null);
+  check(`${platform}: a plain S is not a shortcut`, classify({ type: 'keyDown', key: 's' }, platform) === null);
 }
-check('Ctrl+L, Ctrl+R, F5, zoom, Alt+Left and Alt+Right are the page first (as in Chrome)', ['mod+l', 'mod+r', 'f5', 'mod+=', 'mod+-', 'mod+0', 'alt+arrowleft', 'alt+arrowright', 'mod+k', 'mod+e', 'f6'].every((c) => classify(inputFor(c)) !== null));
-check('Ctrl+Alt+Left (AltGr) is not Back', classify({ type: 'keyDown', key: 'ArrowLeft', control: true, alt: true }) === null);
-// a layout with no Latin letters: Ctrl+W / Ctrl+L go by the physical key
-check('layout: Ctrl+Д (key L on a Russian layout) is Ctrl+L', classify({ type: 'keyDown', key: 'д', code: 'KeyL', control: true })?.combo === 'mod+l');
-check('layout: Ctrl+Ц is reserved (Ctrl+W), not page-first', classify({ type: 'keyDown', key: 'ц', code: 'KeyW', control: true }) === null);
-check('layout: plain typing of a non-Latin letter is no shortcut', classify({ type: 'keyDown', key: 'д', code: 'KeyL' }) === null);
-check('Ctrl+F4 (close tab) is never page-first', classify(inputFor('ctrl+f4')) === null);
-check('Ctrl+Alt+S (AltGr) is not Save page', classify({ type: 'keyDown', key: 's', control: true, alt: true }) === null);
 check('Control+S on macOS is the text-editing key, not Save page', classify({ type: 'keyDown', key: 's', control: true }, 'darwin') === null);
-check('a key up is not a key press', classify({ type: 'keyUp', key: 's', control: true }) === null);
-check('a plain S is not a shortcut', classify({ type: 'keyDown', key: 's' }) === null);
+check('Ctrl+Д on macOS (Control, not Cmd) is no shortcut', classify({ type: 'keyDown', key: 'д', code: 'KeyL', control: true }, 'darwin') === null);
 check('no combo is in both lists', PAGE_FIRST.every((e) => !BROWSER_ONLY.includes(e.combo)));
 
 // hold / done, with fake contents and frames
