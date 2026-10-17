@@ -5839,7 +5839,7 @@ window.assistant.onSync?.(({ view } = {}) => applySync(view));
 
 
 
-async function reconcile() {
+async function reconcile(late = false) {
   let answer = null;
   const seq = runStateSeq;
   try { answer = await window.assistant.resync?.(); } catch {}
@@ -5848,11 +5848,21 @@ async function reconcile() {
 
 
   if (seq !== runStateSeq) return true;
-  return takeView(view);
+  return takeView(view, { late });
 }
-function takeView(view) {
+
+const DONE_GRACE_MS = 1500;
+function takeView(view, { late = false } = {}) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
+
+
+
+  if (!late && running && turn && view.id === shownChatId && !view.live) {
+    const mine = runId;
+    setTimeout(() => { if (running && runId === mine) reconcile(true).catch(() => {}); }, DONE_GRACE_MS);
+    return true;
+  }
 
 
   if (running && turn && (turn.stopRequested || turn.interrupted) && view.id === shownChatId && !view.live) return true;
