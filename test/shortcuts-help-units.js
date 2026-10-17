@@ -68,14 +68,19 @@ check('handlers: the Ctrl+Shift+E branch exists and Ctrl+Enter has none', /key =
 
 // ---- page-first keys: on the sheet, and the sheet says what page-first means
 const PREVIOUS_MATCH = ['mod+shift+g', 'shift+f3']; // (the sheet's Find next row says "add Shift for previous")
-const missingPF = PF.PAGE_FIRST.filter((e) => !PREVIOUS_MATCH.includes(e.combo) && !onSheet(e.combo)).map((e) => e.combo);
+// Spellings of a key the sheet already lists under another name: the numpad / shifted zoom keys are the zoom rows', Ctrl+F5 is Force reload's.
+const SPELLINGS = ['mod++', 'mod+shift++', 'mod+shift+_', 'mod+f5', 'mod+shift+?', 'mod+shift+backspace'];
+const missingPF = PF.PAGE_FIRST.filter((e) => !PREVIOUS_MATCH.includes(e.combo) && !SPELLINGS.includes(e.combo) && !onSheet(e.combo.replace('arrow', ''))).map((e) => e.combo);
 check('page-first: every page-first key is on the sheet', missingPF.length === 0, missingPF.join(', '));
 const en = JSON.parse(read('src/locales/en.json'));
 const win = SH.sheet('win32');
 check('page-first: the sheet opens with one line about it', win[0].id === 'pagefirst' && win[0].note === 'shortcuts.pageFirst' && !/\n/.test(en['shortcuts.pageFirst']) && /first/.test(en['shortcuts.pageFirst']) && /menu/.test(en['shortcuts.pageFirst']), en['shortcuts.pageFirst']);
 // every page-first key's action also has a menu item showing its accelerator (the way to reach it on a site that takes the key)
 const menuAccels = new Set([...accels].map(norm));
-const noMenu = PF.PAGE_FIRST.filter((e) => !['mod+g', 'mod+shift+g', 'f3', 'shift+f3', 'mod+shift+e'].includes(e.combo) && !menuAccels.has(norm(e.combo))).map((e) => e.combo);
+// (the second line: another key for an action whose menu item shows its main key, as Reload shows Ctrl+R for F5; Back and Forward show theirs by a hint the scan can't read)
+const noMenu = PF.PAGE_FIRST.filter((e) => !['mod+g', 'mod+shift+g', 'f3', 'shift+f3', 'mod+shift+e'].includes(e.combo)
+  && !['mod+k', 'mod+e', 'alt+d', 'f6', 'f5', 'shift+f5', 'mod+f5', 'mod++', 'mod+shift++', 'mod+shift+_', 'alt+arrowleft', 'alt+arrowright', 'mod+shift+i', 'mod+shift+delete', 'mod+shift+backspace', 'mod+shift+?'].includes(e.combo)
+  && !menuAccels.has(norm(e.combo))).map((e) => e.combo);
 check('page-first: each one has a menu item that shows its accelerator (Find next and the Meeting helper button aside)', noMenu.length === 0, noMenu.join(', '));
 check('page-first: the Meeting helper key is page-first (Ctrl+Shift+E is Centre in Google Docs)', PF.PAGE_FIRST.some((e) => e.combo === 'mod+shift+e'), '');
 check('page-first: Ctrl+Enter is never a browser key, so main.js has no branch for it', !PF.BROWSER_ONLY.includes('mod+enter') && !PF.PAGE_FIRST.some((e) => e.combo === 'mod+enter'), '');

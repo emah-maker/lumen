@@ -15,12 +15,20 @@ function inputFor(combo, platform = 'win32') {
 
 for (const platform of ['win32', 'darwin', 'linux']) {
   for (const entry of PAGE_FIRST) {
-    const should = entry.not !== platform;
+    const should = entry.not !== platform && (!entry.only || entry.only === platform);
     check(`${platform}: ${entry.combo} (${entry.does}) is ${should ? 'page-first' : 'the browser\'s'}`, Boolean(classify(inputFor(entry.combo, platform), platform)) === should);
   }
   for (const combo of BROWSER_ONLY) check(`${platform}: ${combo} is never page-first`, classify(inputFor(combo, platform), platform) === null, combo);
 }
-check('Alt+D, Alt+Left and Alt+Right are never page-first', ['alt+d', 'alt+arrowleft', 'alt+arrowright'].every((c) => classify(inputFor(c)) === null));
+for (const combo of ['mod+t', 'mod+shift+t', 'mod+w', 'mod+shift+w', 'mod+n', 'mod+shift+n', 'mod+tab', 'mod+shift+tab', 'mod+pageup', 'mod+pagedown', 'mod+1', 'mod+9', 'f11']) {
+  check(`reserved: ${combo} is the browser's, a page cannot take it`, BROWSER_ONLY.includes(combo) && classify(inputFor(combo)) === null, combo);
+}
+check('Ctrl+L, Ctrl+R, F5, zoom, Alt+Left and Alt+Right are the page first (as in Chrome)', ['mod+l', 'mod+r', 'f5', 'mod+=', 'mod+-', 'mod+0', 'alt+arrowleft', 'alt+arrowright', 'mod+k', 'mod+e', 'f6'].every((c) => classify(inputFor(c)) !== null));
+check('Ctrl+Alt+Left (AltGr) is not Back', classify({ type: 'keyDown', key: 'ArrowLeft', control: true, alt: true }) === null);
+// a layout with no Latin letters: Ctrl+W / Ctrl+L go by the physical key
+check('layout: Ctrl+Д (key L on a Russian layout) is Ctrl+L', classify({ type: 'keyDown', key: 'д', code: 'KeyL', control: true })?.combo === 'mod+l');
+check('layout: Ctrl+Ц is reserved (Ctrl+W), not page-first', classify({ type: 'keyDown', key: 'ц', code: 'KeyW', control: true }) === null);
+check('layout: plain typing of a non-Latin letter is no shortcut', classify({ type: 'keyDown', key: 'д', code: 'KeyL' }) === null);
 check('Ctrl+F4 (close tab) is never page-first', classify(inputFor('ctrl+f4')) === null);
 check('Ctrl+Alt+S (AltGr) is not Save page', classify({ type: 'keyDown', key: 's', control: true, alt: true }) === null);
 check('Control+S on macOS is the text-editing key, not Save page', classify({ type: 'keyDown', key: 's', control: true }, 'darwin') === null);
@@ -57,6 +65,14 @@ const report = (key, prevented, extra = {}) => ({ key, ctrl: true, meta: false, 
   check('hold: a focused cross-origin frame keeps Lumen\'s key', keys.hold(inFrame, press('s'), () => {}) === false);
   inFrame.focusedFrame = { ready: true };
   check('hold: a focused frame the preload covers is left to it', keys.hold(inFrame, press('s'), () => {}) === true);
+}
+{
+  const keys = create({ isReady: () => true, platform: 'win32' });
+  const wc = fake(); let ran = 0;
+  keys.hold(wc, { type: 'keyDown', key: 'ArrowLeft', control: false, alt: true, shift: false, meta: false }, () => { ran++; });
+  check('done: Alt+Left the page left alone goes back', keys.done(wc, { key: 'ArrowLeft', ctrl: false, meta: false, shift: false, alt: true, prevented: false }) === true && ran === 1);
+  keys.hold(wc, { type: 'keyDown', key: 'F5', control: false, alt: false, shift: false, meta: false }, () => { ran += 10; });
+  check('done: a page that handled F5 keeps it', keys.done(wc, { key: 'F5', ctrl: false, meta: false, shift: false, alt: false, prevented: true }) === false && ran === 1 && keys.pending(wc) === 0);
 }
 {
   let t = 1000;
