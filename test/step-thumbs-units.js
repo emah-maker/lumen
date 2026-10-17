@@ -148,13 +148,33 @@ function rig(opts = {}) {
     t.stop();
   }
   {
-    // a frame taken for a step's end must not be followed right away by the clock's own frame
+    // a frame taken for a step's end must not be followed right away by the clock's own frame.
+    // On a virtual clock: real timers are only as exact as the OS's (Windows rounds them to ~15 ms, so one run gave gaps of 63..113 ms), and
+    // this is about the order of events, not the speed of a machine. Every timer, the capture and the stamps below use the same virtual time.
+    let vnow = 0;
+    const timers = [];
+    const setTimer = (fn, ms) => { const h = { at: vnow + ms, fn, seq: timers.length, unref() {} }; timers.push(h); return h; };
+    const clearTimer = (h) => { const i = timers.indexOf(h); if (i !== -1) timers.splice(i, 1); };
+    const flush = async () => { for (let k = 0; k < 20; k++) await Promise.resolve(); }; // (the async capture and probe settle between timers)
+    const advance = async (ms) => {
+      const end = vnow + ms;
+      for (;;) {
+        await flush();
+        const next = timers.filter((h) => h.at <= end).sort((x, y) => x.at - y.at || x.seq - y.seq)[0];
+        if (!next) break;
+        timers.splice(timers.indexOf(next), 1);
+        vnow = next.at;
+        next.fn();
+      }
+      vnow = end;
+      await flush();
+    };
     let n = 0;
     const at = [];
-    const t = createThumbs({ capture: async () => { await sleep(3); return { data: `g${++n}`, url: 'u', tabId: 1 }; }, probe: async () => `s${n}x`, send: () => at.push(Date.now()), intervalMs: 100, settleMs: 10, hotMs: 1000 });
+    const t = createThumbs({ capture: async () => { await new Promise((r) => setTimer(r, 3)); return { data: `g${++n}`, url: 'u', tabId: 1 }; }, probe: async () => `s${n}x`, send: () => at.push(vnow), intervalMs: 100, settleMs: 10, hotMs: 1000, now: () => vnow, setTimer, clearTimer });
     t.activity();
-    for (let i = 0; i < 6; i++) { await sleep(85); t.settled(false); } // (a step ends just before each tick would fire)
-    await sleep(150);
+    for (let i = 0; i < 6; i++) { await advance(85); t.settled(false); } // (a step ends just before each tick would fire)
+    await advance(150);
     t.stop();
     const gaps = at.slice(1).map((x, i) => x - at[i]);
     check('a frame for a step end is never followed right behind by a clock frame (gaps at least ~80 ms with a 100 ms clock)', at.length >= 5 && gaps.every((g) => g >= 80), JSON.stringify(gaps));
