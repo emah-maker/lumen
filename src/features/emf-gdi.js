@@ -185,7 +185,7 @@ async function convertMetafiles(pictures, opts = {}) {
       const finish = () => { if (!done) { done = true; clearTimeout(timer); resolve(); } };
       timer = setTimeout(() => { try { if (child) utils.killTree(child); } catch { /* gone */ } finish(); }, opts.timeoutMs || TIME_LIMIT_MS);
       try {
-        child = spawn(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, manifestFile], { cwd: work, stdio: ['ignore', 'ignore', 'ignore'] });
+        child = spawn(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, manifestFile], { cwd: work, stdio: ['ignore', 'ignore', 'ignore'], windowsHide: true });
         child.on('error', finish);
         child.on('close', finish);
       } catch { finish(); }
