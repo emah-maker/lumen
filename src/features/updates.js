@@ -282,6 +282,9 @@ function createUpdates(deps) {
     override: Boolean(process.env.LUMEN_UPDATES_TEST),
   });
   const zipMod = () => (testStager || require('./zip-update'));
+  const REASONS = ['dropped', 'offline', 'timeout', 'server', 'refused', 'blocked', 'secure', 'failed'];
+  let updateNetHolder = null;
+  const updateNet = () => (updateNetHolder ||= (deps.updateNet || require('./update-net').createUpdateNet({ electron: require('electron'), proxy: () => deps.prefs?.().proxy })));
   let testStager = null;
   // The outside world, in one place so a test can stand in for it.
   const io = {
@@ -319,6 +322,7 @@ function createUpdates(deps) {
     version: null, // the newer version, once one is found
     progress: 0,
     error: '',
+    retrying: '', // a transient download failure is being retried: the reason, in words
     lastChecked: deps.readSettings().updatesCheckedAt || 0,
   };
   let info = null; // the updater's info for `version`
@@ -344,6 +348,14 @@ function createUpdates(deps) {
     'updates.moveDialog.later': 'Not now',
     'updates.moveDialog.message': 'Lumen {version} is available',
     'updates.moveDialog.detail': 'Move Lumen to Applications and update it now? Lumen restarts from there.',
+    'updates.reason.dropped': 'the connection dropped',
+    'updates.reason.offline': 'there is no internet connection',
+    'updates.reason.timeout': 'the connection timed out',
+    'updates.reason.server': 'the update server had a problem',
+    'updates.reason.refused': 'the update server refused the download',
+    'updates.reason.blocked': 'something on this computer blocked the download',
+    'updates.reason.secure': 'a secure connection couldn’t be made',
+    'updates.reason.failed': 'the connection failed',
   };
   const tr = (key, vars) => (deps.t ? deps.t(key, vars) : EN[key].replace(/\{(\w+)\}/g, (w, n) => (vars && n in vars ? String(vars[n]) : w)));
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
@@ -371,6 +383,10 @@ function createUpdates(deps) {
   const setState = (patch) => { if (patch.status && patch.status !== 'error') installFailed = false; Object.assign(state, patch); publish(); };
   const dismissKey = () => state.version || 'install-failed'; // a failed install with no known version still has a pill to close
   const short = (err) => String(err?.message || err).split('\n')[0].slice(0, 200);
+  // The plain-words reason for a download failure (locales: updates.reason.*), as a fragment for
+  // "Couldn’t update to Lumen X: <reason>"; a failure without one (a checksum, a disk error) says what it says.
+  const reasonText = (key) => tr(`updates.reason.${REASONS.includes(key) ? key : 'failed'}`);
+  const failText = (err) => (REASONS.includes(err?.reasonKey) ? reasonText(err.reasonKey) : short(err));
   const fail = (msg) => { moveError = msg; queued = false; publish(); return false; };
 
   function getUpdater() {
@@ -394,16 +410,22 @@ function createUpdates(deps) {
     const asset = stageAsset({ kind, version: state.version, arch, files: info?.files });
     if (!asset || state.status === 'downloading') return;
     const execPath = relocateTo ? `${relocateTo}/Contents/MacOS/${path.basename(process.execPath)}` : process.execPath;
-    setState({ status: 'downloading', progress: 0, error: '' });
-    const net = () => { try { return require('electron').net; } catch { return undefined; } };
-    const go = () => zipMod().stage({ net: net(), asset, version: state.version, files: info?.files, execPath, onProgress: (progress) => setState({ progress }) });
+    setState({ status: 'downloading', progress: 0, error: '', retrying: '' });
+    // The download's own session (features/update-net.js), not the browsing one the ad blocker and Safe Browsing watch.
+    const go = async () => zipMod().stage({
+      net: testStager ? undefined : await updateNet().get(), // (a test's stand-in stager downloads nothing)
+      asset, version: state.version, files: info?.files, execPath,
+      onProgress: (progress) => setState({ progress, retrying: '' }),
+      // A transient failure: the pill says "Retrying…" and Settings says why, until data flows again.
+      onRetry: (r) => setState({ retrying: reasonText(r.key) }),
+    });
     (cleaning ? cleaning.then(go) : Promise.resolve().then(go)) // not while an old staging folder is still being deleted
       .then((s) => {
         staged = s;
         setState({ status: 'downloaded', progress: 100 });
         if (queued) applyNow(); // the click that came while it downloaded
       })
-      .catch((err) => { queued = false; setState({ status: 'error', error: short(err) }); });
+      .catch((err) => { queued = false; setState({ status: 'error', error: failText(err), retrying: '' }); });
   }
 
   // Show the native dialog, e.g. to open the newer copy that is already installed.
@@ -699,7 +721,7 @@ function createUpdates(deps) {
     dismiss: () => dismiss(),
     setState: (patch) => setState(patch),
     willQuit: () => applyOnQuit(),
-    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
+    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '', retrying: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
   } : undefined;
 
   registerIpc();

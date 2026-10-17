@@ -13668,13 +13668,14 @@ const tabSearch = (() => {
     const offer = u.status === 'available' && (u.relocate || !u.canSelfUpdate || !u.autoDownload);
     pill.hidden = Boolean(u.disabled) || (u.dismissed && !moveFailed) || !(ready || busy || failed || offer || moveFailed);
     if (pill.hidden) return;
-    const key = moveFailed ? '' : ready ? 'updates.ready' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
+    const retrying = busy && Boolean(u.retrying);
+    const key = moveFailed ? '' : ready ? 'updates.ready' : retrying ? 'updates.retrying' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
     text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
 
 
     const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
-    pill.title = why || text.textContent;
+    pill.title = retrying ? window.t('updates.settings.retrying', { reason: u.retrying }) : why || text.textContent;
     if (why) pill.setAttribute('aria-description', why); else pill.removeAttribute('aria-description');
     action.hidden = busy && u.queued;
     action.disabled = applying || Boolean(u.checking);
