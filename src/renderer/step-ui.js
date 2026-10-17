@@ -267,7 +267,9 @@
   function capSize(card) {
     const w = card.img.naturalWidth;
     if (!w) return;
-    card.shot.style.maxWidth = Math.min(CAP, Math.floor(w / Math.max(1, window.devicePixelRatio || 1))) + 'px';
+    const shown = Math.min(CAP, Math.floor(w / Math.max(1, window.devicePixelRatio || 1)));
+    card.shot.style.maxWidth = shown + 'px';
+    card.el.style.setProperty('--act-w', shown + 'px'); // (the whole card is as wide as its preview: step-ui.css)
   }
   // The status bar of a Browser card: what the AI is doing right now, in the words of its steps. It replaces itself on every step; a screen
   // reader hears it (aria-live polite on the card's hidden live region) at most every 1.5 s, and a change of state (Done, Needs you) at once.
@@ -277,11 +279,19 @@
     if (card.surface !== 'browser') return '';
     const t = card.tab;
     if (!t) return ''; try { return t.url ? new URL(t.url).host.replace(/^www\./, '') : ''; } catch { return ''; } }
+  // What the run came to, for "Done: …": the first sentence of the reply, else the page it ended on ("Opened '<title>'"); never the last step's verb.
+  function outcomeOf(card) {
+    const clip = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + '\u2026' : t);
+    const line = String(card.outcome || '').split(/\n/).map((l) => l.replace(/^[\s>#*_`\-\d.)]+/, '').replace(/[*_`]/g, '').trim()).find(Boolean) || '';
+    if (line) { const first = line.match(/^.+?[.!?](?=\s|$)/)?.[0] || line; return clip(first.replace(/[.!?\s]+$/, ''), 80); }
+    const title = card.surface === 'browser' && card.navigated ? String(card.tab?.title || '').trim() : '';
+    return title ? tr('card.status.opened', { title: clip(title, 70) }) : '';
+  }
   function statusFor(card, state) {
     const step = trimStep(card.latest);
     if (state === 'stopped') return tr('card.status.stopped');
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
-    if (state === 'completed') return step ? tr('card.status.done', { result: step }) : tr('card.state.completed');
+    if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
     if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
     if (!step) return tr('card.status.starting');
     const site = card.surface === 'browser' && card.siteMode ? '' : siteOf(card);
@@ -373,9 +383,31 @@
     if (!src) return;
     card.siteMode = false;
     card.shot.dataset.mode = 'frame';
-    if (card.img.getAttribute('src') !== src) card.img.src = src;
+    if (card.img.getAttribute('src') !== src) swapFrame(card, src);
     if (card.shot.hidden) { card.shot.hidden = false; card.img.alt = tr('card.thumb.alt'); }
   }
+  // A new frame is decoded off to the side and swapped in when it is ready, so a live stream (about 12 a second) never makes the card or the chat
+  // wait on a decode; frames that arrive while one decodes are dropped but the newest. The first picture (nothing shown yet) goes in at once.
+  function swapFrame(card, src) {
+    if (!card.img.getAttribute('src') || typeof Image !== 'function') { card.img.src = src; return; }
+    card.nextSrc = src;
+    if (card.decoding) return;
+    const next = () => {
+      const want = card.nextSrc;
+      card.nextSrc = null;
+      if (!want) { card.decoding = false; return; }
+      card.decoding = true;
+      const g = card.frameGen || 0;
+      const pic = new Image();
+      pic.src = want;
+      Promise.resolve(pic.decode?.()).catch(() => {}).then(() => {
+        if ((card.frameGen || 0) === g && card.img.getAttribute('src') !== want) card.img.src = want;
+        next();
+      });
+    };
+    next();
+  }
+  const dropFrames = (card) => { card.frameGen = (card.frameGen || 0) + 1; card.nextSrc = null; };
   function setShot2(card, src) {
     if (!src) return;
     if (card.img2.getAttribute('src') !== src) card.img2.src = src;
@@ -387,6 +419,7 @@
     card.siteMode = false;
     if (card.shot.hidden) return;
     card.shot.dataset.mode = 'pending';
+    dropFrames(card);
     card.img.removeAttribute('src');
   }
   // The tab only gave blank (one-colour) frames, e.g. a viewer drawn on a canvas in a hidden view: never a solid rectangle. The last good picture
@@ -396,6 +429,7 @@
     if (card.shot.dataset.mode === 'frame' && card.img.getAttribute('src') && card.goodTab === (event.tabId ?? null)) return;
     card.shot.hidden = false;
     card.shot.dataset.mode = 'site';
+    dropFrames(card);
     card.img.removeAttribute('src');
     let name = event.title || '';
     if (!name) { try { name = new URL(event.url).host; } catch { /* none */ } }
@@ -410,6 +444,7 @@
     card.siteMode = true;
     card.shot.hidden = false;
     card.shot.dataset.mode = 'site';
+    dropFrames(card);
     card.img.removeAttribute('src');
     card.siteName.textContent = tr('card.site.reading', { site: event.title || '' });
     const icon = typeof event.favicon === 'string' ? event.favicon : '';
@@ -444,6 +479,7 @@
   // The card moves to the surface of the step now being done (its icon, title, preview and status follow).
   function setSurface(card, surface, name) {
     if (surface === 'browser') card.hadBrowser = true;
+    if (/^(mcp__lumen__)?(navigate|open_tab|go_back|go_forward|reload|switch_tab)$/.test(String(name || ''))) card.navigated = true;
     if (surface === 'shell') card.shellKind = WRITES.test(String(name)) ? 'files' : 'terminal';
     if (card.surface !== surface) { card.surface = surface; card.el.dataset.surface = surface; }
   }
@@ -533,6 +569,7 @@
       if (card.hadBrowser && Number.isFinite(event?.aiTabCount)) card.aiTabs = event.aiTabCount; // (the run is over: the tab it worked in counts now)
       for (const row of card.list.querySelectorAll('.step.stopped')) { card.stopped = true; row._card && (row._card.running = Math.max(0, row._card.running - 1)); }
       card.running = 0;
+      if (typeof event?.reply === 'string' && event.reply.trim()) card.outcome = event.reply;
       card.ended = true;
       card.sayText = '';
       refreshCard(turn, card);

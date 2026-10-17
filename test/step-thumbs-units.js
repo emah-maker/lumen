@@ -179,6 +179,71 @@ function rig(opts = {}) {
     const gaps = at.slice(1).map((x, i) => x - at[i]);
     check('a frame for a step end is never followed right behind by a clock frame (gaps at least ~80 ms with a 100 ms clock)', at.length >= 5 && gaps.every((g) => g >= 80), JSON.stringify(gaps));
   }
+  // streaming: the engine's screencast is the source while the card is on screen and the page moves
+  const streamRig = (opts = {}) => {
+    const sent = [];
+    const st = { starts: 0, stops: 0, captures: 0, finals: 0, push: null, flags: { light: false, visible: true }, sig: 'a', refuse: false };
+    const thumbs = createThumbs({
+      capture: async () => { st.captures++; await sleep(2); return { data: 'captured' + st.captures, url: 'http://x/', title: 't', tabId: 1 }; },
+      probe: async () => st.sig,
+      stream: async ({ onFrame }) => { if (st.refuse) return null; st.starts++; st.push = onFrame; return { stop: () => { st.stops++; st.push = null; } }; },
+      final: async () => { st.finals++; return { data: 'last', url: 'http://x/end', title: 'end', tabId: 2 }; },
+      send: (e) => sent.push(e),
+      light: () => st.flags.light, visible: () => st.flags.visible, intervalMs: 20, settleMs: 5, hotMs: 30, idleMs: 120, ...opts,
+    });
+    return { thumbs, sent, st };
+  };
+  {
+    const r = streamRig();
+    r.thumbs.activity();
+    await sleep(60);
+    check('a visible, active card streams: one stream is started, and nothing is captured on the clock', r.st.starts === 1 && r.st.captures === 0, JSON.stringify(r.st));
+    for (let i = 0; i < 5; i++) r.st.push({ data: 'f' + i, url: 'http://x/', title: 't', tabId: 1 });
+    r.st.push({ data: 'f4', url: 'http://x/', title: 't', tabId: 1 });
+    check('frames of the stream go straight to the chat (an equal one is not sent again)', r.sent.length === 5 && r.sent[4].data === 'f4' && r.sent[0].type === 'thumb', String(r.sent.length));
+    await sleep(400);
+    check('a page that stands still sends nothing, and the stream rests after the idle time', r.sent.length === 5 && r.st.stops === 1 && r.st.starts === 1, JSON.stringify(r.st));
+    r.st.sig = 'b';
+    await sleep(80);
+    check('the probe wakes it when the page moves', r.st.starts === 2, JSON.stringify(r.st));
+    r.st.flags.visible = false;
+    await sleep(80);
+    check('a hidden or scrolled-away card stops the stream', r.st.stops === 2 && r.st.push === null, JSON.stringify(r.st));
+    r.st.flags.visible = true;
+    r.st.sig = 'c';
+    await sleep(80);
+    check('and it comes back when the card does', r.st.starts === 3, JSON.stringify(r.st));
+    const before = r.sent.length;
+    const oldPush = r.st.push;
+    r.thumbs.retarget();
+    oldPush({ data: 'stale', url: 'http://x/', title: 't', tabId: 1 });
+    await sleep(60);
+    check('retarget restarts the stream and a frame of the tab left is never shown', r.st.starts === 4 && r.sent.length === before && !r.sent.some((e) => e.data === 'stale'), JSON.stringify(r.st));
+    r.thumbs.stop();
+    await sleep(60);
+    check('stop() ends the stream and takes one last frame of the tab the run ended on, which is the card\'s last frame', r.st.push === null && r.st.finals === 1 && r.sent[r.sent.length - 1].data === 'last' && r.sent[r.sent.length - 1].tabId === 2, JSON.stringify([r.st, r.sent[r.sent.length - 1]]));
+    const n = r.sent.length;
+    await sleep(100);
+    check('after stop nothing more is sent', r.sent.length === n && r.st.starts === 4, String(r.sent.length));
+  }
+  {
+    const r = streamRig({ stream: async () => null });
+    r.thumbs.activity();
+    await sleep(80);
+    check('a page that cannot be streamed is captured instead (the old path)', r.st.captures >= 1 && r.sent.length >= 1 && r.sent[0].data.startsWith('captured'), JSON.stringify(r.st));
+    r.thumbs.stop();
+  }
+  {
+    const r = streamRig();
+    r.st.flags.light = true;
+    r.thumbs.activity();
+    await sleep(80);
+    check('on Light graphics there is no stream: a capture for the first frame only', r.st.starts === 0 && r.st.captures === 1, JSON.stringify(r.st));
+    r.thumbs.settled(true);
+    await sleep(40);
+    check('…and one more for a navigation', r.st.captures === 2 && r.st.starts === 0, JSON.stringify(r.st));
+    r.thumbs.stop();
+  }
   check('navigation tools are told apart from clicks', isNavigation('navigate') && isNavigation('go_back') && isNavigation('mcp__lumen__open_tab') && !isNavigation('click') && !isNavigation('read_page'), '');
 
   // wiring: main starts it per run, gates it on the chat's report, and the chat reports visibility
@@ -191,6 +256,7 @@ function rig(opts = {}) {
   check('both preloads expose openPreview and thumbsVisible', ['src/preload/preload.js', 'src/features/chat-preload.js'].every((f) => /openPreview/.test(read(f)) && /thumbsVisible/.test(read(f))), '');
   check('the card follows the tab the step acts on (tab_id, switch_tab, read_tabs), else the run\'s own tab; read_urls is a site', /function thumbTargetOf\(run, name, input\)/.test(main) && /inp\.tab_id/.test(main) && /bare === 'read_urls'/.test(main) && /thumbs\.retarget\(\)/.test(main), '');
   check('the live refresh uses a cheap page probe and about 3 frames a second (350 ms), slower on Light graphics', /probe: \(\) => probeRunThumb\(run\)/.test(main) && /graphicsMode\.light\(\) \? 1500 : 350/.test(main) && /intervalMs = 350/.test(read('src/features/step-thumbs.js')), '');
+  check('the card streams the engine\'s screencast (about 15 a second, paced by acknowledging late, the base64 passed on as it is) and takes one last frame of the tab the run ended on', main.includes('stream: ({ onFrame, onEnd }) => streamRunThumb(run, onFrame, onEnd)') && main.includes('final: (last) => finalRunThumb(run, last)') && main.includes('THUMB_FPS = Math.min(30, Math.max(1, Number(process.env.LUMEN_THUMB_FPS) || 15))') && read('src/features/tab-capture.js').includes('async function streamThumb'), '');
   const ui = read('src/renderer/step-ui.js');
   check('the chat reports a card on screen with an IntersectionObserver and the page visibility', /IntersectionObserver/.test(ui) && /visibilitychange/.test(ui) && /thumbsVisible/.test(ui), '');
   check('a saved chat keeps one small final frame (≤ 60 KB as base64 text)', /THUMB_CHARS = 90000/.test(read('src/features/chat-branches.js')) && /maxBytes = 45000/.test(read('src/features/tab-capture.js')), '');
