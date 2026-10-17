@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The sidebar no longer jumps to another tab's chat.** A full-page chat open in another tab (New tab, Ask AI) that started a new chat, opened one, edited a reply or began a run used to redraw the sidebar of the tab you were on as that chat, with your unsent text gone, while Lumen still thought the sidebar showed your own chat. Lumen now sends such an update to the sidebar only when the sidebar shows that chat (or the chat it showed is gone). New test: `test/sidebar-stays.js`, which keeps a long run going in one tab while you type in another (also registered in `scripts/test-all.js`).
+
 ## 0.5.40 (2026-10-16)
 
 - **EMF and WMF pictures in PowerPoint decks now show.** The slide viewer used to leave a placeholder and a banner ("Some pictures are in a format Lumen cannot show") for them. It now draws them with EMFJS and WMFJS (from rtf.js, MIT, about 55 KB each), loaded only when a deck has one, inside the slide page (no network, no access to the rest of Lumen), never in the main process. A file is checked first (size, record count, bitmap sizes), drawing has a time limit, and a picture that cannot be drawn (a damaged file, or an EMF+ that holds only GDI+ records) is a labelled placeholder of its own size; the banner appears only then. Covered by `test/pptx-images.js` (pixels, banner, and truncated or garbage EMF and WMF files) and `test/pptx-images-units.js`.

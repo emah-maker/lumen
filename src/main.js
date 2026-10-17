@@ -8250,6 +8250,14 @@ chatPageRt = chatPage.create({
   chatView: () => chatView(),
   chatOf: (tabId) => chatBind.chatOf(tabId), // [chat per tab] the chat a chat page tab was left on
   followPage: (event) => followChatPage(event?.sender), // a page asking for its chat first brings the open chat in line with its tab
+  // The sidebar of a window shows its front tab's chat. A chat page's sync or run start about any other chat is not for it (it would
+  // redraw the sidebar as that chat while main still has it on its own); one about the chat it shows is, and so is any once the chat
+  // it showed is gone (deleted in the page) and no tab or run holds it.
+  sidebarWants: (wc, payload) => {
+    const about = payload?.view?.id ?? payload?.chatId;
+    const shows = shownChat.get(wc);
+    return !about || !shows || shows === about || (!chatBind.claimed(shows) && !chatRuns.has(shows) && shows !== chatId);
+  },
   agentOffLimits,
   tabInfo: (t) => {
     const live = alive(t);
