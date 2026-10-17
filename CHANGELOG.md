@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.43 (2026-10-17)
+
 - **The Computer card's picture is live.** While the AI works in another app, the card shows that app's window at about 6 pictures a second when its content changes, and nothing when it stands still (slower in Light graphics). The pictures are made in the app helper, not in Lumen's main process, only while the card is on screen, and never of a window that turned into a blocked program.
 
 ## 0.5.42 (2026-10-17)
