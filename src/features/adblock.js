@@ -11,6 +11,7 @@
 // What can still tell: a CORS fetch's response.url shows the stand-in scheme, and ads that never
 // render (a site measuring its ad slot after the ad should have filled it).
 const fs = require('fs');
+const { parse: parseSite } = require('tldts-experimental');
 const path = require('path');
 const crypto = require('crypto');
 const electron = require('electron');
@@ -250,7 +251,7 @@ function createAdblock(deps) {
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
       // So do the captcha and sign-in providers, on every site (challengeFor): a list entry for one of them leaves a blank frame, a
       // script that never ran or a request that dies, and the form behind the check fails.
-      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url)) return callback({});
+      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url, details.resourceType)) return callback({});
       // A form posted into a frame is the person's submission, never an ad: a stand-in would swallow it.
       if (details.resourceType === 'subFrame' && details.method === 'POST') return callback({});
       const request = fromElectronDetails(details);
@@ -258,7 +259,7 @@ function createAdblock(deps) {
       const { redirect, match } = engine.match(request);
       if (!redirect && !match) return callback({});
       // Whatever a captcha or sign-in frame itself loads (its worker, its proof script, its POSTs) goes through too.
-      if (fromProviderFrame(details)) return callback({});
+      if (fromProviderFrame(details, page)) return callback({});
       const id = details.webContents?.id;
       if (id !== undefined) blockedCount.set(id, (blockedCount.get(id) || 0) + 1);
       if (redirect) return callback({ redirectURL: stubUrl(redirect) });
@@ -270,7 +271,7 @@ function createAdblock(deps) {
     const { parse } = require('tldts-experimental');
     // (The first assignment to returnValue sends the reply, so it is assigned exactly once.)
     const scriptletsFor = (event, url) => {
-      if (typeof url !== 'string' || !on(url) || isProviderUrl(url)) return [];
+      if (typeof url !== 'string' || !on(url) || isProviderUrl(url, true)) return [];
       const { hostname, domain } = parse(url);
       // (Scriptlets are chosen by host: remembered per host for this engine, so a page's many frames answer at once.)
       if (scriptletCache.engine !== engine) { scriptletCache.engine = engine; scriptletCache.map.clear(); }
@@ -296,14 +297,14 @@ function createAdblock(deps) {
     // here because adblock-preload.js already ran them, earlier.
     let cosmetics = blocker.onInjectCosmeticFilters;
     blocker.onInjectCosmeticFilters = async (event, url, msg) => {
-      if (!on(url) || isProviderUrl(url)) return undefined;
+      if (!on(url) || isProviderUrl(url, true)) return undefined;
       const sender = { insertCSS: (css, options) => event.sender.insertCSS(css, options), executeJavaScript: () => Promise.resolve() };
       return cosmetics({ frameId: event.frameId, processId: event.processId, sender }, url, msg);
     };
     let headers = blocker.onHeadersReceived;
     blocker.onHeadersReceived = (details, callback) => {
       deps.onResponseHeaders(details); // [settings] sites asking for the color-scheme hint
-      return on(details.webContents?.getURL() || details.url) && !challengeFor(details.webContents?.getURL() || '', details.url) ? headers(details, callback) : callback({});
+      return on(details.webContents?.getURL() || details.url) && !challengeFor(details.webContents?.getURL() || '', details.url, details.resourceType) ? headers(details, callback) : callback({});
     };
     serveStubs(deps.session.defaultSession);
     blocker.enableBlockingInSession(deps.session.defaultSession);
@@ -401,16 +402,23 @@ const PROVIDER_DOMAINS = ['hcaptcha.com', 'recaptcha.net', 'arkoselabs.com', 'fu
   'auth0.com', 'b2clogin.com', 'onelogin.com', 'duosecurity.com', 'pingone.com'];
 const SIGN_IN_LABELS = ['sso', 'login', 'signin', 'sign-in', 'auth', 'accounts', 'idp', 'identity', 'oauth'];
 const dotted = (list) => list.map((d) => d.replace(/\./g, '[.]')).join('|');
+// The named providers: always.
 const PROVIDER_URL = new RegExp('^https?://(?:'
   + '(?:[a-z0-9-]+[.])*(?:' + dotted(PROVIDER_DOMAINS) + ')(?=[:/?#]|$)'
-  + '|(?:' + SIGN_IN_LABELS.join('|') + ')[.][a-z0-9.-]+(?=[:/?#]|$)'
   + '|(?:www[.])?(?:google|gstatic)[.]com(?::[0-9]+)?/recaptcha(?:/|$))', 'i');
+// Any sso. / login. / auth. / accounts. host: a tracker could be served from one (auth.tracker.example), so it counts only as a page
+// (a frame or navigation), or when it is the same site as the page that asked (sso.garmin.com on connect.garmin.com).
+const SIGN_IN_HOST = new RegExp('^https?://(?:' + SIGN_IN_LABELS.join('|') + ')[.][a-z0-9.-]+(?=[:/?#]|$)', 'i');
 const CHALLENGE_PATH = /\/cdn-cgi\/challenge-platform\//; // Cloudflare's check runs from the site's own address
-const isProviderUrl = (url) => PROVIDER_URL.test(url) || CHALLENGE_PATH.test(url);
-const challengeFor = (_page, url) => isProviderUrl(url); // (the page no longer matters: kept with its two arguments)
-// The frame that sent a request (webRequest details name it): a provider's own page.
-const fromProviderFrame = (details) => {
-  try { const frameUrl = details.frame?.url; return Boolean(frameUrl) && PROVIDER_URL.test(frameUrl); } catch { return false; }
+const siteOf = (url) => { try { return parseSite(url).domain || ''; } catch { return ''; } };
+const sameSite = (a, b) => { const x = siteOf(a); return Boolean(x) && x === siteOf(b); };
+const isNavigation = (type) => type === 'mainFrame' || type === 'subFrame';
+// url alone: the named providers, and (asDocument) a sign-in host as a page.
+const isProviderUrl = (url, asDocument = false) => PROVIDER_URL.test(url) || CHALLENGE_PATH.test(url) || (asDocument && SIGN_IN_HOST.test(url));
+const challengeFor = (page, url, type = 'other') => isProviderUrl(url) || (SIGN_IN_HOST.test(url) && (isNavigation(type) || sameSite(page, url)));
+// The frame that sent a request (webRequest details name it): a named provider's page, or a sign-in page of the same site as the top page.
+const fromProviderFrame = (details, page) => {
+  try { const frameUrl = details.frame?.url; return Boolean(frameUrl) && (PROVIDER_URL.test(frameUrl) || (SIGN_IN_HOST.test(frameUrl) && sameSite(page, frameUrl))); } catch { return false; }
 };
 
 module.exports = { createAdblock, hostOf, pageMemo, challengeFor, isProviderUrl };

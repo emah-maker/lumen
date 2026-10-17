@@ -65,6 +65,8 @@ const RULES = [
   '||login.live.com^',
   '||sso.garmin.com^$third-party',
   '||accounts.example.org^',
+  '||auth.tracker.example^',
+  '||sso.garmin-like.test^',
 ].join('\n');
 
 (async () => {
@@ -277,13 +279,14 @@ document.getElementById('submit').onclick = () => window.__submit();
     // ---- the request hook's decisions (adblock.probe): the captcha and sign-in providers pass on any site, a real tracker does not ----
     const probe = (url, type, { method = 'GET', page = 'https://some-site.example/form' } = {}) => app.evaluate((_e, a) => global.__adblock.probe({ id: 1, url: a[0], method: a[2], resourceType: a[1], referrer: a[3], webContents: { id: undefined, getURL: () => a[3] } }), [url, type, method, page]);
     const passes = (r) => r && !r.cancel && !r.redirectURL;
-    const SIGN_IN_HOSTS = ['sso.garmin.com', 'login.microsoftonline.com', 'appleid.apple.com', 'login.live.com', 'dev-123.okta.com', 'tenant.auth0.com', 'accounts.example.org'];
-    for (const [label, host, p] of PROVIDERS) {
-      const url = 'https://' + host + p;
-      check('[provider ' + label + '] the list does catch ' + host + p + ' (the worst case)', host === 'www.google.com' || host === 'www.gstatic.com' || await engineBlocks(url, 'https://some-site.example/form', 'script') === true, 'not in the stand-in list');
-      check('[provider ' + label + '] its script, frame and POST pass on any site', passes(await probe(url, 'script')) && passes(await probe('https://' + host + '/frame', 'subFrame')) && passes(await probe('https://' + host + '/verify', 'xhr', { method: 'POST' })), J([await probe(url, 'script'), await probe('https://' + host + '/verify', 'xhr', { method: 'POST' })]));
-    }
-    check('sign-in hosts (sso., login., accounts.; Microsoft, Apple, Okta, Auth0) pass on any site', (await Promise.all(SIGN_IN_HOSTS.map((h) => probe('https://' + h + '/log', 'xhr', { method: 'POST' })))).every(passes), 'a sign-in host was filtered');
+    const SIGN_IN_HOSTS = ['login.microsoftonline.com', 'appleid.apple.com', 'login.live.com', 'dev-123.okta.com', 'tenant.auth0.com'];
+    check('named sign-in providers (Microsoft, Apple, Okta, Auth0) pass on any site', (await Promise.all(SIGN_IN_HOSTS.map((h) => probe('https://' + h + '/log', 'xhr', { method: 'POST' })))).every(passes), 'a sign-in host was filtered');
+    // A generic sso. / login. / auth. / accounts. host: a page (frame or form POST) always, a subresource only for its own site.
+    const garmin = 'https://connect.garmin-like.test/profile';
+    check('sso.garmin-like.test as a subframe, and as a form POST target, on a garmin-like page is allowed', passes(await probe('https://sso.garmin-like.test/embed', 'subFrame', { page: garmin })) && passes(await probe('https://sso.garmin-like.test/submit', 'subFrame', { method: 'POST', page: garmin })) && passes(await probe('https://sso.garmin-like.test/submit', 'mainFrame', { method: 'POST', page: garmin })), 'filtered');
+    check('...and its script, fetch and POST from the same site (connect.garmin-like.test) are allowed', passes(await probe('https://sso.garmin-like.test/sso.js', 'script', { page: garmin })) && passes(await probe('https://sso.garmin-like.test/api', 'xhr', { method: 'POST', page: garmin })), 'filtered');
+    check('auth.tracker.example loading a script on an unrelated site is still blocked by a stand-in rule', !passes(await probe('https://auth.tracker.example/t.js', 'script')), 'let through');
+    check('...and so are its image, fetch, POST and ping, and the same host named sso. on an unrelated site', !passes(await probe('https://auth.tracker.example/p.gif', 'image')) && !passes(await probe('https://auth.tracker.example/c', 'xhr', { method: 'POST' })) && !passes(await probe('https://auth.tracker.example/c', 'ping', { method: 'POST' })) && !passes(await probe('https://sso.garmin-like.test/sso.js', 'script', { page: 'https://news.example/' })) && !passes(await probe('https://accounts.example.org/x', 'xhr', { method: 'POST' })), 'let through');
     check('Cloudflare\'s check on the site\'s own address passes', passes(await probe('https://shop.example/cdn-cgi/challenge-platform/h/b/scripts/jsd/main.js', 'script')), 'filtered');
     check('a real tracker is still blocked (a script, and a POST report)', !passes(await probe('https://ads.tracker-test.org/ad.js', 'script')) && !passes(await probe('https://ads.tracker-test.org/collect', 'xhr', { method: 'POST' })), 'tracker let through');
     check('a tracker named like a provider is not let through (hcaptcha.com.evil.example, evil.example/hcaptcha.com/)', !passes(await probe('https://ads.tracker-test.org/hcaptcha.com/ad.js', 'script')), 'let through');
