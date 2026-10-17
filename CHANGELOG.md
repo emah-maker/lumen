@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.42 (2026-10-17)
+
 - **A message that fails at once no longer loses its error.** When a reply failed within a moment (a refused API key), the chat could redraw itself from a snapshot taken just before the end of the run and wipe the error, leaving your message with no answer. The chat now waits for the run’s own end before redrawing.
 
 ## 0.5.41 (2026-10-17)
