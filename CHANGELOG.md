@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A page no longer jumps under you when the AI clicks or types in it.** Before each click or text entry the AI scrolled the element to the middle of the window, even when it was already fully in view, so the page moved at every step of a task. It now scrolls only when the element is off screen. Test: `test/ai-task-flicker.js` (a whole task with two extra tabs, sampled: no view hidden, re-shown or resized mid-task, the page keeps its scroll position and size, the toolbar pill and page frame change only when the tab in front does).
 ## 0.5.40 (2026-10-16)
 
 - **EMF and WMF pictures in PowerPoint decks now show.** The slide viewer used to leave a placeholder and a banner ("Some pictures are in a format Lumen cannot show") for them. It now draws them with EMFJS and WMFJS (from rtf.js, MIT, about 55 KB each), loaded only when a deck has one, inside the slide page (no network, no access to the rest of Lumen), never in the main process. A file is checked first (size, record count, bitmap sizes), drawing has a time limit, and a picture that cannot be drawn (a damaged file, or an EMF+ that holds only GDI+ records) is a labelled placeholder of its own size; the banner appears only then. Covered by `test/pptx-images.js` (pixels, banner, and truncated or garbage EMF and WMF files) and `test/pptx-images-units.js`.
