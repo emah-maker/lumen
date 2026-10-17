@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.46 (2026-10-17)
+
 - **Forms behind a captcha or a sign-in frame work again.** The ad blocker now lets hCaptcha, reCAPTCHA, Cloudflare Turnstile, Arkose / FunCaptcha, GeeTest, Friendly Captcha, MTCaptcha and DataDome's check through on every site (before, only on Spotify), together with Microsoft, Apple, Okta, Auth0, OneLogin and Duo sign-in and, for `sso.`, `login.`, `auth.` and `accounts.` hosts, their frames and form posts on any site, and everything else they serve to a page of their own site (never scripts, images, fetches or pings for other sites, so a tracker served from `auth.tracker.example` stays blocked). A list entry for one of them used to replace its frame, proof script or worker with an empty stand-in (the request showed as aborted, and a captcha worker failed), so the form behind it, such as Garmin's profile form in an embedded frame, could not send its POST. Whatever such a frame loads itself goes through too, and a form posted into a frame is never swallowed by a list entry. Real trackers are still blocked. New tests: `test/iframe-post.js` (a cross-origin iframe form with a nested captcha, urlencoded, multipart and CORS JSON POSTs, third-party cookies and storage, links and `window.open` from the frame, all with the default privacy settings, plus a tracker that stays blocked) and `test/adblock-providers-units.js`.
 
 ## 0.5.45 (2026-10-17)
