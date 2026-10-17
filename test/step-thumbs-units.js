@@ -147,6 +147,18 @@ function rig(opts = {}) {
     check('after retarget the capture of the old tab is dropped and the new tab is taken at once', sent.length === 1 && sent[0].data === 'frame-B' && sent[0].tabId === 2, JSON.stringify(sent));
     t.stop();
   }
+  {
+    // a frame taken for a step's end must not be followed right away by the clock's own frame
+    let n = 0;
+    const at = [];
+    const t = createThumbs({ capture: async () => { await sleep(3); return { data: `g${++n}`, url: 'u', tabId: 1 }; }, probe: async () => `s${n}x`, send: () => at.push(Date.now()), intervalMs: 100, settleMs: 10, hotMs: 1000 });
+    t.activity();
+    for (let i = 0; i < 6; i++) { await sleep(85); t.settled(false); } // (a step ends just before each tick would fire)
+    await sleep(150);
+    t.stop();
+    const gaps = at.slice(1).map((x, i) => x - at[i]);
+    check('a frame for a step end is never followed right behind by a clock frame (gaps at least ~80 ms with a 100 ms clock)', at.length >= 5 && gaps.every((g) => g >= 80), JSON.stringify(gaps));
+  }
   check('navigation tools are told apart from clicks', isNavigation('navigate') && isNavigation('go_back') && isNavigation('mcp__lumen__open_tab') && !isNavigation('click') && !isNavigation('read_page'), '');
 
   // wiring: main starts it per run, gates it on the chat's report, and the chat reports visibility
