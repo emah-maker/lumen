@@ -166,6 +166,17 @@ function fakeCdn({ revisions = {}, missing = [], broken = [] } = {}) {
   check('scriptlets: text that does not have the expected shape is left exactly as it was', Y.prepareScriptlet(odd) === odd && Y.prepareScriptlet(editScriptlet('z').replace('safeSelf.safe=t;', '')) !== null && Y.shareSafeSelf(7) === 7, 'changed');
   check('scriptlets: the same scriptlet text is only handed to a page once', Y.dedupe(['a', 'b', 'a', 'c', 'b']).join('') === 'abc', Y.dedupe(['a', 'b', 'a']));
 
+  // The test stand-in for the lists (LUMEN_TEST_ADBLOCK_CDN) is honoured by a development run in test mode only: here (Node, not the stock electron binary) the
+  // lists still come from the real CDN, so an inherited variable can't point a packaged Lumen at another server.
+  {
+    const before = { stand: process.env.LUMEN_TEST_ADBLOCK_CDN, test: process.env.CLAUDE_BROWSER_TEST };
+    process.env.LUMEN_TEST_ADBLOCK_CDN = 'http://127.0.0.1:9'; process.env.CLAUDE_BROWSER_TEST = '1';
+    const seen = fakeCdn({ revisions: { easylist: ['0123abc'] } });
+    await L.fetchSources(seen.fetchImpl).catch(() => {});
+    check('lists: a stand-in server is not used outside a development test run', seen.calls.length > 0 && seen.calls.every((u) => u.startsWith(`${L.CDN}/`)), seen.calls[0]);
+    for (const [k, v] of Object.entries({ LUMEN_TEST_ADBLOCK_CDN: before.stand, CLAUDE_BROWSER_TEST: before.test })) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

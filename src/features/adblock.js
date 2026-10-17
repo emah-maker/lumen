@@ -182,10 +182,10 @@ function createAdblock(deps) {
       if (isTest) global.__adblockEngine = fresh;
     };
     // The slow jobs run in a worker thread (features/adblock-worker.js); `refresh` fetches new lists first.
-    const inWorker = (refresh) => new Promise((resolve) => {
+    const inWorker = (refresh, build = false) => new Promise((resolve) => {
       let worker;
       try {
-        worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: ENGINE_PATCH, patch: PATCH, refresh, sourceFile } });
+        worker = new (require('worker_threads').Worker)(path.join(__dirname, 'adblock-worker.js'), { workerData: { base, patched, exceptions: ENGINE_PATCH, patch: PATCH, refresh, build, sourceFile } });
       } catch { resolve(false); return; }
       worker.once('message', (m) => { if (!m?.ok) console.error('[lumen] ad-block worker:', m?.error); resolve(Boolean(m?.ok)); });
       worker.once('error', (err) => { console.error('[lumen] ad-block worker failed:', err?.message || err); resolve(false); });
@@ -198,15 +198,23 @@ function createAdblock(deps) {
     if (!blocker) {
       let saved = null;
       try { saved = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(base))); } catch { /* none yet, or unreadable */ }
+      let builtHere = false;
       if (saved) blocker = saved;
       else {
-        const built = await lists.buildEngineOrFallback(ElectronBlocker, fetch);
-        blocker = built.engine;
-        fs.promises.writeFile(base, blocker.serialize()).then(() => fs.promises.writeFile(sourceFile, built.source)).catch(() => {});
+        // A first start: the lists are parsed into an engine (~0.7 s of work) in the worker, which saves it already patched, and main
+        // loads that file (~50 ms). Only if the worker can't run is it built here (a freeze of the main process, once).
+        if (await inWorker(false, true)) {
+          try { blocker = ElectronBlocker.deserialize(new Uint8Array(await fs.promises.readFile(patched))); builtHere = true; } catch { blocker = null; }
+        }
+        if (!blocker) {
+          const built = await lists.buildEngineOrFallback(ElectronBlocker, fetch);
+          blocker = built.engine;
+          fs.promises.writeFile(base, blocker.serialize()).then(() => fs.promises.writeFile(sourceFile, built.source)).catch(() => {});
+        }
       }
       // Patched after the window is up (the network check below lets sign-in through meanwhile), then kept. Off the
       // main thread; only if a worker can't run is it patched here, in the idle time a few seconds in.
-      setTimeout(async () => {
+      if (!builtHere) setTimeout(async () => {
         if (await inWorker(false)) { await loadPatched().catch(() => {}); return; }
         try { engine.updateFromDiff({ added: ENGINE_PATCH }); } catch { return; }
         fs.promises.stat(base).then((st) => fs.promises.writeFile(patched, engine.serialize())
