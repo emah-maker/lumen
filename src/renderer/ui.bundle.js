@@ -2708,7 +2708,7 @@ explain describe list find give compare difference summarize summary write rewri
       if (t.src !== event.thumbnail) t.src = event.thumbnail;
       t.alt = tr('desktopcard.thumbAlt', { app: q('.dc-app').textContent });
       t.hidden = false;
-    }
+    } else if (event.blocked) { const t = q('.dc-thumb'); t.removeAttribute('src'); t.hidden = true; }
     return { card, created };
   }
 
