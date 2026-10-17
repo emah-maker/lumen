@@ -3238,6 +3238,8 @@
   "card.status.needsOk": "your OK",
   "card.status.stopped": "Stopped",
   "card.site.reading": "Reading {site}",
+  "card.files.short": "Files",
+  "card.thumb.alt2": "Preview of what the AI is working on",
   "card.tabs.head": "Tabs · {total} opened",
   "card.tabs.headClosed": "Tabs · {total} opened, {closed} closed",
   "card.tabs.stateOpen": "open",
