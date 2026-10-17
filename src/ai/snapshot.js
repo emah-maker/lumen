@@ -449,7 +449,7 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
   const inFrames = frames.available(wc); // embedded frames are outlined each in its own frame (below)
   await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // builds the element registry the refs point into
   const result = await h.runScript(wc, serialize(compactOutline, {
-    maxChars: Math.min(Math.max(Number(input.max_chars) || 6000, 1000), 20000),
+    maxChars: Math.min(Math.max(Number(input.max_chars) || DEFAULT_OUTLINE_CHARS, 1000), 20000),
     blockChars: 280,
     startLine: input.start_line || 0,
     hrefs: Boolean(input.hrefs),
@@ -485,6 +485,7 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
 
 // The first ~600 characters of an outline (whole lines), with a pointer to the rest.
 const HEAD_CHARS = 600;
+const DEFAULT_OUTLINE_CHARS = 4000; // a compact read's default cap (~1,000 tokens); a clipped outline says how to continue (start_line) and find reaches the rest
 const DIFF_LINES = 25; // a diff longer than this lists its first lines and counts the rest
 function pageHead(lines, total, clipped = false) {
   const out = [];

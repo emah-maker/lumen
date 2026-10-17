@@ -60,8 +60,8 @@ const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
   check('full mode without elements: text and a count, no element list', bare.includes('PAGE TEXT:') && /"totalElements":\d+/.test(bare) && !bare.includes('"elements":[') && bare.length < full.length, bare.slice(0, 300));
   check('compact is much smaller than full', compact.length * 2 < full.length, `${compact.length} vs ${full.length}`);
   // Boilerplate: a long footer link list shows its first lines and a count (find still reaches any link); a cookie banner keeps its button, not its words.
-  check('compact: a 40-link footer is cut to its first lines and a count', (compact.match(/Footerlink d+/g) || []).length === 15 && /… 25 more lines in this footer/.test(compact), compact);
-  check('compact: a cookie banner keeps its button, not its sentence', /[d+] button "Accept cookies"/.test(compact) && !compact.includes('We use cookies'), compact);
+  check('compact: a 40-link footer is cut to its first lines and a count', (compact.match(/Footerlink \d+/g) || []).length === 15 && /… 25 more lines in this footer/.test(compact), compact);
+  check('compact: a cookie banner keeps its button, not its sentence', /\[\d+\] button "Accept cookies"/.test(compact) && !compact.includes('We use cookies'), compact);
   check('find still reaches a link the footer cut', /Footerlink 39/.test(await run('find', { query: 'Footerlink 39' })), '');
   const tabList = JSON.parse(await run('list_tabs', {}));
   check('list_tabs rows carry only what is set (no active:false, no group:null)', tabList.every((t) => !('group' in t) && (t.active === true || !('active' in t))), JSON.stringify(tabList));

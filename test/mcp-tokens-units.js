@@ -20,7 +20,7 @@ const tokens = (chars) => Math.ceil(chars / 4);
   const listed = sent[0].result.tools;
   const listTokens = tokens(JSON.stringify(sent[0].result).length);
   console.log(`tools/list: ${listed.length} tools, ${listTokens} tokens`);
-  check('tools/list stays within 3,150 tokens (it was 3,140 before the compaction; adding a tool means trimming another)', listTokens <= 3150, String(listTokens));
+  check('tools/list stays within 3,140 tokens (it was 3,140 before the compaction; adding a tool means trimming another)', listTokens <= 3140, String(listTokens));
   check('no tool description is over 330 characters', listed.every((t) => t.description.length <= 330), listed.filter((t) => t.description.length > 330).map((t) => t.name).join());
   check('every tool still has a description and an object schema', listed.every((t) => t.description && t.inputSchema?.type === 'object'), '');
 

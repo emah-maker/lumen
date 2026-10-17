@@ -73,7 +73,7 @@ ${['First name', 'Last name', 'Email', 'Phone', 'Street', 'City', 'Postal code']
 <label><input type="checkbox" aria-label="Subscribe"> Subscribe to the newsletter</label><label><input type="checkbox" aria-label="Terms"> I accept the terms</label>
 <button>Create account</button></form><p id="out"></p></main></body>`,
 };
-const tabPage = (i) => `<!doctype html><title>Tab ${i}: an example page title that is fairly long</title><body><h1>Tab ${i}</h1><p>Body text of tab ${i}. ${'Some words. '.repeat(40)}</p></body>`;
+const tabPage = (i) => `<!doctype html><title>Tab ${i}: an example page title that is fairly long</title><body><h1>Tab ${i}</h1><p>Body text of tab ${i}. ${'Some words about the topic of this tab. '.repeat(200)}</p></body>`;
 
 // ---------------------------------------------------------------- (b) typical outputs, through the real bridge
 async function liveReport(out) {
@@ -183,6 +183,7 @@ async function liveReport(out) {
       { do: 'click', ref: r(/\[(\d+)\] checkbox "Terms"/) },
       { do: 'click', text: 'Create account' },
     ] });
+    await call('hover', 'hover', { element_id: r(/\[(\d+)\] button "Create account"/) });
     await call('read_page form since_last after batch', 'read_page', { mode: 'compact', since_last: true });
     await call('navigate (read:true)', 'navigate', { url: `${base}/article`, read: true });
 
@@ -194,7 +195,6 @@ async function liveReport(out) {
     await call('read_tabs (3 tabs)', 'read_tabs', { ids: ids.slice(-3) });
     await call('switch_tab', 'switch_tab', { tab_id: ids[ids.length - 1] });
     await call('wait_for', 'wait_for', { text: 'Tab 19', seconds: 3 });
-    await call('hover', 'hover', { element_id: 1 });
     await call('press_key', 'press_key', { key: 'End' });
     await call('go_back', 'go_back');
     return done(0);

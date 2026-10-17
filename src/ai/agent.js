@@ -233,7 +233,7 @@ const TOOLS = [
   },
   {
     name: 'read_tabs',
-    description: 'Read open tabs by id (from list_tabs) without switching: the first 3000 characters of each (max_chars_each for more).',
+    description: 'Read open tabs by id (from list_tabs): 3000 characters each (max_chars_each for more).',
     input_schema: {
       type: 'object',
       properties: {
