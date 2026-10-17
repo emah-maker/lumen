@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { shortcutMod } = require('../browser/shortcut-mod');
+const { shortcutMod, shortcutKey } = require('../browser/shortcut-mod');
 const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
@@ -390,7 +390,7 @@ function createPrivateWindows(deps) {
           // It belongs to this private window: it closes with it (whose session is then cleared).
           rec.popups.add(child);
           child.on('closed', () => rec.popups.delete(child));
-          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && shortcutMod(input, platform) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
+          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && shortcutMod(input, platform) && !input.alt && shortcutKey(input) === 'w') { e.preventDefault(); child.close(); } });
           wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
           return wc;
         },
@@ -522,6 +522,7 @@ function createPrivateWindows(deps) {
     switch (name) {
       case 'newTab': openTab(rec); break;
       case 'newWindow': open(); break;
+      case 'normalWindow': if (!deps.openNormalWindow) return false; deps.openNormalWindow(); break;
       case 'closeTab': if (rec.activeId) closeTab(rec, rec.activeId); break;
       case 'closeWindow': rec.win.close(); break;
       case 'reopenTab': reopenClosed(rec); break;
@@ -552,15 +553,17 @@ function createPrivateWindows(deps) {
   function handleShortcut(rec, event, input) {
     if (input.type !== 'keyDown') return;
     const mac = platform === 'darwin';
-    const key = input.key.toLowerCase();
+    const key = shortcutKey(input);
     const mod = shortcutMod(input, platform); // macOS: Cmd, never Control (the text-editing key there)
     let name = null;
     if (mod && input.shift && key === 'n') name = 'newWindow';
     else if (mod && input.shift && key === 't') name = 'reopenTab';
     else if (mod && input.shift && key === 'w') name = 'closeWindow';
+    else if (mod && !input.shift && !input.alt && key === 'n') name = 'normalWindow';
     else if (mod && key === 't') name = 'newTab';
     else if (mod && key === 'w') name = 'closeTab';
     else if (mod && key === 'l') name = 'focusAddress';
+    else if (mod && !input.shift && !input.alt && (key === 'k' || key === 'e')) name = 'focusAddress';
     else if (mod && input.shift && !input.alt && key === 's') name = 'screenshot';
     else if (mod && key === 'f') name = 'find';
     else if ((mod && key === 'g') || key === 'f3') name = input.shift ? 'findPrevious' : 'findNext';
