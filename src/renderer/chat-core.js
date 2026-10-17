@@ -1296,7 +1296,7 @@ function showStepTime(step, final = false) {
   const ms = Date.now() - t0;
   const text = window.stepTime ? window.stepTime.format(ms) : '';
   slot.textContent = !final && ms < 1000 ? '' : text;
-  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
+  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; step.dataset.start = String(t0); step.dataset.t1 = String(Date.now()); delete step.dataset.t0; } // (a group of steps adds up its members' start and end)
 }
 function startStepClock() {
   if (stepClock) return;
