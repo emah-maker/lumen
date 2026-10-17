@@ -140,7 +140,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         const got = (await frames()) - a0;
         const perMs = s1.frames > s0.frames ? Math.round((s1.helperMs - s0.helperMs) / (s1.frames - s0.frames)) : 0;
         const kb = s1.frames > s0.frames ? Math.round((s1.bytes - s0.bytes) / (s1.frames - s0.frames) / 1024 * 0.75) : 0;
-        return { got, secs, fps: got / secs, perMs, kb, liveGap, calls: s1.calls - s0.calls };
+        return { got, secs, retitled: s1.retitled - s0.retitled, same: s1.same - s0.same, skipped: s1.skipped - s0.skipped, fps: got / secs, perMs, kb, liveGap, calls: s1.calls - s0.calls };
       };
       await app.evaluate(() => { global.__desktopLight = false; }); // (a test run is often in software drawing, which is the slow pace: this run is the normal one)
       // The main thread's worst stall with the picture loop stopped, then with it running (the least of two windows each: one-off stalls are the machine's, a systematic one shows in both)

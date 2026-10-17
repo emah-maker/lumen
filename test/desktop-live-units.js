@@ -225,6 +225,20 @@ function fakeHelper(over = {}) {
     check('a helper that keeps failing: live backs off, tries 8 times and gives up', r5.st.ended.join() === 'failed' && !r5.live.active() && n === 8, J([n, r5.st.ended]));
   }
 
+  {
+    // a title that changes every moment (a progress percentage, a clock): asked about again at once, so it does not starve the pictures
+    const helper = fakeHelper({ ms: 40 });
+    const r = rigLive(helper);
+    const times = [];
+    const orig = helper.frame;
+    helper.frame = async (a) => { times.push([r.clock.now(), a.title]); return orig(a); };
+    r.live.start();
+    let t = 0;
+    while (t < 5000) { await r.clock.advance(100); helper.title = 'Report ' + (t / 100); helper.content++; t += 100; }
+    check('a title that changes all the time: each new title is judged and the picture follows at once (pictures keep coming)', r.live.stats().retitled >= 10 && r.st.frames.length >= 10, J(r.live.stats()));
+    r.live.stop();
+  }
+
   // ---- inside the desktop controller, with a stand-in helper
   const WORDX = 'C:\\Office\\WINWORD.EXE';
   const CHROMEX = 'C:\\Google\\chrome.exe';

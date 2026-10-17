@@ -41,10 +41,11 @@ function createLive(d) {
   let busy = false;
   let staticCount = 0;
   let errors = 0;
+  let retitleRun = 0; // new titles in a row without a picture (a title that changes every moment must not starve the pictures)
   let lastMs = 0;
   let verifiedAt = 0;
   let reset = true; // the next call sends a picture even if it looks unchanged (a new window, a new start)
-  const stats = { frames: 0, same: 0, skipped: 0, errors: 0, bytes: 0, helperMs: 0, calls: 0 };
+  const stats = { frames: 0, same: 0, retitled: 0, skipped: 0, errors: 0, bytes: 0, helperMs: 0, calls: 0 };
 
   const paces = () => (d.light?.() ? [LIGHT_FAST_MS, LIGHT_SLOW_MS] : [FAST_MS, SLOW_MS]);
   const schedule = (ms) => {
@@ -72,10 +73,11 @@ function createLive(d) {
       if (!running) return;
       if (verify) verifiedAt = now();
       errors = 0;
-      if (r.retitle !== undefined) { // the title is not the approved one: judge it before anything is captured
+      if (r.retitle !== undefined) { stats.retitled++; // the title is not the approved one: judge it before anything is captured
         if (!d.judge(String(r.retitle))) { end('blocked'); return; }
         d.approve(String(r.retitle));
         next = 0;
+        retitleRun++;
       } else if (r.skip) { stats.skipped++; next = WAIT_MS; } // minimized or hidden: nothing is captured
       else if (r.same) { stats.same++; staticCount++; next = staticCount >= STATIC_AFTER ? slow : fast; }
       else if (r.image) {
@@ -90,8 +92,9 @@ function createLive(d) {
         d.onFrame(r.image, { w: r.w, h: r.h, ms: r.ms });
         next = fast;
       }
+      if (r.retitle === undefined) retitleRun = 0;
       if (r.ms && r.same) { lastMs = Number(r.ms) || lastMs; stats.helperMs += Number(r.ms) || 0; }
-      next = Math.max(next, Math.round(lastMs * 2)); // the helper works at most about a third of the time
+      if (!(r.retitle !== undefined && retitleRun <= 4)) next = Math.max(next, Math.round(lastMs * 2)); // the helper works at most about a third of the time (a new title is asked about again at once: it costs no picture)
     } catch (err) {
       if (!running) return;
       const msg = String(err?.message || err);
