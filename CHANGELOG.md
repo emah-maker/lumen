@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The Computer card's picture is live.** While the AI works in another app, the card shows that app's window at about 6 pictures a second when its content changes, and nothing when it stands still (slower in Light graphics). The pictures are made in the app helper, not in Lumen's main process, only while the card is on screen, and never of a window that turned into a blocked program.
+
 ## 0.5.42 (2026-10-17)
 
 - **A message that fails at once no longer loses its error.** When a reply failed within a moment (a refused API key), the chat could redraw itself from a snapshot taken just before the end of the run and wipe the error, leaving your message with no answer. The chat now waits for the run’s own end before redrawing.

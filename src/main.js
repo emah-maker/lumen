@@ -8048,7 +8048,8 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
 // switched to it. Only this Agent gets it: background tasks and outside agents (MCP) read signed out.
 // [desktop apps] src/desktop/ is loaded on first use: the AI's desktop tool, or a click on the Computer card. The Settings list needs only its small settings module.
 let desktopWired = null;
-const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND) }));
+const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND),
+  live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false) } })); // (tests choose the mode) the Computer card's live picture: only while a card is on screen (the shared 'agent:thumbs-visible'), slower in Light graphics
 const desktopSettings = () => require('./desktop/settings').createDesktopSettings({ readSettings, writeSettings });
 ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
 ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
@@ -9732,8 +9733,8 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const emit = (msg) => {
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
-    if (msg.type !== 'text' && msg.type !== 'thinking') setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone
-    if (msg.type !== 'text' && msg.type !== 'thinking') run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
+    if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone (a live picture of an app window changes neither)
+    if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };

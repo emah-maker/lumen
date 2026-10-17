@@ -543,10 +543,12 @@
       for (const n of turn.noteRows || []) card.list.append(n);
       turn.noteRows = null;
     }
+    if (event.frame && card.surface === 'app' && card.app?.id === event.id && typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { setShot2(card, event.thumbnail); return true; } // a live picture: only the picture changes
     setSurface(card, 'app', 'desktop');
     card.app = { id: event.id, name: String(event.app || ''), status: event.status || 'working' };
     if (event.status === 'working' && event.task) card.latest = String(event.task);
     if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { card.img2.alt = tr('desktopcard.thumbAlt', { app: card.app.name }); setShot2(card, event.thumbnail); }
+    else if (event.blocked) { card.img2.removeAttribute('src'); card.shot2.hidden = true; } // the window turned into something the AI may not use: its picture goes, the card shows no preview
     refreshCard(turn, card);
     return true;
   }
