@@ -529,6 +529,77 @@ process.stdin.on('data', async (d) => {
   check('"Allowed automatically" rows are small rows in the card\'s step list (the one before the first step moved in), not lines between cards', synth.notes.length === 2 && /^Allowed automatically: reading/.test(synth.notes[0]) && synth.loose === 0, J(synth));
   check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done: /.test(synth.done), J([synth.paused, synth.done]));
 
+  // ---- searches in a burst are one row, in the chat (plain rows) and inside a card; the queries and times are in it; restored the same
+  const grouped = await ui.evaluate(() => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const opts = { messages: host, append: (n) => host.append(n), task: '' };
+    const mkTurn = () => ({ cards: [], card: null, plain: null, working: null });
+    const search = (turn, id, q) => window.stepUI.add(turn, { name: 'web_search', input: { query: q }, id, label: 'Searching the web for "' + q + '"' }, opts);
+    const finish = (turn, row, ms) => { // (what chat-core does when a step ends: its state, its start and end, then stepUI.done)
+      const t0 = Number(row.dataset.t0);
+      row.classList.remove('running'); row.classList.add('done');
+      row.dataset.start = String(t0); row.dataset.t1 = String(t0 + ms); delete row.dataset.t0;
+      row.querySelector('.step-time').textContent = ms + 'ms';
+      window.stepUI.done(turn, row, { ok: true });
+    };
+    const sum = (g) => g.querySelector(':scope > summary');
+    const out = {};
+    // two at once, then a third
+    const t1 = mkTurn();
+    const a = search(t1, 'a', 'Dunlosky 2013 improving students learning');
+    const b = search(t1, 'b', 'evidence-based study strategies retrieval');
+    const g1 = host.querySelector('details.step-group.live');
+    out.running2 = { label: sum(g1).firstChild.textContent, cls: sum(g1).className, loose: [...host.children].filter((n) => n.matches('.step')).length };
+    finish(t1, a, 1100);
+    out.partway = sum(g1).firstChild.textContent;
+    finish(t1, b, 1300);
+    out.done2 = { label: sum(g1).firstChild.textContent, cls: sum(g1).className, time: sum(g1).querySelector('.step-time').textContent, members: [...g1.querySelectorAll('.step-items > .step')].map((r) => r.firstChild.textContent + '|' + r.querySelector('.step-time').textContent) };
+    const c = search(t1, 'c', 'spaced repetition meta-analysis');
+    out.running3 = sum(g1).firstChild.textContent;
+    finish(t1, c, 900);
+    out.done3 = sum(g1).firstChild.textContent;
+    out.members3 = [...g1.querySelectorAll('.step-items > .step')].map((r) => r.firstChild.textContent);
+    out.groups = host.querySelectorAll('details.step-group.live').length;
+    // a different step in between splits the group
+    host.textContent = '';
+    const t2 = mkTurn();
+    const s1 = search(t2, 'p', 'one'); const s2 = search(t2, 'q', 'two');
+    window.stepUI.add(t2, { name: 'TodoWrite', input: {}, id: 'td', label: 'Planning' }, opts);
+    const s3 = search(t2, 'r', 'three'); const s4 = search(t2, 'u', 'four');
+    out.split = [...host.children].map((n) => (n.matches('details.step-group') ? 'group:' + sum(n).firstChild.textContent : 'row:' + n.firstChild.textContent));
+    // one search alone keeps its own label
+    host.textContent = '';
+    const t3 = mkTurn();
+    search(t3, 'z', 'alone');
+    out.single = [...host.children].map((n) => n.matches('.step') ? n.firstChild.textContent : 'group');
+    // inside a card's step list (pages read in a burst)
+    host.textContent = '';
+    const t4 = mkTurn();
+    window.stepUI.add(t4, { name: 'read_urls', input: { urls: ['https://a.example/'] }, id: 'r1', label: 'Reading a.example' }, opts);
+    window.stepUI.add(t4, { name: 'read_urls', input: { urls: ['https://b.example/'] }, id: 'r2', label: 'Reading b.example' }, opts);
+    window.stepUI.add(t4, { name: 'navigate', input: { url: 'https://c.example/' }, id: 'n1', label: 'Opening c.example' }, opts);
+    const card = host.querySelector('.act-card');
+    out.inCard = { cards: host.querySelectorAll('.act-card').length, groups: [...card.querySelectorAll('.act-list details.step-group')].map((g) => sum(g).firstChild.textContent), rows: [...card.querySelectorAll('.act-list > .step')].length };
+    // a reopened chat
+    host.textContent = '';
+    const nodes = window.stepUI.restoreNodes({ cards: true, tools: ['one', 'two', 'three'].map((q) => ({ name: 'web_search', input: { query: q }, label: 'Searching the web for "' + q + '"', ok: true })) });
+    for (const n of nodes) host.append(n);
+    const outer = host.querySelector('details.step-group');
+    const inner = outer && outer.querySelector('details.step-group.live');
+    out.restored = { outer: Boolean(outer), label: inner ? sum(inner).firstChild.textContent : '', members: inner ? [...inner.querySelectorAll('.step-items > .step')].map((r) => r.firstChild.textContent) : [] };
+    host.remove();
+    return out;
+  });
+  check('two searches at once are ONE row while they run: "Searching the web · 2 searches", no loose rows', grouped.running2.label === 'Searching the web · 2 searches' && /running/.test(grouped.running2.cls) && grouped.running2.loose === 0, J(grouped.running2));
+  check('…it stays "Searching" until the last one is done, then "Searched the web · 2 searches" with the total time (first start to last end)', grouped.partway === 'Searching the web · 2 searches' && grouped.done2.label === 'Searched the web · 2 searches' && /done/.test(grouped.done2.cls) && grouped.done2.time !== '', J(grouped.done2));
+  check('…expanding shows each query with its own time', grouped.done2.members.length === 2 && /Dunlosky 2013/.test(grouped.done2.members[0]) && /1100ms/.test(grouped.done2.members[0]) && /evidence-based/.test(grouped.done2.members[1]) && /1300ms/.test(grouped.done2.members[1]), J(grouped.done2.members));
+  check('a third search joins the same row: 3 searches (running, then done), still one group, all three queries inside', grouped.running3 === 'Searching the web · 3 searches' && grouped.done3 === 'Searched the web · 3 searches' && grouped.groups === 1 && grouped.members3.length === 3, J([grouped.running3, grouped.done3, grouped.groups, grouped.members3]));
+  check('a different step between two searches splits the group (two groups and the step in the middle)', J(grouped.split) === '["group:Searching the web · 2 searches","row:Updating the plan","group:Searching the web · 2 searches"]', J(grouped.split));
+  check('one search alone keeps its own line', grouped.single.length === 1 && /^Searching the web for/.test(grouped.single[0]), J(grouped.single));
+  check('inside the activity card pages read in a burst are one row too; a different step after them is a row of its own', grouped.inCard.cards === 1 && J(grouped.inCard.groups) === '["Reading pages · 2 pages"]' && grouped.inCard.rows === 1, J(grouped.inCard));
+  check('a reopened chat renders the same: one row "Searched the web · 3 searches" with the three queries', grouped.restored.outer && grouped.restored.label === 'Searched the web · 3 searches' && grouped.restored.members.length === 3, J(grouped.restored));
+
   // ---- an address read with no tab: "Reading <site>" with its icon, never a picture of another tab
   await fresh('Please read the site quietly');
   const siteMode = await waitFor(() => ui.evaluate((s) => { const sh = document.querySelector(`${s} .act-shot`); return sh && !sh.hidden && sh.dataset.mode === 'site' && { text: sh.querySelector('.act-site-name').textContent, src: sh.querySelector('.act-thumb').hasAttribute('src'), chip: !document.querySelector(`${s} .act-tabref`).hidden }; }, card()), 20000);

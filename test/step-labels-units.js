@@ -98,6 +98,17 @@ const s1 = g('PowerShell', {});
 eq('generic shell steps group as "Used PowerShell 3 times"', L.groupLabel(s1, 3, ''), 'Used PowerShell 3 times');
 check('a described shell step is not grouped by tool', g('Bash', { command: 'x', description: 'Render pages' }).kind === 'same', JSON.stringify(g('Bash', { command: 'x', description: 'Render pages' })));
 check('different tools never share a key', g('Edit', { file_path: 'a.js' }).key !== g('Write', { file_path: 'a.js' }).key, '');
+// searches in a burst are one row
+const ws = (q) => L.groupInfo('web_search', { query: q }, `Searching the web for “${q}”`);
+check('web searches share one group key whatever they ask', ws('a').key === ws('b').key && ws('a').kind === 'search', JSON.stringify([ws('a'), ws('b')]));
+check('the engines\' names group too (WebSearch, mcp__lumen__web_search), sources and pages each in their own group', L.groupInfo('WebSearch', { query: 'x' }, 'x').key === ws('a').key && L.groupInfo('mcp__lumen__web_search', { query: 'x' }, 'x').key === ws('a').key && L.groupInfo('find_sources', {}, 'x').key !== ws('a').key && L.groupInfo('read_urls', {}, 'x').key !== L.groupInfo('find_sources', {}, 'x').key, '');
+eq('running: "Searching the web · 2 searches"', L.groupLabel(ws('a'), 2, '', true), 'Searching the web · 2 searches');
+eq('done: "Searched the web · 2 searches"', L.groupLabel(ws('a'), 2, '', false), 'Searched the web · 2 searches');
+eq('three searches done', L.groupLabel(ws('a'), 3, '', false), 'Searched the web · 3 searches');
+eq('one search (the singular)', L.groupLabel(ws('a'), 1, '', false), 'Searched the web · 1 search');
+eq('sources: "Searching sources · 2 searches"', L.groupLabel(L.groupInfo('find_sources', {}, 'x'), 2, '', true), 'Searching sources · 2 searches');
+eq('pages: "Read pages · 2 pages"', L.groupLabel(L.groupInfo('read_urls', {}, 'x'), 2, '', false), 'Read pages · 2 pages');
+check('the group strings use {n} and the one / other pair', ['web', 'sources', 'urls'].every((w) => ['running', 'done'].every((st) => ['one', 'other'].every((pl) => /\{n\}/.test(en[`step.group.${w}.${st}.${pl}`] || '')))), '');
 eq('the same step again: a count', L.groupLabel(g('Edit', { file_path: '/a/main.js' }), 3, 'Editing main.js'), 'Editing main.js ×3');
 
 // ---- failures
