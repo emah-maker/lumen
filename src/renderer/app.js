@@ -14,7 +14,7 @@ let heldRect = null;
 let boundsHeld = false;
 function currentBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
-  const inset = 2; // (always: the AI's frame shows in this strip behind the page; an inset that came and went with a run resized and reflowed the page at its start and end)
+  const inset = 0; // (the page meets the sidebar, the toolbar and the window edge, and is the same size before, during and after a run: an inset that came and went with a run resized and reflowed the page at its start and end, and a constant one left a gap at the sidebar. The AI's frame, behind the page, is covered; the tab mark and the toolbar pill show the run)
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
   // The page area's width with the sidebar closed: the new-tab page keeps laying itself out at this
   // width while the sidebar covers its right side (main.js layout(), features/sidebar-overlay.js).
