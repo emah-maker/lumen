@@ -4670,6 +4670,7 @@ window.assistant.onEvent((event) => {
     case 'text_block':
       settleThinking();
       endStream();
+      if (turn.text && turn.textSource?.trim()) turn.lastSaid = { el: turn.text, text: turn.text.textContent }; // (an engine that ends a block before its step: that block is the step's narration)
       turn.text = null; // next text starts a fresh block after any tool steps
       if (event.type === 'text_block') window.stepUI?.endCard(turn); // (narration does not end the card either: one turn is one card, which stays until the turn ends, see step-ui.js endCard)
       turn.textSource = '';
@@ -4737,7 +4738,10 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
+      turn.lastSaid = null; // (words before a step: that step's live line in the card, not a bubble)
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
@@ -4747,7 +4751,8 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
-    case 'desktop_card': { // [desktop apps] the "Computer" card: the AI working in another program, with its live thumbnail (renderer/desktop-card.js)
+    case 'desktop_card': { // [desktop apps] another program: the turn's one activity card follows it (its window as the preview, its state in the status bar)
+      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { settleThinking(); break; }
       const drawn = window.desktopCard?.update(event);
       if (!drawn) break;
       if (drawn.created) {
@@ -5643,7 +5648,20 @@ function drawEarlier(older, newest) {
   later();
 }
 function drawItems(items, userEntries, replyEntries) {
+  // A turn's narration lines (text before its steps) were the card's live line while it ran: a card that is drawn again has no bubbles for them,
+  // only the final answer, under the card.
+  const narration = new Set();
+  let before = [];
+  for (const it of items) {
+    if (it.role === 'user') before = [];
+    else if (it.role === 'assistant') {
+      if (it.cards && Array.isArray(it.tools) && it.tools.length && window.stepUI) { for (const n of before) narration.add(n); before = []; }
+      else if (it.text && !it.tools?.length && !it.generated?.length && !it.outFiles?.length && !('steps' in it)) before.push(it);
+      else before = [];
+    }
+  }
   for (const item of items) {
+    if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
       bubble.className = 'msg user';
