@@ -91,7 +91,8 @@ function createRunTracker() {
 }
 
 // deps: { ipcMain, tabs(), alive(t), ui(), openTab(url, opts), switchTab(id), requestCloseTab(id), goHome(tabId), goChat(tabId),
-//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab), spareContents() }
+//         managersOpen(), isPrivateSender(event), chatView(), userName(), tabInfo(tab), agentOffLimits(tab), spareContents(),
+//         sidebarWants(wc, payload) -> bool (optional: is a sync / run start about the chat the sidebar shows) }
 function create(deps) {
   const runs = createRunTracker();
   const drafts = new Map(); // chat tab id -> { text, send } carried from the new-tab page's box, handed to the page once (chatpage:state)
@@ -121,12 +122,20 @@ function create(deps) {
   // sidebar or another tab, never replaces what it shows. The sidebar and a page with no chat of its own take everything.
   const chatOfPage = (wc) => { const t = everyChatTab().find((x) => x.view.webContents === wc); return t && deps.chatOf ? deps.chatOf(t.id) : null; };
   const pageWants = (wc, payload) => { const about = payload?.view?.id ?? payload?.chatId; const own = about ? chatOfPage(wc) : null; return !own || own === about; };
+  // The sidebar is tied to its window's front tab, not to the last thing a chat page did: a page in another tab that starts a new chat,
+  // opens one, edits a reply or begins a run must not turn the sidebar of the tab the user is on into that chat (it would show the page's
+  // chat, with the box emptied, while main still believed it showed its own). The sidebar takes a sync only for the chat it shows.
+  const sidebarWants = (wc, payload) => !deps.sidebarWants || deps.sidebarWants(wc, payload);
   // `except`: a webContents, or a list of them, that are not sent to.
   function broadcast(channel, payload, except = null) {
     const pages = new Set(everyChatTab().map((t) => t.view.webContents));
     const scoped = channel === 'chat:sync' || channel === 'chat:run-start';
     const skip = new Set(Array.isArray(except) ? except : [except]);
-    for (const wc of surfaces()) if (!skip.has(wc) && (!scoped || !pages.has(wc) || pageWants(wc, payload))) wc.send(channel, payload);
+    for (const wc of surfaces()) {
+      if (skip.has(wc)) continue;
+      if (scoped && (pages.has(wc) ? !pageWants(wc, payload) : !sidebarWants(wc, payload))) continue;
+      wc.send(channel, payload);
+    }
   }
   // A run's event to whoever asked, and to the other views when a page is open.
   function emit(sender, channel, payload) {

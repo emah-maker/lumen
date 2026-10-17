@@ -248,7 +248,7 @@ The sidebar agent, MCP clients and OpenAI/Grok/Gemini get the same cheaper tools
 | `read_page` with `extract: "tables" | "links" | "lists"` (and `selector`) | that data as JSON, so `run_script` is not needed to pull a table |
 | `navigate` / `open_tab` with `read: true` (and `wait_for: "text"`) | the new page's outline in the same call, instead of a separate `read_page` |
 | `click`, `click_at`, `type_text`, `press_key` with `observe: true` | the action's result plus what changed on the page, instead of a follow-up read or screenshot |
-| `screenshot` | 1024 px JPEG by default, with `max_width`, `quality` and `region` crop |
+| `screenshot` | 720 px JPEG by default, with `max_width`, `quality` and `region` crop |
 
 What one call costs on real pages (tokens ≈ characters / 4, measured with Lumen's own tools):
 
