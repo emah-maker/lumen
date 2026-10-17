@@ -43,6 +43,7 @@ function createThumbs({ capture, probe = null, send, light = () => false, visibl
         if (key !== lastData) { lastData = key; send({ type: 'thumb', kind: 'blank', data: '', url: shot.url || '', title: shot.title || '', tabId: shot.tabId ?? null, favicon: shot.favicon || null }); }
       } else if (mine === gen && shot && shot.data && shot.data !== lastData) { lastData = shot.data; send({ type: 'thumb', data: shot.data, url: shot.url || '', title: shot.title || '', tabId: shot.tabId ?? null }); }
     } catch { /* the tab is gone or not paintable right now: the next tick tries again */ } finally { inflight = false; }
+    if (timer && running && !stopped) { clearTimer(timer); timer = null; arm(); } // (a frame taken for a step's end sets the clock back: the next tick is a whole interval after it, never right behind it)
     if (mine !== gen && dirty) take(); // (the tab changed while it was taken: take the new one now, even after the run ended)
   }
   async function tick() {
