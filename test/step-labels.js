@@ -95,6 +95,7 @@ process.stdin.on('data', async (d) => {
   const stderr = []; // (what the app said, shown when its window goes away mid-run)
   app.process().stderr?.on('data', (d) => stderr.push(String(d)));
   ui.on('crash', () => console.log('UI CRASHED'));
+  const consoleErrors = []; ui.on('console', (m) => { if (['error', 'warning'].includes(m.type())) consoleErrors.push(m.type() + ': ' + m.text().slice(0, 300)); });
   ui.on('close', () => console.log('UI CLOSED', stderr.join('').slice(-1500)));
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
@@ -160,7 +161,7 @@ process.stdin.on('data', async (d) => {
   const watchUi = () => ui.evaluate(() => {
     window.__long = []; window.__thumbs = []; window.__evlog = [];
     try { new PerformanceObserver((l) => { for (const e of l.getEntries()) window.__long.push(Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] }); } catch { /* none */ }
-    window.assistant.onEvent((e) => { window.__evlog.push(e.type + (e.name ? ':' + e.name : '') + (e.id ? '#' + e.id : '')); if (e.type === 'thumb' && e.data) window.__thumbs.push({ tabId: e.tabId, url: e.url, bytes: e.data.length, at: Math.round(performance.timeOrigin + performance.now()) }); });
+    window.assistant.onEvent((e) => { { const c0 = document.querySelector('#messages .act-card'); window.__evlog.push(e.type + (e.name ? ':' + e.name : '') + (e.id ? '#' + e.id : '') + '[c' + document.querySelectorAll('#messages .act-card').length + 'r' + (c0 ? c0.querySelectorAll('.act-list .step').length : 0) + ']'); } if (e.type === 'thumb' && e.data) window.__thumbs.push({ tabId: e.tabId, url: e.url, bytes: e.data.length, at: Math.round(performance.timeOrigin + performance.now()) }); });
   });
   await watchUi();
 
@@ -215,7 +216,7 @@ process.stdin.on('data', async (d) => {
   check('when the run ends the card says "Done · <task>"', doneSub === 'Done · Find lab TA', doneSub);
   check('a closing narration line follows the card', await ui.evaluate(() => /Found it on the second page/.test([...document.querySelectorAll('#messages .msg.assistant')].pop()?.textContent || '')), 'no reply');
   const summary = await ui.evaluate((s) => document.querySelector(`${s} .act-steps > summary`)?.textContent, card());
-  check('the steps are folded under "N steps"', /^5 steps$/.test(summary), summary + ' ' + J(await ui.evaluate(() => window.__evlog)));
+  check('the steps are folded under "N steps"', /^5 steps$/.test(summary), summary + ' ' + J(consoleErrors.slice(0, 6)) + ' ' + J(await ui.evaluate(() => window.__evlog)));
   const lines = await ui.evaluate((s) => [...document.querySelectorAll(`${s} .act-list .step .step-detail`)].map((n) => n.textContent), card());
   check('each step is one readable line (the site, not the whole address)', lines.length === 5 && /^Opening 127\.0\.0\.1/.test(lines[0]) && lines.every((l) => !/https?:\/\//.test(l)), J(lines));
   const stoppedTimers = await ui.evaluate(() => document.querySelectorAll('#messages .step.running').length);
@@ -543,7 +544,7 @@ process.stdin.on('data', async (d) => {
   const during = moving.frames.filter((t) => t >= wait1 && t <= wait1 + 3000);
   check('a page that keeps changing is refreshed about 2-4 times a second (≥ 5 frames in the 3 s wait)', during.length >= 5 && during.length <= 13, J({ n: during.length, wait1, frames: moving.frames.map((t) => t - wait1) }));
   const spaced = during.slice(1).map((t, i) => t - during[i]);
-  check('…frames are serialized and spaced (never a flood: none closer than 50 ms, most about 350 ms apart)', spaced.every((g) => g >= 50) && spaced.filter((g) => g >= 300).length >= 4, J(spaced));
+  check('…frames are serialized and spaced (never a flood: none closer than 100 ms, most about 350 ms apart)', spaced.every((g) => g >= 100) && spaced.filter((g) => g >= 300).length >= 4, J(spaced));
   await fresh('Watch the still page');
   await finished();
   const still = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
