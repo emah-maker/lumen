@@ -366,7 +366,7 @@ function withProviderAutos(options, { pick = null, last = null, exclude = [], de
         // Named for its provider ("Auto · OpenAI"), so it never reads as the picker's own Auto (any provider) at the top.
         const own = fallback.isEngine(o.id) ? `${scopeName(scope)} · Auto` : `Auto · ${scopeName(scope)}`;
         out.push({
-          id: autoIdOf(scope), label: own, name: mine?.label || own, provider: o.provider || scopeName(scope), group: o.group || scopeName(scope),
+          id: autoIdOf(scope), label: own, name: mine?.label || own, ...(mine?.label ? { lastUsed: lastUsedOf(mine.label) } : {}), provider: o.provider || scopeName(scope), group: o.group || scopeName(scope),
           auto: true, autoScope: scope, signedIn: o.signedIn, detail: text, title: text,
         });
       }
@@ -376,17 +376,21 @@ function withProviderAutos(options, { pick = null, last = null, exclude = [], de
   return out;
 }
 
+// The model name a decision's label carries ("Auto · Haiku" -> "Haiku", "Auto · OpenAI · GPT-5.6" -> "GPT-5.6"): what the picker shows as "last used".
+const lastUsedOf = (text) => String(text || '').replace(/^Auto · /, '').replace(/^(Claude Code|Grok Build|Codex|Antigravity|OpenAI|Claude|Grok|Gemini|OpenRouter) · /, '').trim();
+
 // The id the picker's own "Auto" row carries, and what it says. `last` is the chat's latest decision ({ label, reason }).
 function pickerEntry({ last = null, describe = '' } = {}) {
   return {
     id: AUTO,
-    label: last?.label || 'Auto',
+    label: 'Auto', // never a model's name: what it last chose is `lastUsed`, shown labelled as such
     name: last?.label || 'Auto',
+    ...(last?.label ? { lastUsed: lastUsedOf(last.label) } : {}),
     provider: '',
     group: '', // no heading: the row sits first, above every provider's group
     auto: true,
     detail: last?.reason || describe || 'Lumen picks the model for each message',
-    title: last?.reason || describe || 'Lumen picks the model for each message',
+    title: [describe, last?.reason].filter(Boolean).join(' ') || 'Lumen picks the model for each message',
   };
 }
 

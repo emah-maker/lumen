@@ -333,6 +333,7 @@ async function loadModels() {
     if (m.context) option.dataset.context = String(m.context);
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
+    if (m.lastUsed) option.dataset.lastUsed = m.lastUsed; // Auto's last choice, shown as "last used: …" (never as Auto's name)
     if (m.auto) option.dataset.auto = '1'; // Auto, or a provider's own Auto: the model is chosen per message
     groups.get(m.group).append(option);
   }
