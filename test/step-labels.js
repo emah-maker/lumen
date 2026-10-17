@@ -210,6 +210,10 @@ process.stdin.on('data', async (d) => {
   const followed = await waitFor(async () => { p2 = await pixel(card()); return colourGap(p1, p2) > 150; }, 14000);
   check('…and follows the page (the second page has another colour)', Boolean(followed), J([p1, p2]));
     await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop')), 40000);
+  // The run's final frame (a capture under way when the run ended) lands after "done" and is saved with the reply: a nativeImage decode, resize
+  // and encode on the main process, 15-30 ms, once. Let it land inside the whole-run check below (50 ms, which still includes it), so that the
+  // "15 captures in a row" check (20 ms) measures captures and not whatever the run was finishing at the time (it landed in the burst at random).
+  for (let last = -1, since = Date.now(); Date.now() - since < 900;) { const n = await app.evaluate(() => global.__thumbsState.captures || 0); if (n !== last) { last = n; since = Date.now(); } await sleep(100); }
   const doneSub = await ui.evaluate((s) => document.querySelector(`${s} .act-sub`)?.textContent, card());
   const statusSeq = await ui.evaluate(() => window.__status);
   const liveShape = await ui.evaluate((s) => { const c = document.querySelector(s); return { aria: c.querySelectorAll('[aria-live]').length, status: c.querySelectorAll('[role="status"]').length }; }, card());
