@@ -9474,7 +9474,7 @@ function trackRunDetails(run, msg) {
     if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: stepLabelsLib.compactInput(msg.name, msg.input) || msg.input, ok: true });
     try { const ids = tabMarker.stepTabs(msg.name, msg.input); if (ids.length) noteRunTabs(run, ids); } catch { /* none */ } // [tab chips] a step that names a tab: how it looks before the step (a close) changes it
   } else if (msg.type === 'thumb') {
-    if (msg.data) { d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '', ...(Number.isInteger(msg.tabId) ? { tabId: msg.tabId, s: require('./features/tab-chips').BOOT } : {}) }; if (Number.isInteger(msg.tabId)) noteRunTabs(run, [msg.tabId]); }
+    if (msg.data) { d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '', ...(msg.small ? { small: true } : {}), ...(Number.isInteger(msg.tabId) ? { tabId: msg.tabId, s: require('./features/tab-chips').BOOT } : {}) }; if (Number.isInteger(msg.tabId)) noteRunTabs(run, [msg.tabId]); }
   } else if (msg.type === 'tool_update') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
     if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = stepLabelsLib.compactInput(t.name, msg.input) || msg.input; }
@@ -9540,7 +9540,7 @@ function thumbTargetEvent(run) {
   if (!tab) return { type: 'thumb', kind: 'pending', data: '', url: '', title: '', tabId: t.tabId };
   return { type: 'thumb', kind: 'pending', data: '', url: tab.wc.getURL(), title: tab.wc.getTitle?.() || '', tabId: tab.id };
 }
-async function captureRunThumb(run) {
+async function captureRunThumb(run, { saved = false } = {}) {
   const tab = thumbTabOf(run);
   if (!tab) return null;
   const wc = tab.wc;
@@ -9548,10 +9548,10 @@ async function captureRunThumb(run) {
   if (aiSites.isOff(url)) return null; // a page the AI may not read is not drawn in the chat either
   const named = { url, title: wc.getTitle?.() || '', tabId: tab.id, favicon: typeof tab.favicon === 'string' ? tab.favicon : null };
   if (!/^(https?|file|lumen-pdf):/i.test(url)) return { blank: true, ...named }; // (one of Lumen's own pages: no picture of it, its name)
-  const lowRes = graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false; // (Light graphics or software drawing: the small picture)
+  const lowRes = saved || graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false; // (saved: the run's last frame is the one the chat keeps, small: scaling a sharp one down on the main process costs 15-45 ms) // (Light graphics or software drawing: the small picture)
   const state = {};
   const data = await require('./features/tab-capture').captureThumb(wc, { lowRes, state });
-  if (data) return { data, ...named };
+  if (data) return { data, ...named, ...(state.small ? { small: true } : {}) };
   return state.blank ? { blank: true, ...named } : null;
 }
 // A tiny signature of the page the card shows (address, scroll, size, how much is on it): a frame is taken when it moves (features/step-thumbs.js).
@@ -9564,22 +9564,62 @@ async function probeRunThumb(run) {
   const sig = await tab.wc.executeJavaScript(THUMB_PROBE, false);
   return typeof sig === 'string' ? tab.id + '|' + sig : null;
 }
-async function timedCapture(run) {
+async function timedCapture(run, opts) {
   const t0 = performance.now();
-  try { return await captureRunThumb(run); } finally { if (TEST) { (global.__thumbsState.windows ||= []).push([t0, performance.now()]); global.__thumbsState.captures = (global.__thumbsState.captures || 0) + 1; } } // (a test checks the main process stayed free while these ran)
+  try { return await captureRunThumb(run, opts); } finally { if (TEST) { (global.__thumbsState.windows ||= []).push([t0, performance.now()]); global.__thumbsState.captures = (global.__thumbsState.captures || 0) + 1; } } // (a test checks the main process stayed free while these ran)
+}
+// The live stream behind the card (features/step-thumbs.js): the engine's screencast of the tab at the card's size, at most THUMB_FPS frames a second,
+// each passed on as the base64 JPEG it is (nothing decoded here). Answers { stop() }, or null for a page that is drawn by the capture path instead.
+const THUMB_FPS = Math.min(30, Math.max(1, Number(process.env.LUMEN_THUMB_FPS) || 15));
+async function streamRunThumb(run, onFrame, onEnd) {
+  const tab = thumbTabOf(run);
+  if (!tab) return null;
+  const wc = tab.wc;
+  const url0 = wc.getURL();
+  if (aiSites.isOff(url0) || !/^https?:/i.test(url0)) return null; // (Lumen's own pages, files and viewers: the capture path knows their blank frames)
+  const named = { tabId: tab.id, favicon: typeof tab.favicon === 'string' ? tab.favicon : null };
+  return require('./features/tab-capture').streamThumb(wc, {
+    fps: THUMB_FPS,
+    onEnd,
+    onFrame: (data) => {
+      const t0 = TEST ? performance.now() : 0;
+      const url = wc.getURL();
+      if (!/^https?:/i.test(url) || aiSites.isOff(url)) return; // (the page moved on to one the card does not draw)
+      onFrame({ data, url, title: wc.getTitle?.() || '', ...named });
+      if (TEST) { const st = global.__thumbsState; const ms = performance.now() - t0; st.frameMs = (st.frameMs || 0) + ms; st.frames = (st.frames || 0) + 1; st.frameBytes = (st.frameBytes || 0) + data.length; st.frameMax = Math.max(st.frameMax || 0, ms); } // (a test reports what a frame costs the main process)
+    },
+  });
+}
+// The one last frame of a run: the tab it ended on, once that page has finished loading and drawing (it can have navigated after the last frame).
+// `last`: the address and age of the last frame shown; none is taken when one came a moment ago and the page has not moved on.
+const THUMB_SETTLE = '(()=>new Promise((res)=>{const go=()=>requestAnimationFrame(()=>requestAnimationFrame(()=>res(1)));const im=[...document.images].filter((i)=>!i.complete);if(!im.length)return go();let n=im.length;const one=()=>{if(--n<=0)go()};im.forEach((i)=>{i.addEventListener("load",one,{once:true});i.addEventListener("error",one,{once:true})});setTimeout(go,1200)}))()';
+async function finalRunThumb(run, last = {}) {
+  const sleep = (ms) => new Promise((r) => { const h = setTimeout(r, ms); h.unref?.(); });
+  const until = Date.now() + 3000;
+  let tab = thumbTabOf(run);
+  const wasLoading = Boolean(tab?.wc.isLoading?.());
+  while (tab && tab.wc.isLoading?.() && Date.now() < until) { await sleep(80); tab = thumbTabOf(run); }
+  if (!tab) return null;
+  if (last.ageMs < 500 && !wasLoading && tab.wc.getURL() === last.url) return null; // (the stream was still drawing it a moment ago, and the page is where it was)
+  try { await Promise.race([tab.wc.executeJavaScript(THUMB_SETTLE, false), sleep(1500)]); } catch { /* the page is busy: the frame as it is */ }
+  return timedCapture(run, { saved: true });
 }
 // Called for every event of a run (emit): starts, nudges and ends the run's thumbnailer.
 function noteThumbs(run, msg, push) {
+  const thumbAiTabs = (run.thumbAiTabs ||= { n: 0, at: 0 });
+  if (msg.type === 'tool' || msg.type === 'tool_done' || msg.type === 'done') thumbAiTabs.at = 0; // (a step may have opened or closed a tab: the next frame asks again)
   if (msg.type === 'tool') {
     const name = String(msg.name || '');
     if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
+      (run.toolInputs ||= new Map()).set(msg.id, msg.input);
       if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
       const fresh = !run.thumbs;
       const thumbs = (run.thumbs ||= stepThumbs.createThumbs({
-        capture: () => timedCapture(run), probe: () => probeRunThumb(run), send: (ev) => { let n = 0; try { n = aiTabSelect({ runId: run.runId }).length; } catch { /* none */ } push({ ...ev, aiTabs: n }); }, // (the card's "Hide tabs the AI opened (N)")
+        capture: () => timedCapture(run), probe: () => probeRunThumb(run), stream: ({ onFrame, onEnd }) => streamRunThumb(run, onFrame, onEnd), final: (last) => finalRunThumb(run, last),
+        send: (ev) => { const t = Date.now(); if (t - (thumbAiTabs.at || 0) > 1000) { try { thumbAiTabs.n = aiTabSelect({ runId: run.runId }).length; } catch { thumbAiTabs.n = 0; } thumbAiTabs.at = t; } push({ ...ev, aiTabs: thumbAiTabs.n }); }, // (the card's "Hide tabs the AI opened (N)", asked once a second, not per frame)
         light: () => graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false, visible: thumbsVisible,
-        intervalMs: Number(process.env.LUMEN_THUMB_MS) || (graphicsMode.light() ? 1500 : 350), // about 3 frames a second while the page changes, none while it stands still
+        intervalMs: Number(process.env.LUMEN_THUMB_MS) || (graphicsMode.light() ? 1500 : 350), // the clock of the supervisor (the probe) and of the capture fallback, about 3 a second; a card on screen streams at THUMB_FPS instead (below), none while the page stands still
       }));
       const next = thumbTargetOf(run, name, msg.input);
       const changed = thumbKey(next) !== thumbKey(run.thumbTarget);
@@ -9600,6 +9640,16 @@ function noteThumbs(run, msg, push) {
       if (ev) push(ev);
       run.thumbs?.retarget();
     }
+    if (name && !Number.isInteger(run.toolInputs?.get(msg.id)?.tab_id) && !/(^|__)(open_tab|close_tab|read_urls)$/.test(name)) { // a step that names no tab acts in the tab the run is pinned to, and a navigation can move the run to a tab of its own: the card follows
+      const pinned = agent.runTabIdFor(run.messages);
+      if (pinned != null && run.thumbTarget?.kind === 'tab' && run.thumbTarget.tabId !== pinned && !(run.thumbHold != null)) {
+        run.thumbTarget = { kind: 'tab', tabId: pinned };
+        const ev = thumbTargetEvent(run);
+        if (ev) push(ev);
+        run.thumbs?.retarget();
+      }
+    }
+    run.toolInputs?.delete(msg.id);
     if (name) run.thumbs?.settled(stepThumbs.isNavigation(name));
   } else if (msg.type === 'done') run.thumbs?.stop();
 }
@@ -9658,8 +9708,10 @@ function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or a
 // The saved reply keeps one small frame (the live ones are sharp and bigger): scaled down once, here, not per frame.
 function savedThumb(t) {
   if (!t || !t.data) return undefined;
+  const { small, ...rest } = t;
+  if (small && t.data.length * 0.75 <= 45000) return rest; // (taken small already: nothing to decode or scale on the main process)
   const data = require('./features/tab-capture').shrinkThumb(t.data);
-  return data ? { ...t, data } : undefined;
+  return data ? { ...rest, data } : undefined;
 }
 function stampRun(run, done = null) {
   try {

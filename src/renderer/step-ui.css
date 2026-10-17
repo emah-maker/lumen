@@ -18,6 +18,10 @@
 
 /* ---- the activity card: Browser, Terminal, Files */
 .act-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; color: var(--text); animation: rise var(--t-smooth) var(--spring-smooth); }
+/* The whole card is as wide as its preview (the picture's shown width, set as --act-w by step-ui.js capSize, plus the card's padding and border), left-aligned
+   like the preview; a narrow sidebar shrinks it. What is inside never pushes it wider: long names are cut with an ellipsis. */
+.act-card[data-surface="browser"], .act-card[data-surface="app"] { max-width: calc(var(--act-w, 340px) + 26px); min-width: 0; box-sizing: border-box; }
+.act-card > * { min-width: 0; }
 .act-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .act-icon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
 .act-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

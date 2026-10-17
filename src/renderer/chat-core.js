@@ -1695,7 +1695,7 @@ function finishTurn(event, { early }) {
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
-  window.stepUI?.finalize(turn, event);
+  window.stepUI?.finalize(turn, { ...event, reply: turn.text?.source || '' });
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {

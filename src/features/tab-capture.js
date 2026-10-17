@@ -84,6 +84,7 @@ async function captureThumb(wc, opts = {}) {
   const now = Date.now();
   if (now - (lastRedraw.get(wc) || 0) > 5000) { // a hidden view can hand back a black frame: ask it to paint, then take it the other way (the screenshot path)
     lastRedraw.set(wc, now);
+    state.small = false; // (the second picture is the page's own pixels)
     try { wc.invalidate?.(); } catch { /* going away */ }
     await new Promise((r) => { const h = setTimeout(r, 80); h.unref?.(); });
     const second = await viaScreenshot(wc, opts);
@@ -121,7 +122,96 @@ function screencastFrame(wc, { quality, maxWidth, maxHeight, timeoutMs = 600 }) 
     dbg.sendCommand('Page.startScreencast', { format: 'jpeg', quality, maxWidth, maxHeight, everyNthFrame: 1 }).catch(() => finish(null));
   });
 }
-async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000 } = {}) {
+// A live stream of frames from the DevTools screencast for the chat's Browser card, at most `fps` a second. The engine sends a frame when the page paints
+// and sends no more until it is acknowledged, so the pace is kept by acknowledging late: a frame that comes sooner than 1000/fps after the last one goes
+// out when that time has passed (it is always the newest the page drew; none is queued behind it). The base64 JPEG is passed on as it is, never decoded
+// here. A page that stands still sends nothing. `onFrame(base64)` per frame; `onEnd()` if the stream ended by itself (debugger detached).
+// A view the user cannot see (a tab the AI works in behind the one in front) is not drawn to the screen, and the engine's screencast sends it nothing:
+// then, when no frame comes within `firstMs` of starting, the page is polled instead, one Page.captureScreenshot of its top (its own pixels, no layout
+// change) after another at the same pace, a frame only when it differs from the last. Answers { stop() } (a frame held back is sent first), or null.
+async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, onEnd = () => {}, firstMs = 350 }) {
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; }
+  } catch { return null; }
+  let w = 1280;
+  let h = 800;
+  let dpr = 1;
+  try {
+    const m = (await dbg.sendCommand('Runtime.evaluate', { expression: '[window.innerWidth, window.innerHeight, window.devicePixelRatio]', returnByValue: true }))?.result?.value;
+    if (Array.isArray(m)) { w = Math.max(1, Number(m[0]) || w); h = Math.max(1, Number(m[1]) || h); dpr = Math.max(1, Number(m[2]) || 1); }
+  } catch { /* the defaults */ }
+  const zoom = wc.getZoomFactor?.() || 1;
+  const outW = Math.round(width * Math.max(1, dpr / zoom));
+  const minGap = 1000 / Math.max(1, fps);
+  let ended = false;
+  let held = null;
+  let timer = null;
+  let last = 0;
+  let gotFirst = false;
+  let pollTimer = null;
+  const ack = (sessionId) => { dbg.sendCommand('Page.screencastFrameAck', { sessionId }).catch(() => {}); };
+  const release = () => {
+    timer = null;
+    const f = held;
+    held = null;
+    if (!f) return;
+    last = performance.now();
+    if (!ended) { try { onFrame(f.data); } catch { /* the listener's own */ } ack(f.sessionId); }
+  };
+  const onMessage = (_event, method, params) => {
+    if (ended || method !== 'Page.screencastFrame' || !params || typeof params.data !== 'string') return;
+    gotFirst = true;
+    if (held) ack(held.sessionId); // (never two: the engine waits for each acknowledgement)
+    held = params;
+    const wait = last + minGap - performance.now();
+    if (wait <= 1) { clearTimeout(timer); release(); } else if (!timer) { timer = setTimeout(release, wait); timer.unref?.(); }
+  };
+  const finish = (flush) => {
+    if (ended) return;
+    if (flush && held) release();
+    ended = true;
+    clearTimeout(timer);
+    clearTimeout(pollTimer);
+    held = null;
+    try { dbg.removeListener('message', onMessage); dbg.removeListener('detach', onDetach); } catch { /* gone */ }
+    dbg.sendCommand('Page.stopScreencast').catch(() => {});
+    if (attachedHere) { try { dbg.detach(); } catch { /* gone */ } }
+  };
+  const onDetach = () => { if (ended) return; ended = true; clearTimeout(timer); clearTimeout(pollTimer); held = null; try { dbg.removeListener('message', onMessage); } catch { /* gone */ } onEnd(); };
+  dbg.on('message', onMessage);
+  dbg.on('detach', onDetach);
+  try {
+    await dbg.sendCommand('Page.startScreencast', { format: 'jpeg', quality, maxWidth: outW, maxHeight: Math.round(outW * h / w), everyNthFrame: 1 });
+  } catch { finish(false); return null; }
+  for (let waited = 0; !gotFirst && !ended && waited < firstMs; waited += 25) await new Promise((r) => { const t = setTimeout(r, 25); t.unref?.(); });
+  if (!gotFirst && !ended) { // nothing is drawn for this view: poll it
+    dbg.removeListener('message', onMessage);
+    dbg.sendCommand('Page.stopScreencast').catch(() => {});
+    // (the engine reads the pixels back on the browser's main thread: an 800 px wide top of the page, 16:10, keeps that read to under a third of a full-size
+    // 1440 px window's; the card shows the top of the page at its own size either way)
+    const cssW = Math.min(w, 800);
+    const cssH = Math.min(h, cssW * 0.625);
+    const pollGap = 1000 / Math.min(fps, 8);
+    let q = Math.min(quality, 60);
+    let lastData = '';
+    const poll = async () => {
+      if (ended) return;
+      const t0 = performance.now();
+      try {
+        const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
+        const data = shot && typeof shot.data === 'string' ? shot.data : '';
+        if (data.length > 90000) q = Math.max(25, q - 10); else if (data.length < 40000) q = Math.min(Math.min(quality, 60), q + 5); // (about 30-65 KB a frame)
+        if (!ended && data && data !== lastData && !(data.length * 0.75 <= 9000 && isBlankFrame(data))) { lastData = data; try { onFrame(data); } catch { /* the listener's own */ } }
+      } catch { /* the page is busy or going away: the next one */ }
+      if (!ended) { pollTimer = setTimeout(poll, Math.max(0, pollGap - (performance.now() - t0))); pollTimer.unref?.(); }
+    };
+    poll();
+  }
+  return { stop: () => finish(true) };
+}
+async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000, state = null } = {}) {
   const dbg = wc.debugger;
   let attachedHere = false;
   try {
@@ -145,7 +235,7 @@ async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000 } = {}) {
     const zoom = wc.getZoomFactor?.() || 1;
     const outW = lowRes ? 420 : Math.round(SHOW_CSS * Math.max(1, dpr / zoom));
     const frame = await screencastFrame(wc, { quality: lowRes ? 55 : 80, maxWidth: outW, maxHeight: Math.round(outW * h / w) });
-    if (frame && frame.length * 0.75 <= (lowRes ? Math.max(maxBytes, 90000) : 260000)) return frame;
+    if (frame && frame.length * 0.75 <= (lowRes ? Math.max(maxBytes, 90000) : 260000)) { if (state && lowRes) state.small = true; return frame; } // (small: the compositor scaled it to the card's small size)
     maxBytes = lowRes ? Math.max(maxBytes, 90000) : 260000; // (a sharp frame is the page's own pixels: about 60-200 KB, a few per second)
     for (const q of lowRes ? [38, 28, 20] : [66, 52, 40, 30]) {
       const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
@@ -179,4 +269,4 @@ function shrinkThumb(base64, { width = 420, maxBytes = 45000 } = {}) {
   return null;
 }
 
-module.exports = { captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
