@@ -20,7 +20,9 @@ const FIXTURE = `<!doctype html><title>Shop</title>
 <tr><td>3.</td><td><a href="/s3">Story three title</a></td></tr><tr><td></td><td>30 points by cy</td></tr>
 </table></td></tr></table>
 <ul><li>Parent item<ul><li>Child item A</li><li>Child item B</li></ul></li></ul>
-</main>`;
+</main>
+<div class="cookie-banner"><p>We use cookies to improve your visit, by continuing you accept them.</p><button>Accept cookies</button></div>
+<footer>${Array.from({ length: 40 }, (_, i) => `<a href="/f${i}">Footerlink ${i}</a>`).join(' ')}</footer>`;
 
 const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
 (async () => {
@@ -57,6 +59,12 @@ const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
   const bare = await run('read_page', {});
   check('full mode without elements: text and a count, no element list', bare.includes('PAGE TEXT:') && /"totalElements":\d+/.test(bare) && !bare.includes('"elements":[') && bare.length < full.length, bare.slice(0, 300));
   check('compact is much smaller than full', compact.length * 2 < full.length, `${compact.length} vs ${full.length}`);
+  // Boilerplate: a long footer link list shows its first lines and a count (find still reaches any link); a cookie banner keeps its button, not its words.
+  check('compact: a 40-link footer is cut to its first lines and a count', (compact.match(/Footerlink \d+/g) || []).length === 15 && /… 25 more lines in this footer/.test(compact), compact);
+  check('compact: a cookie banner keeps its button, not its sentence', /\[\d+\] button "Accept cookies"/.test(compact) && !compact.includes('We use cookies'), compact);
+  check('find still reaches a link the footer cut', /Footerlink 39/.test(await run('find', { query: 'Footerlink 39' })), '');
+  const tabList = JSON.parse(await run('list_tabs', {}));
+  check('list_tabs rows carry only what is set (no active:false, no group:null)', tabList.every((t) => !('group' in t) && (t.active === true || !('active' in t))), JSON.stringify(tabList));
 
   // batch: fill and submit with refs from the compact outline, one call, diff included.
   const out = await run('batch', { steps: [
@@ -87,13 +95,20 @@ const AGENT = path.join(__dirname, '..', 'src', 'ai', 'agent.js');
 
   // Screenshots: smaller by default, region crop.
   const shot = JSON.parse(await run('screenshot', {}));
-  check('screenshot defaults to 1024 px', shot[1].text.includes('1024x'), shot[1].text);
+  check('screenshot defaults to 720 px (smaller captures keep the main process responsive: test/mcp-perf.js)', shot[1].text.includes('720x'), shot[1].text);
   const crop = JSON.parse(await run('screenshot', { region: { x: 0, y: 0, width: 200, height: 100 } }));
   check('screenshot region crop is small', crop[0].image < shot[0].image / 2 && crop[1].text.includes('Region'), `${crop[0].image} vs ${shot[0].image}`);
   const bad = await run('screenshot', { region: { x: 0 } });
   check('invalid region is rejected by validation', await 1 !== null, bad);
 
-  // Token budgets on real pages.
+  // Token budgets on real pages (needs internet; LUMEN_TEST_OFFLINE=1 skips them: the local fixture above is what runs offline).
+  if (process.env.LUMEN_TEST_OFFLINE) {
+    console.log('SKIP  Wikipedia and httpbin checks (LUMEN_TEST_OFFLINE)');
+    await app.close();
+    server.close();
+    console.log(failures ? `\n${failures} failure(s)` : '\nall passed');
+    process.exit(failures ? 1 : 0);
+  }
   const BUDGET = 6500; // chars (~1.6k tokens) for the whole Alan Turing outline, vs ~50k for full
   await run('navigate', { url: 'https://en.wikipedia.org/wiki/Alan_Turing' });
   const turing = await run('read_page', { mode: 'compact' });
