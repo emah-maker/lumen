@@ -15,7 +15,19 @@ function cssClip(rect, zoom) {
   return { x: rect.x / z, y: rect.y / z, width: Math.max(1, rect.width / z), height: Math.max(1, rect.height / z), scale: 1 };
 }
 
-async function viaDevTools(wc, rect) {
+// Page.captureScreenshot with a clip lays the page out at the picture's size for the moment of the capture and puts the old size back after. Two in
+// flight on one page each saved "the size before", and the later restore put the first one's size back: the page stayed small in its tab's corner.
+// So the captures of one page run one after the other.
+const chains = new WeakMap(); // wc -> the last capture's promise
+function oneAtATime(wc, task) {
+  const run = (chains.get(wc) || Promise.resolve()).then(task, task);
+  const tail = run.catch(() => {});
+  chains.set(wc, tail);
+  return run;
+}
+
+function viaDevTools(wc, rect) { return oneAtATime(wc, () => viaDevToolsNow(wc, rect)); }
+async function viaDevToolsNow(wc, rect) {
   const dbg = wc.debugger;
   let attachedHere = false;
   if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
@@ -82,23 +94,61 @@ async function captureThumb(wc, opts = {}) {
   if (first) state.blank = true;
   return null;
 }
-async function viaProtocol(wc, { lowRes = false, width = 420, quality = 55, maxBytes = 45000 } = {}) {
-  const size = wc.getContentSize?.() || [0, 0];
-  const w = Math.max(1, size[0] || 1280);
-  const h = Math.max(1, size[1] || 800);
+function viaProtocol(wc, opts) { return oneAtATime(wc, () => viaProtocolNow(wc, opts)); }
+// One frame from the DevTools screencast, scaled to maxWidth x maxHeight by the compositor (a GPU copy at the small size, no layout change and no
+// big bitmap on the main process). Answers base64 JPEG, or null (no frame in time, or someone else's screencast runs on this page).
+function screencastFrame(wc, { quality, maxWidth, maxHeight, timeoutMs = 600 }) {
+  const dbg = wc.debugger;
+  return new Promise((resolve) => {
+    let done = false;
+    let timer = null;
+    const finish = (data) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { dbg.removeListener('message', onMessage); } catch { /* gone */ }
+      dbg.sendCommand('Page.stopScreencast').catch(() => {});
+      resolve(data);
+    };
+    const onMessage = (_event, method, params) => {
+      if (method !== 'Page.screencastFrame' || !params) return;
+      dbg.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      finish(typeof params.data === 'string' ? params.data : null);
+    };
+    timer = setTimeout(() => finish(null), timeoutMs);
+    timer.unref?.();
+    dbg.on('message', onMessage);
+    dbg.sendCommand('Page.startScreencast', { format: 'jpeg', quality, maxWidth, maxHeight, everyNthFrame: 1 }).catch(() => finish(null));
+  });
+}
+async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000 } = {}) {
   const dbg = wc.debugger;
   let attachedHere = false;
   try {
     if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; }
+    // The picture is taken at the page's own scale: a clip inside the viewport with scale 1 (what `Page.captureScreenshot` does without any emulation),
+    // sent as it is. A clip with a scale below 1 makes Chromium lay the page out at the picture's size for the moment of the capture, a visible resize
+    // of the live page at every card frame, and two of them at once left the page small in its tab's corner (see oneAtATime). No scaling on the main
+    // process either: a resize of a full frame there costs 15-45 ms; the card's <img> shows the bytes at its own size.
+    // (A webContents has no getContentSize, that is a window's: the viewport is read from the page.)
+    let w = 1280;
+    let h = 800;
+    let dpr = 1;
+    try {
+      const m = (await dbg.sendCommand('Runtime.evaluate', { expression: '[window.innerWidth, window.innerHeight, window.devicePixelRatio]', returnByValue: true }))?.result?.value;
+      if (Array.isArray(m)) { w = Math.max(1, Number(m[0]) || w); h = Math.max(1, Number(m[1]) || h); dpr = Math.max(1, Number(m[2]) || 1); }
+    } catch { /* the defaults */ }
+    const cssW = w;
+    const cssH = Math.min(h, cssW * 0.625); // the card shows a 16:10 window onto the top of the page
+    // The card shows the picture at 340 CSS px wide: the screencast hands over just that many device pixels (lowRes: 420 px). Where it gives nothing
+    // (a hidden view that draws no frames), the page's own pixels are taken as below.
     const zoom = wc.getZoomFactor?.() || 1;
-    let dpr = 1; // (the picture is `width` device pixels wide, whatever the display's scale)
-    try { dpr = Math.max(1, Number((await dbg.sendCommand('Runtime.evaluate', { expression: 'window.devicePixelRatio', returnByValue: true }))?.result?.value) || 1); } catch { /* 1 */ }
-    const scale = Math.max(1, dpr / zoom); // (the display's own scale: the page's devicePixelRatio includes the page zoom)
-    if (!lowRes) { width = Math.round(SHOW_CSS * scale); quality = 80; maxBytes = 220000; }
-    const cssW = w / zoom;
-    const cssH = Math.min(h / zoom, cssW * 0.625); // the card shows a 16:10 window onto the top of the page
-    for (const [q, k] of lowRes ? [[quality, 1], [38, 1], [32, 0.75]] : [[80, 1], [68, 1], [56, 0.85], [44, 0.7]]) {
-      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: Math.min(1, (width * k) / (cssW * dpr)) } });
+    const outW = lowRes ? 420 : Math.round(SHOW_CSS * Math.max(1, dpr / zoom));
+    const frame = await screencastFrame(wc, { quality: lowRes ? 55 : 80, maxWidth: outW, maxHeight: Math.round(outW * h / w) });
+    if (frame && frame.length * 0.75 <= (lowRes ? Math.max(maxBytes, 90000) : 260000)) return frame;
+    maxBytes = lowRes ? Math.max(maxBytes, 90000) : 260000; // (a sharp frame is the page's own pixels: about 60-200 KB, a few per second)
+    for (const q of lowRes ? [38, 28, 20] : [66, 52, 40, 30]) {
+      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
       if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
     }
   } catch { /* try the screenshot path */ } finally {
