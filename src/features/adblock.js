@@ -248,11 +248,17 @@ function createAdblock(deps) {
       const page = details.webContents?.getURL() || details.referrer || '';
       // Google's own sign-in pages (accounts.google.com…) load everything they ask for: their risk check reads the
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
+      // So do the captcha and sign-in providers, on every site (challengeFor): a list entry for one of them leaves a blank frame, a
+      // script that never ran or a request that dies, and the form behind the check fails.
       if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url)) return callback({});
+      // A form posted into a frame is the person's submission, never an ad: a stand-in would swallow it.
+      if (details.resourceType === 'subFrame' && details.method === 'POST') return callback({});
       const request = fromElectronDetails(details);
       if (request.type === 'other') request.guessTypeOfRequest();
       const { redirect, match } = engine.match(request);
       if (!redirect && !match) return callback({});
+      // Whatever a captcha or sign-in frame itself loads (its worker, its proof script, its POSTs) goes through too.
+      if (fromProviderFrame(details)) return callback({});
       const id = details.webContents?.id;
       if (id !== undefined) blockedCount.set(id, (blockedCount.get(id) || 0) + 1);
       if (redirect) return callback({ redirectURL: stubUrl(redirect) });
@@ -264,7 +270,7 @@ function createAdblock(deps) {
     const { parse } = require('tldts-experimental');
     // (The first assignment to returnValue sends the reply, so it is assigned exactly once.)
     const scriptletsFor = (event, url) => {
-      if (typeof url !== 'string' || !on(url)) return [];
+      if (typeof url !== 'string' || !on(url) || isProviderUrl(url)) return [];
       const { hostname, domain } = parse(url);
       // (Scriptlets are chosen by host: remembered per host for this engine, so a page's many frames answer at once.)
       if (scriptletCache.engine !== engine) { scriptletCache.engine = engine; scriptletCache.map.clear(); }
@@ -290,7 +296,7 @@ function createAdblock(deps) {
     // here because adblock-preload.js already ran them, earlier.
     let cosmetics = blocker.onInjectCosmeticFilters;
     blocker.onInjectCosmeticFilters = async (event, url, msg) => {
-      if (!on(url)) return undefined;
+      if (!on(url) || isProviderUrl(url)) return undefined;
       const sender = { insertCSS: (css, options) => event.sender.insertCSS(css, options), executeJavaScript: () => Promise.resolve() };
       return cosmetics({ frameId: event.frameId, processId: event.processId, sender }, url, msg);
     };
@@ -377,6 +383,7 @@ function createAdblock(deps) {
     sync,
     menu,
     ready: () => blocker !== null,
+    probe: (details) => new Promise((resolve) => blocker.onBeforeRequest(details, resolve)), // (tests: what the request hook says about a request: {}, { cancel } or { redirectURL })
     blocked: (id) => blockedCount.get(id) || 0,
     resetCount: (id) => blockedCount.set(id, 0), // a new page starts at zero
     forget: (id) => blockedCount.delete(id), // the tab closed: its count leaves the total
@@ -384,10 +391,26 @@ function createAdblock(deps) {
   };
 }
 
-// The human checks of a sign-in page (Arkose / FunCaptcha, reCAPTCHA, hCaptcha, Cloudflare's) on Spotify: a filter list entry for one of them would leave the
-// person with a blank frame they cannot click. Let through for pages of Spotify's own sites only.
-const CHALLENGE = /^https:\/\/(([a-z0-9-]+\.)*(arkoselabs\.com|funcaptcha\.com|hcaptcha\.com|recaptcha\.net)|challenges\.cloudflare\.com|(www\.)?(google|gstatic)\.com\/recaptcha)(\/|$)/;
-const CHALLENGE_PAGE = /(^|\.)spotify\.com$/;
-const challengeFor = (page, url) => CHALLENGE.test(url) && CHALLENGE_PAGE.test(hostOf(page));
+// The captcha and sign-in providers other sites embed (hCaptcha, reCAPTCHA, Cloudflare Turnstile, Arkose / FunCaptcha, GeeTest, DataDome's
+// check, Friendly Captcha, MTCaptcha; Microsoft, Apple, Okta, Auth0, Azure AD B2C, OneLogin, Duo and Ping sign-in; any sso. / login. / auth. /
+// accounts. host) are never filtered, on every site. A filter list entry for one of them leaves the person with a blank frame they cannot
+// click, a proof-of-work script that never ran or a request that dies, and the form behind the check fails. Chrome with a blocker loads them
+// the same way; this does not depend on the lists being current.
+const PROVIDER_DOMAINS = ['hcaptcha.com', 'recaptcha.net', 'arkoselabs.com', 'funcaptcha.com', 'geetest.com', 'friendlycaptcha.com', 'friendlycaptcha.eu', 'mtcaptcha.com',
+  'captcha-delivery.com', 'challenges.cloudflare.com', 'login.microsoftonline.com', 'login.live.com', 'appleid.apple.com', 'idmsa.apple.com', 'okta.com', 'oktapreview.com',
+  'auth0.com', 'b2clogin.com', 'onelogin.com', 'duosecurity.com', 'pingone.com'];
+const SIGN_IN_LABELS = ['sso', 'login', 'signin', 'sign-in', 'auth', 'accounts', 'idp', 'identity', 'oauth'];
+const dotted = (list) => list.map((d) => d.replace(/\./g, '[.]')).join('|');
+const PROVIDER_URL = new RegExp('^https?://(?:'
+  + '(?:[a-z0-9-]+[.])*(?:' + dotted(PROVIDER_DOMAINS) + ')(?=[:/?#]|$)'
+  + '|(?:' + SIGN_IN_LABELS.join('|') + ')[.][a-z0-9.-]+(?=[:/?#]|$)'
+  + '|(?:www[.])?(?:google|gstatic)[.]com(?::[0-9]+)?/recaptcha(?:/|$))', 'i');
+const CHALLENGE_PATH = /\/cdn-cgi\/challenge-platform\//; // Cloudflare's check runs from the site's own address
+const isProviderUrl = (url) => PROVIDER_URL.test(url) || CHALLENGE_PATH.test(url);
+const challengeFor = (_page, url) => isProviderUrl(url); // (the page no longer matters: kept with its two arguments)
+// The frame that sent a request (webRequest details name it): a provider's own page.
+const fromProviderFrame = (details) => {
+  try { const frameUrl = details.frame?.url; return Boolean(frameUrl) && PROVIDER_URL.test(frameUrl); } catch { return false; }
+};
 
-module.exports = { createAdblock, hostOf, pageMemo, challengeFor };
+module.exports = { createAdblock, hostOf, pageMemo, challengeFor, isProviderUrl };

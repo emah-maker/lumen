@@ -8329,7 +8329,7 @@ if (TEST) {
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
   global.__isContentBlocker = isContentBlocker;
-  global.__adblock = { ready: adblock.ready, blocked: adblock.blocked };
+  global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
   global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
   // The tab menu's Mute Tab / Mute Site items (a native menu the tests can't click)
