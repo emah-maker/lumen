@@ -320,9 +320,9 @@ async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (m.lastUsed) o.dataset.lastUsed = m.lastUsed; if (m.auto) o.dataset.auto = '1'; if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
-    row('Model', 'The model the assistant in the sidebar uses.', h('select', {
+    row('Model', tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
       id: 'ai-model',
       'aria-label': 'Model',
       onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
@@ -341,6 +341,11 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
+  // One chevron on the button's centre line, a real element (the sidebar's picker draws its own).
+  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chevron.setAttribute('class', 'picker-chevron'); chevron.setAttribute('viewBox', '0 0 10 6'); chevron.setAttribute('aria-hidden', 'true'); chevron.setAttribute('focusable', 'false');
+  chevron.innerHTML = '<path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  settingsPicker.button.append(chevron);
   // Nothing connected: say so and put the way in right here (the keys and sign-ins page), not somewhere below.
   const noModels = h('p', { class: 'note empty-model', id: 'ai-model-empty' }, h('span', { text: tr('settings.ai.noModels', 'No AI connected yet.') }), h('button', { type: 'button', class: 'primary', id: 'ai-model-connect', text: tr('settings.ai.connect', 'Connect an AI'), onclick: () => { location.hash = '#ai-keys-page'; } }));
   modelPicker.parentElement.append(noModels);

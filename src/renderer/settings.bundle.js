@@ -37,6 +37,7 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
+    S.ai.onModelsUpdated?.(stop);
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();
@@ -760,7 +761,10 @@ else {
 
 window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false } = {}) => {
   const uid = `pk${Math.random().toString(36).slice(2, 8)}`;
-  const nameOf = (o) => o.dataset.name || o.textContent;
+
+
+  const nameOf = (o) => (o.dataset.lastUsed ? o.textContent : o.dataset.name || o.textContent);
+  const lastOf = (o) => (o?.dataset?.lastUsed ? tr('picker.lastUsed', 'last used: {name}', { name: o.dataset.lastUsed }) : '');
   const groupOf = (o) => (o.parentElement?.tagName === 'OPTGROUP' ? o.parentElement.label : '');
   const tr = (key, fallback, vars) => {
     let s = window.t ? window.t(key, vars) : key;
@@ -777,7 +781,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   button.setAttribute('aria-controls', `${uid}-list`);
   const where = Object.assign(document.createElement('span'), { className: 'picker-provider' });
   const text = Object.assign(document.createElement('span'), { className: 'picker-text' });
-  button.append(where, text);
+  const last = Object.assign(document.createElement('span'), { className: 'picker-last', hidden: true });
+  button.append(where, text, last);
   if (anchor) button.hidden = true;
   const menu = Object.assign(document.createElement('div'), { className: 'picker-menu', hidden: true });
   const search = Object.assign(document.createElement('input'), { type: 'search', className: 'picker-search', autocomplete: 'off', spellcheck: false });
@@ -839,9 +844,11 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const tag = option ? option.dataset.provider || groupOf(option) : '';
     if (label) { where.textContent = ''; text.textContent = option ? label(option) : ''; }
     else { where.textContent = tag && !name.toLowerCase().startsWith(tag.toLowerCase()) ? tag : ''; text.textContent = name; }
+    last.textContent = option ? lastOf(option) : '';
+    last.hidden = !last.textContent;
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
     button.title = option ? [groupOf(option), name, option.value.toLowerCase() === name.toLowerCase() ? '' : option.value].filter(Boolean).join(' · ') : '';
-    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent].filter(Boolean).join(': '));
+    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': '));
     requestAnimationFrame(fitTag);
   };
 
@@ -859,7 +866,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     text.textContent = full;
     if (text.scrollWidth + 30 > room) text.textContent = shortName(full);
     button.classList.remove('picker-narrow');
-    const need = where.scrollWidth + text.scrollWidth + 30;
+    const need = where.scrollWidth + text.scrollWidth + (last.hidden ? 0 : last.scrollWidth + 6) + 30;
     button.classList.toggle('picker-narrow', need > Math.min(room, 320));
   }
   if (typeof ResizeObserver === 'function') new ResizeObserver(fitTag).observe(button.parentElement?.parentElement || button);
@@ -883,12 +890,20 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const SHOWN = 5;
 
   let activeEl = null;
+
+  function scrollRowIntoView(el, centre) {
+    const l = list.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (centre) list.scrollTop += r.top - l.top - (l.height - r.height) / 2;
+    else if (r.top < l.top + 30) list.scrollTop -= l.top + 30 - r.top;
+    else if (r.bottom > l.bottom) list.scrollTop += r.bottom - l.bottom;
+  }
   function setActive(i, scroll = true) {
     if (!rows.length) { active = -1; activeEl?.classList.remove('active'); activeEl = null; owner().removeAttribute('aria-activedescendant'); return; }
     active = Math.max(0, Math.min(rows.length - 1, i));
     if (activeEl !== rows[active].el) { activeEl?.classList.remove('active'); activeEl = rows[active].el; activeEl.classList.add('active'); }
     owner().setAttribute('aria-activedescendant', rows[active].el.id);
-    if (scroll) rows[active].el.scrollIntoView({ block: centreNext ? 'center' : 'nearest' });
+    if (scroll) scrollRowIntoView(rows[active].el, centreNext);
     centreNext = false;
   }
 
@@ -917,7 +932,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     el.append(top);
 
     const maker = recentRow ? o.dataset.provider || groupOf(o) : '';
-    const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
+    const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', lastOf(o), o.dataset.detail || ''].filter(Boolean).join(' · ');
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more || o.value.toLowerCase() === nameOf(o).toLowerCase() ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', '));
@@ -1109,7 +1124,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (refocus) (anchor || button).focus();
   }
   const onResize = () => close(false);
-  const onScroll = (e) => { if (!menu.contains(e.target) && (e.target === document || e.target.contains?.(anchor || button))) close(false); };
+
+  let docAt = null;
+  const docMoved = () => { const d = document.scrollingElement; return !docAt || !d || d.scrollTop !== docAt.top || d.scrollLeft !== docAt.left; };
+  const onScroll = (e) => { if (menu.contains(e.target)) return; if (e.target === document ? docMoved() : e.target.contains?.(anchor || button)) close(false); };
   function outside(e) { if (!menu.contains(e.target) && e.target !== button && !button.contains(e.target) && !(anchor && anchor.contains(e.target))) close(false); }
   function choose(value) {
     if (value == null) return;
@@ -1133,10 +1151,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     search.value = initial;
     search.placeholder = placeholder || tr('picker.search', 'Search models');
     search.setAttribute('aria-label', tr('picker.search', 'Search models'));
+    place();
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
     usageBars?.touch();
     place();
+    { const d = document.scrollingElement; docAt = d ? { top: d.scrollTop, left: d.scrollLeft } : null; }
     centreNext = true;
     render();
     document.addEventListener('pointerdown', outside, true);
@@ -3459,9 +3479,9 @@ async function buildAi(card) {
   let ai = await S.ai.get();
 
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (m.lastUsed) o.dataset.lastUsed = m.lastUsed; if (m.auto) o.dataset.auto = '1'; if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
-    row('Model', 'The model the assistant in the sidebar uses.', h('select', {
+    row('Model', tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
       id: 'ai-model',
       'aria-label': 'Model',
       onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
@@ -3480,6 +3500,11 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
+
+  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chevron.setAttribute('class', 'picker-chevron'); chevron.setAttribute('viewBox', '0 0 10 6'); chevron.setAttribute('aria-hidden', 'true'); chevron.setAttribute('focusable', 'false');
+  chevron.innerHTML = '<path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  settingsPicker.button.append(chevron);
 
   const noModels = h('p', { class: 'note empty-model', id: 'ai-model-empty' }, h('span', { text: tr('settings.ai.noModels', 'No AI connected yet.') }), h('button', { type: 'button', class: 'primary', id: 'ai-model-connect', text: tr('settings.ai.connect', 'Connect an AI'), onclick: () => { location.hash = '#ai-keys-page'; } }));
   modelPicker.parentElement.append(noModels);

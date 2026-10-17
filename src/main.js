@@ -622,7 +622,9 @@ function autoProviderList(options = modelOptions()) {
 function pickerOptions(options = modelOptions()) {
   if (!options.some((o) => !o.more)) return options;
   const s = agent.messages?.settings;
-  const last = s?.autoLast || null;
+  // "last used" only while that model is still connected (a removed key or a signed-out engine would make it a stale name)
+  const lastRaw = s?.autoLast || null;
+  const last = lastRaw && options.some((o) => o.id === lastRaw.id && o.signedIn !== false && !(o.badges || []).includes('sign in')) ? lastRaw : null;
   const pick = chatModelPick() ?? readSettings().model ?? null;
   const withOwn = autoModel.withProviderAutos(options, { pick, last, exclude: autoExcluded(), dedupe: true, describe: (scope) => t('models.auto.providerDetail', { name: autoModel.scopeName(scope) }) });
   return [autoModel.pickerEntry({ last: last && !last.scope ? last : null, describe: t('models.auto.detail') }), ...withOwn];

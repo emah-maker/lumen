@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The model menu in Settings is the sidebar's, and says what Auto is.** Settings → AI → Model now lines up its label and arrow on one line, looks like the other dropdowns, and always shows the same choice as the sidebar (pick in one, the other follows at once, even in the first second after Settings opens). Auto reads just "Auto", and after it has chosen a model it adds "last used: Haiku" in muted text, only while that model is still connected; its row explains that it picks the best connected model for each message. A model menu in Settings no longer closes by itself the moment it opens when the page sends a scroll event that moved nothing. Tests:  (Settings and sidebar agree, keyboard, centring, Auto label), 
+
 ## 0.5.43 (2026-10-17)
 
 - **The Computer card's picture is live.** While the AI works in another app, the card shows that app's window at about 6 pictures a second when its content changes, and nothing when it stands still (slower in Light graphics). The pictures are made in the app helper, not in Lumen's main process, only while the card is on screen, and never of a window that turned into a blocked program.
