@@ -48,7 +48,7 @@ const WINDOW_ICON = path.join(__dirname, 'assets', process.platform === 'win32' 
 const { pathToFileURL } = require('url');
 const { netFetch } = require('./browser/net-fetch');
 const matchPattern = require('./browser/match-pattern'); // which pages an extension's content scripts apply to
-const { shortcutMod, extraShortcut, appCommandAction } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere; F6, F3, Ctrl+F4; the mouse's back / forward buttons
+const { shortcutMod, shortcutKey, extraShortcut, appCommandAction } = require('./browser/shortcut-mod'); // Cmd on macOS, Ctrl elsewhere; F6, F3, Ctrl+F4; the mouse's back / forward buttons
 const { reloadAction } = require('./browser/reload-action');
 const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Paste and Go) for the browser's own text fields
 // The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
@@ -1259,6 +1259,7 @@ const privateWindows = createPrivateWindows({
   print: (wc, host) => printTab(wc, host), // Print… in a private window: the same preview, over that window
   testBackground: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND), // (TEST_BACKGROUND is declared further down)
   pageFirstKeys, // page-first keys in a private tab (features/page-first-keys.js)
+  openNormalWindow: () => openNewWindow(), // Ctrl+N in a private window opens a normal one, as in Chrome
   screenshot: (ctx) => screenshotTool.open(ctx), // Ctrl+Shift+S in a private window (copies; Save as… is offered)
   // The protections a normal tab has: Safe Browsing (until the ad blocker takes over onBeforeRequest, which
   // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
@@ -4882,7 +4883,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.on('did-navigate-in-page', retitle);
   wc.on('context-menu', (_e, p) => showContextMenu(wc, p)); // paste into a password field, spelling, copy
   wc.on('before-input-event', (e, input) => { // Ctrl+W (Cmd+W) closes it, as it would a tab
-    if (input.type === 'keyDown' && shortcutMod(input) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); }
+    if (input.type === 'keyDown' && shortcutMod(input) && !input.alt && shortcutKey(input) === 'w') { e.preventDefault(); child.close(); }
   });
   if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
   const popupLimit = createBurstLimit();
@@ -5023,7 +5024,7 @@ function showContextMenu(wc, p) {
 
 function handleShortcut(event, input) {
   if (input.type !== 'keyDown') return;
-  const key = input.key.toLowerCase();
+  const key = shortcutKey(input); // (the physical key with Ctrl / Cmd / Alt held, so Ctrl+W works on a Russian or Greek layout too)
   const mod = shortcutMod(input); // macOS: Cmd, never Control (the text-editing key there; browser/shortcut-mod.js)
   const wc = activeTab()?.webContents;
   let handled = true;
@@ -5046,6 +5047,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
+  else if (mod && !input.shift && !input.alt && (key === 'k' || key === 'e')) focusAddress(); // Chrome's "search from the address bar"
   else if (mod && key === 'f' && pdfViewer.isViewerUrl(wc?.getURL())) pdfRt.command(wc, 'find'); // the PDF viewer's own find bar searches every page
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') openFindBar();
