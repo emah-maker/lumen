@@ -3245,6 +3245,7 @@
   "card.status.working": "{step}…",
   "card.status.workingOn": "{step} · {site}",
   "card.status.done": "Done: {result}",
+  "card.status.opened": "Opened '{title}'",
   "card.status.needs": "Needs you: {why}",
   "card.status.needsWhy": "approve {step}",
   "card.status.needsOk": "your OK",

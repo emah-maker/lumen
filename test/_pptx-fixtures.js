@@ -87,6 +87,26 @@ function emf({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
   all.writeUInt32LE(all.length, 48);
   return all;
 }
+// An EMF+ only file (GDI+ records in one EMR_COMMENT: EmfPlusHeader, two EmfPlusFillRects with solid colors, EmfPlusEndOfFile) and no classic drawing
+// record, so EMFJS draws nothing from it: only GDI+ (Windows) shows the two halves. Same layout as emf(): left half one color, right half another.
+function emfPlus({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
+  const plus = (type, flags, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt16LE(type, 0); b.writeUInt16LE(flags, 2); b.writeUInt32LE(b.length, 4); b.writeUInt32LE(data.length, 8); data.copy(b, 12); return b; };
+  const header = (() => { const d = Buffer.alloc(16); d.writeUInt32LE(0xdbc01002, 0); d.writeUInt32LE(0, 4); d.writeUInt32LE(96, 8); d.writeUInt32LE(96, 12); return plus(0x4001, 0, d); })();
+  const fill = (c, x, ww) => { const d = Buffer.alloc(24); d.writeUInt32LE((0xff000000 | (c[0] << 16) | (c[1] << 8) | c[2]) >>> 0, 0); d.writeUInt32LE(1, 4); [x, 0, ww, h].forEach((v, i) => d.writeFloatLE(v, 8 + i * 4)); return plus(0x400a, 0x8000, d); };
+  const records = Buffer.concat([header, fill(left, 0, w / 2), fill(right, w / 2, w / 2), plus(0x4002, 0, Buffer.alloc(0))]);
+  const comment = Buffer.alloc(16 + records.length); comment.writeUInt32LE(70, 0); comment.writeUInt32LE(comment.length, 4); comment.writeUInt32LE(4 + records.length, 8); comment.writeUInt32LE(0x2b464d45, 12); records.copy(comment, 16);
+  const eof = Buffer.alloc(20); eof.writeUInt32LE(14, 0); eof.writeUInt32LE(20, 4); eof.writeUInt32LE(0, 8); eof.writeUInt32LE(16, 12); eof.writeUInt32LE(20, 16);
+  const head = Buffer.alloc(88);
+  head.writeUInt32LE(1, 0); head.writeUInt32LE(88, 4);
+  [0, 0, w - 1, h - 1].forEach((v, i) => head.writeInt32LE(v, 8 + i * 4));
+  [0, 0, Math.round(w * 26.4583), Math.round(h * 26.4583)].forEach((v, i) => head.writeInt32LE(v, 24 + i * 4));
+  head.writeUInt32LE(0x464d4520, 40); head.writeUInt32LE(0x10000, 44);
+  head.writeUInt32LE(3, 52); head.writeUInt16LE(1, 56);
+  head.writeInt32LE(1024, 72); head.writeInt32LE(768, 76); head.writeInt32LE(270, 80); head.writeInt32LE(203, 84);
+  const all = Buffer.concat([head, comment, eof]);
+  all.writeUInt32LE(all.length, 48);
+  return all;
+}
 function wmf({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
   const rec = (fn, ...words) => { const b = Buffer.alloc(6 + words.length * 2); b.writeUInt32LE(b.length / 2, 0); b.writeUInt16LE(fn, 4); words.forEach((v, i) => b.writeUInt16LE(v & 0xffff, 6 + i * 2)); return b; };
   const brush = (c) => rec(0x02fc, 0, colorref(c) & 0xffff, colorref(c) >>> 16, 0); // META_CREATEBRUSHINDIRECT: solid
@@ -95,7 +115,7 @@ function wmf({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
   const head = Buffer.alloc(18);
   head.writeUInt16LE(1, 0); head.writeUInt16LE(9, 2); head.writeUInt16LE(0x300, 4); head.writeUInt32LE(size, 6); head.writeUInt16LE(3, 10); head.writeUInt32LE(8, 12);
   const placeable = Buffer.alloc(22);
-  placeable.writeUInt32LE(0x9ac6cdd7, 0); placeable.writeInt16LE(w, 8); placeable.writeInt16LE(h, 10); placeable.writeUInt16LE(96, 12);
+  placeable.writeUInt32LE(0x9ac6cdd7, 0); placeable.writeInt16LE(w, 10); placeable.writeInt16LE(h, 12); placeable.writeUInt16LE(96, 14); // left, top 0; right, bottom; units per inch
   let sum = 0; for (let i = 0; i < 20; i += 2) sum ^= placeable.readUInt16LE(i); placeable.writeUInt16LE(sum, 20);
   return Buffer.concat([placeable, head, ...body]);
 }
@@ -124,4 +144,4 @@ function deck({ width = 12192000, height = 6858000, slides, media = {}, layout =
 }
 const imageRel = (id, name) => [id, 'image', `../media/${name}`];
 
-module.exports = { emf, wmf, zip, png, quadrants, solid, svgOf, deck, pic, picShape, rect, group, table, bgPicture, picturePlaceholder, imageRel, xfrm, pt, rels, NS, RED, GREEN, BLUE, YELLOW };
+module.exports = { emf, emfPlus, wmf, zip, png, quadrants, solid, svgOf, deck, pic, picShape, rect, group, table, bgPicture, picturePlaceholder, imageRel, xfrm, pt, rels, NS, RED, GREEN, BLUE, YELLOW };

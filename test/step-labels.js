@@ -71,7 +71,10 @@ process.stdin.on('data', async (d) => {
   const PAGES = { '/a': '#d22', '/b': '#22d', '/c': '#2a2' };
   const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
-    if (req.url.startsWith('/live')) { res.end('<!doctype html><title>Page /live</title><body style="margin:0;background:#2a2;color:#fff"><h1 style="font-size:60px;margin:30px">Live</h1><script>let n = 0; setInterval(() => { const d = document.createElement("div"); d.textContent = "row " + (++n); d.style.cssText = "font-size:30px;margin:4px 30px;background:#" + (n % 2 ? "163" : "361"); document.body.append(d); }, 200);</script></body>'); return; }
+    if (req.url.startsWith('/still')) { res.end('<!doctype html><title>Still page</title><body style="margin:0;background:#d22;color:#fff"><h1 style="font-size:90px;margin:40px">Still</h1></body>'); return; } // (nothing on it moves: the other pages tick a counter, which is a changing page)
+    if (req.url.startsWith('/redir')) { res.end('<!doctype html><title>Red page</title><body style="margin:0;background:#d22;color:#fff"><h1 style="font-size:90px;margin:40px">Red</h1><script>setTimeout(() => { location.href = "/blue"; }, 500);</script></body>'); return; }
+    if (req.url.startsWith('/blue')) { setTimeout(() => res.end('<!doctype html><title>Blue page</title><body style="margin:0;background:#22d;color:#fff"><h1 style="font-size:90px;margin:40px">Blue</h1></body>'), 2500); return; } // (slow: the run is over before it has loaded)
+    if (req.url.startsWith('/live')) { res.end('<!doctype html><title>Page /live</title><body style="margin:0;background:#2a2;color:#fff"><h1 style="font-size:60px;margin:30px">Live</h1><script>let n = 0; setInterval(() => { const d = document.createElement("div"); d.textContent = "row " + (++n); d.style.cssText = "font-size:30px;margin:4px 30px;background:#" + (n % 2 ? "163" : "361"); document.body.append(d); }, 200); const bar = document.createElement("div"); bar.style.cssText = "position:fixed;top:0;left:0;width:60px;height:60px;background:#fff"; document.body.append(bar); (function f() { bar.style.transform = "translateX(" + (Date.now() / 4 % 250) + "px)"; requestAnimationFrame(f); })();</script></body>'); return; }
     const color = PAGES[req.url.split('?')[0]] || '#888';
     res.end(`<!doctype html><title>Page ${req.url}</title><body style="margin:0;background:${color};color:#fff"><h1 style="font-size:90px;margin:40px">Page ${req.url}</h1><p id="n" style="font-size:60px;margin:40px"></p><script>setInterval(() => { document.getElementById('n').textContent = Date.now(); }, 150);</script></body>`); // (a counter: every frame differs)
   }).listen(0, '127.0.0.1');
@@ -119,15 +122,18 @@ process.stdin.on('data', async (d) => {
       mixed: [{ text: 'Opening the page.', tool: ['navigate', { url: '@a' }] }, { text: 'Checking my downloads.', tool: ['list_files', { folder: 'downloads' }] }, { text: 'Back to the site.', delay: 2500, tool: ['navigate', { url: '@b' }] }, { text: 'All done with both.', delay: 1000 }],
       // an address read with no tab
       reading: [{ text: 'Reading quietly.', tool: ['read_urls', { urls: ['@a'] }] }, { text: 'Read it.', delay: 1500 }],
+      // the last step navigates to a page that loads slowly: the run ends while it is still loading
+      endnav: [{ tool: ['navigate', { url: '@redir' }] }, { text: 'Opened the page.', delay: 1500 }],
       // a page that keeps changing, then one that stands still
       moving: [{ tool: ['navigate', { url: '@live' }] }, { tool: ['wait', { seconds: 3 }] }, { text: 'Watched it.' }],
-      still: [{ tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 6 }] }, { text: 'Watched it still.' }],
+      movingA: [{ tool: ['navigate', { url: '@live', tab_id: '#A' }] }, { tool: ['wait', { seconds: 3, tab_id: '#A' }] }, { text: 'Watched it in this tab.' }],
+      still: [{ tool: ['navigate', { url: '@still' }] }, { tool: ['wait', { seconds: 6 }] }, { text: 'Watched it still.' }],
     };
     global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
       const users = params.messages.filter((m) => m.role === 'user');
       const lastAsk = [...users].reverse().find((m) => !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result')));
       const asked = JSON.stringify(lastAsk?.content || '');
-      const key = /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /mix the surfaces/.test(asked) ? 'mixed' : /the viewers/.test(asked) ? 'viewers' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
+      const key = /final frame/.test(asked) ? 'endnav' : /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /mix the surfaces/.test(asked) ? 'mixed' : /the viewers/.test(asked) ? 'viewers' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page in this tab/.test(asked) ? 'movingA' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
       const idx = users.length - 1 - users.indexOf(lastAsk);
       const step = scripts[key][Math.min(idx, scripts[key].length - 1)];
       const base = global.__slBase;
@@ -214,7 +220,7 @@ process.stdin.on('data', async (d) => {
   const barSeq = await ui.evaluate(() => window.__bar);
   const stateSeq = await ui.evaluate(() => window.__states);
   const gaps = statusSeq.slice(1, -1).map((x, i) => Math.round(x.at - statusSeq[i].at)); // (between announcements, the last one being the Done, which is not held back)
-  check('the status bar follows the current step and ends as "Done: <result>"', barSeq.length >= 3 && barSeq.some((t) => /^Opening 127\.0\.0\.1/.test(t)) && barSeq.slice(0, -1).every((t) => !/^Done/.test(t)) && /^Done: /.test(barSeq[barSeq.length - 1]), J(barSeq));
+  check('the status bar follows the current step and ends as "Done: <result>"', barSeq.length >= 3 && barSeq.some((t) => /^Opening 127\.0\.0\.1/.test(t)) && barSeq.slice(0, -1).every((t) => !/^Done/.test(t)) && /^Done: Found it on the second page$/.test(barSeq[barSeq.length - 1]) && !/^Done: (Opening|Waiting|Clicking)/.test(barSeq[barSeq.length - 1]), J(barSeq));
   check('the card is "working" for the whole turn and "completed" only at its end', J(stateSeq) === '["working","completed"]', J(stateSeq));
   check('one polite live region announces the bar, throttled (≥ 1.4 s apart), and Done at the end', liveShape.aria === 1 && liveShape.status === 1 && statusSeq.length >= 2 && /^Done: /.test(statusSeq[statusSeq.length - 1].t) && gaps.every((g) => g >= 1400), J([statusSeq, liveShape, gaps]));
   check('when the run ends the card says "Done · <task>"', doneSub === 'Done · Find lab TA', doneSub);
@@ -230,7 +236,7 @@ process.stdin.on('data', async (d) => {
   const gap = await app.evaluate(() => {
     const w = global.__thumbsState.windows || [];
     const during = global.__slProbe.big.filter(([end, g]) => w.some(([s, e]) => end - g < e + 3 && end > s - 3)); // gaps that overlap a thumbnail capture
-    return { max: Math.round(global.__slProbe.max), n: global.__slProbe.n, captures: w.length, avgCaptureMs: Math.round(w.reduce((n, [s, e]) => n + (e - s), 0) / Math.max(1, w.length)), overCaptures: Math.round(Math.max(0, ...during.map((d) => d[1]))), all: global.__slProbe.big.map(([t, g]) => [Math.round(t), Math.round(g)]) };
+    return { max: Math.round(global.__slProbe.max), n: global.__slProbe.n, captures: w.length + (global.__thumbsState.frames || 0), avgCaptureMs: Math.round(w.reduce((n, [s, e]) => n + (e - s), 0) / Math.max(1, w.length)), overCaptures: Math.round(Math.max(0, ...during.map((d) => d[1]))), all: global.__slProbe.big.map(([t, g]) => [Math.round(t), Math.round(g)]) };
   });
   console.log('      main-process gaps over 10 ms:', J(gap.all), 'captures:', gap.captures, 'average wall time per capture (ms):', gap.avgCaptureMs);
   const longTasks = await ui.evaluate(() => window.__long);
@@ -531,7 +537,7 @@ process.stdin.on('data', async (d) => {
   });
   check('another program on the PC joins the same card: its window is the preview, its task and name are the status, Stop and Open are there', synth.cards === 1 && synth.sawApp === true && synth.title === 'Computer' && synth.surface === 'app' && synth.shot2 !== 'none' && synth.shot === 'none' && synth.src2 && /^Typing the heading · Word$/.test(synth.bar) && synth.stop && synth.open === 'Open', J(synth));
   check('"Allowed automatically" rows are small rows in the card\'s step list (the one before the first step moved in), not lines between cards', synth.notes.length === 2 && /^Allowed automatically: reading/.test(synth.notes[0]) && synth.loose === 0, J(synth));
-  check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done: /.test(synth.done), J([synth.paused, synth.done]));
+  check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done/.test(synth.done), J([synth.paused, synth.done]));
 
   // ---- searches in a burst are one row, in the chat (plain rows) and inside a card; the queries and times are in it; restored the same
   const grouped = await ui.evaluate(() => {
@@ -610,22 +616,57 @@ process.stdin.on('data', async (d) => {
   check('a read with no tab shows "Reading <site>" and no screenshot of another tab', siteMode && /^Reading 127\.0\.0\.1:\d+$/.test(siteMode.text) && siteMode.src === false && siteMode.chip === false, J(siteMode));
   await finished();
 
-  // ---- live: about 2-4 frames a second while the page changes, none while it stands still
+  // ---- live: a stream while the page changes (about 15 frames a second in the tab the user looks at, fewer in a tab behind it, which the engine does not
+  // draw to the screen and which is read back one picture after another), none while it stands still
+  const FPS = Number(process.env.LUMEN_THUMB_FPS) || 15; // (main.js THUMB_FPS)
+  const POLL_FPS = 8; // (tab-capture.js streamThumb: a view that is not drawn)
+  const watch = async (prompt) => {
+    await fresh(prompt);
+    await waitFor(() => ui.evaluate(() => window.__tools.some((t) => /wait$/.test(t.name))), 20000);
+    await sleep(300); // (the first frames of the page, which was loading, are over)
+    await app.evaluate(() => { global.__slProbe.max = 0; global.__slProbe.big = []; const st = global.__thumbsState; st.frames = 0; st.frameMs = 0; st.frameBytes = 0; st.frameMax = 0; });
+    await ui.evaluate(() => { window.__long = []; });
+    const t0 = Date.now();
+    await sleep(2700);
+    const cost = await app.evaluate(() => { const st = global.__thumbsState; return { frames: st.frames || 0, avgMs: Math.round((st.frameMs || 0) / Math.max(1, st.frames || 0) * 100) / 100, maxMs: Math.round((st.frameMax || 0) * 100) / 100, bytes: st.frameBytes || 0, mainGapMax: Math.round(global.__slProbe.max), mainGaps: global.__slProbe.big.map(([, g]) => Math.round(g)) }; });
+    const long = await ui.evaluate(() => window.__long);
+    await finished();
+    const ev = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
+    const w0 = ev.tools.find((t) => /wait$/.test(t.name))?.at || 0;
+    const during = ev.frames.filter((t) => t >= w0 && t <= w0 + 3000);
+    return { cost, long, during, w0, spaced: during.slice(1).map((t, i) => t - during[i]), t0, bytesPerSec: Math.round(cost.bytes * 0.75 / 2.7), kbPerFrame: Math.round(cost.bytes * 0.75 / Math.max(1, cost.frames) / 1024 * 10) / 10 };
+  };
+  // the tab the user looks at (tab A): the engine draws it, so its screencast streams at the full rate
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), tabA);
-  await fresh('Watch the moving page');
-  await finished();
-  const moving = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
-  const wait1 = moving.tools.find((t) => /wait$/.test(t.name))?.at || 0;
-  const during = moving.frames.filter((t) => t >= wait1 && t <= wait1 + 3000);
-  check('a page that keeps changing is refreshed about 2-4 times a second (≥ 5 frames in the 3 s wait)', during.length >= 5 && during.length <= 13, J({ n: during.length, wait1, frames: moving.frames.map((t) => t - wait1) }));
-  const spaced = during.slice(1).map((t, i) => t - during[i]);
-  check('…frames are serialized and spaced (never a flood: none closer than 100 ms, most about 350 ms apart)', spaced.every((g) => g >= 100) && spaced.filter((g) => g >= 300).length >= 4, J(spaced));
+  const seen = await watch('Watch the moving page in this tab');
+  console.log('      visible tab, stream cost:', J({ ...seen.cost, mainGaps: seen.cost.mainGaps.length, bytesPerSec: seen.bytesPerSec, kbPerFrame: seen.kbPerFrame, frames: seen.during.length }));
+  check('a page that keeps changing is live: about ' + FPS + ' frames a second (≥ ' + FPS * 2 + ' in the 3 s wait, never more than the rate allows)', seen.during.length >= FPS * 2 && seen.during.length <= FPS * 3 + 4, J({ n: seen.during.length, frames: seen.during.map((t) => t - seen.w0) }));
+  check('…frames are paced (never a flood: none closer than ' + Math.round(1000 / FPS * 0.72) + ' ms, most about ' + Math.round(1000 / FPS) + ' ms apart)', seen.spaced.every((g) => g >= 1000 / FPS * 0.72) && seen.spaced.filter((g) => g >= 1000 / FPS * 0.84).length >= seen.spaced.length * 0.7, J(seen.spaced));
+  check('while streaming at that rate no main-process task runs over 20 ms (setImmediate gap), each frame costs the main process under 2 ms, and the chat has no long task', seen.cost.frames >= 20 && seen.cost.mainGapMax <= 20 && seen.cost.maxMs < 2 && seen.long.length === 0, J({ cost: seen.cost, long: seen.long }));
+  // the tab the AI opened behind it: read back one picture after another, still live, at the lower rate
+  const hidden = await watch('Watch the moving page');
+  console.log('      hidden tab, poll cost:', J({ ...hidden.cost, mainGaps: hidden.cost.mainGaps.length, bytesPerSec: hidden.bytesPerSec, kbPerFrame: hidden.kbPerFrame, frames: hidden.during.length }));
+  check('a tab the user does not look at is live too: ≥ ' + Math.round(POLL_FPS * 3 * 0.55) + ' frames in the 3 s wait, never more than ' + POLL_FPS + ' a second', hidden.during.length >= Math.round(POLL_FPS * 3 * 0.55) && hidden.during.length <= POLL_FPS * 3 + 4, J({ n: hidden.during.length, frames: hidden.during.map((t) => t - hidden.w0) }));
+  check('…paced (none closer than ' + Math.round(1000 / POLL_FPS * 0.7) + ' ms) and the chat has no long task', hidden.spaced.every((g) => g >= 1000 / POLL_FPS * 0.7) && hidden.long.length === 0, J({ spaced: hidden.spaced, long: hidden.long }));
+  check('…and no main-process task over 25 ms while it streams', hidden.cost.frames >= 10 && hidden.cost.mainGapMax <= 25, J(hidden.cost));
   await fresh('Watch the still page');
   await finished();
   const still = await ui.evaluate(() => ({ tools: window.__tools, frames: window.__thumbEv.filter((t) => t.hasData).map((t) => t.at) }));
   const wait2 = still.tools.find((t) => /wait$/.test(t.name))?.at || 0;
   const tail = still.frames.filter((t) => t >= wait2 + 2600 && t <= wait2 + 5600); // (the step finishing at 6 s still gets its one frame)
   check('a page that stands still is not captured again (no frame between 2.6 s and 5.6 s of a 6 s wait)', wait2 > 0 && tail.length === 0, J({ wait2, frames: still.frames.map((t) => t - wait2) }));
+
+  // ---- the last frame is of the page the run ended on, after it settled (not the page it was on a moment before)
+  await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), tabA);
+  await fresh('Show me the final frame of this');
+  await finished();
+  const endBar = await ui.evaluate((s) => document.querySelector(`${s} .act-status-text`)?.textContent, card());
+  const endBlue = await waitFor(async () => { const p = await pixel(card()); return isBlue(p) && p; }, 12000);
+  const endUrl = await ui.evaluate((s) => document.querySelector(`${s} .act-tabref .tab-ref-title`)?.textContent || '', card());
+  check('the final frame shows the page the run ended on once it had loaded (blue), not the page before it (red)', Boolean(endBlue), J([await pixel(card()), endUrl]));
+  check('the final status says what came of it, not the last step ("Done: Opened the page")', endBar === 'Done: Opened the page', endBar);
+  const widths = await ui.evaluate((s) => { const c = document.querySelector(s); const sh = c.querySelector('.act-shot'); const cr = c.getBoundingClientRect(); const sr = sh.getBoundingClientRect(); const msgs = document.getElementById('messages').getBoundingClientRect(); return { card: Math.round(cr.width), shot: Math.round(sr.width), msgs: Math.round(msgs.width), left: Math.round(cr.left - msgs.left), over: c.scrollWidth - c.clientWidth, kids: [...c.children].map((k) => Math.round(k.getBoundingClientRect().right - cr.right)).filter((d) => d > 0) }; }, card());
+  check('the whole card is as wide as its preview (plus its padding), left-aligned, with nothing sticking out', widths.shot > 100 && Math.abs(widths.card - widths.shot - 26) <= 4 && widths.card < widths.msgs && widths.left <= 24 && widths.over <= 0 && widths.kids.length === 0, J(widths));
 
   // ---- Graphics on Light: the thumbnail refreshes on navigation only (a frame when the work starts, one per page change), never on the clock
   await app.evaluate(() => global.__settings.backend.set('graphicsMode', 'light'));
@@ -664,7 +705,7 @@ process.stdin.on('data', async (d) => {
   const pageThumb = await waitFor(() => inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const i = c && c.querySelector('.act-thumb'); return i && i.src.startsWith('data:image/jpeg') ? i.src.length : 0; })()`), 15000);
   check('…with its thumbnail', pageThumb > 500, String(pageThumb));
   const cap = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const sh = c.querySelector('.act-shot'); const i = c.querySelector('.act-thumb'); const sr = sh.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { shot: sr.width, card: cr.width, nat: i.naturalWidth, dpr: devicePixelRatio, left: sr.left - cr.left, ratio: sr.width / sr.height }; })()`);
-  check('the preview is small: at most 360 px wide and never above its own pixels (width / devicePixelRatio), left-aligned, 16:10, in a wide card', cap.shot <= 360 && cap.shot <= cap.nat / cap.dpr + 1 && cap.card >= cap.shot + 100 && cap.left < 24 && Math.abs(cap.ratio - 1.6) < 0.1, J(cap));
+  check('the preview is small: at most 360 px wide and never above its own pixels (width / devicePixelRatio), left-aligned, 16:10, and the card is only as wide as it (plus padding)', cap.shot <= 360 && cap.shot <= cap.nat / cap.dpr + 1 && Math.abs(cap.card - cap.shot - 26) <= 4 && cap.left < 24 && Math.abs(cap.ratio - 1.6) < 0.1, J(cap));
   await waitFor(async () => (await inPage(`document.getElementById('send').classList.contains('stop')`)) === false, 40000);
   const pageDone = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); return c && c.querySelector('.act-sub').textContent; })()`);
   check('…and "Done" at the end', /^Done · /.test(String(pageDone)), String(pageDone));
