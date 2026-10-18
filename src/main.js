@@ -8600,7 +8600,8 @@ function cardFetch(url, options, { renew = false } = {}) {
 }
 const widgets = createWidgets({
   readSettings, writeSettings,
-  fetch: (url, options) => net.fetch(url, options),
+  fetch: (url, options) => net.fetch(TEST && global.__widgetFetchMap ? global.__widgetFetchMap(url) : url, options), // (tests map Spotify's picture hosts, which cannot be reached on https without a port, to a local server)
+  resizeThumb: (bytes) => resizeArt(bytes, 128, 75), // a row's or tile's picture in a card: 128 px (rows draw 28, Home tiles 112), about 4 KB
   freshFetch: cardFetch, // a request the browser's session fails at once (net::ERR_FAILED) is sent again through this
   resetNetwork, // a card that got no answer from the network drops these before it asks again (Try again, its retries)
   getSecret: widgetSecret,
@@ -8738,11 +8739,11 @@ if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusi
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
 // Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
 // while a card is being read, and ended at quit). Album pictures are made small here (they travel in the new-tab page's address).
-const resizeArt = (bytes) => {
+const resizeArt = (bytes, height = 160, quality = 82) => {
   const { nativeImage } = require('electron');
   const img = nativeImage.createFromBuffer(Buffer.from(bytes));
   if (img.isEmpty()) return null;
-  return (img.getSize().height > 160 ? img.resize({ height: 160, quality: 'good' }) : img).toJPEG(82);
+  return (img.getSize().height > height ? img.resize({ height, quality: 'good' }) : img).toJPEG(quality);
 };
 const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
   any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
