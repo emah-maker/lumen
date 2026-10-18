@@ -13,6 +13,7 @@
 
 const SV = require('./spotify-view');
 const RECS = require('./spotify-recs');
+const LIBM = require('./spotify-library');
 const { PLAYER } = SV;
 
 const TAB_MAX_AGE_MS = 5000;
@@ -105,12 +106,12 @@ async function runSearch(ui, term, ctx, call = ctx.searchCall) {
 function clearSearch(ui) { ui.searchSeq = (ui.searchSeq || 0) + 1; ui.search = null; }
 // The pictures of library rows the card shows (it names them by id): each list's rows get a thumb, from the addresses kept when the list was read.
 async function loadLibraryThumbs(ui, ids, ctx) {
-  const lib = ui.library;
-  if (!lib) return;
+  const lib = ui.library || {};
   const want = new Set(ids || []);
   const asked = (ui.libThumbAsked ||= new Set());
   const rows = [];
   for (const field of ['recent', 'liked', 'playlists', 'albums', 'artists']) for (const r of lib[field] || []) if (want.has(r.id) && !r.thumb && !asked.has(`${r.kind}:${r.id}`)) rows.push(r);
+  for (const r of L2.rows(ui)) if (want.has(r.id) && !r.thumb && !asked.has(`${r.kind}:${r.id}`)) rows.push(r);
   const todo = rows.slice(0, 12);
   for (const r of todo) asked.add(`${r.kind}:${r.id}`);
   await Promise.all(todo.map(async (r) => { const images = ui.libImages?.[`${r.kind}:${r.id}`] || []; if (images.length) r.thumb = await pic(images, ctx.searchImage || ctx.image); if (r.thumb) (ui.libThumbs ||= new Map()).set(`${r.kind}:${r.id}`, r.thumb); }));
@@ -426,6 +427,11 @@ async function act(call, action, ctx) {
       return { local: true };
     }
     case 'ethumb': { await loadThumbs(ui, action.ids, ctx); return { local: true }; }
+    case 'elib': case 'edetail': return L2.act(call, action, ctx);
+    case 'eplay': { // a list of the Library, or a row of it, played inside that list (the context with an offset)
+      const done = await L2.play(call, ui, { kind: action.kind, item: action.item, pos: action.pos, with: action.with, shuffle: action.shuffle === true }, cached, { fail: need, noDevice, warm: ctx.warm });
+      return done === false ? false : { delay: 1200 };
+    }
     case 'ehome': { if (!HOME_SHELVES.includes(action.arg)) return false; await loadShelf(call, action.arg, { ...ctx, force: action.force === true }); return { local: true }; }
     case 'emore': { await searchMore(ui, ctx, ctx.searchCall || call); return { local: true }; }
     case 'playitem': {
@@ -522,6 +528,7 @@ async function extras(call, ctx, playback) {
     tracks,
     lists,
     ...(homeFields(ui, ctx.homeText) || (ctx.homeText ? { homeText: ctx.homeText } : {})),
+    ...(lib2Fields(ui, ctx.libText) || {}),
     ...(libraryFields(ui) || { recent: [], likedSongs: [], playlists: [], albums: [], artists: [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: false }),
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
@@ -553,4 +560,9 @@ function directLibrary(ui) {
 // The Home tab's words (locales/en.json: spotify.home.<key>); {title} is replaced by the card.
 const HOME_STRINGS = { ...RECS.STRINGS, greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', connectText: 'Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.', connectButton: 'Connect Spotify', waiting: 'Waiting for Spotify in the tab that just opened…', ownApp: 'Use my own Spotify app', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
 
-module.exports = { HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+// The Library's words (locales/en.json: spotify.library.*) and the card fields of the Library (see features/spotify-library.js).
+const L2 = LIBM.make({ ask, keepImages, wakeAndRetry, bare });
+const LIB_STRINGS = LIBM.LIB_STRINGS;
+const lib2Fields = (ui, text) => L2.fields(ui, text);
+
+module.exports = { LIB_STRINGS, lib2Fields, HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };

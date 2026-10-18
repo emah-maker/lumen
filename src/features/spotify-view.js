@@ -294,7 +294,8 @@ function listItem(o, kind, tile = false) {
   const pics = k === 'song' ? o.album?.images : o.images;
   const images = tile ? tileUrls(pics) : thumbUrls(pics);
   const genres = k === 'artist' && Array.isArray(o.genres) ? o.genres.map((g) => flat(g, 40).toLowerCase()).filter(Boolean).slice(0, 4) : [];
-  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'album' && typeof o.release_date === 'string' ? { released: o.release_date.slice(0, 10) } : {}), ...(genres.length ? { genres } : {}), ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
+  const count = k === 'playlist' ? o.items?.total ?? o.tracks?.total : k === 'album' ? o.total_tracks : undefined; // (how many songs: a playlist's list is `items` since February 2026, `tracks` before)
+  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'song' && o.album?.name ? { album: flat(o.album.name, 120) } : {}), ...(k === 'album' && typeof o.release_date === 'string' ? { released: o.release_date.slice(0, 10) } : {}), ...(genres.length ? { genres } : {}), ...(Number.isInteger(count) && count >= 0 ? { count } : {}), ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
 }
 const parse = (text) => { try { const b = JSON.parse(text); return b && typeof b === 'object' ? b : null; } catch { return null; } };
 // GET /me/player/queue -> what plays next (the song playing now is not in it).
@@ -412,6 +413,29 @@ const normalizeArtistReleases = (text) => asTiles(parse(text)?.items, 'album'); 
 const normalizeSearchSongs = (text) => asTiles(parse(text)?.tracks?.items, 'track'); // GET /search?type=track
 const normalizeSearchArtists = (text) => asTiles(parse(text)?.artists?.items, 'artist'); // GET /search?type=artist
 const parseSavedMany = (text) => { try { const a = JSON.parse(text); return Array.isArray(a) ? a.map((v) => v === true) : null; } catch { return null; } };
+// ---- the Library: every playlist, Liked Songs, a playlist or album opened in the card, an artist ----
+// One page of songs -> { total, raw (entries read, skipped ones included: the next offset), items: [{ ...song, pos }] }. `kind`: 'playlist' (GET /playlists/{id}/items: each entry's song
+// under `item`, older `track`), 'liked' (GET /me/tracks: `track`), 'album' (GET /albums/{id}/tracks: songs without their album: `cover` is the album's pictures).
+// `pos` is the entry's place in the list as Spotify counts it (an episode, a removed or a local song is skipped but still counts): what "play from here" sends.
+function normalizeTrackPage(kind, text, offset = 0, cover = null) {
+  const b = parse(text);
+  const entries = Array.isArray(b?.items) ? b.items : [];
+  const items = [];
+  entries.forEach((e, i) => {
+    const o = kind === 'album' ? e : (e?.item || e?.track);
+    const it = listItem(kind === 'album' && o ? { ...o, album: { name: '', images: cover || [] } } : o, 'track');
+    if (it) items.push({ ...it, pos: offset + i });
+  });
+  return { total: Number.isInteger(b?.total) ? b.total : offset + entries.length, raw: entries.length, items };
+}
+// GET /artists/{id}/albums -> the albums and singles
+const normalizeArtistAlbums = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => listItem(o, 'album')).filter(Boolean).slice(0, 50);
+// GET /artists/{id}/top-tracks -> { tracks }
+const normalizeArtistTop = (text) => (Array.isArray(parse(text)?.tracks) ? parse(text).tracks : []).map((o, i) => { const it = listItem(o, 'track'); return it ? { ...it, pos: i } : null; }).filter(Boolean).slice(0, 10);
+// GET /me/tracks?limit=1 / /me/playlists... -> a list's total
+const totalOf = (text) => { const b = parse(text); const n = b?.total ?? b?.artists?.total; return Number.isInteger(n) && n >= 0 ? n : null; };
+// GET /me -> the account's id (for the Liked Songs collection uri)
+const normalizeMeId = (text) => { const id = parse(text)?.id; return typeof id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? id : ''; };
 // ---- the Home tab (shelves like open.spotify.com's Home, from the endpoints the Web API gives apps) ----
 // Every answer is cut down to tiles: { id, kind, title, sub, ms, images } (images: candidate addresses for the tile's cover; the card swaps them for small data: URLs).
 const HOME_MAX = 10; // tiles in a shelf
@@ -471,6 +495,19 @@ const PLAYER = {
   albums: () => ['GET', '/me/albums?limit=50&market=from_token'], // (the saved albums: scope user-library-read)
   following: () => ['GET', '/me/following?type=artist&limit=50'], // (the followed artists: scope user-follow-read; answers { artists: { items, next, cursors } })
   recent: () => ['GET', '/me/player/recently-played?limit=30'],
+  // Library
+  libPlaylists: () => ['GET', '/me/playlists?limit=50'],
+  libAlbums: () => ['GET', '/me/albums?limit=50&market=from_token'],
+  libArtists: () => ['GET', '/me/following?type=artist&limit=50'],
+  likedPage: (offset) => ['GET', `/me/tracks?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token`],
+  playlistPage: (id, offset) => ['GET', `/playlists/${id}/items?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token&additional_types=track`],
+  albumPage: (id, offset) => ['GET', `/albums/${id}/tracks?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token`],
+  artistAlbums: (id) => ['GET', `/artists/${id}/albums?include_groups=album,single&limit=50&market=from_token`],
+  artistTop: (id) => ['GET', `/artists/${id}/top-tracks?market=from_token`],
+  me: () => ['GET', '/me'],
+  // Play a row of the Liked Songs: its collection context with an offset; when Spotify refuses that, the songs read so far as a list.
+  playLiked: (userId, pos) => ['PUT', '/me/player/play', { context_uri: `spotify:user:${userId}:collection`, offset: { position: pos } }],
+  playUris: (ids, pos) => ['PUT', '/me/player/play', { uris: ids.map((i) => `spotify:track:${i}`), offset: { position: pos } }],
   // Home (each shelf's source; one request each, cached a minute by the card)
   homeRecent: () => ['GET', '/me/player/recently-played?limit=50'],
   homePlaylists: () => ['GET', '/me/playlists?limit=50'],
@@ -516,7 +553,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS, normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isAllowlistError, ALLOWLIST_MESSAGE, isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

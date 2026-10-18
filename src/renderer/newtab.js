@@ -117,15 +117,16 @@ function applyEffect(look) {
   effectScript.onload = () => window.setBackdropEffect?.(currentLook.effect, currentLook);
   document.head.append(effectScript);
 }
-// [look] Music-reactive home screen: its two scripts are loaded the first time the setting is on, never otherwise.
+// [look] Music-reactive home screen: its three scripts are loaded the first time the setting is on, never otherwise.
 let musicScripts = 0;
 function applyMusicReactive(look) {
   if (window.setMusicReactive) { window.setMusicReactive(look); return; }
-  if (!look.musicReactive || musicScripts) return;
+  if (!(look.musicReactive || document.querySelector('.w-card[data-mreact="1"]')) || musicScripts) return; // (the home screen, or a music card that reacts: either starts it)
   musicScripts = 1;
   const load = (src, next) => { const s = document.createElement('script'); s.src = src; s.onload = next; document.head.append(s); };
-  load('../features/music-react.js', () => load('newtab-music-react.js', () => window.setMusicReactive?.(currentLook)));
+  load('../features/music-react.js', () => load('music-field-canvas.js', () => load('newtab-music-react.js', () => window.setMusicReactive?.(currentLook))));
 }
+window.musicCardsChanged = () => applyMusicReactive(currentLook); // (newtab-widgets.js says when the cards change; the driver replaces this once loaded)
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
 window.widgetLook = () => {

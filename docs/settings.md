@@ -149,7 +149,7 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Effect color | `newTabEffectColor` | `auto` | `auto` (white or your text color; the soft effects have their own palettes), `accent`, `rainbow` or `#rrggbb`. |
 | Effect amount, speed, size | `newTabEffectAmount`, `newTabEffectSpeed`, `newTabEffectSize` | `normal` | `few`/`normal`/`many`, `slow`/`normal`/`fast`, `small`/`normal`/`large`. |
 | React to the pointer | `newTabEffectInteract` | on | Particles reach for the pointer, stars light up near it, bubbles and snow move aside. |
-| Music-reactive home screen | `newTabMusicReactive` | off | The new-tab page's glow, wave and clock bounce follow the music playing in Lumen's own tabs and players. Only the bass, mids and highs levels are read; nothing is recorded or sent. Glow only with Visual effects: Light or software drawing; off with Reduce motion and Performance mode. |
+| Music-reactive home screen | `newTabMusicReactive` | off | The new-tab page's background moves with the sound the PC is playing (Windows' output loopback; any program, the Spotify desktop app included): soft dots drift, burst on the beat, swirl and twinkle. Only loudness numbers are read; nothing is recorded or sent. Simpler (40 dots, 15 frames a second) with Visual effects: Light or software drawing; off with Reduce motion and Performance mode. Settings has a Preview. A music card can react on its own too (its own settings: React to music). |
 | Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 
 ## Search engine
