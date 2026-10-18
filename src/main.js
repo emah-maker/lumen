@@ -8735,11 +8735,19 @@ const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w
 const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe, () => true)); // (the engine keeps the page, hidden, with no web card)
 if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
 // [look] Music-reactive home screen: which Lumen window is playing sound, as a one-tab capture id for the new-tab page (features/music-react-source.js)
-const musicReact = require('./features/music-react-source').create({
-  players: () => [spotifyWeb.webContents(), appleMusicWeb.webContents()],
-  tabs: () => allTabsEverywhere().filter(alive).map((t) => t.view.webContents),
-  isNewTab, enabled: () => readSettings().newTabMusicReactive === true, pick: require('./features/music-react').pickSource,
-});
+let musicReactSrc = null; // (loaded the first time the setting is on and the page asks: nothing of it at startup)
+const musicReactOn = () => readSettings().newTabMusicReactive === true;
+const musicReact = {
+  get src() {
+    return (musicReactSrc ||= require('./features/music-react-source').create({
+      players: () => [spotifyWeb.webContents(), appleMusicWeb.webContents()],
+      tabs: () => allTabsEverywhere().filter(alive).map((t) => t.view.webContents),
+      isNewTab, enabled: musicReactOn, pick: require('./features/music-react').pickSource,
+    }));
+  },
+  source: (wc, have) => (musicReactOn() ? musicReact.src.source(wc, have) : { key: null }),
+  allows: (wc, permission, details, consume) => permission === 'media' && musicReactOn() && musicReact.src.allows(wc, permission, details, consume),
+};
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
 // Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
 // while a card is being read, and ended at quit). Album pictures are made small here (they travel in the new-tab page's address).

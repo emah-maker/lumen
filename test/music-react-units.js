@@ -181,7 +181,7 @@ check('driver: frames are throttled (about 30 a second live, fewer idle) and var
 const preload = read('src/preload/newtab-preload.js');
 check('preload: the new-tab page\'s own preload carries it (the main preload is untouched)', /musicSource/.test(preload) && !/newtab-music/.test(read('src/preload/preload.js')), '');
 const main = read('src/main.js');
-check('main: only the new-tab page\'s top frame is answered, and only with the setting on', /ipcMain\.handle\('newtab-music:source', \(event, have\) => \{\s*if \(!newTabTab\(event\)\) return \{ key: null \};\s*const r = musicReact\.source\(/.test(main) && /enabled: \(\) => readSettings\(\)\.newTabMusicReactive === true/.test(main), '');
+check('main: only the new-tab page\'s top frame is answered, and only with the setting on', /ipcMain\.handle\('newtab-music:source', \(event, have\) => \{\s*if \(!newTabTab\(event\)\) return \{ key: null \};\s*const r = musicReact\.source\(/.test(main) && /musicReactOn = \(\) => readSettings\(\)\.newTabMusicReactive === true/.test(main), '');
 check('main: the permission handlers ask the same module first', /musicReact\.allows\(wc, permission, details, true\)/.test(main) && /musicReact\.allows\(wc, permission, details, false\)/.test(main), '');
 const en = JSON.parse(read('src/locales/en.json'));
 check('locale: the setting has its label and description', typeof en['settings.musicReactive.label'] === 'string' && typeof en['settings.musicReactive.desc'] === 'string' && /settings\.musicReactive\.label/.test(read('src/renderer/settings.js')), '');
