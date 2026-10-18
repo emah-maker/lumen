@@ -12,6 +12,7 @@
 'use strict';
 
 const SV = require('./spotify-view');
+const RECS = require('./spotify-recs');
 const { PLAYER } = SV;
 
 const TAB_MAX_AGE_MS = 5000;
@@ -242,7 +243,8 @@ const currentIndex = (items, id) => items.findIndex((i) => i.id === id);
 // user-read-recently-played, user-follow-read) says why: 'scope'. Sections of Spotify's own Home the API does not expose (its generated "Based on your recent listening" mixes,
 // podcasts, charts and the like) are not drawn: nothing here is invented.
 const HOME_TTL_MS = 60e3;
-const HOME_SHELVES = ['quick', 'jump', 'made', 'recent', 'toptracks', 'topartists', 'new', 'playlists', 'albums', 'artists'];
+// (the order of Spotify's Home: what you were playing, made for you, then suggestions, then your own library; the suggestion shelves: features/spotify-recs.js)
+const HOME_SHELVES = ['quick', 'jump', 'made', 'recommended', 'newfrom', 'recent', 'toptracks', 'topartists', 'moretop', 'related', 'genres', 'genreartists', 'new', 'playlists', 'albums', 'artists'];
 const SOURCES = {
   recent: { req: () => PLAYER.homeRecent(), what: 'recent', read: (b) => ({ albums: SV.normalizeRecentAlbums(b), tracks: SV.normalizeRecentTiles(b), contexts: SV.recentContexts(b) }) },
   playlists: { req: () => PLAYER.homePlaylists(), what: 'library', read: SV.tilePlaylists },
@@ -272,6 +274,9 @@ const SHELVES = {
   albums: { src: ['albums'], build: (d) => d.albums.slice(0, SV.HOME_MAX) },
   artists: { src: ['following'], build: (d) => d.following.slice(0, SV.HOME_MAX) },
 };
+// The suggestion shelves load through their own loaders (they probe endpoints Spotify may refuse, and take a day's seed): `load` -> { ok, why, items, captionVars }
+const RECS_ = RECS.make({ ask, homeSource, busy });
+for (const k of RECS.KEYS) SHELVES[k] = { load: RECS_.LOADERS[k], ttl: RECS.REC_TTL_MS };
 function homeSource(call, ui, name, ctx) {
   const src = SOURCES[name];
   const store = (ui.homeSrc ||= {});
@@ -295,13 +300,22 @@ async function loadShelf(call, key, ctx) {
   if (!shelf) return;
   const home = (ui.home ||= {});
   const cur = home[key];
-  if (cur && (cur.pending || (!ctx.force && cur.ok && ctx.now() - cur.at < HOME_TTL_MS))) return;
-  home[key] = { ok: cur?.ok !== false, why: '', items: cur?.items || [], pending: true, at: ctx.now() };
-  const got = await Promise.all(shelf.src.map((n) => homeSource(call, ui, n, ctx)));
-  if (!got[0].ok) { home[key] = { ok: false, why: got[0].why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
-  const items = keepImages(ui, shelf.build(Object.fromEntries(shelf.src.map((n, i) => [n, got[i].ok ? got[i].data : null]))));
+  if (cur && (cur.pending || (!ctx.force && (cur.ok || cur.why === 'blocked') && ctx.now() - cur.at < (shelf.ttl || HOME_TTL_MS)))) return;
+  home[key] = { ok: cur?.ok !== false, why: '', items: cur?.items || [], pending: true, at: ctx.now(), captionVars: cur?.captionVars };
+  let items;
+  let captionVars;
+  if (shelf.load) {
+    const out = await shelf.load(call, ui, ctx).catch((err) => ({ ok: false, why: 'page', items: [], error: err }));
+    if (!out.ok) { home[key] = { ok: false, why: out.why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
+    items = keepImages(ui, out.items);
+    captionVars = out.captionVars;
+  } else {
+    const got = await Promise.all(shelf.src.map((n) => homeSource(call, ui, n, ctx)));
+    if (!got[0].ok) { home[key] = { ok: false, why: got[0].why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
+    items = keepImages(ui, shelf.build(Object.fromEntries(shelf.src.map((n, i) => [n, got[i].ok ? got[i].data : null]))));
+  }
   for (const r of items) { const t = ui.libThumbs?.get(`${r.kind}:${r.id}`); if (t) r.thumb = t; }
-  home[key] = { ok: true, why: '', items, pending: false, at: ctx.now() };
+  home[key] = { ok: true, why: '', items, pending: false, at: ctx.now(), captionVars };
   ctx.onPart?.(); // (the names first, the covers as they come)
   await Promise.all(items.map(async (r) => {
     if (r.thumb) return;
@@ -320,7 +334,16 @@ function homeFields(ui, text) {
   const home = ui && ui.home;
   if (home) {
     const shelves = {};
-    for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [] };
+    for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [], ...(s.captionVars ? { captionVars: s.captionVars } : {}) };
+    // No item shows twice among the suggestions, and none of them is something already on the Home's own shelves (your library, what you played, your top).
+    const claimed = new Set();
+    for (const [k, s] of Object.entries(shelves)) if (!RECS.KEYS.includes(k)) for (const i of s.items) claimed.add(`${i.kind}:${i.id}`);
+    for (const k of HOME_SHELVES.filter((x) => RECS.KEYS.includes(x))) {
+      const s = shelves[k];
+      if (!s) continue;
+      s.items = s.items.filter((i) => !claimed.has(`${i.kind}:${i.id}`));
+      for (const i of s.items) claimed.add(`${i.kind}:${i.id}`);
+    }
     out.home = { shelves };
   }
   return Object.keys(out).length ? out : null;
@@ -528,6 +551,6 @@ function directLibrary(ui) {
 }
 
 // The Home tab's words (locales/en.json: spotify.home.<key>); {title} is replaced by the card.
-const HOME_STRINGS = { greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', connectText: 'Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.', connectButton: 'Connect Spotify', waiting: 'Waiting for Spotify in the tab that just opened…', ownApp: 'Use my own Spotify app', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
+const HOME_STRINGS = { ...RECS.STRINGS, greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', connectText: 'Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.', connectButton: 'Connect Spotify', waiting: 'Waiting for Spotify in the tab that just opened…', ownApp: 'Use my own Spotify app', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
 
 module.exports = { HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
