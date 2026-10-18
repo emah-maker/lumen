@@ -33,9 +33,11 @@ module.exports = [
   { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
-  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
   { files: ['src/renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
+  // settings-routines.js is loaded before settings.js and uses its helpers (called later, from its builder).
+  { files: ['src/renderer/settings-routines.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', stackRow: 'readonly', armedButton: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-macros.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-macros.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-providers.js is loaded before settings.js and uses its helpers (called later, from its builders).

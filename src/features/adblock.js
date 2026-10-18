@@ -251,7 +251,7 @@ function createAdblock(deps) {
       // logging and script traffic a blocked list entry (play.google.com/log) would have removed.
       // So do the captcha and sign-in providers, on every site (challengeFor): a list entry for one of them leaves a blank frame, a
       // script that never ran or a request that dies, and the form behind the check fails.
-      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url, details.resourceType)) return callback({});
+      if (!filtersPage(page) || details.resourceType === 'mainFrame' || SIGN_IN.test(details.url) || challengeFor(page, details.url, details.resourceType) || spotifyOwn(details.url, details.resourceType, Boolean(details.webContents))) return callback({});
       // A form posted into a frame is the person's submission, never an ad: a stand-in would swallow it.
       if (details.resourceType === 'subFrame' && details.method === 'POST') return callback({});
       const request = fromElectronDetails(details);
@@ -410,6 +410,12 @@ const PROVIDER_URL = new RegExp('^https?://(?:'
 // (a frame or navigation), or when it is the same site as the page that asked (sso.garmin.com on connect.garmin.com).
 const SIGN_IN_HOST = new RegExp('^https?://(?:' + SIGN_IN_LABELS.join('|') + ')[.][a-z0-9.-]+(?=[:/?#]|$)', 'i');
 const CHALLENGE_PATH = /\/cdn-cgi\/challenge-platform\//; // Cloudflare's check runs from the site's own address
+// Spotify's own pictures and its API are never filtered: a card's cover art (a picture on scdn.co or spotifycdn.com) turned into the ad blocker's 1x1 stand-in shows as a
+// blank square, and the cards' own requests (made by Lumen itself, with no page behind them) match third-party rules like a tracker would. Pictures on any page, and the
+// API and picture requests of the cards (no page); nothing else of Spotify's (ads and logging) is let through.
+const SPOTIFY_PICTURES = /^https:\/\/(?:[a-z0-9-]+[.])*(?:scdn[.]co|spotifycdn[.]com)\//i;
+const SPOTIFY_API = /^https:\/\/(?:api|accounts)[.]spotify[.]com\//i;
+const spotifyOwn = (url, type, hasPage) => (SPOTIFY_PICTURES.test(url) && (type === 'image' || !hasPage)) || (!hasPage && SPOTIFY_API.test(url));
 const siteOf = (url) => { try { return parseSite(url).domain || ''; } catch { return ''; } };
 const sameSite = (a, b) => { const x = siteOf(a); return Boolean(x) && x === siteOf(b); };
 const isNavigation = (type) => type === 'mainFrame' || type === 'subFrame';
@@ -421,4 +427,4 @@ const fromProviderFrame = (details, page) => {
   try { const frameUrl = details.frame?.url; return Boolean(frameUrl) && (PROVIDER_URL.test(frameUrl) || (SIGN_IN_HOST.test(frameUrl) && sameSite(page, frameUrl))); } catch { return false; }
 };
 
-module.exports = { createAdblock, hostOf, pageMemo, challengeFor, isProviderUrl };
+module.exports = { createAdblock, hostOf, pageMemo, challengeFor, isProviderUrl, spotifyOwn };

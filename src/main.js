@@ -2654,6 +2654,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
+  tab.askedUrl = typeof url === 'string' ? url : ''; // (what a first load was asked for: the saved session's address for it until it commits)
   // One of Lumen's own pages whose load never commits (white page, spinner, empty console) is loaded again (features/stuck-load.js).
   stuckLoad.guard(wc, {
     url,
@@ -6049,7 +6050,9 @@ function titleBarOverlay() {
 function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
-  const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
+  // (A page still on its first load has no address yet, wc.getURL() is empty until it commits: the address it was asked for stands in, or closing
+  // Lumen while the front page loads dropped that tab, and the next start came up without it, or on another tab.)
+  const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) || (t.view.webContents.isLoading() ? t.askedUrl || '' : '') : t.sleeping ? t.sleepUrl || '' : '');
   // What a tab keeps in the session: web pages, lumen://chat, and the file a file tab shows (a PDF or deck in its viewer is saved as the file's own
   // address: the viewer's moves with an update). Not research tabs: they would come back in the user's session.
   const savedOf = (t) => { const u = urlOf(t); return isWebUrl(u) || chatPage.isChatUrl(u) ? u : sessionFiles.savedUrl(u); };
@@ -8252,6 +8255,7 @@ chatPageRt = chatPage.create({
   goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
   goChat: (id) => { const { id: page } = openTab(chatPage.CHAT_URL, { managerPage: 'chat' }); takePlace(page, id); return page; }, // and the way back: the new-tab page becomes the chat page
   managersOpen: () => managers.open('chat'),
+  routines: () => bgTasks, // "Schedule this" on the page (features/chat-page.js registerRoutines); bgTasks is made below, so it is looked up when asked
   spareContents: () => spareChat?.view.webContents || null, // (the spare chat page, before a tab takes it: the strings it asks for at load)
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -8286,8 +8290,12 @@ agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
 // (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
+let routinesSoon = () => {}; // [widgets] the home page's Routines card looks again when a routine changes; set once the widgets exist
 const bgTasks = require('./features/background-runner').create({
   file: path.join(app.getPath('userData'), 'background-tasks.json'),
+  now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
+  connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
+  routinesChanged: () => routinesSoon(),
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
@@ -8599,7 +8607,8 @@ function cardFetch(url, options, { renew = false } = {}) {
 }
 const widgets = createWidgets({
   readSettings, writeSettings,
-  fetch: (url, options) => net.fetch(url, options),
+  fetch: (url, options) => net.fetch(TEST && global.__widgetFetchMap ? global.__widgetFetchMap(url) : url, options), // (tests map Spotify's picture hosts, which cannot be reached on https without a port, to a local server)
+  resizeThumb: (bytes) => resizeArt(bytes, 128, 75), // a row's or tile's picture in a card: 128 px (rows draw 28, Home tiles 112), about 4 KB
   freshFetch: cardFetch, // a request the browser's session fails at once (net::ERR_FAILED) is sent again through this
   resetNetwork, // a card that got no answer from the network drops these before it asks again (Try again, its retries)
   getSecret: widgetSecret,
@@ -8622,6 +8631,8 @@ const widgets = createWidgets({
   appleMusicWebSignedIn: () => appleMusicEngine.signedIn(),
   appleMusicWebStatus: () => appleMusicWeb.status(),
   appleMusicWebReload: () => appleMusicWeb.reload(),
+  routines: () => bgTasks.routineView(), // the Routines card (features/routines-card.js shapes it)
+  routineAct: (req) => bgTasks.routineAct(req), // its New routine and result buttons: open the sidebar's editor / the routine's result page
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
@@ -8647,6 +8658,7 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 aiStatusSoon = widgets.aiStatusSoon;
+routinesSoon = widgets.routinesSoon;
 scheduler.every('ai-status', 15e3, () => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, { whenHidden: 60e3 }); // (runs at once when a window is back) // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
 // A profile that had no settings file when Lumen started (a fresh install) and has no cards yet gets the Files card: the new-tab page is not empty
@@ -8751,11 +8763,11 @@ const musicReact = {
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
 // Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
 // while a card is being read, and ended at quit). Album pictures are made small here (they travel in the new-tab page's address).
-const resizeArt = (bytes) => {
+const resizeArt = (bytes, height = 160, quality = 82) => {
   const { nativeImage } = require('electron');
   const img = nativeImage.createFromBuffer(Buffer.from(bytes));
   if (img.isEmpty()) return null;
-  return (img.getSize().height > 160 ? img.resize({ height: 160, quality: 'good' }) : img).toJPEG(82);
+  return (img.getSize().height > height ? img.resize({ height, quality: 'good' }) : img).toJPEG(quality);
 };
 const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
   any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
@@ -9219,7 +9231,7 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
   ipcMain.on('newtab-files:strings', (event) => {
     const mine = (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender))) || syntheticTestEvent(event);
     const all = i18n().strings;
-    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.')).map((k) => [k, all[k]])) : {};
+    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.') || k.startsWith('routines.card.')).map((k) => [k, all[k]])) : {};
   });
   // The card's "Turn on" (when Remember files I open is off): this one setting, and nothing else, can be switched on from the new-tab page.
   ipcMain.handle('newtab-files:remember', (event) => {

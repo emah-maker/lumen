@@ -16,7 +16,7 @@ const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`;
 // songs (the heart), saved albums, followed artists. An account signed in before these were added keeps working for the playback buttons; the calls that need a new one answer
 // 403 "Insufficient client scope" and the card then offers to reconnect (scopeError() recognises that answer).
 const BASE_SCOPES = ['user-read-playback-state', 'user-modify-playback-state'];
-const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify', 'user-follow-read'];
+const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify', 'user-follow-read', 'user-top-read']; // (user-top-read: the Home tab's top artists and songs)
 const SCOPES = [...BASE_SCOPES, ...LIBRARY_SCOPES].join(' ');
 const MAX_ART_BYTES = 96e3; // the picture travels in the new-tab page's address, so it stays small
 const ACTIONS = { play: ['PUT', '/me/player/play'], pause: ['PUT', '/me/player/pause'], next: ['POST', '/me/player/next'], previous: ['POST', '/me/player/previous'] };
@@ -271,7 +271,15 @@ function thumbUrls(images) {
   const ok = list.filter((i) => w(i) >= 56).sort((a, b) => w(a) - w(b));
   return [...ok, ...list.filter((i) => w(i) < 56)].map((i) => i.url).slice(0, 2);
 }
-function listItem(o, kind) {
+// Cover pictures for a Home tile (drawn about 112 px wide): the smallest that is at least 128 px, else the biggest there is; Spotify's own hosts only.
+function tileUrls(images) {
+  const list = (Array.isArray(images) ? images : []).filter((i) => i && typeof i.url === 'string' && isImageUrl(i.url));
+  const w = (i) => (Number.isFinite(i.width) ? i.width : 300);
+  const big = list.filter((i) => w(i) >= 128).sort((a, b) => w(a) - w(b));
+  const small = list.filter((i) => w(i) < 128).sort((a, b) => w(b) - w(a));
+  return [...big, ...small].map((i) => i.url).slice(0, 2);
+}
+function listItem(o, kind, tile = false) {
   if (!o || typeof o !== 'object' || !SAFE_ID.test(o.id || '')) return null;
   if (kind === 'track' && o.type && o.type !== 'track') return null; // (an episode is not a song)
   const k = KIND_OF[kind || o.type];
@@ -279,8 +287,9 @@ function listItem(o, kind) {
   if (!k || !title) return null;
   const artists = (Array.isArray(o.artists) ? o.artists : []).map((a) => flat(a?.name, 60)).filter(Boolean).slice(0, 3).join(', ');
   const sub = k === 'song' ? artists : k === 'album' ? [flat(o.artists?.[0]?.name, 60), o.release_date ? String(o.release_date).slice(0, 4) : ''].filter(Boolean).join(' · ') : k === 'playlist' ? flat(o.owner?.display_name, 60) : '';
-  const images = thumbUrls(k === 'song' ? o.album?.images : o.images);
-  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images };
+  const pics = k === 'song' ? o.album?.images : o.images;
+  const images = tile ? tileUrls(pics) : thumbUrls(pics);
+  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
 }
 const parse = (text) => { try { const b = JSON.parse(text); return b && typeof b === 'object' ? b : null; } catch { return null; } };
 // GET /me/player/queue -> what plays next (the song playing now is not in it).
@@ -386,6 +395,56 @@ function normalizeListing(kind, text) {
   return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
 }
 const MAX_LIST = 100;
+// ---- the Home tab (shelves like open.spotify.com's Home, from the endpoints the Web API gives apps) ----
+// Every answer is cut down to tiles: { id, kind, title, sub, ms, images } (images: candidate addresses for the tile's cover; the card swaps them for small data: URLs).
+const HOME_MAX = 10; // tiles in a shelf
+const tile = (o, kind) => listItem(o, kind, true);
+// GET /me/player/recently-played -> the songs, each once, newest first.
+function normalizeRecentTiles(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const it = tile(h?.track, 'track');
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out.slice(0, HOME_MAX);
+}
+// ...the albums those songs are on, each once (the quick picks: what you have been listening to).
+function normalizeRecentAlbums(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const a = h?.track?.album;
+    const it = a ? tile({ ...a, artists: a.artists || h.track.artists }, 'album') : null;
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out;
+}
+// ...the playlists, albums and artists they were played from ("jump back in"): [{ kind, id }], each once, newest first.
+function recentContexts(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const m = typeof h?.context?.uri === 'string' ? /^spotify:(album|playlist|artist):([A-Za-z0-9]{1,64})$/.exec(h.context.uri) : null;
+    if (m && !seen.has(m[0])) { seen.add(m[0]); out.push({ kind: m[1], id: m[2] }); }
+  }
+  return out;
+}
+// GET /me/top/artists, /me/top/tracks
+const normalizeTopArtists = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'artist')).filter(Boolean).slice(0, HOME_MAX);
+const normalizeTopTracks = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'track')).filter(Boolean).slice(0, HOME_MAX);
+// GET /browse/new-releases -> { albums: { items } }
+const normalizeNewReleases = (text) => (Array.isArray(parse(text)?.albums?.items) ? parse(text).albums.items : []).map((o) => tile(o, 'album')).filter(Boolean).slice(0, HOME_MAX);
+// The Home sources of your own library, as tiles.
+const tilePlaylists = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'playlist')).filter(Boolean);
+const tileAlbums = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((e) => tile(e?.album, 'album')).filter(Boolean);
+const tileFollowing = (text) => (Array.isArray(parse(text)?.artists?.items) ? parse(text).artists.items : []).map((o) => tile(o, 'artist')).filter(Boolean);
+// "Made for you": Spotify's own personalised playlists in the account's list (Spotify owns them; the API has no endpoint for them).
+const MADE_RE = /^(?:daily mix \d*|discover weekly|release radar|on repeat|repeat rewind|time capsule|your top songs \d{4}|your summer rewind|your daylist|daylist.*|your \d{4} wrapped|blend)\b/i;
+const madeForYou = (items) => items.filter((p) => p.kind === 'playlist' && p.ownerId === 'spotify' && MADE_RE.test(p.title));
 // Where each list comes from, and what a card button does. All paths are fixed; only checked ids and numbers are put into them.
 const enc = encodeURIComponent;
 const SEARCH_LIMIT = 10; // per kind (the most Spotify's search answers for an app in development mode)
@@ -395,6 +454,14 @@ const PLAYER = {
   albums: () => ['GET', '/me/albums?limit=50&market=from_token'], // (the saved albums: scope user-library-read)
   following: () => ['GET', '/me/following?type=artist&limit=50'], // (the followed artists: scope user-follow-read; answers { artists: { items, next, cursors } })
   recent: () => ['GET', '/me/player/recently-played?limit=30'],
+  // Home (each shelf's source; one request each, cached a minute by the card)
+  homeRecent: () => ['GET', '/me/player/recently-played?limit=50'],
+  homePlaylists: () => ['GET', '/me/playlists?limit=50'],
+  homeAlbums: () => ['GET', '/me/albums?limit=12&market=from_token'],
+  homeFollowing: () => ['GET', '/me/following?type=artist&limit=12'],
+  topArtists: () => ['GET', '/me/top/artists?limit=10&time_range=medium_term'],
+  topTracks: () => ['GET', '/me/top/tracks?limit=10&time_range=medium_term'],
+  newReleases: () => ['GET', '/browse/new-releases?limit=10'],
   liked: () => ['GET', '/me/tracks?limit=50&market=from_token'], // (the saved songs, newest first: still there after Spotify's February 2026 changes)
   devices: () => ['GET', '/me/player/devices'],
   // More songs for a search: the songs alone, the next page (Spotify's development mode answers 10 at most per request).
@@ -425,7 +492,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  scopeError, switches, thumbUrls, listItem, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

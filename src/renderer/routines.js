@@ -55,17 +55,48 @@
         return h('li', { className: 'routine-item' }, toggle, row, run);
       })));
     } else out.push(h('p', { className: 'chat-list-empty', textContent: T('routines.empty') }));
+    out.push(quietBlock(state));
     out.push(h('section', { className: 'routine-templates', 'aria-label': T('routines.templates') }, h('h3', { textContent: T('routines.templates') }),
-      TEMPLATES.map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; })));
+      h('ul', { className: 'routine-template-list' }, templates().filter((tp) => !tp.page).map((tp) => templateCard(tp, items, state))),
+      h('div', { className: 'routine-template-more' }, templates().filter((tp) => tp.page).map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; }))));
     return out;
   }
 
-  // Starter routines. `page`: the start page is the tab in front (the user can change it).
-  const TEMPLATES = [
-    { key: 'news', schedule: { repeat: 'weekdays', time: '08:00' } },
-    { key: 'changes', schedule: { repeat: 'daily', time: '09:00' }, page: true },
-    { key: 'weekly', schedule: { repeat: 'weekly', days: [1], time: '09:00' }, page: true },
-  ];
+  // Starter routines come from main (features/routines.js TEMPLATES, in the tasks state): a one-click card adds one switched off;
+  // `page` ones start at the tab in front, so they open the editor.
+  const templates = () => core.state().templates || [];
+  async function addTemplate(tp) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const res = await api.saveRoutine({ title: name, prompt: T(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, confirmed: true });
+    core.announce(res.ok ? T('routines.template.added', { name }) : res.error);
+    await core.refresh();
+  }
+  function templateCard(tp, items, state) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const have = items.some((x) => x.routine?.template === tp.key);
+    const app = tp.connector ? T(`routines.connector.${tp.connector}`) : '';
+    const add = btn(have ? T('routines.template.have') : T('routines.template.add'), () => addTemplate(tp), 'btn routine-template-add');
+    add.disabled = have || !state.settings.enabled;
+    add.setAttribute('aria-label', `${add.textContent}: ${name}`);
+    return h('li', { className: 'routine-template-card' },
+      h('span', { className: 'task-text' }, h('span', { className: 'task-title', textContent: name }),
+        h('span', { className: 'task-meta', textContent: `${T(`routines.template.${tp.key}.description`)} ${scheduleText({ type: 'routine', ...tp.schedule })}` }),
+        tp.connector ? h('span', { className: `task-meta routine-template-conn${(state.connected || []).includes(tp.connector) ? ' ready' : ''}`, textContent: (state.connected || []).includes(tp.connector) ? T('routines.template.ready', { app }) : T('routines.template.needs', { app }) }) : null),
+      add);
+  }
+
+  // Quiet hours: no routine starts on its own in this daily window; one due then runs once when it ends.
+  function quietBlock(state) {
+    const q = state.settings.quiet || { on: false, from: '22:00', to: '07:00' };
+    const set = (patch) => api.settings({ quiet: { ...q, ...patch } }).then(core.refresh);
+    const on = h('input', { type: 'checkbox', checked: q.on, onchange: (e) => set({ on: e.target.checked }) });
+    const time = (value, key, label) => { const i = h('input', { type: 'time', value, required: true, onchange: (e) => { if (e.target.value) set({ [key]: e.target.value }); } }); i.setAttribute('aria-label', label); return i; };
+    return h('details', { className: 'routine-quiet', open: q.on },
+      h('summary', { textContent: T('routines.quiet.title') }),
+      h('label', { className: 'task-check' }, on, T('routines.quiet.on')),
+      h('div', { className: 'routine-quiet-times' }, h('span', { textContent: T('routines.quiet.from') }), time(q.from, 'from', T('routines.quiet.from')), h('span', { textContent: T('routines.quiet.to') }), time(q.to, 'to', T('routines.quiet.to'))),
+      h('p', { className: 'task-meta', textContent: T('routines.quiet.desc') }));
+  }
 
   // ---- a routine's history, in its task page
   function history(task) {
@@ -120,6 +151,7 @@
     const start = h('input', { type: 'text', spellcheck: false, value: task?.routine?.startUrl || '', placeholder: 'https://' });
     const sites = h('input', { type: 'text', spellcheck: false, value: task ? task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', ') : pv.sites.join(', ') });
     let sitesTouched = Boolean(task);
+    let templateKey = ''; // set when the editor was filled from a template (kept on the routine so the cards know it is added)
     sites.addEventListener('input', () => { sitesTouched = true; });
     const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === (task?.model || pv.model), disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
@@ -198,6 +230,7 @@
       repeat.value = tp.schedule.repeat;
       time.value = tp.schedule.time || '08:00';
       for (const i of days.querySelectorAll('input')) i.checked = (tp.schedule.days || [1]).includes(Number(i.value));
+      templateKey = tp.key;
       sitesTouched = false;
       sync();
       followSites();
@@ -209,7 +242,7 @@
       save.disabled = true;
       const res = await api.saveRoutine({
         id: task?.id, title: name.value, prompt: what.value, startUrl: start.value, sites: sitesTouched ? sites.value.split(',').map((x) => x.trim()).filter(Boolean) : undefined, // untouched: worked out from the request and start page
-        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, confirmed: true,
+        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, confirmed: true,
       });
       if (!res.ok) { error.textContent = res.error; error.hidden = false; save.disabled = false; return; }
       if (fromComposer) { composerInput.value = ''; composerInput.dispatchEvent(new Event('input')); }
@@ -222,7 +255,7 @@
     box.append(
       h('h2', { textContent: task ? T('routines.edit.title') : T('routines.create.title') }),
       task ? null : h('div', { className: 'routine-template-row', role: 'group', 'aria-label': T('routines.templates') }, h('span', { className: 'task-meta', textContent: T('routines.templates.start') }),
-        TEMPLATES.map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
+        templates().map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
       field(T('routines.field.name'), name),
       field(T('tasks.create.prompt'), what),
       field(T('routines.field.start'), start),
@@ -281,5 +314,49 @@
     };
   }
 
-  window.lumenRoutines = { list, history, scheduleText, open };
+  // ---- opened from elsewhere (the home page card, Settings): main sends tasks:open { routine: 'new' | 'edit', id, prompt }
+  async function fromMain({ routine, id, prompt } = {}) {
+    if (routine === 'edit') {
+      const task = await api.get(id);
+      if (!task) return;
+      await core.openPanel(id, { tab: 'routines' });
+      open({ task });
+      return;
+    }
+    open({ prompt: typeof prompt === 'string' ? prompt : '' });
+  }
+
+  // ---- "Every day at 8am check my email" typed in the message box: a small bar offers to make it a routine.
+  // It never sends or saves anything by itself, and the message still sends normally.
+  (() => {
+    const phrase = window.routinePhrase;
+    if (!phrase || !composerInput) return;
+    const label = h('span', { className: 'routine-offer-text' });
+    const yes = btn(T('routines.offer.button'), () => {}, 'btn primary routine-offer-yes');
+    const no = btn(T('routines.offer.dismiss'), () => {}, 'btn routine-offer-no');
+    const bar = h('div', { className: 'routine-offer', role: 'status', hidden: true }, label, yes, no);
+    composerInput.before(bar);
+    let timer = null;
+    let seq = 0;
+    let dismissedFor = '';
+    const hide = () => { seq++; clearTimeout(timer); bar.hidden = true; };
+    composerInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      const text = composerInput.value.trim();
+      if (!core.state().settings.enabled || text === dismissedFor || !phrase.looksScheduled(text)) { hide(); return; }
+      timer = setTimeout(async () => {
+        const mine = ++seq;
+        const res = await api.routinePreview({ text });
+        if (mine !== seq || composerInput.value.trim() !== text) return;
+        if (!res.parsed) { bar.hidden = true; return; }
+        label.textContent = `${T('routines.offer.text')} ${scheduleText({ type: 'routine', ...res.parsed.schedule })}`;
+        yes.onclick = () => { hide(); open({ prompt: res.parsed.prompt, schedule: res.parsed.schedule, fromComposer: true }); };
+        no.onclick = () => { dismissedFor = text; hide(); composerInput.focus(); };
+        bar.hidden = false;
+      }, 400);
+    });
+    composerInput.form?.addEventListener('submit', hide);
+  })();
+
+  window.lumenRoutines = { list, history, scheduleText, open, fromMain };
 })();

@@ -6,6 +6,8 @@ A routine is a request the AI repeats on a schedule: "every weekday at 8:00, giv
 
 - **Tasks panel → Routines → New routine.** Give it a name, say what it should do, optionally a start page, and pick when it runs. The editor shows the next three run times as you change the schedule. Three templates (Morning news brief, Check a page for changes, Weekly summary of a site) fill the form for you.
 - **`/routine` in the message box.** Type `/routine every weekday at 8am: summarize the news` and press Enter: the editor opens with the schedule and the request filled in. Understood in front of the request: `every day at 9`, `daily at 9:30pm`, `every weekday at 7am`, `every monday and friday 7:15`, `weekly`, `every 4 hours`, `every hour`, `every morning`.
+- **Settings → AI and agents → Routines** lists every routine with a switch, its schedule, next and last run and a run history, and has **New routine** and one-click templates (Morning email check, Canvas: what's due today, Daily news brief, Weekly calendar preview). A template is added switched off, and says whether the app it needs is connected. **Quiet hours** there keep routines from starting overnight: a routine due then waits and runs once when they end, marked as ran late. Edit opens the editor in the sidebar.
+- **On the full-page chat (`lumen://chat`)** the same three ways work with a compact **Schedule this** dialog (name, request, and when in words, with the next runs shown): the clock button beside Copy, `/routine`, and a **Make this a routine?** offer above the message box while you type a message that starts with a schedule. The routine is saved switched on; edit it in the sidebar or Settings.
 - **Save as routine** (the clock button beside Copy on a reply) turns the request that led to that reply into a routine.
 - **Repeat on a schedule instead…** in the "Run in the background?" card does the same for a background task.
 
@@ -16,7 +18,11 @@ Times are in your computer's time zone and follow daylight saving: 8:00 stays 8:
 ## When it runs
 
 - **Only while Lumen is running.** On a Mac, closing the window keeps Lumen running if *Keep Lumen running when its window is closed* is on (Settings → General → Behavior, on by default).
-- **Missed runs run once.** If Lumen was closed or the computer asleep at a routine's time, it runs once when Lumen starts or the computer wakes, however many times were missed. Its history says "caught up" and when it was due. Turning a routine back on, or changing its schedule, does not run the times before.
+- **Missed runs run once.** If Lumen was closed or the computer asleep at a routine's time, it runs once when Lumen starts or the computer wakes, however many times were missed. Its history says "ran late" and when it was due. Turning a routine back on, or changing its schedule, does not run the times before.
+- **Quiet hours.** In the Routines tab (and Settings → Routines) you can set a daily window, for example 22:00 to 07:00, in which no routine starts on its own. A run due then waits and runs once when the window ends, marked "ran late". Run now ignores quiet hours.
+- **Time zones and daylight saving.** Times are wall-clock in the computer's time zone, so 8:00 stays 8:00 when clocks change or you travel; "every N hours" counts real hours.
+- **Approvals still apply.** A scheduled run never sends, posts, buys or deletes silently: those steps, and sites outside the routine's list, pause the run and ask (a notification says so, and the home card and Settings show "Needs your OK").
+- **Templates are off until you turn them on.** One click adds Morning email check (Gmail), Canvas: what's due today (Canvas), Daily news brief and Weekly calendar preview (Google Calendar). The connector ones read the services you connected in Settings → AI and agents → Connectors (read only, no passwords); without the connector the routine says how to connect it.
 - **Never two at once.** If a routine's time comes while its previous run is still going (or still waiting for a free slot), that time is skipped and the history says so.
 - **The concurrency cap applies.** A due routine waits in line with the other background tasks (Tasks → Settings → Tasks at the same time, and one at a time in Performance mode).
 - **Offline, it waits.** A routine that comes due without a connection starts when the connection is back.

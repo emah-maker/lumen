@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { mergeChangelog, mergeSuiteList, mergeBlocker, lockDecision } = require('./release-lib');
-const { Stop, say, run, must, git, gh, ghJson, mainCheckout, worktreesDir, listWorktrees, waitForCi, alive } = require('./ship-common');
+const { Stop, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, waitForCi, alive } = require('./ship-common');
 
 const CHANGELOG = 'CHANGELOG.md';
 const SUITE_LIST = 'scripts/test-all.js';
@@ -126,8 +126,10 @@ async function landOne(pr, opts) {
 async function landRun(pr, opts) {
   const main = mainCheckout(process.cwd());
   say('pr', `#${pr}`);
-  must(git(main, 'fetch', '-q', 'origin'), 'git fetch');
-  const info = ghJson(main, 'pr', 'view', String(pr), '--json', 'number,title,state,headRefName,headRefOid,baseRefName,isCrossRepository,isDraft');
+  // Every network step retries on a dropped connection or a GitHub 5xx (ship-common.js: NET_TRIES attempts, 2 s, 4 s, 8 s ... between them).
+  const log = (step) => (m) => say(step, m);
+  must(await gitRetry(main, ['fetch', '-q', 'origin'], { log: log('pr') }), 'git fetch');
+  const info = await ghJsonRetry(main, ['pr', 'view', String(pr), '--json', 'number,title,state,headRefName,headRefOid,baseRefName,isCrossRepository,isDraft'], { tries: NET_TRIES, log: log('pr') });
   const existing = listWorktrees(main).find((w) => w.branch === info.headRefName);
   if (opts.dryRun) return dryRun(main, info, existing);
   if (info.state !== 'OPEN') throw new Stop(`PR #${pr} is ${info.state}`);
@@ -161,7 +163,12 @@ async function landRun(pr, opts) {
   } else say('bundles', `up to date${churnAfter.length ? ' (line-ending churn reset)' : ''}`);
 
   const unpushed = Number(must(git(wt, 'rev-list', '--count', `origin/${branch}..HEAD`), 'git rev-list'));
-  if (unpushed) { must(git(wt, 'push', '-q'), 'git push'); say('push', `pushed ${unpushed} commit(s)`); } else say('push', 'nothing new to push');
+  if (unpushed) {
+    // A push that dropped after reaching GitHub counts as done: the remote branch is already at HEAD.
+    const pushed = () => { const r = git(wt, 'ls-remote', 'origin', `refs/heads/${branch}`); return r.status === 0 && r.stdout.startsWith(must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse')) ? { status: 0, stdout: '' } : null; };
+    must(await gitRetry(wt, ['push', '-q'], { recheck: pushed, log: log('push') }), 'git push');
+    say('push', `pushed ${unpushed} commit(s)`);
+  } else say('push', 'nothing new to push');
   const sha = must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse');
 
   say('ci', `waiting on ${sha.slice(0, 8)}`);
@@ -170,11 +177,13 @@ async function landRun(pr, opts) {
 
   // Re-read the PR right before merging: it must still be open with the head CI passed on (a commit pushed meanwhile would be lost).
   const mainBefore = must(git(wt, 'rev-parse', 'origin/main'), 'git rev-parse');
-  const blocked = mergeBlocker(ghJson(wt, 'pr', 'view', String(pr), '--json', 'state,headRefOid'), sha);
+  const blocked = mergeBlocker(await ghJsonRetry(wt, ['pr', 'view', String(pr), '--json', 'state,headRefOid'], { tries: NET_TRIES, log: log('merge') }), sha);
   if (blocked) throw new Stop(`not merging #${pr}: ${blocked}`);
-  must(gh(wt, 'pr', 'merge', String(pr), '--squash', '--match-head-commit', sha), 'gh pr merge');
+  // A transient error may hit after GitHub merged: before each retry, an already-merged PR counts as success.
+  const merged = () => { const j = gh(wt, 'pr', 'view', String(pr), '--json', 'state'); try { return j.status === 0 && JSON.parse(j.stdout).state === 'MERGED' ? { status: 0, stdout: '' } : null; } catch { return null; } };
+  must(await ghRetry(wt, ['pr', 'merge', String(pr), '--squash', '--match-head-commit', sha], { tries: NET_TRIES, recheck: merged, log: log('merge') }), 'gh pr merge');
   say('merged', `#${pr} squash-merged (head ${sha.slice(0, 8)})`);
-  git(main, 'fetch', '-q', 'origin');
+  await gitRetry(main, ['fetch', '-q', 'origin'], { log: log('merged') });
   // Verify main now carries what the PR changed: the files the PR touched must match the head's content (unless main moved on since).
   const touched = git(wt, 'diff', '--name-only', mainBefore, sha).stdout.split('\n').filter(Boolean);
   if (touched.length && git(wt, 'diff', '--quiet', sha, 'origin/main', '--', ...touched).status !== 0) {

@@ -27,7 +27,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
 // ---------- 1. lint ----------
 // Files whose look was brought onto the scale. (Chat-page internals, the TradingView card and the generated bundle are left out.)
-const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'pdfviewer.css', 'eml.css', 'private.css'];
+const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'settings-routines.css', 'pdfviewer.css', 'eml.css', 'private.css'];
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
 const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
