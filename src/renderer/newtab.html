@@ -76,18 +76,21 @@
          blur behind the cards below, left vertical bands on some graphics cards). */
     }
     @media (max-width: 760px) { #effect { opacity: 0.35; } }
-    /* [look] Music-reactive home screen (newtab-music-react.js; off by default). Two decorative layers behind the content, drawn in the accent
-       colour: a glow at the top that follows the bass, a soft wave along the bottom that follows the mids. Their opacity is capped well
-       under what would touch the text's contrast (features/music-react.js GLOW_CAP / WAVE_CAP; test/music-react-units.js works the worst
-       case out), and only opacity and transform change, so no layout and no repaint of the cards. The clock card and the music cards
-       grow by about one per cent on a beat. Visual effects: Light and software drawing get the glow only (no wave, no bounce). */
-    #mr-glow, #mr-wave { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
-    #mr-glow { opacity: calc(var(--mr-glow, 0) * var(--mr-gain, 1)); background: radial-gradient(62% 46% at 50% 16%, var(--accent), transparent 72%); }
-    #mr-wave { opacity: calc(var(--mr-wave, 0) * var(--mr-gain, 1)); transform: translate3d(0, calc(var(--mr-wave, 0) * -400px), 0); background: radial-gradient(70% 22% at 30% 108%, var(--accent), transparent 72%), radial-gradient(60% 18% at 75% 112%, var(--accent), transparent 72%); }
-    body.on-media { --mr-gain: 1.5; } /* over a dark picture or gradient (features/music-react.js MEDIA_GAIN); a light background reads like Plain */
-    body.on-media.tone-light { --mr-gain: 1; }
-    body.mr-on :is(#clock-card, .w-card.spotify, .w-card.applemusic) { scale: calc(1 + var(--mr-beat, 0) * 0.012); }
-    @media (prefers-reduced-motion: reduce) { #mr-glow, #mr-wave { display: none; } body.mr-on :is(#clock-card, .w-card) { scale: none; } }
+    /* [look] Music-reactive home screen (newtab-music-react.js; off by default). One canvas behind the content, drawn in the accent's tones: soft
+       dots that drift, burst on the beat, swirl and twinkle, and a glow that flows behind them. Its opacity is capped well under what would touch
+       the text's contrast and it is cut away to a tenth behind the content column (features/music-react.js DOT_CAP / FLOW_CAP / COLUMN_GAIN;
+       test/music-react-units.js works the worst case out). Frosted and Clear cards let the page show through, so there it is a little fainter still.
+       The clock card and the music cards grow by about one per cent on a beat. */
+    #mr-canvas { position: fixed; inset: 0; z-index: -1; width: 100vw; height: 100vh; pointer-events: none; }
+    body[data-wglass="frosted"] #mr-canvas, body[data-wglass="clear"] #mr-canvas { opacity: 0.25; }
+    body.mr-bg #clock-card { scale: calc(1 + var(--mr-beat, 0) * 0.012); }
+    /* [look] A music card that reacts ("React to music" in its own settings): its cover breathes on the beat (up to 4 %) and a faint accent glow rims
+       the card's edge (up to 7 % opacity, 11 % over a dark picture or gradient: features/music-react.js CARD_HALO_CAP, CARD_PULSE; the middle, where
+       the text is, stays clear). Opacity and scale only. */
+    .w-card[data-mreact="1"]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(farthest-corner at 50% 50%, transparent 58%, var(--accent) 100%); opacity: calc(var(--mr-halo, 0) * 0.07); }
+    body.on-media:not(.tone-light) .w-card[data-mreact="1"]::after { opacity: calc(var(--mr-halo, 0) * 0.11); }
+    .w-card[data-mreact="1"] .sp-art { scale: calc(1 + var(--mr-pulse, 0) * 0.04); }
+    @media (prefers-reduced-motion: reduce) { #mr-canvas { display: none; } body.mr-bg #clock-card, .w-card[data-mreact="1"] .sp-art { scale: none; } .w-card[data-mreact="1"]::after { display: none; } }
     /* Over an effect the search box, switch and cards are less see-through. */
     body.on-media.has-effect input:not(:focus) { background: rgba(28, 28, 32, 0.78); }
     body.on-media.has-effect .w-card, body.on-media.has-effect .privacy,
@@ -446,7 +449,9 @@
     .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: var(--rail-bg-hot); box-shadow: 0 0 0 0.5px var(--border); }
     .w-stack:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
     .w-stack-dots { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 0; }
-    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 1 24px; width: 24px; height: 24px; min-height: 13px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: default; }
+    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; min-height: 24px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: pointer; transition: background-color 150ms var(--ease); }
+    .w-stack-dot:hover { background: var(--hover); }
+    .w-stack-dot:focus-visible { background: var(--hover); }
     .w-stack-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rail-dot); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
     .w-stack-dot[aria-current="true"]::before { background: var(--rail-dot-on); scale: 1.25; }
     .w-card:hover .w-stack-dot::before, .w-card:focus-within .w-stack-dot::before, .w-card.rail-on .w-stack-dot::before { background: color-mix(in srgb, var(--text) 52%, transparent); }
@@ -469,7 +474,7 @@
     .w-card.rail-end .w-stack-dot[aria-current="true"]::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
     @keyframes w-rail-end { 0%, 100% { scale: 1.25; } 40% { scale: 1.9; } }
     @keyframes w-rail-intro { 0%, 100% { scale: 1; opacity: 0.92; } 22%, 62% { scale: 1.14; opacity: 1; background: color-mix(in srgb, var(--bg) 58%, transparent); box-shadow: 0 0 0 0.5px var(--border), 0 0 0 5px color-mix(in srgb, var(--accent) 24%, transparent); } }
-    @container card (max-height: 150px) { .w-stack-dot { min-height: 11px; } .w-stack-nav { display: none; } }
+    @container card (max-height: 150px) { .w-stack-dot { min-height: 24px; } .w-stack-nav { display: none; } }
     .w-stack-nav { appearance: none; display: grid; place-items: center; flex: none; width: 24px; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-stack-nav svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .w-card:hover .w-stack-nav, .w-stack:focus-within .w-stack-nav { opacity: 1; }
@@ -493,8 +498,8 @@
     .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     body.w-editing .w-stack-edit { display: grid; pointer-events: auto; }
     .w-ghost.stack { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, transparent); scale: 0.96; }
-    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot::before, .w-stack-nav { transition: none; } }
-    body.calm .w-stack, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
+    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot, .w-stack-dot::before, .w-stack-nav { transition: none; } }
+    body.calm .w-stack, body.calm .w-stack-dot, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
     /* Edit stack: a small panel beside the card (Edit layout) */
     .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
     .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }

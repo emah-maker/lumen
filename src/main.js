@@ -1041,7 +1041,7 @@ function setupPermissions() {
 
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
     // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
-    if (musicReact.allows(wc, permission, details, true)) { mediaPages.add(wc); return callbackAsked(true); } // [look] the new-tab page's analyser: one tab's sound, audio only
+    if (musicReact.allowsDisplay(wc, permission, details)) return callbackAsked(true); // [look] the new-tab page's analyser may listen to the PC's sound (loopback), nothing else
     const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
     if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
@@ -1074,7 +1074,7 @@ function setupPermissions() {
   });
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
-    musicReact.allows(wc, permission, details, false) ? true : // [look] Music-reactive home screen (the new-tab page, audio only)
+    musicReact.allowsDisplay(wc, permission, details) ? true : // [look] Music-reactive home screen (the new-tab page, the PC's sound only)
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
     spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
@@ -1117,6 +1117,10 @@ async function askOpenExternal(wc, details, decisions = externalDecisions) { // 
 // getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
 // closing the menu shares nothing. `owner`: the window asking, when it isn't the current one (a private window).
 async function pickScreenToShare(request, callback, owner = null) {
+  { // [look] the music-reactive home screen listens to the PC's sound (loopback, a copy: nothing is muted); the video Chromium insists on is the page's to stop
+    let wc = null; try { wc = require('electron').webContents.fromFrame(request.frame); } catch { /* gone */ }
+    if (wc && musicReact.takeDisplay(wc, request.frame === wc.mainFrame)) return callback({ audio: 'loopback', video: request.frame });
+  }
   const shown = owner && !owner.isDestroyed() ? owner : win;
   let done = false;
   const answer = (streams) => {
@@ -8749,17 +8753,13 @@ const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().
 if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
 // [look] Music-reactive home screen: which Lumen window is playing sound, as a one-tab capture id for the new-tab page (features/music-react-source.js)
 let musicReactSrc = null; // (loaded the first time the setting is on and the page asks: nothing of it at startup)
-const musicReactOn = () => readSettings().newTabMusicReactive === true;
+const musicCardsOn = () => { try { return widgets.list().some((w) => (w.type === 'spotify' || w.type === 'applemusic') && w.react === true); } catch { return false; } }; // (a music card with "React to music" on)
+const musicReactOn = () => readSettings().newTabMusicReactive === true || musicCardsOn();
 const musicReact = {
-  get src() {
-    return (musicReactSrc ||= require('./features/music-react-source').create({
-      players: () => [spotifyWeb.webContents(), appleMusicWeb.webContents()],
-      tabs: () => allTabsEverywhere().filter(alive).map((t) => t.view.webContents),
-      isNewTab, enabled: musicReactOn, pick: require('./features/music-react').pickSource,
-    }));
-  },
-  source: (wc, have) => (musicReactOn() ? musicReact.src.source(wc, have) : { key: null }),
-  allows: (wc, permission, details, consume) => permission === 'media' && musicReactOn() && musicReact.src.allows(wc, permission, details, consume),
+  get src() { return (musicReactSrc ||= require('./features/music-react-source').create({ isNewTab, enabled: musicReactOn })); },
+  start: (wc) => (musicReactOn() ? musicReact.src.start(wc) : { ok: false, why: 'off' }),
+  allowsDisplay: (wc, permission, details) => (permission === 'display-capture' || permission === 'media') && musicReactOn() && Boolean(musicReactSrc) && musicReactSrc.allowsDisplay(wc, permission, details),
+  takeDisplay: (wc, top) => musicReactOn() && Boolean(musicReactSrc) && musicReactSrc.takeDisplay(wc, top),
 };
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
 // Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
@@ -9256,10 +9256,10 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
     return true;
   });
   // [look] Music-reactive home screen: what is playing -> { key, id } (one tab's capture id; features/music-react-source.js says what it is and is not)
-  ipcMain.handle('newtab-music:source', (event, have) => {
-    if (!newTabTab(event)) return { key: null };
-    const r = musicReact.source(event.sender, Number.isFinite(have) ? have : null);
-    if (r.id) event.sender.executeJavaScript('0', true).catch(() => {}); // (a page may only start its analyser after a touch; this one has been asked by its own user to listen, in Settings, so the page counts as touched)
+  ipcMain.handle('newtab-music:source', (event) => {
+    if (!newTabTab(event)) return { ok: false, why: 'off' };
+    const r = musicReact.start(event.sender);
+    if (r.ok) event.sender.executeJavaScript('0', true).catch(() => {}); // (getDisplayMedia needs a touch on the page: this one was asked to listen by its own user, in Settings, so the page counts as touched)
     return r;
   });
   ipcMain.handle('newtab-ai:pick', async (event) => {

@@ -5,15 +5,13 @@
 // instant and a web page's frame never reloads. Only the shown card and its two neighbors are drawn (the rest
 // are content-visibility: hidden); each widget still refreshes on its own schedule.
 //
-// Cycling, like iOS: the mouse wheel or a two-finger swipe (deltaY) and a one-finger swipe on touch move the
-// shown card with the hand, then a spring takes it to the next card (or back), carrying the release velocity;
-// grabbing it mid-flight takes over from where it is. The motion is Smart Stack's: a full card slides up and
+// Cycling is only by the rail's dots, arrows and keys: never the mouse wheel, a trackpad scroll or a swipe, so
+// scrolling can't move a stack off a widget by accident. A spring takes the card to the next one. The motion is Smart Stack's: a full card slides up and
 // out while the next one comes up from below, edge to edge, inside the stack's own frame (each card is clipped
 // to it, so nothing leaks over a neighbor), with overlapping opacity and a slight recede (transform, opacity and
 // clip-path only; a plain crossfade with Reduce motion, nothing in Performance mode). A switch changes the
 // stack's classes in place: the grid is not drawn again (features/widget-stack-motion.js slide).
-// Wrapping: the last card is followed by the first. At an end a swipe meets resistance first (a rubber band, and a
-// firmer push to wrap); keys, dots, arrows and the auto-rotate wrap freely.
+// Wrapping: the last card is followed by the first. Keys, dots, arrows and the auto-rotate wrap freely.
 // The stack's rail on the right edge (in its own gutter of the card's padding) has page dots (buttons) and, on
 // hover or focus, an up and a down arrow. It is faint at rest and shows fully on hover, focus and while the stack
 // moves. The rail is the focusable stack: Up/Down and PageUp/PageDown switch, Home and End go to the ends, and
@@ -33,7 +31,6 @@
   const say = (t) => window.widgetAnnounce?.(t);
   const txt = (key, vars) => window.WidgetEdit.text(key, vars, window.lumenI18n?.strings);
   const PENDING_MS = 2500; // how long a switch the browser hasn't confirmed yet is kept on screen
-  const PX_MAX = 160; // px of wheel that move one card (less for a short card: its own height)
   const LONG_PRESS_MS = 520; // a press on the rail this long opens Edit stack…
   const RAIL_MS = 1400; // the rail stays fully visible this long after a switch
   const TOUCH_HOLD_MS = 10 * 60 * 1000; // after a person cycled or touched a stack their order wins: smart rotate leaves it be this long
@@ -42,7 +39,6 @@
   let groups = new Map(); // widget id -> { sid, members: [ids], top, rotate, smart }
   let lastRaw = [];
   let eng = null; // the swipe or switch in progress: { sid, topId, p (drawn), raw (swipe, before resistance), edge, v, target, jump, samples, raf, h, px }
-  let endCarry = null; // { sid, raw, t }: a wheel notch that met the end of a stack and sprang back, kept for the next one
   let expecting = null; // Add widget > Smart Stack was chosen: { sids: the stacks there were, until }, so the new one's panel opens
 
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
@@ -213,7 +209,6 @@
     c.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); openRailMenu(card, c, e.clientX, e.clientY); });
     c.addEventListener('pointerdown', (e) => onRailPress(e, card, c));
     card.append(c, why);
-    card.addEventListener('pointerdown', (e) => onTouchStart(e, card));
     card.addEventListener('contextmenu', (e) => onCardMenu(e, card, c)); // a right-click anywhere on the card is the rail's menu
     return c;
   }
@@ -327,26 +322,9 @@
   function begin(g, extra = {}) {
     if (eng) settleNow();
     const h = cardOf(g.top)?.offsetHeight || 160;
-    eng = { sid: g.sid, topId: g.top, p: 0, raw: 0, edge: false, exempt: 0, v: 0, target: null, jump: null, peekId: null, samples: [], raf: 0, t: 0, wheelTimer: 0, h, px: Math.max(80, Math.min(PX_MAX, h)), ...extra };
+    eng = { sid: g.sid, topId: g.top, p: 0, raw: 0, edge: false, exempt: 0, v: 0, target: null, jump: null, peekId: null, samples: [], raf: 0, t: 0, h, ...extra };
     flashRail(cardOf(g.top));
     return eng;
-  }
-  // Take over a card that is in flight: the swipe carries on from where the card is drawn.
-  function grab() {
-    stop();
-    eng.exempt = eng.target ? Math.sign(eng.target) : eng.exempt; // a landing in progress is not held back at the end
-    eng.target = null;
-    eng.raw = eng.edge && !eng.exempt ? SM.unelastic(eng.p) : eng.p;
-  }
-  // Add a swipe of `step` cards to the raw swipe: the drawn progress follows it (resisted at an end).
-  function swipe(g, step) {
-    eng.raw = Math.max(-1, Math.min(1, eng.raw + step));
-    const sign = Math.sign(eng.raw);
-    if (eng.exempt && eng.exempt !== sign) eng.exempt = 0;
-    const was = eng.edge;
-    eng.edge = !eng.exempt && SM.atEnd(g.members.indexOf(g.top), g.members.length, sign);
-    if (eng.edge && !was) pulseEnd(cardOf(eng.topId), sign);
-    eng.p = SM.resist(eng.raw, eng.edge);
   }
   const groupOfEng = () => (eng ? groups.get(eng.topId) : null);
   function peekFor(g, sign) {
@@ -391,7 +369,6 @@
   }
   function stop() {
     cancelAnimationFrame(eng.raf);
-    clearTimeout(eng.wheelTimer);
     eng.raf = 0;
   }
   function abort() {
@@ -509,120 +486,11 @@
     return true;
   }
 
-  // ---- the mouse wheel and two-finger swipes ----
-  let lockT = 0;
-  let locked = false;
-  let innerT = 0; // a card's own list was scrolling a moment ago: its end is not a switch
-  function scrollsInside(target, card, dy) {
-    for (let n = target; n && n !== card.parentNode; n = n.parentElement) {
-      if (n.nodeType !== 1 || n.scrollHeight <= n.clientHeight + 1) continue;
-      if (!/(auto|scroll)/.test(getComputedStyle(n).overflowY)) continue;
-      if (dy < 0 ? n.scrollTop > 0 : n.scrollTop + n.clientHeight < n.scrollHeight - 1) return true;
-    }
-    return false;
-  }
-  function onWheel(e) {
-    if (e.ctrlKey || e.metaKey || e.defaultPrevented) return;
-    const card = e.target.closest?.('.w-card.in-stack:not(.w-under)');
-    if (!card || editing() || window.widgetGrid?.busy()) return;
-    const g = groups.get(card.dataset.id);
-    if (!g || g.top !== card.dataset.id) return;
-    const dy = SM.wheelPx(e, card.clientHeight);
-    if (!dy || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    const now = performance.now();
-    if (scrollsInside(e.target, card, dy)) { innerT = now; return; }
-    if (now - innerT < 220) return;
-    e.preventDefault();
-    if (locked) { // the tail of a swipe that already switched cards
-      if (now - lockT > 140) locked = false; else { lockT = now; return; }
-    }
-    if (eng && eng.sid !== g.sid) settleNow();
-    const back = eng && eng.edge && eng.target === 0 ? eng.releasedRaw : undefined; // springing back from an end: the next notch adds to what this one pushed
-    const fresh = !eng;
-    if (eng) grab(); else begin(g); // a new swipe, or the card in flight is grabbed where it is
-    if (fresh && endCarry && endCarry.sid === g.sid && Date.now() - endCarry.t < 700) eng.raw = endCarry.raw; // wheel notches at an end add up until they wrap
-    if (back !== undefined) eng.raw = back;
-    if (fresh) endCarry = null;
-    eng.drag = true;
-    eng.jump = eng.jump && Math.sign(eng.p) === eng.jump.dir ? eng.jump : null;
-    touched(g.sid);
-    eng.samples.push({ t: now, d: dy });
-    swipe(g, dy / eng.px);
-    draw();
-    if (!eng) return;
-    if (Math.abs(eng.raw) >= 1) { // a whole card of swipe: it lands (wraps, at an end), and the rest of this swipe is ignored
-      locked = true;
-      lockT = now;
-      eng.drag = false;
-      release(Math.sign(eng.raw), SM.velocityOf(eng.samples, now) / eng.px);
-      return;
-    }
-    clearTimeout(eng.wheelTimer);
-    const owner = eng;
-    eng.wheelTimer = setTimeout(() => {
-      if (eng !== owner) return;
-      const v = SM.velocityOf(owner.samples, owner.samples[owner.samples.length - 1].t, 120);
-      owner.drag = false;
-      const target = SM.settleTarget(owner.raw, v, owner.px, owner.edge);
-      owner.releasedRaw = owner.raw;
-      endCarry = owner.edge && target === 0 && Math.abs(owner.raw) > 0.05 ? { sid: g.sid, raw: owner.raw, t: Date.now() } : null; // the next notch at this end adds to this one
-      release(target, v / owner.px);
-    }, 90);
-  }
-
-  // ---- touch: a one-finger swipe up or down on the card ----
-  let touch = null;
-  function onTouchStart(e, card) {
-    if (e.pointerType === 'mouse' || e.button !== 0 || touch || editing() || window.widgetGrid?.busy() || card.classList.contains('w-under')) return;
-    if (e.target.closest?.('.w-head, input, select, textarea, iframe, .w-stack-edit')) return;
-    const g = groups.get(card.dataset.id);
-    if (!g || g.top !== card.dataset.id) return;
-    touch = { id: e.pointerId, x: e.clientX, y: e.clientY, lastY: e.clientY, g, card, on: false, moved: false };
-    if (eng && eng.sid === g.sid) { grab(); eng.drag = true; touch.grab = true; } // grabbing a card in flight
-    addEventListener('pointermove', onTouchMove, true);
-    addEventListener('pointerup', onTouchEnd, true);
-    addEventListener('pointercancel', onTouchEnd, true);
-  }
-  function onTouchMove(e) {
-    if (!touch || e.pointerId !== touch.id) return;
-    const dx = e.clientX - touch.x;
-    const dy = e.clientY - touch.y;
-    if (!touch.on) {
-      if (!touch.grab && Math.abs(dy) < 8 && Math.abs(dx) < 8) return;
-      if (!touch.grab && Math.abs(dx) > Math.abs(dy)) { endTouchListeners(); touch = null; return; }
-      touch.on = true;
-      touch.px = touch.card.clientHeight || PX_MAX; // the card follows the finger one to one
-      if (!eng) { begin(touch.g); eng.drag = true; }
-      try { touch.card.setPointerCapture(e.pointerId); } catch { /* the pointer is gone */ }
-    }
-    e.preventDefault();
-    touch.moved = true;
-    touched(touch.g.sid);
-    const step = touch.lastY - e.clientY; // an upward swipe is toward the next card
-    touch.lastY = e.clientY;
-    eng.samples.push({ t: performance.now(), d: step });
-    swipe(touch.g, step / touch.px);
-    draw();
-  }
-  function onTouchEnd(e) {
-    if (!touch || e.pointerId !== touch.id) return;
-    const t = touch;
-    touch = null;
-    endTouchListeners();
-    if (!t.on || !eng) return;
-    eng.drag = false;
-    if (t.moved) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 60); }
-    const v = e.type === 'pointercancel' ? 0 : SM.velocityOf(eng.samples, performance.now());
-    release(e.type === 'pointercancel' ? 0 : SM.settleTarget(eng.raw, v, t.px, eng.edge), v / t.px);
-  }
-  function endTouchListeners() {
-    removeEventListener('pointermove', onTouchMove, true);
-    removeEventListener('pointerup', onTouchEnd, true);
-    removeEventListener('pointercancel', onTouchEnd, true);
-  }
+  // No wheel, trackpad scroll or touch swipe changes the card: a scroll over a stack belongs to the card's own
+  // content or to the page, so a stray scroll never moves a stack off the widget in use. Only the dots, the arrows
+  // and the keys switch.
   let suppressClick = false;
   document.addEventListener('click', (e) => { if (suppressClick) { e.preventDefault(); e.stopPropagation(); } }, true);
-  document.addEventListener('wheel', onWheel, { passive: false });
 
   // ---- by itself: auto-rotate and smart rotate ----
   const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -636,7 +504,7 @@
     if (live) setTimeout(() => { live.textContent = `${titleOf(card)}. ${txt('newtab.stack.why', { why: label })}`; }, 80);
   }
   function tick() {
-    if (document.hidden || eng || touch || !groups.size || editing()) return;
+    if (document.hidden || eng || !groups.size || editing()) return;
     const now = new Date();
     const ms = now.getTime();
     for (const g of uniqueGroups()) {

@@ -1,74 +1,48 @@
-// [look] Music-reactive home screen, the browser's half (renderer/newtab-music-react.js is the page's). The page asks "what is playing?" about
-// every 4 seconds while it is in front and the setting is on; this answers with ONE tab's capture id, or nothing.
+// [look] Music-reactive home screen, the browser's half (renderer/newtab-music-react.js is the page's). The page listens to the sound the PC is
+// playing: Windows' system-output loopback, a copy of what is already going to the speakers, handed to the new-tab page through getDisplayMedia (audio
+// only: the video Chromium insists on is stopped the moment it arrives). A loopback never touches the tabs or apps that make the sound, so nothing is
+// muted, delayed or interrupted, and it hears the Spotify desktop app and any other program too.
 //
-//   - Only the new-tab page's top frame is answered (main.js checks the sender), and only while Settings → "Music-reactive home screen" is on.
-//   - The source is a Lumen window that is playing sound right now: first Lumen's own music players (Spotify, Apple Music), then any tab.
-//     It is never the microphone and never the computer's sound as a whole: Chromium's per-tab capture id (webContents.getMediaSourceId)
-//     only works for the one tab it names, only for the page it was made for, and only for 10 seconds.
-//   - The page then asks for that stream, audio only, and Chromium asks the permission handler about the captured tab (not the asking page).
-//     allows() is the single exception to "media is refused unless the user said yes": it says yes only for the tab an id was just made for,
-//     only when the request comes from a local Lumen page (never from the captured tab's own page), never for video, within 15 seconds, once.
-//   - Nothing here reads, keeps or forwards audio. Frames are reduced to a few numbers inside the page's analyser.
+//   - Only the new-tab page's top frame is answered (main.js checks the sender), only while Settings → "Music-reactive home screen" is on, and only on
+//     Windows (the page is told why when it is not).
+//   - start() makes a 15-second grant for the page. The permission handlers (allowsDisplay) and the display-media handler (takeDisplay) honour it for that
+//     page only and use it up once: a stream is one grant. Never the microphone or the camera (those requests always name their type and are never
+//     answered here), never the screen's picture.
+//   - Nothing here reads, keeps or forwards audio. The page reduces each frame to a few loudness numbers and drops it.
 'use strict';
 
 const GRANT_MS = 15e3;
-const HOLD_MS = 3e3; // a tab that was audible this recently still counts (Chromium says silent in every quiet gap; a song has them)
 
-function create({ players, tabs, isNewTab, enabled, now = Date.now, pick }) {
-  const grants = new Map(); // captured webContents id -> { requester (the new-tab page's webContents), until }
+function create({ isNewTab, enabled, now = Date.now, platform = process.platform }) {
+  const grants = new Map(); // the new-tab page's webContents id -> { wc, until }
   const usable = (wc) => Boolean(wc) && !wc.isDestroyed();
-  const lastAudible = new Map(); // webContents id -> when it was last heard
-  const audible = (wc) => {
-    let on = false;
-    try { on = wc.isCurrentlyAudible() === true; } catch { on = false; }
-    const t = now();
-    if (on) lastAudible.set(wc.id, t);
-    return on || t - (lastAudible.get(wc.id) ?? -1e12) < HOLD_MS;
-  };
-  // While the page keeps asking (and for 12 s after it stops), every window is looked at about 2.5 times a second so the hold above sees the beats
-  // between the quiet gaps, not just the instant of each question. A few cheap calls; the timer stops by itself.
-  let timer = null; let lastAsk = 0;
-  const sampleAll = () => {
-    if (now() - lastAsk > 12e3) { clearInterval(timer); timer = null; return; }
-    for (const wc of [...players(), ...tabs()]) if (usable(wc)) audible(wc);
-  };
+  const live = (wc) => { const g = grants.get(wc.id); if (!g) return false; if (now() > g.until) { grants.delete(wc.id); return false; } return true; };
+  let onNewTab = (wc) => { try { return isNewTab(wc.getURL()); } catch { return false; } };
   return {
-    // (requesting webContents, the key it is capturing now or null) -> { key: null } | { key, id: null } (same as it has) | { key, id }
-    source(requester, have) {
-      if (!usable(requester) || enabled() !== true) return { key: null };
-      lastAsk = now();
-      if (!timer) { timer = setInterval(sampleAll, 400); timer.unref?.(); }
-      const list = (ws) => ws.filter(usable).filter((w) => w !== requester).map((w) => ({ id: w.id, audible: audible(w), wc: w }));
-      const p = list(players()); const t = list(tabs());
-      const key = pick(p, t, requester.id);
-      if (key === null) return { key: null };
-      if (key === have) return { key, id: null };
-      const target = [...p, ...t].find((x) => x.id === key)?.wc;
-      if (!target) return { key: null };
-      let id;
-      try { id = target.getMediaSourceId(requester); } catch { return { key: null }; }
-      if (typeof id !== 'string' || !id) return { key: null };
-      grants.set(target.id, { requester, until: now() + GRANT_MS });
-      return { key, id };
+    supported: () => platform === 'win32',
+    // The page asks to start listening -> { ok: true } | { ok: false, why: 'off' | 'platform' }
+    start(requester) {
+      if (!usable(requester) || enabled() !== true) return { ok: false, why: 'off' };
+      if (platform !== 'win32') return { ok: false, why: 'platform' };
+      grants.set(requester.id, { wc: requester, until: now() + GRANT_MS });
+      return { ok: true };
     },
-    // The permission handler's question, about `wc` (the captured tab). consume: a request uses the grant up; a check (which asks without
-    // opening anything) leaves it. details: Electron's, with securityOrigin the asking page's origin.
-    allows(wc, permission, details, consume) {
-      if (permission !== 'media' || !usable(wc) || enabled() !== true) return false;
-      const g = grants.get(wc.id);
-      if (!g) return false;
-      if (now() > g.until || !usable(g.requester)) { grants.delete(wc.id); return false; }
+    // The permission handlers' question: may `wc` use getDisplayMedia right now? Chromium asks 'display-capture', or 'media' with no media type at all
+    // (a microphone or camera request always names its type). Yes only for the new-tab page itself, while its grant is live.
+    allowsDisplay(wc, permission, details) {
       const d = details || {};
-      if (d.isMainFrame === false || d.mediaType === 'video') return false;
-      if (Array.isArray(d.mediaTypes) && d.mediaTypes.some((m) => m !== 'audio')) return false; // never video, never both (tab audio itself is listed as no type at all)
-      if (typeof d.securityOrigin !== 'string' || !d.securityOrigin.startsWith('file:')) return false; // asked by one of Lumen's own local pages, not by the tab's page
-      let onNewTab = false;
-      try { onNewTab = isNewTab(g.requester.getURL()); } catch { return false; }
-      if (!onNewTab) return false;
-      if (consume) grants.delete(wc.id);
-      return true;
+      const display = permission === 'display-capture' || (permission === 'media' && Array.isArray(d.mediaTypes) && d.mediaTypes.length === 0 && d.mediaType === undefined);
+      if (!display || d.isMainFrame === false || !usable(wc) || enabled() !== true || platform !== 'win32') return false;
+      return live(wc) && onNewTab(wc);
     },
-    forget(wc) { if (wc) for (const [k, g] of grants) if (k === wc.id || g.requester === wc) grants.delete(k); },
+    // The display-media handler's question: true when this request is the new-tab page's own, with a live grant (which it uses up).
+    takeDisplay(wc, isTopFrame) {
+      if (!usable(wc) || isTopFrame !== true || enabled() !== true || platform !== 'win32') return false;
+      const ok = live(wc) && onNewTab(wc);
+      if (ok) grants.delete(wc.id);
+      return ok;
+    },
+    forget(wc) { if (wc) grants.delete(wc.id); },
   };
 }
 

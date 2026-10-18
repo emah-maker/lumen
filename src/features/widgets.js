@@ -163,7 +163,7 @@ const INLINE = {
   aistatus: () => ({}),
   routines: () => ({}),
   files: () => ({}),
-  applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app }),
+  applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app, react: w.react === true }),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -574,21 +574,21 @@ const CONNECTORS = {
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
-      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
+      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors), react: c.react === true } : null; // (react: the card reacts to the music, off unless asked: renderer/newtab-music-react.js)
     },
     async resolve(input, x) {
       const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
       // Status (the engine's now-playing card) and Web player: nothing to check here (the user signs in on Spotify's own site).
       const mode = ['status', 'web', 'api'].includes(input.mode) ? input.mode : clientId ? 'api' : 'status'; // (a form always says; without one, an own Client ID means the API card, as before, else the engine's)
-      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
-      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
+      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
+      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card shows open.spotify.com. Sign in there once.' };
       if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
       if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
       try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
-      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
     summary: (c) => (c.mode === 'web' ? 'Spotify web player' : c.mode === 'status' ? `Plays inside Lumen${c.art ? '' : ' · no album art'}` : `Now playing${c.art ? '' : ' · no album art'}`),
@@ -1087,10 +1087,10 @@ const CONNECTORS = {
     label: 'Apple Music',
     ttl: (d) => (d && d.mode === 'web' ? 365 * 24 * 3600e3 : 4e3),
     minRefresh: 100, // the engine tells main when something changes (deps.appleMusic.onChange), which asks for a fresh look at once
-    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors) }),
+    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors), react: c.react === true }),
     async resolve(input) {
       const cfg = AMV.cleanConfig(input);
-      return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card plays Apple Music inside Lumen and shows what is playing.' };
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors), react: input.react === true }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card plays Apple Music inside Lumen and shows what is playing.' };
     },
     title: () => 'Apple Music',
     summary: (c) => (c.mode === 'web' ? 'Apple Music web player' : `Now playing${c.art ? '' : ' · no album art'}`),
@@ -1505,7 +1505,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, react: i.react === true, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -2031,7 +2031,7 @@ function createWidgets(deps) {
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', react: w.react === true, layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }

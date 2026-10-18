@@ -4256,24 +4256,66 @@ function buildEffectOptions() {
 
 
 function musicReactiveRow() {
-  const row = toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'The new-tab page’s glow and clock move with the music playing in Lumen: Spotify, YouTube or any tab. Lumen only reads how loud the bass, mids and highs are; nothing is recorded or sent anywhere. Glow only with Visual effects: Light; off with Reduce motion or Performance mode.'));
+  const row = toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'Moves the new-tab page’s background with the music: soft dots drift, burst on the beat, swirl with the mids and twinkle with the highs. It reacts to the sound your PC is playing (any program, the Spotify desktop app included) and only while the new tab is on screen. Lumen reads how loud the bass, mids and highs are; nothing is recorded or sent, and the microphone is never used. Windows only. Simplified with Visual effects: Light; off with Reduce motion or Performance mode.'));
   const note = h('span', { class: 'note', id: 'music-reactive-note', hidden: true });
   const link = h('button', { type: 'button', class: 'linkish', id: 'music-reactive-link', hidden: true, text: tr('settings.musicReactive.linkLight', 'Change Visual effects'), onclick: () => { location.hash = '#visual-effects'; } });
+  const preview = h('button', { type: 'button', id: 'music-reactive-preview', text: tr('settings.musicReactive.preview', 'Preview') });
+  const stage = h('canvas', { class: 'mr-preview', id: 'music-reactive-stage', hidden: true, 'aria-hidden': 'true' });
+  let off = false; let light = false;
   const show = () => {
     const g = st.graphics; const mode = st.prefs?.graphicsMode || 'auto';
     const soft = Boolean(g?.software) || (Boolean(g?.drawing) && mode !== 'full');
-    const light = mode === 'light' || (mode === 'auto' && Boolean(g?.integrated)) || soft;
+    light = mode === 'light' || (mode === 'auto' && Boolean(g?.integrated)) || soft;
+    off = Boolean(st.prefs?.reduceMotion || st.performance?.active);
     let text = '';
     if (st.prefs?.reduceMotion) text = tr('settings.musicReactive.offMotion', 'Off because Reduce motion is on.');
     else if (st.performance?.active) text = tr('settings.musicReactive.offPerformance', 'Off because Performance mode is on.');
-    else if (soft) text = tr('settings.musicReactive.lightSoftware', 'Simplified (glow only) because Lumen is drawing in software.');
-    else if (light) text = mode === 'light' ? tr('settings.musicReactive.lightChosen', 'Simplified (glow only) because Visual effects is set to Light.') : tr('settings.musicReactive.lightAuto', 'Simplified (glow only) because Visual effects is on Automatic, which uses Light on this computer.');
+    else if (st.platform && st.platform !== 'win32') text = tr('settings.musicReactive.platform', 'Windows only for now: it listens to the sound the PC is playing.');
+    else if (soft) text = tr('settings.musicReactive.lightSoftware', 'Simplified (fewer dots, slower) because Lumen is drawing in software.');
+    else if (light) text = mode === 'light' ? tr('settings.musicReactive.lightChosen', 'Simplified (fewer dots, slower) because Visual effects is set to Light.') : tr('settings.musicReactive.lightAuto', 'Simplified (fewer dots, slower) because Visual effects is on Automatic, which uses Light on this computer.');
     note.textContent = text; note.hidden = !text;
-    link.hidden = !(text && light && !st.prefs?.reduceMotion && !st.performance?.active);
+    link.hidden = !(text && light && !off && !(st.platform && st.platform !== 'win32'));
+    preview.disabled = off;
+    if (off && !stage.hidden) stopPreview();
   };
+
+
+  let run = null;
+  const scripts = {};
+  const loadScript = (src) => (scripts[src] ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s); }));
+  function stopPreview() {
+    if (run) { cancelAnimationFrame(run.raf); run = null; }
+    stage.hidden = true; preview.textContent = tr('settings.musicReactive.preview', 'Preview');
+  }
+  async function startPreview() {
+    if (off) return;
+    await loadScript('../features/music-react.js'); await loadScript('music-field-canvas.js');
+    stage.hidden = false; preview.textContent = tr('settings.musicReactive.previewStop', 'Stop preview');
+    const mode = light ? 'reduced' : 'full';
+    const w = Math.max(200, Math.round(stage.getBoundingClientRect().width)); const hgt = 140;
+    const painter = window.MusicFieldCanvas.create({ canvas: stage, mode, accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0a84ff', tone: 'plain' });
+    painter.resize(w, hgt, devicePixelRatio || 1, { cx: -1e5, w: 1 });
+    const mapper = window.MusicReact.createMapper(); const beats = window.MusicReact.beatDetector();
+    const step = mode === 'reduced' ? window.MusicReact.REDUCED_MS : 33;
+    let last = 0; const t0 = performance.now();
+    run = { raf: 0 };
+    const frame = (now) => {
+      if (!run) return;
+      run.raf = requestAnimationFrame(frame);
+      const t = now - t0;
+      if (t > 10000) { stopPreview(); return; }
+      if (now - last < step) return;
+      const dt = last ? Math.min(0.1, (now - last) / 1000) : 0.033; last = now;
+      const b = window.MusicReact.demoFrame(t);
+      painter.draw(t, mapper.step({ ...b, beat: beats.push(t, b.bass) }, t), dt);
+    };
+    run.raf = requestAnimationFrame(frame);
+  }
+  preview.addEventListener('click', () => { if (run) stopPreview(); else startPreview().catch(() => stopPreview()); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && run) stopPreview(); });
   show();
   window.addEventListener('lumen-pref', (e) => { if (['reduceMotion', 'performanceMode', 'graphicsMode'].includes(e.detail.key)) setTimeout(show, 0); });
-  row.querySelector('.text').append(note, link);
+  row.querySelector('.text').append(note, link, h('div', { class: 'mr-preview-row' }, preview), stage);
   return row;
 }
 function buildLook(card) {
@@ -4781,6 +4823,7 @@ async function buildWidgets(card) {
       const sp = () => ws.spotify || {};
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Your own Spotify app’s Client ID' });
       inputs.art = tog('widget-spotify-art', 'Album art', same ? same.art !== false : true);
+      inputs.react = tog('widget-spotify-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
 
 
       inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['status', 'Plays in Lumen'], ['web', 'Web player'], ['api', 'Now playing (API)']], same ? same.mode || 'api' : 'status');
@@ -4839,7 +4882,7 @@ async function buildWidgets(card) {
       const syncMode = () => { apiBox.hidden = inputs.mode.value === 'web';  webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
       inputs.mode.addEventListener('change', syncMode);
       syncMode();
-      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox);
+      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox, section('Music', [inputs.react]));
     }
 
     function gmailFields(same) {
@@ -5253,6 +5296,7 @@ async function buildWidgets(card) {
       } else if (type === 'applemusic') {
         inputs.mode = segment('widget-applemusic-mode', 'How Apple Music is shown', [['status', 'Status card'], ['web', 'Web player']], same?.mode === 'web' ? 'web' : 'status');
         inputs.art = tog('widget-applemusic-art', 'Album art', same ? same.art !== false : true);
+        inputs.react = tog('widget-applemusic-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
         inputs.app = tog('widget-applemusic-app', 'Also show the Apple Music app', same ? same.app !== false : true, 'When nothing is playing inside Lumen but the Apple Music app on this computer is (iTunes on Windows too), show it, with its own buttons. On a Mac, macOS asks once to let Lumen control Music.');
         const modeRow = block('How to show Apple Music', 'Status card: Apple Music plays inside Lumen, and the card shows what is playing with play, pause, next, previous and seek, your recent plays and playlists, and a search. You sign in on Apple’s site once. Web player: Apple’s own site in the card.', inputs.mode);
         const statusNote = h('p', { class: 'wf-foot', text: 'Apple Music plays in a hidden page inside Lumen (Apple’s own MusicKit), in your normal Lumen session, so the music keeps playing when you leave the new-tab page. Search works without signing in (30-second previews); sign in for your library and full songs. Lumen never sees your Apple ID or password.' });
@@ -5260,7 +5304,7 @@ async function buildWidgets(card) {
         const syncMode = () => { statusNote.hidden = showBox.hidden = inputs.mode.value !== 'status'; };
         inputs.mode.addEventListener('change', syncMode);
         syncMode();
-        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox);
+        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox, section('Music', [inputs.react]));
       } else if (type === 'files') {
         fields.replaceChildren(section(tr('settings.files.group', 'Files'), [h('div', { class: 'row' }, h('span', { class: 'note', text: tr('widgets.files.desc', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.') }))]));
       } else if (type === 'routines') {
@@ -5383,8 +5427,8 @@ async function buildWidgets(card) {
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
       }
-      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
-      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app) };
+      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art), react: val(inputs.react) };
+      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app), react: val(inputs.react) };
       if (type === 'gmail') {
         const own = inputs.mode.value === 'oauth';
         return { ...base, mode: own ? 'oauth' : 'google', account: Number(inputs.account.value) || 0, clientId: own ? inputs.clientId.value : '', clientSecret: own ? inputs.clientSecret.value : '', count: Number(inputs.count.value), snippets: val(inputs.snippets) };

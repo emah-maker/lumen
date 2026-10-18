@@ -1,61 +1,81 @@
-// [look] Music-reactive home screen (Settings → Appearance → New tab page → "Music-reactive home screen"). newtab.js loads this file
-// (and features/music-react.js, the maths) only when the setting is on, so with it off none of this exists on the page.
+// [look] Music-reactive home screen (Settings → Appearance → New tab page → "Music-reactive home screen") and music cards that react ("React to music"
+// in a Spotify or Apple Music card's own settings). newtab.js loads this file, features/music-react.js (the maths) and music-field-canvas.js (the drawing)
+// only when either is on, so with both off none of this exists on the page.
 //
-// What it does: listens to (and plays on, see startCapture) the sound that Lumen's own tabs and music players are playing (the browser hands this page a one-time
-// "tab capture" id for the playing tab; it is never the microphone and never the computer's sound), reads the analyser's frequency
-// bytes ~30 times a second, reduces each frame to a few numbers (glow, wave, beat) and writes them to three CSS variables (--mr-glow, --mr-wave, --mr-beat), each on the one element that uses it.
-// The raw audio never leaves the analyser: nothing is recorded, stored, sent anywhere or even copied out of the frame.
+// What it does: listens to the sound the PC is playing (Windows' system-output loopback, a copy of what is already going to the speakers: it never
+// mutes, delays or interrupts anything, and it hears every program, the Spotify desktop app included) and reduces an analyser's frequency bytes to a few
+// loudness numbers. ONE analyser serves both uses:
+//   - the home screen: one canvas behind the widgets, soft dots in the accent's tones that drift slowly, burst on the beat, swell with the bass, swirl
+//     with the mids and twinkle with the highs, with a glow that flows behind them, and the clock card bouncing a hair on the beat;
+//   - a music card with the option on: its cover art breathes on the beat and a faint accent glow rims the card (two CSS variables on that card).
+// The raw audio never leaves the analyser: nothing is recorded, stored, sent anywhere or played (this page is silent) and the microphone is never used.
 //
-//   - The glow behind the page pulses with the bass, a soft wave at the bottom follows the mids, the clock and music card bounce a hair
-//     on the beat (newtab.html: #mr-glow, #mr-wave, body.mr-on). All decorative: aria-hidden, never takes a click, under the content.
-//   - Nothing playing: a very slow idle drift (under 1 Hz, a few per cent of opacity), and no capture is open.
-//   - Page not in front (another tab, minimised): no frames, no timer, no capture.
+//   - The analyser runs only while at least one of them is on (features/music-react.js plan) and the page is shown: hidden (another tab, minimised),
+//     there are no frames, no timer and the loopback is closed. Both off: nothing exists.
+//   - The canvas is decorative: aria-hidden, never takes a click, under the content, and cut away to a tenth behind the content column (text keeps its
+//     contrast: features/music-react.js, test/music-react-units.js).
+//   - Nothing playing: the dots just drift (a very slow idle) and the cards are still.
 //   - Reduce motion (the setting or the system's) and Performance mode: nothing runs at all.
-//   - Visual effects: Light and software drawing: a reduced version, the glow only (no wave, no bounce), at most 10 updates a second, one CSS
-//     variable on one element (features/music-react.js modeOf).
-//   - The limits on intensity and the 2.8-flashes-a-second ceiling are in features/music-react.js and tested there.
+//   - Visual effects: Light and software drawing: 40 dots, no clock bounce and no cover pulse, at most 15 frames a second.
+//   - The 2.8-flashes-a-second ceiling and the opacity limits are in features/music-react.js and tested there.
 (() => {
   const MR = window.MusicReact;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-  const POLL_MS = 4000; // how often the browser is asked what is playing (one small message; nothing else happens in between)
   const LIVE_MS = 33; // ~30 frames a second while music plays
-  const IDLE_MS = 80; // ~12 a second for the idle drift
-  const SILENT_MS = 1500; // a capture that has been silent this long reads as idle
+  const IDLE_MS = 50; // ~20 a second for the slow idle drift
+  const SILENT_MS = 1500; // a loopback that has been silent this long reads as idle
+  const RETRY_MS = 15e3; // a loopback that could not open is tried again after this
   const FFT = 1024;
 
   let look = null;
-  let mode = 'off'; // 'full' | 'reduced' (features/music-react.js modeOf)
-  let active = false;
-  let raf = 0; let pollTimer = 0;
-  let glowEl = null; let waveEl = null;
-  let cap = null; // { key, stream, ctx, analyser, bytes }
-  let lastFrameT = 0; let silentSince = 0; let polling = false; let blockedUntil = 0; let notRunningSince = 0;
+  let bgMode = 'off'; let cardMode = 'off'; // 'off' | 'reduced' | 'full' (features/music-react.js plan)
+  let active = false; // the analyser side runs (at least one of the two is on)
+  let raf = 0; let startTimer = 0;
+  let canvasEl = null; let painter = null;
+  let cap = null; // { stream, ctx, analyser, bytes }
+  let opening = false;
+  let lastFrameT = 0; let silentSince = 0;
   let mapper = MR.createMapper(); let beats = MR.beatDetector();
-  const written = new WeakMap(); // element -> the last value written, so an unchanged variable is not written again
-  let beatEls = []; // the clock card and the music cards that bounce (found again at each poll: cards come and go)
-  const el = (id) => Object.assign(document.createElement('div'), { id });
-  // Each variable is set on the element that uses it, never on <body>: a custom property set on a parent restyles every descendant.
-  function set(node, name, value) {
-    if (!node) return;
-    const seen = written.get(node) || {};
-    if (seen[name] === value) return;
-    seen[name] = value; written.set(node, seen);
-    node.style.setProperty(name, value);
+  let clockEl = null; let cardEls = []; // what moves: the clock card, and the music cards that asked to react (found again as cards come and go)
+  let lastBeat = ''; let lastHalo = ''; let lastPulse = '';
+  const cost = window.__mrCost = { frames: 0, ms: 0, max: 0, out: null, in: null, field: null }; // (how long the frames took, the latest numbers and the dots: measuring aids, read only by the tests)
+  const fast = () => bgMode === 'full' || cardMode === 'full'; // the faster cadence when either wants the full version
+
+  const hasCards = () => Boolean(document.querySelector('.w-card[data-mreact="1"]'));
+  function findTargets() {
+    clockEl = bgMode === 'full' ? document.getElementById('clock-card') : null;
+    const now = cardMode !== 'off' ? [...document.querySelectorAll('.w-card[data-mreact="1"]')] : [];
+    for (const n of cardEls) if (!now.includes(n)) { n.style.removeProperty('--mr-halo'); n.style.removeProperty('--mr-pulse'); }
+    cardEls = now;
+    document.body.dataset.mrCards = String(now.length);
   }
-  function write(vars) {
-    set(glowEl, '--mr-glow', vars['--mr-glow']);
-    if (waveEl) set(waveEl, '--mr-wave', vars['--mr-wave']);
-    for (const n of beatEls) set(n, '--mr-beat', vars['--mr-beat']);
+  const q3 = (v) => (Math.round(v * 250) / 250).toFixed(3);
+  function writeCards(halo, pulse) {
+    const h = q3(halo); const p = cardMode === 'full' ? q3(pulse) : '0.000';
+    if (h === lastHalo && p === lastPulse) return;
+    lastHalo = h; lastPulse = p;
+    for (const n of cardEls) { n.style.setProperty('--mr-halo', h); n.style.setProperty('--mr-pulse', p); }
   }
-  const BEAT_TARGETS = '#clock-card, .w-card.spotify:not(:has(.sp-web-slot)), .w-card.applemusic:not(:has(.sp-web-slot))'; // (a web player's card holds a native view: it stays put)
-  function findBeatEls() {
-    const now = mode === 'full' ? [...document.querySelectorAll(BEAT_TARGETS)] : [];
-    for (const n of beatEls) if (!now.includes(n)) { n.style.removeProperty('--mr-beat'); written.delete(n); }
-    beatEls = now;
+  function writeBeat(v) {
+    const s = q3(v);
+    if (s === lastBeat) return;
+    lastBeat = s;
+    if (clockEl) clockEl.style.setProperty('--mr-beat', s);
   }
-  function clearVars() {
-    for (const n of beatEls) { n.style.removeProperty('--mr-beat'); written.delete(n); }
-    beatEls = [];
+
+  function column() {
+    const m = document.querySelector('main');
+    const r = m ? m.getBoundingClientRect() : null;
+    return r && r.width > 0 ? { cx: r.left + r.width / 2, w: r.width + 48 } : { cx: innerWidth / 2, w: 688 };
+  }
+  const toneOf = () => (document.body.classList.contains('on-media') && !document.body.classList.contains('tone-light') ? 'media' : 'plain');
+  const accentOf = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0a84ff';
+  function layout() {
+    if (!painter) return;
+    painter.resize(innerWidth, innerHeight, devicePixelRatio || 1, column());
+    painter.setAccent(accentOf());
+    painter.setTone(toneOf());
+    cost.field = painter.field;
   }
 
   function stopCapture() {
@@ -64,114 +84,126 @@
     try { for (const t of c.stream.getTracks()) t.stop(); } catch { /* already ended */ }
     try { c.ctx.close(); } catch { /* already closed */ }
     document.body.dataset.mr = 'idle';
+    document.body.dataset.mrCap = '0';
   }
-  // Chromium's per-tab capture takes the tab's sound away from the speakers while it is captured (the capturer is expected to play it). So this page
-  // plays it back, once, straight from the capture to the output: the music is never lost, and never doubled (the tab itself is silent meanwhile).
-  // Safety first: the capture is only opened with an AudioContext that is already running, and the moment that context stops running, the page lets go
-  // of the capture and the tab plays by itself again (and the capture is not tried again for a while).
-  async function startCapture(id, key) {
-    stopCapture();
-    if (Date.now() < blockedUntil) return;
-    const ctx = new AudioContext({ latencyHint: 'interactive' }); // (made first: the tab is not touched unless this can run)
-    for (let i = 0; i < 6 && ctx.state !== 'running'; i++) { try { await ctx.resume(); } catch { /* not yet */ } if (ctx.state !== 'running') await new Promise((r) => setTimeout(r, 250)); }
-    if (!active || ctx.state !== 'running') { try { ctx.close(); } catch { /* closed */ } blockedUntil = Date.now() + 30e3; return; }
-    let stream;
+  async function startCapture() {
+    if (opening || cap || !active || document.hidden) return;
+    opening = true;
     try {
-      // One tab's sound, audio only. Never { audio: true } (that is the microphone): main grants this page nothing else.
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: id } }, video: false });
-    } catch { try { ctx.close(); } catch { /* closed */ } return; }
-    if (!active || ctx.state !== 'running') { for (const t of stream.getTracks()) t.stop(); try { ctx.close(); } catch { /* closed */ } return; }
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = FFT; analyser.smoothingTimeConstant = 0.55;
-    const source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    source.connect(ctx.destination); // (the sound back to the speakers, once)
-    cap = { key, stream, ctx, analyser, bytes: new Uint8Array(analyser.frequencyBinCount) };
-    stream.getAudioTracks()[0]?.addEventListener('ended', () => { if (cap && cap.stream === stream) stopCapture(); });
-    silentSince = 0;
+      const r = await window.lumenNewtab?.musicSource?.();
+      if (!r || r.ok !== true || !active || document.hidden) { if (active && !document.hidden) retryLater(); return; }
+      // The PC's sound, audio only: Chromium asks for a video track too, and it is stopped at once (never drawn, never read).
+      const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+      for (const t of stream.getVideoTracks()) { t.stop(); stream.removeTrack(t); }
+      if (!stream.getAudioTracks().length || !active || document.hidden) { for (const t of stream.getTracks()) t.stop(); if (active && !document.hidden) retryLater(); return; }
+      const ctx = new AudioContext({ latencyHint: 'playback' });
+      for (let i = 0; i < 6 && ctx.state !== 'running'; i++) { try { await ctx.resume(); } catch { /* not yet */ } if (ctx.state !== 'running') await new Promise((res) => setTimeout(res, 250)); }
+      if (!active || document.hidden || ctx.state !== 'running') { for (const t of stream.getTracks()) t.stop(); try { ctx.close(); } catch { /* closed */ } if (active && !document.hidden) retryLater(); return; }
+      const analyser = ctx.createAnalyser(); // (never connected to anything that makes a sound: this page is silent)
+      analyser.fftSize = FFT; analyser.smoothingTimeConstant = 0.55;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      cap = { stream, ctx, analyser, bytes: new Uint8Array(analyser.frequencyBinCount) };
+      stream.getAudioTracks()[0].addEventListener('ended', () => { if (cap && cap.stream === stream) { stopCapture(); if (active && !document.hidden) retryLater(); } });
+      silentSince = 0;
+      document.body.dataset.mrCap = '1';
+    } catch { if (active && !document.hidden) retryLater(); } finally { opening = false; }
   }
-
-  async function poll() {
-    pollTimer = 0;
-    if (!active || document.hidden) return;
-    findBeatEls();
-    if (!polling) {
-      polling = true;
-      try {
-        const r = await window.lumenNewtab?.musicSource?.(cap ? cap.key : null);
-        if (active && r && typeof r === 'object') {
-          if (r.key === null || r.key === undefined) stopCapture();
-          else if (typeof r.id === 'string' && r.id) await startCapture(r.id, r.key);
-        }
-      } catch { /* the browser is busy: asked again */ }
-      polling = false;
-    }
-    if (active && !document.hidden) pollTimer = setTimeout(poll, POLL_MS);
-  }
+  function retryLater() { clearTimeout(startTimer); startTimer = setTimeout(startCapture, RETRY_MS); }
 
   function frame(t) {
     raf = 0;
     if (!active || document.hidden) return;
     raf = requestAnimationFrame(frame);
-    // The output must be running while the tab is captured; if it is not (for a second), let go so the tab is heard again.
-    if (cap && cap.ctx.state !== 'running') { if (!notRunningSince) notRunningSince = t; else if (t - notRunningSince > 1000) { stopCapture(); blockedUntil = Date.now() + 30e3; notRunningSince = 0; } } else notRunningSince = 0;
     const live = Boolean(cap) && cap.ctx.state === 'running';
     const shown = live ? 'live' : 'idle'; // (what the page is doing, for the tests: 'live' only while an analyser is really running)
     if (document.body.dataset.mr !== shown) document.body.dataset.mr = shown;
-    if (t - lastFrameT < (mode === 'reduced' ? MR.REDUCED_MS : live ? LIVE_MS : IDLE_MS)) return;
+    if (t - lastFrameT < (!fast() ? MR.REDUCED_MS : live ? LIVE_MS : IDLE_MS)) return;
+    const dt = lastFrameT ? Math.min(0.1, (t - lastFrameT) / 1000) : 0.033;
     lastFrameT = t;
+    const t0 = performance.now();
     let input = null;
     if (live) {
       cap.analyser.getByteFrequencyData(cap.bytes);
       const b = MR.bandsOf(cap.bytes, cap.ctx.sampleRate, FFT);
       if (!MR.isSilent(b)) silentSince = 0; else if (!silentSince) silentSince = t;
-      if (!silentSince || t - silentSince < SILENT_MS) input = { bass: b.bass, mids: b.mids, level: b.level, beat: mode === 'full' && beats.push(t, b.bass) };
+      if (!silentSince || t - silentSince < SILENT_MS) input = { bass: b.bass, mids: b.mids, highs: b.highs, level: b.level, beat: beats.push(t, b.bass) };
     }
-    write(MR.cssVars(mapper.step(input, t)));
+    const out = mapper.step(input, t);
+    if (painter) { painter.draw(t, out, dt); if (bgMode === 'full') writeBeat(out.beat); }
+    if (cardEls.length) writeCards(input ? out.bass : 0, input ? out.beat : 0); // (cards react to the music itself: still when nothing plays)
+    cost.out = out; cost.in = input;
+    const spent = performance.now() - t0;
+    cost.frames++; cost.ms += spent; if (spent > cost.max) cost.max = spent;
+  }
+
+  function dropCanvas() {
+    canvasEl?.remove(); canvasEl = null; painter = null; cost.field = null;
+    if (clockEl) clockEl.style.removeProperty('--mr-beat');
+    clockEl = null; lastBeat = '';
+    delete document.body.dataset.mrParticles;
+    document.body.classList.remove('mr-bg');
+  }
+  function makeCanvas() {
+    canvasEl = document.createElement('canvas');
+    canvasEl.id = 'mr-canvas';
+    canvasEl.setAttribute('aria-hidden', 'true');
+    const backdrop = document.getElementById('backdrop'); // (after the background and its effect, which are under everything too, so it shows over them)
+    if (backdrop) (document.getElementById('effect') || backdrop).after(canvasEl); else document.body.prepend(canvasEl);
+    painter = window.MusicFieldCanvas.create({ canvas: canvasEl, mode: bgMode, accent: accentOf(), tone: toneOf() });
+    document.body.classList.add('mr-bg');
+    document.body.dataset.mrParticles = String(painter.count);
+    layout();
   }
 
   function start() {
-    if (active) return;
     active = true;
     mapper = MR.createMapper(); beats = MR.beatDetector();
-    glowEl = el('mr-glow'); waveEl = mode === 'full' ? el('mr-wave') : null; // (reduced: the glow only)
-    for (const e of [glowEl, waveEl]) e?.setAttribute('aria-hidden', 'true');
-    document.body.prepend(...[glowEl, waveEl].filter(Boolean));
     document.body.classList.add('mr-on');
-    document.body.dataset.mrMode = mode;
     document.body.dataset.mr = 'idle';
-    findBeatEls();
+    document.body.dataset.mrCap = '0';
     resume();
   }
   function resume() {
     if (!active || document.hidden) return;
+    lastFrameT = 0;
+    layout();
+    findTargets();
     if (!raf) raf = requestAnimationFrame(frame);
-    if (!pollTimer && !polling) pollTimer = setTimeout(poll, 50);
+    startCapture();
   }
   function pause() {
     cancelAnimationFrame(raf); raf = 0;
-    clearTimeout(pollTimer); pollTimer = 0;
+    clearTimeout(startTimer); startTimer = 0;
     stopCapture();
   }
   function stop() {
     if (!active) return;
     pause();
     active = false;
-    clearVars();
-    glowEl?.remove(); waveEl?.remove(); glowEl = waveEl = null;
+    for (const n of cardEls) { n.style.removeProperty('--mr-halo'); n.style.removeProperty('--mr-pulse'); }
+    cardEls = []; lastHalo = ''; lastPulse = '';
+    dropCanvas();
     document.body.classList.remove('mr-on');
-    delete document.body.dataset.mr;
-    delete document.body.dataset.mrMode;
+    for (const k of ['mr', 'mrMode', 'mrCap', 'mrCards', 'mrBg']) delete document.body.dataset[k];
   }
 
+  // What runs is decided again whenever the look changes, a card's option changes, or Reduce motion flips: the analyser runs while at least one of the
+  // home screen and the cards is on; each part is made or dropped on its own.
   function apply() {
-    const next = MR.modeOf(look, reduced.matches);
-    if (next === mode && (next === 'off') === !active) return;
-    stop();
-    mode = next;
-    if (next !== 'off') start();
+    const p = MR.plan(look, hasCards(), reduced.matches);
+    if (!p.listen) { bgMode = cardMode = 'off'; stop(); return; }
+    const prevBg = bgMode;
+    bgMode = p.bg; cardMode = p.cards;
+    if (!active) start();
+    if (prevBg !== bgMode || Boolean(canvasEl) !== (bgMode !== 'off')) { dropCanvas(); if (bgMode !== 'off') makeCanvas(); } else if (painter) layout();
+    document.body.dataset.mrMode = bgMode !== 'off' ? bgMode : cardMode; // (what the page does, for the tests)
+    if (bgMode !== 'off') document.body.dataset.mrBg = '1'; else delete document.body.dataset.mrBg;
+    findTargets();
+    if (document.hidden) pause();
   }
   window.setMusicReactive = (l) => { look = l; apply(); };
+  window.musicCardsChanged = () => { if (look) apply(); };
   reduced.addEventListener('change', apply);
+  addEventListener('resize', () => { if (active && painter) layout(); });
   document.addEventListener('visibilitychange', () => { if (!active) return; if (document.hidden) pause(); else resume(); });
 })();
