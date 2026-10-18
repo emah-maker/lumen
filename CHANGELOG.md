@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.49 (2026-10-18)
+
 - **Fixed: the music-reactive home screen no longer mutes your music.** Chromium takes a captured tab's sound away from the speakers, so with the option on the music went silent. The new-tab page now plays the captured sound back, once, straight to the output (about 70 ms later), and only captures a tab while its own output is running; if that output ever stops, it lets go and the tab plays by itself again. Turning the option off, leaving the page or closing it returns everything at once. `test/music-react.js` now listens to what really reaches the speakers (system loopback in a hidden window) and fails if the music goes quiet or is doubled.
 
 ## 0.5.48 (2026-10-18)
