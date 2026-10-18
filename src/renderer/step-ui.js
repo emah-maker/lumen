@@ -224,8 +224,7 @@
     statusBar(card, state); // (the screen reader hears it, throttled; a change of state at once)
   }
   // ---- the tabs this turn opened or used: chips (tab-ref.js) in the order they were first touched, each marked open or closed
-  // (a closed one reopens from its chip, an open one switches to it); folded when there are more than 4.
-  const TABS_FOLDED = 4;
+  // (a closed one reopens from its chip, an open one switches to it); folded by default, the head says how many.
   const isClosedState = (st) => st === 'closed' || st === 'gone';
   function tabsCount(card) {
     if (!card.touched.length) return;
@@ -259,7 +258,7 @@
     }
     if (!added) return;
     card.tabsBox.hidden = false;
-    if (!card.tabsUser) card.tabsBox.open = card.touched.length <= TABS_FOLDED;
+    if (!card.tabsUser) card.tabsBox.open = false; // folded until the user opens it (the head says how many); kept as they set it
     tabsCount(card);
   }
   // The preview is shown at or below its own pixels: its width in CSS pixels is the picture's width over the display's scale, never above CAP.
