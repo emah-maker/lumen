@@ -121,16 +121,30 @@ const LOOSE_NOT = '(?!\\s+(?:upload|gallery|carousel|component|tag|element|forma
 const LOOSE = new RegExp(`\\b${MAKE_VERBS}\\s+(?:me\\s+|us\\s+)?(?:(?:an?|some|another)\\s+(?:(?!(?:the|this|that|these|those|my|our|your|its|his|her|their)\\b)[\\w'-]+\\s+){0,4}?(?:${LOOSE_NOUN})s?\\b|(?:images|pictures|image|picture)\\b)${LOOSE_NOT}`, 'i');
 const CODE_TALK = /\b(?:python|javascript|typescript|node(?:js)?|react|vue|css|html|canvas|pil|pillow|opencv|matplotlib|api|sdk|library|npm|pip|function|script|program|code|component)\b/i;
 const NEGATED = /\b(?:don'?t|do not|never|no need to|without|instead of|stop)\s+(?:\w+\s+){0,3}$/i;
+// What a picture request needs besides a picture model (ai/agent.js imageTurn, ai/image-router.js DIAGRAM_NOTE):
+//  technical  exact technical drawings (free-body diagrams, circuits, schematics, ...): a raster model draws arrows, angles and text badly,
+//             so the chat model draws them as SVG instead.
+//  diagramish a weaker hint (any diagram, graph, chart, labelled figure): a picture provider is tried first, and if it declines or fails
+//             the request falls back to SVG.
+//  context    the words point at something in the chat or on screen ("each problem", "this", "these"): a provider would see only the
+//             words, so the model reads the page, files and conversation first.
+const TECHNICAL = /\b(?:free[- ]?body|fbds?|force diagrams?|circuits?|schematics?|trusses|truss|(?:shear|bending)[- ](?:and|&)[- ]moment|moment diagrams?|vector diagrams?|ray diagrams?|phase diagrams?|lewis structures?|flow ?charts?|(?:label+ed|annotated) (?:diagram|figure|schematic|graph)s?|step[- ]by[- ]step (?:diagram|figure|math|solution|drawing)s?)\b/i;
+const DIAGRAMISH = /\b(?:diagrams?|graphs?|charts?|plots?|schematics?|label+ed|figures?|equations?|step[- ]by[- ]step)\b/i;
+const CONTEXT_REF = /\b(?:each|every|all|both)\s+(?:of\s+)?(?:the\s+|these\s+|those\s+|my\s+)?(?:\w+\s+)?(?:problems?|questions?|exercises?|parts?|steps?|figures?|diagrams?)\b|\b(?:this|that|these|those|the|my|our)\s+(?:\w+\s+)?(?:problems?|questions?|exercises?|assignments?|homework|worksheets?|pdf|page|document|slides?|article|chapter|paper|figure)\b|\b(?:of|for|from|about|show|explain|illustrate|draw|make|generate)\s+(?:this|these|those|it|them)\b(?!\s+(?:a|an|the)\b)/i;
+const technicalIntent = (text) => TECHNICAL.test(String(text || ''));
+const diagramishIntent = (text) => TECHNICAL.test(String(text || '')) || DIAGRAMISH.test(String(text || ''));
+const contextRef = (text) => CONTEXT_REF.test(String(text || ''));
+const hints = (t) => ({ technical: technicalIntent(t), diagramish: diagramishIntent(t), context: contextRef(t) });
 function pictureIntent(text) {
   const t = String(text || '').trim();
   if (!t || t.length > 4000) return null;
   const direct = imageRequest(t);
-  if (direct) return { ...direct, loose: false };
+  if (direct) return { ...direct, loose: false, ...hints(t) };
   if (/\?\s*$/.test(t) && /^\s*(?:how|what|why|which|where|when|is|are|do|does)\b/i.test(t)) return null; // a question about pictures
   if (CODE_TALK.test(t)) return null;
   const m = LOOSE.exec(t);
   if (!m || NEGATED.test(t.slice(Math.max(0, m.index - 30), m.index))) return null;
-  return { prompt: t, explicit: false, loose: true };
+  return { prompt: t, explicit: false, loose: true, ...hints(t) };
 }
 
 // ![alt](url) in a reply: [{ alt, url }] (any url; the renderer and main decide what may load).
@@ -332,6 +346,6 @@ async function fetchRemoteImage(url, { fetchImpl = globalThis.fetch, max = MAX_B
 }
 
 module.exports = {
-  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, pictureIntent, markdownImages,
+  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, pictureIntent, technicalIntent, diagramishIntent, contextRef, markdownImages,
   createImageStore, pathsIn, toolImagePaths, fromFileUrl, findLocalImages, publicHost, fetchRemoteImage,
 };
