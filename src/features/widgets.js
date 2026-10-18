@@ -602,7 +602,8 @@ const CONNECTORS = {
         const homeOn = apiConnected(c, x);
         // The Home tab: the Web API's shelves when the account is connected; else the tab says Spotify has to be connected (its button starts the sign-in).
         const home = { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true }, ...(homeOn ? {} : { home: { shelves: {}, connect: true } }) };
-        const merged = shown || lib || home ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}) } : d;
+        const lib2 = homeOn ? SAC.lib2Fields(x.ui(c.id), x.libText()) : null; // (the Library of the card: the Web API's, when the account is connected)
+        const merged = shown || lib || home || lib2 ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}), ...(lib2 || {}) } : d;
         return c.art === false ? { ...merged, art: '' } : merged;
       }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
@@ -616,7 +617,7 @@ const CONNECTORS = {
       let art = '';
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
       // The bigger sizes (the heart, the queue, the library, devices, the album playing): features/spotify-api-card.js. A failure there never costs the card its now-playing.
-      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.thumb, searchImage: x.searchThumb, homeText: x.homeText() }, data).catch(() => ({}));
+      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.thumb, searchImage: x.searchThumb, homeText: x.homeText(), libText: x.libText() }, data).catch(() => ({}));
       return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
@@ -639,7 +640,7 @@ const CONNECTORS = {
       }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.thumb, searchCall: searchIt, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), homeText: x.homeText(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}, SAC.homeFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.thumb, searchCall: searchIt, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), homeText: x.homeText(), libText: x.libText(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}, SAC.homeFields(x.ui(c.id)) || {}, SAC.lib2Fields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
@@ -1352,6 +1353,13 @@ async function statusSearch(c, action, x, cached) {
     Object.assign(cached, SAC.directResults(ui));
     return { local: true };
   }
+  if (action.do === 'elib' || action.do === 'edetail' || action.do === 'eplay') { // the Library (Web API, when connected): lists, opened lists, a row played in its list on Lumen's own player
+    if (!apiConnected(c, x)) return { local: true };
+    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
+    const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, lx);
+    Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {});
+    return done;
+  }
   if (action.do === 'ehome') {
     if (!SAC.HOME_SHELVES.includes(action.arg)) return false;
     if (!apiConnected(c, x)) return { local: true }; // (nothing to read it with: the tab offers to connect)
@@ -1765,6 +1773,7 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      libText: () => Object.fromEntries(Object.entries(SAC.LIB_STRINGS).map(([k, en]) => [k, tt(`spotify.library.${k}`, en)])), // (the Library's words, from locales/)
       homeText: () => Object.fromEntries(Object.entries(SAC.HOME_STRINGS).map(([k, en]) => [k, tt(`spotify.home.${k}`, en)])), // (the Home tab's words, from locales/)
       libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
       pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
@@ -2569,7 +2578,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|elib|edetail|eplay|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
     if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
       action.routine = params.get('id');
@@ -2638,6 +2647,25 @@ function createWidgets(deps) {
       action.arg = params.get('arg');
       if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
       if (params.get('force') === '1') action.force = true; // (Try again: the tab is read again, not served from the last few seconds)
+    }
+    if (action.do === 'elib') { // the Library's lists (arg: init | playlists | albums | artists; more: the next page)
+      action.arg = params.get('arg');
+      if (!['init', 'playlists', 'albums', 'artists'].includes(action.arg)) return { invalid: true };
+      if (params.get('more') === '1') action.more = true;
+      if (params.get('force') === '1') action.force = true;
+    }
+    if (action.do === 'edetail' || action.do === 'eplay') { // a list of the Library opened in the card (its songs, a page at a time), or played (pos: from that entry; with: which song)
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!['playlist', 'album', 'liked', 'artist'].includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return { invalid: true };
+      if (action.do === 'edetail') { if (params.get('more') === '1') action.more = true; if (params.get('force') === '1') action.force = true; }
+      else {
+        if (params.has('pos')) { action.pos = Number(params.get('pos')); if (!Number.isInteger(action.pos) || action.pos < 0 || action.pos > 99999) return { invalid: true }; }
+        action.with = params.get('with');
+        if (action.with !== null && !AMB.ID_RE.test(action.with)) return { invalid: true };
+        if (action.with === null) delete action.with;
+        if (params.get('shuffle') === '1') action.shuffle = true;
+      }
     }
     if (action.do === 'ehome') { // a Home shelf the card scrolled to (arg: which)
       action.arg = params.get('arg');
