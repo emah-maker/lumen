@@ -182,6 +182,7 @@ const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
 const ERROR_CLICK_MS = 1e3; // ...except a card showing an error: Try again works at once (a double click is one request)
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
+const PICTURE_RATE = { window: 60e3, max: 400 }; // ...and the small cover pictures of the Spotify cards (the Home tab alone is up to a hundred) come from Spotify's picture hosts: a budget of their own, so they never use up the API's
 const SEARCH_RATE = { window: 60e3, max: 90 }; // ...and a search the user typed (and the pictures of its rows) has a budget of its own: polling can't make it wait
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
@@ -598,7 +599,9 @@ const CONNECTORS = {
         const d = await x.spotifyEngine.read();
         const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
         const lib = SAC.directLibrary(x.ui(c.id)); // (the Web API's library, when the account is connected and it answered; else the page's own)
-        const merged = shown || lib ? { ...d, ...(lib || {}), ...(shown || {}) } : d;
+        const homeOn = apiConnected(c, x);
+        const home = homeOn ? { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true } } : null; // (the Home tab: the Web API's shelves, when the account is connected)
+        const merged = shown || lib || home ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}) } : d;
         return c.art === false ? { ...merged, art: '' } : merged;
       }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
@@ -612,7 +615,7 @@ const CONNECTORS = {
       let art = '';
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
       // The bigger sizes (the heart, the queue, the library, devices, the album playing): features/spotify-api-card.js. A failure there never costs the card its now-playing.
-      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.image }, data).catch(() => ({}));
+      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.thumb, searchImage: x.searchThumb, homeText: x.homeText() }, data).catch(() => ({}));
       return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
@@ -635,7 +638,7 @@ const CONNECTORS = {
       }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.thumb, searchCall: searchIt, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), homeText: x.homeText(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}, SAC.homeFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
@@ -1333,7 +1336,7 @@ async function statusLibrary(c, x, cached, action) {
   const ui = x.ui(c.id);
   const have = ui.library;
   if (have && SAC.directLibrary(ui) && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
-  const sctx = { ui, now: x.now, image: x.image, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
+  const sctx = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
   await SAC.loadTab((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), 'library', sctx, cached).catch(() => {});
   const got = SAC.directLibrary(ui);
   if (!got) return false;
@@ -1344,7 +1347,7 @@ async function statusSearch(c, action, x, cached) {
   if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
   if (!apiConnected(c, x)) { if (action.do === 'esearch') SAC.clearSearch(x.ui(c.id)); return false; } // (not connected: the page searches, and no older Web API rows are left over it)
   const ui = x.ui(c.id);
-  const sctx = { ui, now: x.now, image: x.image, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchImage };
+  const sctx = { ui, now: x.now, image: x.thumb, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchThumb };
   if (action.do === 'esearch') {
     const term = typeof action.text === 'string' ? action.text.trim() : '';
     if (!term) { SAC.clearSearch(ui); return false; } // (the engine clears its own)
@@ -1355,9 +1358,22 @@ async function statusSearch(c, action, x, cached) {
     Object.assign(cached, SAC.directResults(ui));
     return { local: true };
   }
-  if (action.do === 'ethumb' && ui.search?.api) {
+  if (action.do === 'ehome') {
+    if (!SAC.HOME_SHELVES.includes(action.arg)) return false;
+    const sh = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, onPart: () => { Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {}); x.pushUpdate?.(); } };
+    await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, sh).catch(() => {});
+    Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {});
+    return { local: true };
+  }
+  if (action.do === 'playlater' && action.kind === 'song') {
+    // "Add to queue" with the account connected: the Web API does it and its answer is the truth (the card says "Added" only when Spotify did). When it can't (no scope, no
+    // active device, offline) the hidden player's own page queues it, as before.
+    try { const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, { ui, cached, now: x.now }); if (done) return done; } catch { /* the page queues it */ }
+    return false;
+  }
+  if (action.do === 'ethumb' && (ui.search?.api || SAC.directLibrary(ui))) {
     await SAC.loadThumbs(ui, action.ids, sctx);
-    Object.assign(cached, SAC.directResults(ui));
+    Object.assign(cached, SAC.directLibrary(ui) || {}, SAC.directResults(ui) || {});
     return { local: true };
   }
   if (action.do === 'emore' && ui.search?.api) { // the next ten songs of the search shown (Spotify's development mode answers ten a request)
@@ -1375,11 +1391,14 @@ function warmSpotify(c, x) {
 
 // One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
 // a 429 already backs every request off (request() below) and reads as a calm message.
+// Spotify's answers can be big: GET /me/albums sends every saved album with its whole track list (50 albums are well over 1 MB), and a playlist's items
+// are full track objects. Cut at 256 KB the JSON was invalid and the list silently empty, so the cap is high and a cut answer is a failure (see ask() in spotify-api-card.js).
+const SPOTIFY_MAX_BYTES = 6e6;
 async function spotifyCall(x, cfg, method, path, body, budget) {
   const go = async (force) => {
     const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
     return (budget === 'search' && x.rawSearch ? x.rawSearch : x.raw)(`${x.endpoint('spotify')}${path}`, {
-      method, max: 262144, body: body ? JSON.stringify(body) : undefined,
+      method, max: SPOTIFY_MAX_BYTES, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     });
   };
@@ -1583,6 +1602,7 @@ function applyRects(widgets, items) {
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
+  const recentPictures = [];
   const recentSearch = []; // the same for the user's own searches (SEARCH_RATE)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
@@ -1617,7 +1637,7 @@ function createWidgets(deps) {
     const value = await fn();
     if (born !== epoch) return value;
     memoCache.set(key, { at: now(), value });
-    if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
+    if (memoCache.size > 400) memoCache.delete(memoCache.keys().next().value); // (the small pictures of a Home tab are most of them)
     return value;
   }
   const lastGood = new Map(); // key -> the last answer that worked (a calendar that is down for a while)
@@ -1627,6 +1647,12 @@ function createWidgets(deps) {
   function spend(budget) {
     if (budget === 'auth') return; // a sign-in's own requests (the device flow's polling): not the cards' budget, and not held back by it
     const t = now();
+    if (budget === 'pictures') { // (not the API: neither its 429 pause nor its budget)
+      while (recentPictures.length && t - recentPictures[0] > PICTURE_RATE.window) recentPictures.shift();
+      if (recentPictures.length >= (Number(deps.pictureRateMax?.()) || PICTURE_RATE.max)) throw new Error('Too many pictures right now. Try again in a minute.');
+      recentPictures.push(t);
+      return;
+    }
     if (t < backoffUntil) throw Object.assign(new Error('The service asked Lumen to slow down. It will try again shortly.'), { waitMs: backoffUntil - t }); // (one 429 pauses every card: they wait it out together instead of retrying)
     const bucket = budget === 'search' ? recentSearch : recent;
     const win = budget === 'search' ? SEARCH_RATE.window : RATE.window;
@@ -1745,11 +1771,25 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      homeText: () => Object.fromEntries(Object.entries(SAC.HOME_STRINGS).map(([k, en]) => [k, tt(`spotify.home.${k}`, en)])), // (the Home tab's words, from locales/)
       libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
       pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
       ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
       rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)
+      // A row's picture (queue, search, library): a small JPEG made by deps.resizeThumb (128 px: rows draw it 28 px wide, Home tiles 112), as a data: URL the card accepts
+      // (under 12000 characters). Without a resizer the original is used when it is small enough. `budget`: 'search' for pictures of rows the user is looking at.
+      thumb: (url) => memo(`thumb:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/jpeg, image/png;q=0.9' }, budget: 'pictures' });
+        if (!res.ok || res.truncated) throw new Error('That picture can’t be shown.');
+        let small = null;
+        try { if (deps.resizeThumb) small = deps.resizeThumb(res.bytes); } catch { /* the picture as it is, if it is small enough */ }
+        const data = SV.dataUrl(small || res.bytes, SV.MAX_ART_BYTES);
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
+      searchThumb: (url) => x.thumb(url),
       // The same picture as image(), for a result row the user is looking at (the search budget).
       searchImage: (url) => memo(`img:${url}`, 3600e3, async () => {
         if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
@@ -2575,7 +2615,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|ghcli)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|ghcli)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
     if (action.do === 'reschedule') { // a task's new day, from the card's small menu
       action.arg = params.get('arg');
@@ -2640,6 +2680,11 @@ function createWidgets(deps) {
       action.arg = params.get('arg');
       if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
       if (params.get('force') === '1') action.force = true; // (Try again: the tab is read again, not served from the last few seconds)
+    }
+    if (action.do === 'ehome') { // a Home shelf the card scrolled to (arg: which)
+      action.arg = params.get('arg');
+      if (!SAC.HOME_SHELVES.includes(action.arg)) return { invalid: true };
+      if (params.get('force') === '1') action.force = true;
     }
     if (action.do === 'eopen' || action.do === 'pplay' || action.do === 'pin' || action.do === 'unpin') { // a playlist or album (kind, arg: its id): open its songs in the card, play it (pos: from that entry; with: which song; shuffle=1), pin it as a tab or unpin it
       action.kind = params.get('kind');
@@ -2852,6 +2897,7 @@ function createWidgets(deps) {
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
+    entry.notice = null; // (a note from the last press — "Added to the queue." — is not what this press did)
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
@@ -2876,6 +2922,9 @@ function createWidgets(deps) {
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
       entry.data = { ...entry.data, notice: entry.error };
+      // What went wrong stays on the card for a few seconds, as a note does, instead of vanishing with the next look at the player (which replaced the data and the message with it).
+      entry.notice = { text: entry.error, until: now() + 8000 };
+      setTimeout(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
       if (err?.transient === true) { entry.tries = 0; scheduleRetry(w, entry); } // a passing failure: the list is read again in a moment, which also clears the note
       deps.onUpdate?.();
       return false;

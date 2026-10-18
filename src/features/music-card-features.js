@@ -21,7 +21,7 @@ const TIER_MIN = { medium: { w: 300, h: 200 }, large: { w: 380, h: 300 }, xl: { 
 const FEATURES = {
   small: ['art', 'title', 'playPause', 'next', 'progress'],
   medium: ['prev', 'seek', 'like', 'shuffle', 'repeat', 'volume'],
-  large: ['tabs', 'search', 'queue', 'library', 'devices', 'playlists'], // (playlists: a playlist opened in the card and pinned as its own tab; the Web API card only)
+  large: ['tabs', 'home', 'search', 'queue', 'library', 'devices', 'playlists'], // (playlists: a playlist opened in the card and pinned as its own tab; the Web API card only)
   xl: ['tracks', 'lyrics'],
 };
 
@@ -45,8 +45,8 @@ function featuresAt(tier) {
 // browser") or false. Spotify "Play as Lumen" has no Web API: it presses the web player's own controls, so what it finds is also
 // reported live (the page's `has`), which can only switch a control off.
 const ENGINES = {
-  'spotify-lumen': { art: true, title: true, playPause: true, next: true, progress: true, prev: true, seek: true, like: true, shuffle: true, repeat: true, volume: true, tabs: true, search: true, queue: true, queueAdd: true, library: true, devices: 'browser', tracks: true, lyrics: true },
-  'spotify-api': { art: true, title: true, playPause: true, next: true, progress: true, prev: true, seek: true, like: true, shuffle: true, repeat: true, volume: true, tabs: true, search: true, queue: true, queueAdd: true, library: true, playlists: true, devices: 'pick', tracks: true, lyrics: false },
+  'spotify-lumen': { art: true, title: true, playPause: true, next: true, progress: true, prev: true, seek: true, like: true, shuffle: true, repeat: true, volume: true, tabs: true, home: true, search: true, queue: true, queueAdd: true, library: true, devices: 'browser', tracks: true, lyrics: true },
+  'spotify-api': { art: true, title: true, playPause: true, next: true, progress: true, prev: true, seek: true, like: true, shuffle: true, repeat: true, volume: true, tabs: true, home: true, search: true, queue: true, queueAdd: true, library: true, playlists: true, devices: 'pick', tracks: true, lyrics: false },
   applemusic: { art: true, title: true, playPause: true, next: true, progress: true, prev: true, seek: true, like: true, shuffle: true, repeat: true, volume: true, tabs: true, search: true, queue: true, queueAdd: true, library: true, devices: false, tracks: true, lyrics: true },
 };
 

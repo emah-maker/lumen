@@ -256,10 +256,11 @@ function createMusicEngine(deps) {
     }
   }
   const pageChanged = () => Boolean(playerMissingSince && now() - playerMissingSince > (deps.playerMissingMs?.() || PLAYER_MISSING_MS));
-  const toData = async (url) => {
+  // `height`: a row's picture is made small (96 px: rows draw it 28 px wide) so it fits what the card accepts (12000 characters); the now-playing art keeps 160.
+  const toData = async (url, height) => {
     const bytes = await deps.fetchBytes(url);
     if (!bytes || bytes.length > MAX_ART_BYTES) return '';
-    const small = deps.resizeArt ? deps.resizeArt(bytes) : bytes;
+    const small = deps.resizeArt ? (height ? deps.resizeArt(bytes, height, 80) : deps.resizeArt(bytes)) : bytes;
     if (!small && deps.decodeArt) return (await deps.decodeArt(bytes)) || ''; // (a format the resizer cannot read, WebP: a page decodes it)
     return (small && AMV.dataUrl(small)) || '';
   };
@@ -274,7 +275,7 @@ function createMusicEngine(deps) {
     if (!wanted.length) return;
     for (const u of wanted) thumbs.set(u, '');
     while (thumbs.size > 80) thumbs.delete(thumbs.keys().next().value);
-    Promise.all(wanted.map((u) => toData(u).then((d) => { thumbs.set(u, d); }, () => {}))).then(() => { if (forRid === results.rid || forRid === -1) changed(); }); // (-1: not a search: the queue's)
+    Promise.all(wanted.map((u) => toData(u, 96).then((d) => { thumbs.set(u, d); }, () => {}))).then(() => { if (forRid === results.rid || forRid === -1) changed(); }); // (-1: not a search: the queue's)
   }
   // The pictures of the result rows the card has on screen (it names the rows by id; the addresses are the ones the page sent, never the card's).
   function loadThumbs(ids) {
