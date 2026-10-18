@@ -149,6 +149,7 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Effect color | `newTabEffectColor` | `auto` | `auto` (white or your text color; the soft effects have their own palettes), `accent`, `rainbow` or `#rrggbb`. |
 | Effect amount, speed, size | `newTabEffectAmount`, `newTabEffectSpeed`, `newTabEffectSize` | `normal` | `few`/`normal`/`many`, `slow`/`normal`/`fast`, `small`/`normal`/`large`. |
 | React to the pointer | `newTabEffectInteract` | on | Particles reach for the pointer, stars light up near it, bubbles and snow move aside. |
+| Music-reactive home screen | `newTabMusicReactive` | off | The new-tab page's glow, wave and clock bounce follow the music playing in Lumen's own tabs and players. Only the bass, mids and highs levels are read; nothing is recorded or sent. Off with Reduce motion, Visual effects: Light, software drawing and Performance mode. |
 | Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 
 ## Search engine

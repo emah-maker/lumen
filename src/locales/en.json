@@ -289,6 +289,8 @@
   "settings.devices.type.hid": "HID",
   "settings.devices.type.serial": "Serial",
   "settings.devices.type.usb": "USB",
+  "settings.musicReactive.label": "Music-reactive home screen",
+  "settings.musicReactive.desc": "The new-tab page’s glow and clock move with the music playing in Lumen: Spotify, YouTube or any tab. Lumen only reads how loud the bass, mids and highs are; nothing is recorded or sent anywhere. Still when nothing plays, with Reduce motion, and in Light visual effects.",
   "dialog.cancel": "Cancel",
   "dialog.muteDialogs": "Don't let this page show more dialogs",
   "dialog.ok": "OK",

@@ -4239,6 +4239,7 @@ async function buildHome(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
+    toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'The new-tab page’s glow and clock move with the music playing in Lumen: Spotify, YouTube or any tab. Lumen only reads how loud the bass, mids and highs are; nothing is recorded or sent anywhere. Still when nothing plays, with Reduce motion, and in Light visual effects.')),
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
