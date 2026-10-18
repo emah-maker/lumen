@@ -539,6 +539,64 @@ process.stdin.on('data', async (d) => {
   check('"Allowed automatically" rows are small rows in the card\'s step list (the one before the first step moved in), not lines between cards', synth.notes.length === 2 && /^Allowed automatically: reading/.test(synth.notes[0]) && synth.loose === 0, J(synth));
   check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done/.test(synth.done), J([synth.paused, synth.done]));
 
+  // ---- steps after the card's text, and steps on no surface, stay in the turn's ONE card (never "Used 1 browser action" rows under it)
+  const trailing = await ui.evaluate(() => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const opts = { messages: host, append: (n) => host.append(n), task: '' };
+    const turn = { cards: [], card: null, plain: null, working: null };
+    const out = {};
+    const step = (name, input, id) => window.stepUI.add(turn, { name, input, id, label: name + ' step' }, opts);
+    const finish = (row) => { row.classList.remove('running'); row.classList.add('done'); window.stepUI.done(turn, row, { ok: true }); };
+    const rows = [];
+    // eight steps (browser ones and a web search, a tool on no surface, among them), then the assistant says something, then three more
+    rows.push(step('web_search', { query: 'first' }, 'w0')); // (before any card: it moves into the card when the card appears)
+    for (let i = 1; i <= 7; i++) rows.push(i % 3 === 0 ? step('TodoWrite', {}, 't' + i) : step('read_page', {}, 'p' + i));
+    for (const r of rows) finish(r);
+    window.stepUI.endCard(turn); // (text between)
+    out.afterText = host.querySelector('.act-card').dataset.state;
+    const more = [step('read_page', {}, 'q1'), step('clipboard', {}, 'q2'), step('read_page', {}, 'q3')];
+    out.working = host.querySelector('.act-card').dataset.state;
+    for (const r of more) finish(r);
+    const c = host.querySelector('.act-card');
+    out.live = { cards: host.querySelectorAll('.act-card').length, steps: c.querySelector('.act-steps > summary').textContent, loose: [...host.children].filter((n) => !n.classList.contains('act-card')).length, used: (host.textContent.match(/Used \d+ browser action/g) || []).length };
+    window.stepUI.finalize(turn, { type: 'done' });
+    out.done = c.dataset.state;
+    // a step that arrives after Done (a follow-up burst) reopens the card, which says Done again at the end
+    const late = step('read_page', {}, 'z1');
+    out.reopened = c.dataset.state;
+    finish(late);
+    window.stepUI.finalize(turn, { type: 'done' });
+    out.doneAgain = { state: c.dataset.state, steps: c.querySelector('.act-steps > summary').textContent, cards: host.querySelectorAll('.act-card').length };
+    host.textContent = '';
+    // the same turn drawn again from a saved chat: 11 steps, 1 card, no folded "Used N" group
+    const names = ['web_search', 'read_page', 'read_page', 'TodoWrite', 'read_page', 'read_page', 'TodoWrite', 'read_page', 'read_page', 'clipboard', 'read_page'];
+    const nodes = window.stepUI.restoreNodes({ cards: true, tools: names.map((name, i) => ({ name, input: name === 'web_search' ? { query: 'q' + i } : {}, label: name + ' ' + i, ok: true })) });
+    for (const n of nodes) host.append(n);
+    const rc = host.querySelector('.act-card');
+    out.restored = { cards: host.querySelectorAll('.act-card').length, steps: rc.querySelector('.act-steps > summary').textContent, folded: host.querySelectorAll('details.step-group.restored').length, loose: [...host.children].filter((n) => !n.classList.contains('act-card')).length, used: (host.textContent.match(/Used \d+ browser action/g) || []).length, state: rc.dataset.state };
+    host.textContent = '';
+    // three steps on no surface (and no card at all): ONE row, "Used 3 browser actions", with every step inside
+    const three = window.stepUI.restoreNodes({ cards: true, tools: ['TodoWrite', 'clipboard', 'TodoWrite'].map((name, i) => ({ name, input: {}, label: name + ' ' + i, ok: true })) });
+    for (const n of three) host.append(n);
+    out.outside = { rows: host.querySelectorAll('details.step-group.restored').length, label: host.querySelector('details.step-group.restored > summary')?.textContent || '', members: host.querySelectorAll('details.step-group.restored .step-items .step').length, cards: host.querySelectorAll('.act-card').length };
+    host.textContent = '';
+    const one = window.stepUI.restoreNodes({ cards: true, tools: [{ name: 'TodoWrite', input: {}, label: 'a', ok: true }] });
+    for (const n of one) host.append(n);
+    out.singular = host.querySelector('details.step-group.restored > summary')?.textContent || '';
+    host.textContent = '';
+    // the older saved form (no cards): the same single folded row
+    for (const n of window.chatActions.details({ steps: 3, tools: ['TodoWrite', 'clipboard', 'TodoWrite'].map((name, i) => ({ name, input: {}, label: name + ' ' + i, ok: true })) })) host.append(n);
+    out.older = { rows: host.querySelectorAll('details.step-group.restored').length, label: host.querySelector('details.step-group.restored > summary')?.textContent || '' };
+    host.remove();
+    return out;
+  });
+  check('8 steps, then text, then 3 more: ONE card with 11 steps (working until the turn ends) and no "Used 1 browser action" rows', trailing.afterText === 'working' && trailing.working === 'working' && trailing.live.cards === 1 && /^11 steps/.test(trailing.live.steps) && trailing.live.loose === 0 && trailing.live.used === 0 && trailing.done === 'completed', J(trailing));
+  check('a step after Done reopens the same card (Working) and it says Done again at the end, with the new step counted', trailing.reopened === 'working' && trailing.doneAgain.state === 'completed' && trailing.doneAgain.steps === '12 steps' && trailing.doneAgain.cards === 1, J(trailing.doneAgain));
+  check('the same turn from a saved chat: one card, 11 steps, no folded "Used N browser actions" rows under it', trailing.restored.cards === 1 && trailing.restored.steps === '11 steps' && trailing.restored.folded === 0 && trailing.restored.loose === 0 && trailing.restored.used === 0 && trailing.restored.state === 'completed', J(trailing.restored));
+  check('three separate out-of-card actions are ONE row: "Used 3 browser actions" with all three inside (and "Used 1 browser action" for one)', trailing.outside.rows === 1 && trailing.outside.label.trim() === 'Used 3 browser actions' && trailing.outside.members === 3 && trailing.outside.cards === 0 && trailing.singular.trim() === 'Used 1 browser action', J([trailing.outside, trailing.singular]));
+  check('the older saved form (no cards) is one folded row as well', trailing.older.rows === 1 && trailing.older.label.trim() === 'Used 3 browser actions', J(trailing.older));
+
   // ---- searches in a burst are one row, in the chat (plain rows) and inside a card; the queries and times are in it; restored the same
   const grouped = await ui.evaluate(() => {
     const host = document.createElement('div');
