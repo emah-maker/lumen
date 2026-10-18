@@ -490,6 +490,19 @@
     (turn.noteRows ||= []).push(row);
     opts.append(row);
   }
+  // The plain step rows a turn drew before its card existed move into the card (each entry as it is, groups included), counted as its steps.
+  function adoptPlain(turn, card) {
+    for (const plain of turn.allPlain || []) {
+      for (const e of plain.entries) {
+        card.list.append(e.el);
+        card.entries.push(e);
+        for (const m of e.members) { card.count++; if (m.classList.contains('running')) card.running++; m._card = card; }
+      }
+      plain.entries.length = 0;
+    }
+    turn.allPlain = null;
+    turn.plain = null;
+  }
   function add(turn, event, opts) {
     init(opts.messages);
     const label = opts.fallback ? (labelFor(event) || opts.fallback) : labelFor(event);
@@ -510,7 +523,9 @@
         if (surface === 'browser') { card.task = SL().taskName(opts.task || ''); if (turn.lastThumb) { card.tab = turn.lastThumb.tab; setThumb(card, turn.lastThumb.src); } }
         for (const n of turn.noteRows || []) card.list.append(n); // (approvals that came before the first step)
         turn.noteRows = null;
+        adoptPlain(turn, card); // (steps of this turn that came before the card: they belong in it)
       }
+      if (card.ended) { card.ended = false; card.stopped = false; } // (a step after the card said Done: it works again, and says Done at the turn's real end)
       setSurface(card, surface, event.name);
       markRow(row, surface, event.name);
       if (opts.runId != null && card.runId == null) card.runId = opts.runId;
@@ -522,8 +537,19 @@
       touchTabs(card, window.tabMarker ? window.tabMarker.stepTabs(event.name, data.input) : []);
       refreshCard(turn, card);
       row._card = card;
+    } else if (turn.card?.el.isConnected) {
+      // A step that is on no surface of its own (a web search, a tool): in the turn's card, in order, not in a row of its own under it.
+      const card = turn.card;
+      if (card.ended) { card.ended = false; card.stopped = false; }
+      card.count++;
+      if (running) card.running++;
+      card.latest = label;
+      place(card, row, info);
+      refreshCard(turn, card);
+      row._card = card;
     } else {
-      const plain = (turn.plain ||= { entries: [], host: { append: (n) => opts.append(n) } });
+      const plain = turn.plain || (turn.plain = { entries: [], host: { append: (n) => opts.append(n) } });
+      if (!(turn.allPlain ||= []).includes(plain)) turn.allPlain.push(plain);
       place(plain, row, info, tail);
     }
     row._turn = turn;
@@ -636,7 +662,9 @@
     const turn = { cards: [], card: null, plain: null, working: null };
     const host = { append: (n) => out.push(n) };
     let legacy = null;
-    const flushLegacy = () => { legacy = null; };
+    const flushLegacy = () => { /* one folded group for all the steps that are on no surface (kept: a later step does not start another) */ };
+    const early = []; // steps on no surface that came before the card's first step
+    const hasCard = tools.some((x) => x && x.name && !isNote(String(x.name)) && surfaceFor(String(x.name)));
     for (const tool of tools) {
       const name = String(tool.name || '');
       let input = tool.input && typeof tool.input === 'object' ? tool.input : null;
@@ -660,6 +688,8 @@
           if (surface === 'browser') unwatch(card.el);
           for (const n of turn.noteRows || []) card.list.append(n);
           turn.noteRows = null;
+          for (const e of early) { card.count++; e.row._card = card; place(card, e.row, e.info); }
+          early.length = 0;
         }
         setSurface(card, surface, name);
         markRow(row, surface, name);
@@ -668,6 +698,13 @@
         card.latest = label;
         place(card, row, info);
         row._card = card;
+      } else if (hasCard && turn.card) { // (a step on no surface, after the card's first step: in the card, in order)
+        turn.card.count++;
+        turn.card.latest = label;
+        place(turn.card, row, info);
+        row._card = turn.card;
+      } else if (hasCard) {
+        early.push({ row, info });
       } else {
         if (!legacy) {
           const group = el('details', { className: 'step-group restored' });
