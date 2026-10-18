@@ -11,7 +11,7 @@ Cards are grouped as Mail and calendar, School, Files and docs, Work, Tasks and 
 | Canvas | The Canvas you are signed in to in Lumen. Lumen finds your school's address from your browsing, or you type it. | Course list, upcoming assignments and due dates, announcements (all or per course), read one announcement. Read only. |
 | Gmail | Google sign-in in your browser (the same one the Gmail widget uses), read only. Without it, the Google sign-in already in Lumen works for unread mail only. | Unread mail; with the full sign-in also search and read a message. |
 | Google Calendar | The calendar's secret iCal address, which you paste. Only Google Calendar addresses (calendar.google.com, https) are accepted. | Events for the next days. Read only. |
-| GitHub | A fine-grained, read-only personal access token you paste. | Your pull requests and issues (author, assigned, review), read one pull request. |
+| GitHub | Sign in with GitHub (a one-time code, or the GitHub CLI if it is signed in): the same sign-in as the GitHub card on the new-tab page, see [Sign in with GitHub](github-signin.md). A pasted fine-grained, read-only token still works. | Your pull requests and issues (author, assigned, review), read one pull request. |
 | Todoist | Your API token. | List tasks and projects. **Add a task** asks you first. |
 | Notion | An internal integration secret. It sees only the pages you share with it. | Search and read a page. |
 | Google Drive and Docs, Slack, Spotify | Coming soon. Slack waits for a maintained MCP server to point at: the one on npm is deprecated, so there is no preset. | |

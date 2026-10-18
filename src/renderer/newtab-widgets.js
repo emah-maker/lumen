@@ -694,6 +694,36 @@ const WIDGET_RENDERERS = {
   github(w, card) {
     const d = w.data;
     card.head.append(refreshButton(w));
+    // Signed out, or GitHub stopped accepting the sign-in: the card says so and offers the sign-in right here. While a code is
+    // waiting it is shown (and github.com/login/device is open in a Lumen tab). The words come from the browser process (locales).
+    if (d.reconnect) {
+      const copy = d.copy && typeof d.copy === 'object' ? d.copy : {};
+      const say = (key, fallback) => text(copy[key], 220) || fallback;
+      const box = el('div', 'gh-signin');
+      const pending = d.pending && typeof d.pending === 'object' && /^[A-Z0-9-]{4,20}$/.test(String(d.pending.code)) ? d.pending : null;
+      if (pending) {
+        box.append(el('p', 'w-note', say('waiting', 'Enter this code on github.com/login/device. This card fills in when you approve it.')));
+        box.append(el('div', 'gh-user-code', pending.code));
+        box.append(link('https://github.com/login/device', say('open', 'Open github.com/login/device'), 'w-btn'));
+      } else {
+        const expired = d.reason === 'expired';
+        box.append(el('p', 'w-note', expired ? say('expired', 'GitHub signed Lumen out.') : say('signedout', 'Sign in to GitHub to see your pull requests and notifications.')));
+        if (d.last && d.last.ok === false && typeof d.last.message === 'string') box.append(el('p', 'w-note gh-err', text(d.last.message, 220)));
+        const actions = el('div', 'w-actions');
+        const button = (label, action, primary) => {
+          const b = el('button', primary ? 'w-btn primary' : 'w-btn', label);
+          b.type = 'button';
+          b.addEventListener('click', () => widgetAct(w.id, action));
+          actions.append(b);
+        };
+        if (d.device) button(expired ? say('again', 'Sign in again') : say('signin', 'Sign in with GitHub'), 'signin', true);
+        if (d.cli) button(say('cli', 'Use GitHub CLI sign-in'), 'ghcli', !d.device);
+        button(say('settings', 'Other ways to sign in'), 'configure', !d.device && !d.cli);
+        box.append(actions);
+      }
+      card.body.append(box);
+      return;
+    }
     const open = githubUrl(d.open);
     if (open) card.head.append(openLink(open, 'Open GitHub'));
     const listOf = (v) => {
