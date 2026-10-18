@@ -2652,6 +2652,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
+  tab.askedUrl = typeof url === 'string' ? url : ''; // (what a first load was asked for: the saved session's address for it until it commits)
   // One of Lumen's own pages whose load never commits (white page, spinner, empty console) is loaded again (features/stuck-load.js).
   stuckLoad.guard(wc, {
     url,
@@ -6047,7 +6048,9 @@ function titleBarOverlay() {
 function sessionEntry() {
   // A sleeping tab has no webContents to read a URL from; its sleep snapshot stands in, so closing
   // Lumen while a tab happens to be asleep doesn't silently drop it from the next launch's session.
-  const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) : t.sleeping ? t.sleepUrl || '' : '');
+  // (A page still on its first load has no address yet, wc.getURL() is empty until it commits: the address it was asked for stands in, or closing
+  // Lumen while the front page loads dropped that tab, and the next start came up without it, or on another tab.)
+  const urlOf = (t) => (alive(t) ? realUrl(t.view.webContents) || (t.view.webContents.isLoading() ? t.askedUrl || '' : '') : t.sleeping ? t.sleepUrl || '' : '');
   // What a tab keeps in the session: web pages, lumen://chat, and the file a file tab shows (a PDF or deck in its viewer is saved as the file's own
   // address: the viewer's moves with an update). Not research tabs: they would come back in the user's session.
   const savedOf = (t) => { const u = urlOf(t); return isWebUrl(u) || chatPage.isChatUrl(u) ? u : sessionFiles.savedUrl(u); };
