@@ -214,14 +214,19 @@ function fakeSpotify(opts, world) {
     // ---- Library: pages, big answers, pictures, an expired token ----
     world.expired = true; // (the first token is refused: the card refreshes it and goes on)
     await page(`${card}.querySelector('.mc-tab-library').click()`);
-    check('Library: playlists of both pages and the saved albums (an answer over 1 MB) all show, after the expired token was refreshed', await waitFor(`${card}.querySelectorAll('.mc-panel-library .mc-row').length >= 160`, 120), `${await page(`${card}.querySelectorAll('.mc-panel-library .mc-row').length`)} rows; tokens=${world.tokens}`);
-    const libText = await page(`${card}.querySelector('.mc-panel-library').innerText`);
-    check('Library: the second page\'s playlists (Playlist 99) and the last saved album (Saved Album 49) are there', /Playlist 99/.test(libText) && /Saved Album 49/.test(libText), libText.slice(0, 200));
+    const lp = `${card}.querySelector('.mc-panel-library')`;
+    check('Library: the first rows (Liked Songs, then playlists) show, after the expired token was refreshed', await waitFor(`${lp}.querySelectorAll('.lv-row').length >= 40`, 120), `${await page(`${lp}.querySelectorAll('.lv-row').length`)} rows; tokens=${world.tokens}`);
+    for (let i = 0; i < 40 && !(await page(`/Playlist 99/.test(${lp}.innerText)`)); i++) { await page(`${lp}.scrollTop = ${lp}.scrollHeight`); await sleep(200); }
+    check('Library: the second page of playlists (Playlist 99) is read as the list scrolls', await page(`/Playlist 99/.test(${lp}.innerText)`), (await page(`${lp}.innerText`)).slice(0, 200));
+    await page(`[...${lp}.querySelectorAll('.lv-chip')][1].click()`);
+    check('Library: the saved albums (an answer over 1 MB) show under the Albums chip', await waitFor(`/Saved Album 0/.test(${lp}.innerText)`, 120) && (await page(`${lp}.querySelectorAll('.lv-row').length`)) >= 50, (await page(`${lp}.innerText`)).slice(0, 200));
     check('Library: the token was refreshed (a new token was asked for) and the library did not stay empty', world.tokens >= 2, String(world.tokens));
-    check('Library: the rows have pictures (a playlist, an album: pixel probe green / red)', await waitFor(`${card}.querySelectorAll('.mc-panel-library img.am-thumb').length >= 6`, 120), String(await page(`${card}.querySelectorAll('.mc-panel-library img.am-thumb').length`)));
-    const libThumbs = await page(`Promise.all([...${card}.querySelectorAll('.mc-panel-library .mc-row')].filter((r) => r.querySelector('img.am-thumb')).slice(0, 12).map(async (r) => ({ title: r.querySelector('.am-title').textContent, color: await (${PROBE})(r.querySelector('img.am-thumb')) })))`);
-    const wantFor = (title) => (/^Playlist|Daily|Discover|Road|Today/.test(title) ? COLORS.pl : /^Saved Album|^Album/.test(title) ? COLORS.al : /Artist/.test(title) ? COLORS.ar : COLORS.tr);
-    check('Library: each row\'s picture is its own kind\'s cover', libThumbs.length >= 6 && libThumbs.every((t) => near(t.color, wantFor(t.title))), JSON.stringify(libThumbs));
+    await page(`[...${lp}.querySelectorAll('.lv-chip')][0].click()`);
+    await page(`${lp}.scrollTop = 0`);
+    check('Library: the rows have pictures (a playlist: pixel probe green)', await waitFor(`${lp}.querySelectorAll('img.lv-cover').length >= 4`, 120), String(await page(`${lp}.querySelectorAll('img.lv-cover').length`)));
+    const libThumbs = await page(`Promise.all([...${lp}.querySelectorAll('.lv-row')].filter((r) => r.querySelector('img.lv-cover')).slice(0, 8).map(async (r) => ({ title: r.querySelector('.lv-title').textContent, color: await (${PROBE})(r.querySelector('img.lv-cover')) })))`);
+    const wantFor = (title) => (/^Playlist|Daily|Discover|Road|Today/.test(title) ? COLORS.pl : COLORS.tr);
+    check('Library: each row\'s picture is its own kind\'s cover', libThumbs.length >= 4 && libThumbs.every((t) => near(t.color, wantFor(t.title))), JSON.stringify(libThumbs));
     world.expired = false;
 
     // ---- a missing scope ----
