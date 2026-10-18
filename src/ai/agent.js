@@ -2225,7 +2225,13 @@ class Agent {
     // use generate_image, in the browser_state block (never shown in the chat). pictureAsk also keeps open_tab from previewing a file.
     const pictureAsk = !aiOff && this.imageSetting() !== 'off' ? genImages.pictureIntent(userText) : null;
     messages.pictureAsk = Boolean(pictureAsk);
-    const pictureNote = pictureAsk ? imageRouter.PICTURE_NOTE : '';
+    // [image routing] An exact technical drawing ("free body diagrams for each problem") is drawn by the chat model as SVG, never by an image
+    // model; a request that points at something ("each problem", "this") needs the page, files and conversation read first, so the page text
+    // is attached even to a short message (isSimpleQuestion would leave it out). Only this message's hidden block carries the notes.
+    const diagramAsk = Boolean(pictureAsk?.technical);
+    const needsContext = Boolean(pictureAsk && (pictureAsk.technical || pictureAsk.context));
+    messages.diagramAsk = Boolean(pictureAsk?.diagramish || needsContext);
+    const pictureNote = pictureAsk ? (diagramAsk ? imageRouter.DIAGRAM_NOTE : imageRouter.PICTURE_NOTE) : '';
     const stateOf = () => (aiOff
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe user turned off AI on this tab's site: its title, address and content are not shared, and tools can't use it.\n</browser_state>\n\n`
       : tab && this.localFileOf(tab.webContents.getURL()) && !this.fileShared(tab.webContents.getURL(), messages) // [screen context] a file on this computer: its name and path are the user's to share
@@ -2294,7 +2300,7 @@ class Agent {
       attached = wanted.length ? await abortable(this.tabsContextFor(wanted), controller.signal) : { block: '', tabs: [] };
       if (attached.tabs.length) emit({ type: 'tabs_attached', tabs: attached.tabs });
       // A plain question that needs neither the page nor a tool (isSimpleQuestion) is sent without the page's text.
-      page = wanted.includes(tab?.id) || (!screenPlan.capture && isSimpleQuestion(userText, images.length + attachedFiles + wanted.length)) || (!wanted.length && isPictureQuestion(userText, images.length)) ? '' : await abortable(this.pageContextFor(tab, { messages, screen: screenPlan.capture, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
+      page = wanted.includes(tab?.id) || (!screenPlan.capture && !needsContext && isSimpleQuestion(userText, images.length + attachedFiles + wanted.length)) || (!wanted.length && isPictureQuestion(userText, images.length)) ? '' : await abortable(this.pageContextFor(tab, { messages, screen: screenPlan.capture || needsContext, fresh: (viaClaudeCode && !messages.settings.ccSession) || (viaGrokBuild && !messages.settings.gbSession) || (viaAntigravity && !messages.settings.agySession) || (viaCodex && !messages.settings.cxSession) }), controller.signal);
     } catch (err) {
       if (ccPlan) this.engineFor('claudecode').release?.(); // stopped or failed before the message was sent: the warm process is of no use
       throw err;
@@ -2316,10 +2322,28 @@ class Agent {
     // After a stop, history can end on a user turn (tool results); extend it instead of stacking two.
     if (last?.role === 'user') last.content = [...(Array.isArray(last.content) ? last.content : [{ type: 'text', text: last.content }]), ...blocks];
     else messages.push({ role: 'user', content: blocks });
-    messages.simpleTurn = !screenPlan.capture && isSimpleQuestion(userText, images.length + attachedFiles + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
+    messages.simpleTurn = !screenPlan.capture && !needsContext && isSimpleQuestion(userText, images.length + attachedFiles + (attached.block ? 1 : 0)) ? messages[messages.length - 1] : null;
 
     // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
+    // [image routing] A request that points at something with nothing to read (no readable tab, attachment or earlier message): asked once.
+    if (needsContext && !images.length && !wanted.length && !attachedFiles && !page && !this.skillRun && !this.hasConversation(messages) && !this.tabHasContent(tab)) {
+      const text = imageRouter.noContextAsk({ tab: this.noContextTabLabel(tab) });
+      emit({ type: 'turn_start' });
+      emit({ type: 'text', text });
+      const reply = { role: 'assistant', content: [{ type: 'text', text }] };
+      producedBy.set(reply, String(messages.settings.model));
+      messages.push(reply);
+      return;
+    }
     if (!images.length && !wanted.length && !this.skillRun && await this.imageTurn(messages, userText, controller.signal, emit, { attachedFiles })) return;
+    // [image routing] A picture provider declined or failed a diagram: the model draws it as SVG (the notice said so, imageTurn).
+    if (messages.svgFallback) {
+      delete messages.svgFallback;
+      const add = (text) => (text.includes(imageRouter.PICTURE_NOTE) ? text.replace(imageRouter.PICTURE_NOTE, () => imageRouter.DIAGRAM_NOTE) : text.replace('</browser_state>', () => `${imageRouter.DIAGRAM_NOTE}</browser_state>`));
+      state = add(state);
+      const mine = blocks[blocks.length - 1];
+      if (mine?.type === 'text') mine.text = add(mine.text);
+    }
 
     // ---- [claude code engine] "Claude · your account": the user's own CLI answers this message.
     // Its tool calls arrive over MCP, outside this async context: the engine's run carries this message's task scope
@@ -3339,7 +3363,15 @@ ${prompt}` : prompt), historyImages: [] };
       source = this.lastGeneratedPicture(scope.chat);
       if (!source) throw new Error('There is no earlier picture in this chat to edit. Make one first.');
     }
-    const made = await this.routeImage({ prompt, source, signal: scope.signal, current: scope.chat.settings?.model });
+    let made;
+    try {
+      made = await this.routeImage({ prompt, source, signal: scope.signal, current: scope.chat.settings?.model });
+    } catch (err) { // [image routing] a diagram the engine declined or could not make: the model draws it as SVG
+      if ((err?.code === 'refused' || err?.code === 'failed') && (scope.chat.diagramAsk || genImages.diagramishIntent(prompt))) {
+        throw Object.assign(new Error(`${err.userMessage || err.message} Do not retry it with an image model. Tell the user in one line that the picture engine could not make it, then draw it yourself: ${imageRouter.DIAGRAM_NOTE}`), { code: err.code });
+      }
+      throw err;
+    }
     (scope.toolImages ||= []).push(...made.images.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300), credit: made.credit })));
     return imageRouter.toolResult(made);
   }
@@ -3482,6 +3514,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (err.code === 'none' && !err.missing) return false;
       if (err.code === 'none') { emit({ type: 'turn_start' }); emit({ type: 'text', text: err.userMessage }); reply([{ type: 'text', text: err.userMessage }]); return true; } // the chosen provider is not connected: said, never swapped for another
       if (err.code === 'aborted') throw new Error('Stopped');
+      if ((err.code === 'refused' || err.code === 'failed') && genImages.diagramishIntent(ask.prompt) && this.svgFallbackNotice(messages, err, emit)) return false; // [image routing] drawn as SVG instead
       if (err.code === 'refused') { const text = err.userMessage || err.message; emit({ type: 'text', text }); reply([{ type: 'text', text }]); return true; }
       throw Object.assign(new Error(err.userMessage || err.message), err.provider ? { __provider: err.provider } : {});
     }
@@ -3491,6 +3524,28 @@ ${prompt}` : prompt), historyImages: [] };
     if (made.said) emit({ type: 'text', text: made.said });
     if (blocks.length) reply(content);
     return true;
+  }
+  // A picture provider declined or failed a diagram-like request: the model draws it as SVG instead, said in one line. true when set up.
+  svgFallbackNotice(messages, err, emit) {
+    const who = err.label || 'The picture engine';
+    emit({ type: 'notice', text: `${who} couldn't make this picture, so I'll draw it as SVG diagrams here instead.` });
+    messages.svgFallback = true;
+    return true;
+  }
+
+  // Does the tab show something the model could read for "each problem" (a web page, a PDF or deck in Lumen's viewer, a file)? A new tab page, a blank
+  // page or no tab: no.
+  tabHasContent(tab) {
+    if (!tab) return false;
+    let url = '';
+    try { url = tab.webContents.getURL(); } catch { return false; }
+    return /^https?:/i.test(url) || Boolean(pdfViewer.pdfUrlOf(url) || slidesViewer.deckUrlOf(url) || emlViewer.emlUrlOf(url) || this.localFileOf(url));
+  }
+  noContextTabLabel(tab) {
+    if (!tab) return 'no tab is open';
+    let title = '';
+    try { title = String(tab.webContents.getTitle() || '').trim(); } catch { /* none */ }
+    return title ? `"${title.slice(0, 60)}", which has nothing to read` : 'a blank page';
   }
   // ---- [/image routing]
 
@@ -3518,6 +3573,9 @@ ${prompt}` : prompt), historyImages: [] };
     const asked = genImages.imageRequest(userText);
     if (!asked) return false;
     const ask = { ...asked, shown: asked.prompt };
+    // [image routing] Exact technical drawings, and requests that point at something ("each problem", "this"), are the model's: a picture
+    // provider would see only these words. (/image …: the user's own words, as typed.)
+    if (!asked.explicit && (genImages.technicalIntent(userText) || genImages.contextRef(userText))) return false;
     const withConversation = this.hasConversation(messages, { attachedFiles });
     const picked = String(messages.settings.model);
     const viaEngine = /^(claudecode|grokbuild|antigravity|codex):/.test(picked);
@@ -3531,6 +3589,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (this.imageSetting() !== 'off') {
       if (withConversation) { if (await this.imageProviderReady(picked)) return false; } // the model writes the prompt and calls generate_image
       else if (await this.routedImageTurn(messages, ask, picked, signal, emit)) return true;
+      if (messages.svgFallback) return false; // [image routing] a provider declined a diagram: the model draws it (runTaskOnce says how)
     }
     // Claude Code with full access and no provider connected: the message goes to it, and its generate_image call says why there is none.
     if (picked.startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) return false;
