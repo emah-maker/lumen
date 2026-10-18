@@ -1941,6 +1941,28 @@ function createWidgets(deps) {
   }
   // user: a person pressed Refresh or Try again. That is always a real fetch: no minimum interval, no cached answer, no rate-limit
   // pause that hides it (the failure is shown instead), and it joins a refresh already running (the button spins until it ends).
+  // Play / Pause on a music card: the card shows the intended state at once, and keeps it until the source says the same (Spotify's API answers is_playing with the old value for a
+  // second or two after a pause, and the hidden player's page can send a state it read just before the click). An answer that disagrees is not shown (it is one that was read
+  // before the press, or one that has not caught up); the player is asked again shortly. If it still disagrees after MUSIC_CONFIRM_MS the press did not work: the card goes back
+  // to what the source says, with a short note.
+  const MUSIC_CONFIRM_MS = 3000;
+  function holdIntent(w, entry, data, startedAt) {
+    const i = entry.intent;
+    if (!i) return data;
+    const playing = data && (data.state === 'playing' || data.state === 'paused');
+    if (!playing || data.kind === 'ad') { entry.intent = null; return data; } // (nothing playing any more, or an ad: nothing to hold)
+    if (data.state === i.state) { entry.intent = null; return data; } // confirmed
+    if (now() < i.until) { // not yet: show what was pressed, ask again soon
+      setTimer(() => { if (cache.get(w.id) === entry && entry.intent === i) refresh(w, { after: true }).catch(() => {}); }, 700);
+      return { ...data, state: i.state, progressMs: i.progressMs ?? data.progressMs, at: i.at };
+    }
+    entry.intent = null; // the source never agreed: the press did not work
+    const text = tt(i.state === 'paused' ? 'widgets.musicPauseFailed' : 'widgets.musicPlayFailed', i.state === 'paused' ? 'It didn’t pause. Try again.' : 'It didn’t start playing. Try again.');
+    entry.notice = { text, until: now() + 8000 };
+    setTimer(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+    void startedAt;
+    return { ...data, notice: text };
+  }
   function refresh(w, { force = false, retry = false, user = false, after = false } = {}) {
     if (user) force = true;
     if (after) { // after a write (an added task): a run that began before the write has the old list, so wait for it and ask again
@@ -1974,9 +1996,11 @@ function createWidgets(deps) {
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     let capTimer;
     const capped = (p) => Promise.race([p, new Promise((_, no) => { capTimer = setTimer(() => no(Object.assign(new Error('Couldn’t reach the service in time. Try again.'), { transient: true })), FETCH_CAP_MS); })]);
+    const startedAt = now();
     entry.pending = (entry.netFail || (user && entry.error) ? freshNetwork() : Promise.resolve())
       .then(() => capped(Promise.resolve().then(() => c.fetch(w, helpers(c.secret)))))
       .then((data) => {
+        data = holdIntent(w, entry, data, startedAt);
         entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
         entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
         entry.netFail = entry.retrying;
@@ -2863,6 +2887,9 @@ function createWidgets(deps) {
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
+      if ((w.type === 'spotify' || w.type === 'applemusic') && (action.do === 'play' || action.do === 'pause') && (entry.data.state === 'playing' || entry.data.state === 'paused') && entry.data.state === (action.do === 'play' ? 'playing' : 'paused')) {
+        entry.intent = { state: entry.data.state, at: now(), until: now() + MUSIC_CONFIRM_MS, progressMs: entry.data.progressMs }; // (see holdIntent)
+      }
       if (done.keep) { deps.onUpdate?.(); return true; } // nothing to fetch again (a Muse answer costs money)
       forget('tasks:');
       forget('done:');
