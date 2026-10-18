@@ -189,7 +189,7 @@ module.exports = async function githubSigninUnits(check) {
     scopesOf = { [DEVICE_TOKEN]: 'read:user, notifications', [CLI_TOKEN]: 'gist, read:org, repo', [PASTED]: 'notifications' };
     // PATH is this process's own, and holds ONLY the stub's folder and the system folders: if the stub ever went missing the real gh (and its real
     // token) must not be found in its place.
-    process.env.PATH = [bin, process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\Windows', 'System32') : '/usr/bin', process.platform === 'win32' ? '' : '/bin'].filter(Boolean).join(path.delimiter);
+    process.env.PATH = [bin, process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') : '/usr/bin', process.platform === 'win32' ? '' : '/bin'].filter(Boolean).join(path.delimiter);
     check('github CLI: the only gh this test can find is its own stub', GA.findGh()?.shown?.startsWith(bin), JSON.stringify(GA.findGh()));
     if (prevPathWin !== undefined) process.env.Path = process.env.PATH;
 
