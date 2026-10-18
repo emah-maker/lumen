@@ -38,7 +38,7 @@
   let mapper = MR.createMapper(); let beats = MR.beatDetector();
   let clockEl = null; let cardEls = []; // what moves: the clock card, and the music cards that asked to react (found again as cards come and go)
   let lastBeat = ''; let lastHalo = ''; let lastPulse = '';
-  const cost = window.__mrCost = { frames: 0, ms: 0, max: 0, out: null, field: null }; // (how long the frames took, the latest numbers and the dots: measuring aids, read only by the tests)
+  const cost = window.__mrCost = { frames: 0, ms: 0, max: 0, out: null, in: null, field: null }; // (how long the frames took, the latest numbers and the dots: measuring aids, read only by the tests)
   const fast = () => bgMode === 'full' || cardMode === 'full'; // the faster cadence when either wants the full version
 
   const hasCards = () => Boolean(document.querySelector('.w-card[data-mreact="1"]'));
@@ -131,7 +131,7 @@
     const out = mapper.step(input, t);
     if (painter) { painter.draw(t, out, dt); if (bgMode === 'full') writeBeat(out.beat); }
     if (cardEls.length) writeCards(input ? out.bass : 0, input ? out.beat : 0); // (cards react to the music itself: still when nothing plays)
-    cost.out = out;
+    cost.out = out; cost.in = input;
     const spent = performance.now() - t0;
     cost.frames++; cost.ms += spent; if (spent > cost.max) cost.max = spent;
   }

@@ -108,7 +108,7 @@ function createMapper() {
   let lastRise = -1e9;
   let rising = false; // an output is on its way up: a swell carries on; a new rise waits for MIN_RISE_GAP_MS
   const follow = (c, target, dt, attack, release) => c + (target - c) * (1 - Math.exp(-dt / (target > c ? attack : release)));
-  const TIMES = { bass: [70, 260], mids: [120, 380], highs: [60, 220] };
+  const TIMES = { bass: [60, 190], mids: [120, 380], highs: [60, 220] };
   return {
     // frame: { bass, mids, highs, level, beat } or null for idle
     step(frame, t) {
@@ -117,7 +117,7 @@ function createMapper() {
       const tgt = { bass: 0, mids: 0, highs: 0 };
       let bTarget = 0;
       if (frame) {
-        for (const k of ['bass', 'mids', 'highs']) { peak[k] = Math.max(FLOOR[k], frame[k], peak[k] * Math.exp(-dt / 8000)); tgt[k] = clamp01(frame[k] / peak[k]); }
+        for (const k of ['bass', 'mids', 'highs']) { peak[k] = Math.max(FLOOR[k], frame[k], peak[k] * Math.exp(-dt / 8000)); tgt[k] = smooth(0.3, 0.9, frame[k] / peak[k]); } // (below a third of the band's own peak reads as nothing: the gaps between beats are gaps)
         if (frame.beat) bTarget = 1;
       } else {
         const s = 0.5 + 0.5 * Math.sin((t / 8000) * Math.PI * 2); // 0.125 Hz
