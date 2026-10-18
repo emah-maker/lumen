@@ -62,6 +62,23 @@ window.stopTone = () => { try { ctx.close(); } catch {} return true; };
   await sleep(1500);
   let audible = false; for (let i = 0; i < 12 && !audible; i++) { audible = await app.evaluate((_e, id) => global.__mrTabs.find((t) => t.id === id).webContents.isCurrentlyAudible(), toneTab); if (!audible) await sleep(250); } // (Chromium says silent in the gaps between kicks: asked a few times)
   check('the tone tab is playing sound (Chromium reports it audible)', audible === true, audible);
+  // ---- the ground truth for "does the music still play out loud": system loopback in a separate hidden window ----
+  // (Chromium's own audible flag does not change when a tab's sound is taken from the speakers by a capture, so it cannot tell. The loopback hears what
+  // is really rendered to the output device: the 80 Hz kick of the tone shows in the bass bins, and a muted tab shows nothing there.)
+  await app.evaluate(async ({ BrowserWindow, session, desktopCapturer }, u) => {
+    const ses = session.fromPartition('music-react-probe');
+    ses.setDisplayMediaRequestHandler(async (_req, cb) => { const srcs = await desktopCapturer.getSources({ types: ['screen'] }); cb({ video: srcs[0], audio: 'loopback' }); });
+    const w = new BrowserWindow({ show: false, width: 200, height: 200, webPreferences: { session: ses, backgroundThrottling: false } });
+    await w.loadURL(u);
+    global.__mrProbe = w;
+  }, `http://127.0.0.1:${server.address().port}/probe`);
+  const probe = (c) => app.evaluate((_e, c2) => global.__mrProbe.webContents.executeJavaScript(c2, true), c);
+  const probeOk = await probe(`(async () => { const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }); s.getVideoTracks().forEach((t) => t.stop()); const c = new AudioContext(); await c.resume(); const a = c.createAnalyser(); a.fftSize = 1024; c.createMediaStreamSource(s).connect(a); window.__pk = []; const b = new Uint8Array(a.frequencyBinCount); setInterval(() => { a.getByteFrequencyData(b); let m = 0; for (let i = 1; i < 6; i++) m = Math.max(m, b[i]); window.__pk.push(m); }, 20); return s.getAudioTracks().length === 1 && c.state === 'running'; })()`).catch((e) => String(e));
+  check('the loopback probe is listening to what the speakers play', probeOk === true, probeOk);
+  const probeStart = () => probe('window.__pk = []; true');
+  // the loudness of the kick: the loudest bass reading in each half second (one kick each), and the middle of those
+  const probeLevel = async () => { const pk = await probe('window.__pk'); const peaks = []; for (let i = 0; i + 25 <= pk.length; i += 25) peaks.push(Math.max(...pk.slice(i, i + 25))); peaks.sort((a, b) => a - b); if (process.env.MR_DEBUG) console.log('probe peaks', peaks.join(' ')); return peaks.length < 4 ? NaN : peaks[Math.floor(peaks.length / 2)]; };
+  await sleep(1000);
 
   // ---- off, the default ----
   const home = await openTab(undefined); // the new-tab page
@@ -78,18 +95,21 @@ window.stopTone = () => { try { ctx.close(); } catch {} return true; };
 
   // ---- on ----
   // baseline: the same reads with the feature still off, to tell this feature's stalls from the test's own
-  await stall(true); await sleep(8000);
+  await probeStart(); await stall(true); await sleep(8000);
   const baseline = await stall(false);
+  const baseLevel = await probeLevel();
+  check(`the loopback hears the tone with the feature off (bass level ${baseLevel})`, baseLevel > 120, String(baseLevel));
   if (process.env.MR_DEBUG) console.log('baseline main stall', baseline, 'ms');
   await set('newTabMusicReactive', true);
   check('on: the page loads the feature and says it is listening', await waitFor(home, `document.body.dataset.mr === 'live'`, 25000), JSON.stringify(await run(home, SAMPLE)));
   if (process.env.MR_DEBUG) { const r = []; for (let i = 0; i < 10; i++) { const x = await run(home, 'window.lumenNewtab.musicSource(null).then((v) => JSON.stringify(v).slice(0, 40)) '); r.push(x); await sleep(500); } console.log('source answers', r.join(' ')); }
   // (the main process is watched only while the page reads the tone and nothing else talks to it: the recorder below runs inside the page)
-  await sleep(500); await stall(true);
+  await probeStart(); await sleep(500); await stall(true);
   // Recorded inside the page, once a frame (a read from here is too slow to catch a 170 ms pulse)
   await run(home, `window.__mrRec = []; (function f(t) { const g = document.getElementById('mr-glow'); const w = document.getElementById('mr-wave'); const c = document.getElementById('clock-card'); window.__mrRec.push({ t, mr: document.body.dataset.mr || null, glow: g ? Number(g.style.getPropertyValue('--mr-glow')) : NaN, wave: w ? Number(w.style.getPropertyValue('--mr-wave')) : NaN, beat: c ? Number(c.style.getPropertyValue('--mr-beat')) : NaN }); if (window.__mrRec.length < 100000 && !window.__mrStop) requestAnimationFrame(f); })(0); true`);
   await sleep(8000);
   const stalled = await stall(false);
+  const onLevel = await probeLevel();
   const series = await run(home, `window.__mrStop = true; window.__mrRec`);
   if (process.env.MR_DEBUG) { let last = null; const ch = []; for (const f of series) if (f.mr !== last) { ch.push(Math.round(f.t - series[0].t) + ':' + f.mr); last = f.mr; } console.log('mr changes', ch.join(' ')); }
   if (process.env.MR_DEBUG) { const gl = series.filter((f) => f.mr === 'live'); console.log('glow every 6th frame', gl.filter((_, i) => i % 6 === 0).slice(0, 80).map((f) => f.glow.toFixed(3)).join(' ')); console.log('beat>0.6 at', series.filter((f, i) => f.beat > 0.6 && !(series[i - 1]?.beat > 0.6)).map((f) => Math.round(f.t - series[0].t)).join(' ')); }
@@ -188,6 +208,21 @@ window.stopTone = () => { try { ctx.close(); } catch {} return true; };
   check('switched off: the layers, class and variables are removed', await waitFor(home, `!document.getElementById('mr-glow') && !document.body.dataset.mr && !document.body.classList.contains('mr-on') && !document.getElementById('clock-card').style.getPropertyValue('--mr-beat')`, 6000), JSON.stringify(await run(home, gone)));
   const after = await run(home, 'window.lumenNewtab.musicSource(null)');
   check('switched off: the browser answers nothing again', after && after.key === null, JSON.stringify(after));
+
+  // ---- the music keeps playing out loud, and is not doubled; and nothing is left holding the tab when the page goes ----
+  const kept = (label, now) => { check(`${label}: the tab's sound still reaches the speakers (loopback ${now} against ${baseLevel} without the feature)`, Number.isFinite(now) && now >= baseLevel - 12, `${now} vs ${baseLevel}`); };
+  kept('on', onLevel);
+  check(`on: and it is played once, not twice (loopback ${onLevel} against ${baseLevel})`, onLevel <= baseLevel + 12, `${onLevel} vs ${baseLevel}`);
+  await set('newTabMusicReactive', false);
+  await sleep(2500); await probeStart(); await sleep(4000);
+  kept('switched off', await probeLevel());
+  await set('newTabMusicReactive', true);
+  check('on again: the page listens again', await waitFor(home, `document.body.dataset.mr === 'live'`, 25000), JSON.stringify(await run(home, SAMPLE)));
+  await app.evaluate((_e, id) => global.__notifyClick.closeTab(id), home);
+  await sleep(2500); await probeStart(); await sleep(4000);
+  kept('the new tab closed', await probeLevel());
+  let stillPlaying = false; for (let i = 0; i < 12 && !stillPlaying; i++) { stillPlaying = await app.evaluate((_e, id) => global.__mrTabs.find((t) => t.id === id).webContents.isCurrentlyAudible(), toneTab); if (!stillPlaying) await sleep(250); }
+  check('the tone tab is still playing at the end (Chromium reports it audible)', stillPlaying === true, stillPlaying);
 
   await app.close().catch(() => {});
   server.close();
