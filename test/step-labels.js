@@ -392,6 +392,8 @@ process.stdin.on('data', async (d) => {
   check('the tab the AI used and left open is marked open; the one it closed is marked closed', closedList && closedList.tabs[0][2] === 'closed' && closedList.tabs[1][1] === 'open' && closedList.tabs[1][2] === 'open' && !(await app.evaluate((_e, id) => Boolean(global.__agent.browser.tabById?.(id)), tabB2)), J(closedList));
   check('the "Hide tabs / Close them" actions are still next to it', await ui.evaluate((s) => { const c = document.querySelector(s); return c.querySelector('.act-tabs').nextElementSibling === c.querySelector('.act-actions') && Boolean(c.querySelector('.act-actions .act-btn')); }, card()), 'order');
   const nowTabs = await app.evaluate(() => global.__chatPage.tabs().length);
+  check('the Tabs list starts folded, even with only a few tabs', closedList && closedList.open === false, J(closedList && closedList.open));
+  await ui.click(`${card()} .act-tabs-head`); // the user opens it
   await ui.click(`${card()} .act-tab[data-state="closed"] .tab-ref`);
   const reopenedB = await waitFor(() => app.evaluate((_e, u) => { const a = global.__agent.browser.activeTab(); return a && a.webContents.getURL() === u ? a.id : null; }, `${base}/b?B2`), 8000);
   check('clicking the closed chip reopens that page in a tab', Boolean(reopenedB) && reopenedB !== tabB2 && nowTabs >= 1, J({ reopenedB, tabB2 }));
