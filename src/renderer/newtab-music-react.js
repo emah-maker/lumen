@@ -1,7 +1,7 @@
 // [look] Music-reactive home screen (Settings → Appearance → New tab page → "Music-reactive home screen"). newtab.js loads this file
 // (and features/music-react.js, the maths) only when the setting is on, so with it off none of this exists on the page.
 //
-// What it does: listens to the sound that Lumen's own tabs and music players are playing (the browser hands this page a one-time
+// What it does: listens to (and plays on, see startCapture) the sound that Lumen's own tabs and music players are playing (the browser hands this page a one-time
 // "tab capture" id for the playing tab; it is never the microphone and never the computer's sound), reads the analyser's frequency
 // bytes ~30 times a second, reduces each frame to a few numbers (glow, wave, beat) and writes them to three CSS variables (--mr-glow, --mr-wave, --mr-beat), each on the one element that uses it.
 // The raw audio never leaves the analyser: nothing is recorded, stored, sent anywhere or even copied out of the frame.
@@ -29,7 +29,7 @@
   let raf = 0; let pollTimer = 0;
   let glowEl = null; let waveEl = null;
   let cap = null; // { key, stream, ctx, analyser, bytes }
-  let lastFrameT = 0; let silentSince = 0; let polling = false;
+  let lastFrameT = 0; let silentSince = 0; let polling = false; let blockedUntil = 0; let notRunningSince = 0;
   let mapper = MR.createMapper(); let beats = MR.beatDetector();
   const written = new WeakMap(); // element -> the last value written, so an unchanged variable is not written again
   let beatEls = []; // the clock card and the music cards that bounce (found again at each poll: cards come and go)
@@ -65,19 +65,27 @@
     try { c.ctx.close(); } catch { /* already closed */ }
     document.body.dataset.mr = 'idle';
   }
+  // Chromium's per-tab capture takes the tab's sound away from the speakers while it is captured (the capturer is expected to play it). So this page
+  // plays it back, once, straight from the capture to the output: the music is never lost, and never doubled (the tab itself is silent meanwhile).
+  // Safety first: the capture is only opened with an AudioContext that is already running, and the moment that context stops running, the page lets go
+  // of the capture and the tab plays by itself again (and the capture is not tried again for a while).
   async function startCapture(id, key) {
     stopCapture();
+    if (Date.now() < blockedUntil) return;
+    const ctx = new AudioContext({ latencyHint: 'interactive' }); // (made first: the tab is not touched unless this can run)
+    for (let i = 0; i < 6 && ctx.state !== 'running'; i++) { try { await ctx.resume(); } catch { /* not yet */ } if (ctx.state !== 'running') await new Promise((r) => setTimeout(r, 250)); }
+    if (!active || ctx.state !== 'running') { try { ctx.close(); } catch { /* closed */ } blockedUntil = Date.now() + 30e3; return; }
     let stream;
     try {
       // One tab's sound, audio only. Never { audio: true } (that is the microphone): main grants this page nothing else.
       stream = await navigator.mediaDevices.getUserMedia({ audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: id } }, video: false });
-    } catch { return; }
-    if (!active) { for (const t of stream.getTracks()) t.stop(); return; }
-    const ctx = new AudioContext({ latencyHint: 'playback' });
-    const analyser = ctx.createAnalyser(); // (never connected to the speakers: this page makes no sound)
+    } catch { try { ctx.close(); } catch { /* closed */ } return; }
+    if (!active || ctx.state !== 'running') { for (const t of stream.getTracks()) t.stop(); try { ctx.close(); } catch { /* closed */ } return; }
+    const analyser = ctx.createAnalyser();
     analyser.fftSize = FFT; analyser.smoothingTimeConstant = 0.55;
-    ctx.createMediaStreamSource(stream).connect(analyser);
-    for (let i = 0; i < 6 && ctx.state !== 'running'; i++) { try { await ctx.resume(); } catch { /* not yet */ } if (ctx.state !== 'running') await new Promise((r) => setTimeout(r, 250)); } // (stays suspended: the idle drift, never a wrong reading)
+    const source = ctx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    source.connect(ctx.destination); // (the sound back to the speakers, once)
     cap = { key, stream, ctx, analyser, bytes: new Uint8Array(analyser.frequencyBinCount) };
     stream.getAudioTracks()[0]?.addEventListener('ended', () => { if (cap && cap.stream === stream) stopCapture(); });
     silentSince = 0;
@@ -105,6 +113,8 @@
     raf = 0;
     if (!active || document.hidden) return;
     raf = requestAnimationFrame(frame);
+    // The output must be running while the tab is captured; if it is not (for a second), let go so the tab is heard again.
+    if (cap && cap.ctx.state !== 'running') { if (!notRunningSince) notRunningSince = t; else if (t - notRunningSince > 1000) { stopCapture(); blockedUntil = Date.now() + 30e3; notRunningSince = 0; } } else notRunningSince = 0;
     const live = Boolean(cap) && cap.ctx.state === 'running';
     const shown = live ? 'live' : 'idle'; // (what the page is doing, for the tests: 'live' only while an analyser is really running)
     if (document.body.dataset.mr !== shown) document.body.dataset.mr = shown;
