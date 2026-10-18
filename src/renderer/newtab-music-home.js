@@ -6,7 +6,7 @@
 'use strict';
 
 (() => {
-  const SHELF_ORDER = ['quick', 'jump', 'made', 'recent', 'toptracks', 'topartists', 'new', 'playlists', 'albums', 'artists'];
+  const SHELF_ORDER = ['quick', 'jump', 'made', 'recommended', 'newfrom', 'recent', 'toptracks', 'topartists', 'moretop', 'related', 'genres', 'genreartists', 'new', 'playlists', 'albums', 'artists'];
   const ASK_AGAIN_MS = 60e3;
   const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
   const KINDS = ['song', 'album', 'playlist', 'artist'];
@@ -41,6 +41,7 @@
     .hm-quick .hm-play { top: 8px; right: 6px; width: 26px; height: 26px; }
     .hm-quick .hm-queue { display: none; }
     .hm-skel .hm-cover, .hm-skel .hm-title { background: var(--field); color: transparent; border-radius: 6px; }
+    .hm-caption { margin: -2px 4px 6px; font-size: 11px; color: var(--muted); }
     .hm-note { margin: 0; font-size: 12px; color: var(--muted); }
     .hm-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 8px; background: var(--field); font-size: 12px; }
     @media (prefers-reduced-motion: reduce) { .hm-play { transition: none; } }
@@ -69,7 +70,7 @@
     const asked = (ui.homeAsked ||= {});
     const scroll = (ui.homeScroll ||= {});
     const hour = new Date().getHours();
-    const state = SHELF_ORDER.map((k) => { const s = shelves[k]; return s ? [k, s.ok !== false, s.why || '', s.pending === true, (s.items || []).map((i) => `${i.id}${thumbOk(i.thumb) ? 1 : 0}`).join()] : [k]; });
+    const state = SHELF_ORDER.map((k) => { const s = shelves[k]; return s ? [k, s.ok !== false, s.why || '', s.pending === true, (s.items || []).map((i) => `${i.id}${thumbOk(i.thumb) ? 1 : 0}`).join(), s.captionVars && s.captionVars.title] : [k]; });
     const needsScope = SHELF_ORDER.some((k) => shelves[k] && shelves[k].ok === false && shelves[k].why === 'scope');
     const connect = Boolean(d.home && d.home.connect); // (Play as Lumen without the account connected: Home has nothing to read it with)
     const sign = d.signIn && typeof d.signIn === 'object' ? { state: String(d.signIn.state || ''), message: typeof d.signIn.message === 'string' ? d.signIn.message.slice(0, 300) : '' } : null;
@@ -118,6 +119,8 @@
             }
           }
           sec.append(head);
+          const caption = loading ? '' : say(d, `${key}Caption`, s && s.captionVars ? s.captionVars : {}); // (a suggestion shelf says what it is built from)
+          if (caption) sec.append(el('p', 'hm-caption', caption));
         }
         const list = el('ul', key === 'quick' ? 'hm-quick' : 'hm-row');
         list.setAttribute('aria-label', title);

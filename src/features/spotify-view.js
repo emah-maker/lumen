@@ -293,8 +293,9 @@ function listItem(o, kind, tile = false) {
   const sub = k === 'song' ? artists : k === 'album' ? [flat(o.artists?.[0]?.name, 60), o.release_date ? String(o.release_date).slice(0, 4) : ''].filter(Boolean).join(' · ') : k === 'playlist' ? flat(o.owner?.display_name, 60) : '';
   const pics = k === 'song' ? o.album?.images : o.images;
   const images = tile ? tileUrls(pics) : thumbUrls(pics);
+  const genres = k === 'artist' && Array.isArray(o.genres) ? o.genres.map((g) => flat(g, 40).toLowerCase()).filter(Boolean).slice(0, 4) : [];
   const count = k === 'playlist' ? o.items?.total ?? o.tracks?.total : k === 'album' ? o.total_tracks : undefined; // (how many songs: a playlist's list is `items` since February 2026, `tracks` before)
-  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'song' && o.album?.name ? { album: flat(o.album.name, 120) } : {}), ...(Number.isInteger(count) && count >= 0 ? { count } : {}), ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
+  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'song' && o.album?.name ? { album: flat(o.album.name, 120) } : {}), ...(k === 'album' && typeof o.release_date === 'string' ? { released: o.release_date.slice(0, 10) } : {}), ...(genres.length ? { genres } : {}), ...(Number.isInteger(count) && count >= 0 ? { count } : {}), ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
 }
 const parse = (text) => { try { const b = JSON.parse(text); return b && typeof b === 'object' ? b : null; } catch { return null; } };
 // GET /me/player/queue -> what plays next (the song playing now is not in it).
@@ -400,6 +401,18 @@ function normalizeListing(kind, text) {
   return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
 }
 const MAX_LIST = 100;
+// ---- recommendations for the Home tab ----
+// Spotify closed these to apps created after November 2024 (and to most older ones without an extended-quota agreement): GET /recommendations, GET /artists/{id}/related-artists,
+// GET /audio-features, the featured and category playlists, and the Spotify-made playlists' contents. The card asks each once (features/spotify-recs.js probes) and uses it only when
+// Spotify answers; otherwise it builds suggestions from endpoints that still work (the albums and singles of your artists, genre searches, ...), and says which it did.
+const asTiles = (items, kind) => (Array.isArray(items) ? items : []).map((o) => tile(o, kind)).filter(Boolean);
+const normalizeRecTracks = (text) => asTiles(parse(text)?.tracks, 'track').slice(0, 20); // GET /recommendations
+const normalizeRelated = (text) => asTiles(parse(text)?.artists, 'artist').slice(0, 20); // GET /artists/{id}/related-artists
+const normalizeArtistTopTracks = (text) => asTiles(parse(text)?.tracks, 'track'); // GET /artists/{id}/top-tracks
+const normalizeArtistReleases = (text) => asTiles(parse(text)?.items, 'album'); // GET /artists/{id}/albums (each with its release date)
+const normalizeSearchSongs = (text) => asTiles(parse(text)?.tracks?.items, 'track'); // GET /search?type=track
+const normalizeSearchArtists = (text) => asTiles(parse(text)?.artists?.items, 'artist'); // GET /search?type=artist
+const parseSavedMany = (text) => { try { const a = JSON.parse(text); return Array.isArray(a) ? a.map((v) => v === true) : null; } catch { return null; } };
 // ---- the Library: every playlist, Liked Songs, a playlist or album opened in the card, an artist ----
 // One page of songs -> { total, raw (entries read, skipped ones included: the next offset), items: [{ ...song, pos }] }. `kind`: 'playlist' (GET /playlists/{id}/items: each entry's song
 // under `item`, older `track`), 'liked' (GET /me/tracks: `track`), 'album' (GET /albums/{id}/tracks: songs without their album: `cover` is the album's pictures).
@@ -500,6 +513,13 @@ const PLAYER = {
   homePlaylists: () => ['GET', '/me/playlists?limit=50'],
   homeAlbums: () => ['GET', '/me/albums?limit=12&market=from_token'],
   homeFollowing: () => ['GET', '/me/following?type=artist&limit=12'],
+  // Recommendations (see features/spotify-recs.js)
+  recommendations: ({ artists = [], tracks = [], genres = [] }) => ['GET', `/recommendations?limit=20&market=from_token${artists.length ? `&seed_artists=${artists.slice(0, 5).join(',')}` : ''}${tracks.length ? `&seed_tracks=${tracks.slice(0, 5).join(',')}` : ''}${genres.length ? `&seed_genres=${genres.slice(0, 5).map(enc).join(',')}` : ''}`],
+  relatedArtists: (id) => ['GET', `/artists/${id}/related-artists`],
+  artistTopTracks: (id) => ['GET', `/artists/${id}/top-tracks?market=from_token`],
+  artistReleases: (id) => ['GET', `/artists/${id}/albums?include_groups=album,single&limit=6&market=from_token`],
+  searchGenre: (genre, type) => ['GET', `/search?q=${enc(`genre:"${flat(genre, 40)}"`)}&type=${type}&limit=${SEARCH_LIMIT}&market=from_token`],
+  savedMany: (ids) => ['GET', `/me/library/contains?uris=${enc(ids.slice(0, 40).map((i) => `spotify:track:${i}`).join(','))}`],
   topArtists: () => ['GET', '/me/top/artists?limit=10&time_range=medium_term'],
   topTracks: () => ['GET', '/me/top/tracks?limit=10&time_range=medium_term'],
   newReleases: () => ['GET', '/browse/new-releases?limit=10'],
@@ -533,7 +553,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId, scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
+  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS, normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isAllowlistError, ALLOWLIST_MESSAGE, isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

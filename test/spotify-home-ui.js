@@ -78,9 +78,16 @@ function fakeSpotify(opts, world) {
       }
       if (p === '/me/tracks') return json(200, { items: [{ track: track(50) }], next: null });
       if (p === '/me/following') return json(200, { artists: { items: [{ id: 'AR1', type: 'artist', name: 'Followed Artist', images: img('ar', 1, [640, 320, 160]) }], next: null } });
-      if (p === '/me/top/artists') return json(200, { items: [{ id: 'AR2', type: 'artist', name: 'Top Artist', images: img('ar', 2, [640, 320, 160]) }, { id: 'AR3', type: 'artist', name: 'Top Artist Two', images: img('ar', 3, [640, 320, 160]) }] });
+      if (p === '/me/top/artists') return json(200, { items: [{ id: 'AR2', type: 'artist', name: 'Top Artist', genres: ['indie pop'], images: img('ar', 2, [640, 320, 160]) }, { id: 'AR3', type: 'artist', name: 'Top Artist Two', genres: ['indie pop'], images: img('ar', 3, [640, 320, 160]) }] });
       if (p === '/me/top/tracks') return json(200, { items: [track(21), track(22)] });
       if (p === '/browse/new-releases') return json(200, { albums: { items: [album(31), album(32)] } });
+      // Spotify's recommendation endpoints are closed to this (newer) app: refused. The shelves built from what still works:
+      if (p === '/recommendations') return json(403, { error: { status: 403, message: 'Forbidden' } });
+      if (/^\/artists\/[A-Za-z0-9]+\/related-artists$/.test(p)) return json(404, { error: { status: 404, message: 'Not Found' } });
+      if (/^\/artists\/[A-Za-z0-9]+\/top-tracks$/.test(p)) return json(403, { error: { status: 403, message: 'Forbidden' } });
+      if (/^\/artists\/[A-Za-z0-9]+\/albums$/.test(p)) { const id = p.split('/')[2]; return json(200, { items: [{ id: `NEW${id}`, type: 'album', name: `Fresh from ${id}`, artists: [{ name: id }], release_date: new Date(Date.now() - 4 * 86400e3).toISOString().slice(0, 10), images: img('al', 200, [640, 300, 64]) }] }); }
+      if (p === '/me/library/contains') return json(200, (u.searchParams.get('uris') || '').split(',').map(() => false));
+      if (p === '/search') return u.searchParams.get('type') === 'track' ? json(200, { tracks: { items: [track(71), track(72)] } }) : json(200, { artists: { items: [{ id: 'G1', type: 'artist', name: 'Genre Artist', images: img('ar', 9, [640, 320, 160]) }] } });
       return json(404, {});
     });
   });
@@ -198,6 +205,24 @@ function fakeSpotify(opts, world) {
       check('Queue, no active device: the card says to open Spotify on a device and play something', await waitFor(`/No active Spotify device\\. Open Spotify on a phone, computer or speaker/.test(${card}.innerText)`), await page(`[...${card}.querySelectorAll('.w-note')].map((n) => n.textContent).join('|') + ' // ' + ${card}.innerText.slice(0, 300)`));
     });
     world.noDevice = false;
+
+    await soft('Home suggestions', async () => {
+      const covers = (shelf) => colorsOf(`[data-shelf="${shelf}"] .hm-row img.hm-cover`);
+      // Spotify's own recommendation endpoints answer 403/404 here (closed to newer apps): those two shelves are not drawn, the others are built from what still works, and say so.
+      for (let i = 0; i < 40; i++) { await page(`(() => { const p = ${card}.querySelector('.mc-panel-home'); p.scrollTop += 120; })()`); await sleep(150); }
+      check('Home suggestions: "Recommended for you" and "Fans also like" (closed endpoints) are not drawn, nothing stands in for them', await waitFor(`Boolean(${card}.querySelector('[data-shelf="newfrom"]'))`) && !(await page(`Boolean(${card}.querySelector('[data-shelf="recommended"], [data-shelf="related"], [data-shelf="moretop"]'))`)), await page(`[...${card}.querySelectorAll('.hm-sec')].map((s) => s.dataset.shelf).join()`));
+      check('Home suggestions: "New from artists you love" shows the newest albums with covers (pixel probe red) and says what it is built from', await waitFor(`${card}.querySelectorAll('[data-shelf="newfrom"] img.hm-cover').length >= 1`) && (await covers('newfrom')).every((c) => near(c, COLORS.al)) && /New albums and singles from your top and followed artists/.test(await page(`${card}.querySelector('[data-shelf="newfrom"] .hm-caption')?.innerText || ''`)), await page(`${card}.querySelector('[data-shelf="newfrom"]')?.innerText`));
+      check('Home suggestions: "Based on your genres" shows songs (orange covers) with its caption naming the genre', await waitFor(`${card}.querySelectorAll('[data-shelf="genres"] img.hm-cover').length >= 2`) && (await covers('genres')).every((c) => near(c, COLORS.tr)) && /indie pop/.test(await page(`${card}.querySelector('[data-shelf="genres"] .hm-caption')?.innerText || ''`)), await page(`${card}.querySelector('[data-shelf="genres"]')?.innerText`));
+      const sugg = await page(`[...${card}.querySelectorAll('[data-shelf="newfrom"] .hm-tile, [data-shelf="genres"] .hm-tile, [data-shelf="genreartists"] .hm-tile')].map((t) => t.dataset.kind + ':' + t.dataset.id)`);
+      const library = await page(`[...${card}.querySelectorAll('[data-shelf="playlists"] .hm-tile, [data-shelf="albums"] .hm-tile, [data-shelf="artists"] .hm-tile, [data-shelf="made"] .hm-tile, [data-shelf="recent"] .hm-tile')].map((t) => t.dataset.kind + ':' + t.dataset.id)`);
+      check('Home suggestions: no suggestion repeats, and none is something already on the library shelves', new Set(sugg).size === sugg.length && !sugg.some((k) => library.includes(k)) && sugg.length >= 3, JSON.stringify([sugg, library]));
+      await page(`${card}.querySelector('[data-shelf="newfrom"] .hm-main').click()`);
+      await sleep(500);
+      check('Home suggestions: pressing a "New from artists you love" tile plays that album', /"context_uri":"spotify:album:NEW/.test(logOf((l) => l.path === '/me/player/play').pop().body), '');
+      await page(`${card}.querySelector('[data-shelf="genres"] .hm-queue').click()`);
+      await sleep(600);
+      check('Home suggestions: a song of "Based on your genres" queues (POST /me/player/queue)', logOf((l) => l.path.startsWith('/me/player/queue?uri=spotify%3Atrack%3AT7')).length >= 1, JSON.stringify(logOf((l) => l.path.startsWith('/me/player/queue')).map((l) => l.path)));
+    });
 
     // ---- Queue (no Home needed): the request, the note, and a failed press shows its own message instead of the last press's "Added" ----
     const textNow = () => page(`${card}.innerText`);
