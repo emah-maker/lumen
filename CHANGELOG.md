@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Reconnect Spotify now connects.** The "Reconnect Spotify to show more" bar on the Spotify card's Home tab (and the library and likes notes) sent you to Settings, where a card in "Plays in Lumen" mode showed no Spotify log-in at all. The button now starts the Spotify sign-in itself, with every permission (top artists included): Spotify's approve page opens in a tab, you come back, and the card shows Home. A "Plays in Lumen" card with no account connected now has a Home tab that says Spotify has to be connected once (the music still plays in Lumen) with a Connect Spotify button, and that mode's editor shows the Log in with Spotify section too. Lumen's own Spotify app lets only 25 listed accounts in while Spotify keeps it in development mode: when Spotify refuses an account (or never comes back), the card says so plainly and offers "Use my own Spotify app", which opens the card's editor with the existing three steps. Home shelves left empty by a sign-in are asked for again. Tests: `spotify-reconnect-units`, `spotify-reconnect-ui`.
+
 ## 0.5.47 (2026-10-18)
 
 - **A page that was still loading when you closed Lumen comes back.** Closing Lumen (or an update restarting it) in the first moments of a page load, a slow site or the first seconds after a start, left that tab out of the saved session, so the next start opened without it or on another tab. A tab still on its first load is now saved with the address it was asked for. New test: `test/first-tab-restart.js` (a hidden run that quits and starts again on one profile: the tab in front loads, is shown at the page area's size and has painted, in many variants, and a page closed mid-load is back in front).

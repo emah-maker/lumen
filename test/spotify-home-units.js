@@ -128,7 +128,7 @@ module.exports = async function spotifyHomeUnits(check) {
     check('Play as Lumen + connected account: Home is offered (can.home, and the engine\'s own can is kept) and its shelves load', d1.can.home === true && d1.can.search === true && d2.home?.shelves?.made?.items?.length === 2, JSON.stringify([d1.can, d2.home && Object.keys(d2.home.shelves)]));
     const off = await make({}, { mode: 'status', engine, secret: '' });
     const d3 = await off.look();
-    check('Play as Lumen without a connected account: no Home tab (nothing to read it with)', !d3.can || d3.can.home !== true, JSON.stringify(d3.can));
+    check('Play as Lumen without a connected account: the Home tab is offered with a connect prompt and no shelves (nothing to read them with; test/spotify-reconnect-units.js covers the button)', d3.can.home === true && d3.home.connect === true && Object.keys(d3.home.shelves).length === 0, JSON.stringify([d3.can, d3.home]));
   }
   {
     // the covers of a whole Home (about forty here, a hundred for a full one) come from Spotify's picture hosts: they do not spend the API's request budget

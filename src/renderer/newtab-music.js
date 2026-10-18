@@ -537,7 +537,7 @@ function build(w, card, o) {
     return b;
   }
   function reconnectNote(box) {
-    note(box, 'Sign in again to show your library. Spotify needs you to allow Lumen to read it once more.', { button: 'Sign in again', onClick: () => act('configure') });
+    note(box, 'Sign in again to show your library. Spotify needs you to allow Lumen to read it once more.', { button: 'Sign in again', onClick: () => act('reconnect') });
   }
   function drawDevices() {
     const d = view.d; const list = (Array.isArray(d.devices) ? d.devices : []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string');
@@ -756,7 +756,7 @@ function build(w, card, o) {
         r.append(el('span', 'w-note', 'Reconnect Spotify to use likes and your library here.'));
         const b = el('button', 'w-btn', 'Reconnect');
         b.type = 'button';
-        b.addEventListener('click', () => act('configure'));
+        b.addEventListener('click', () => act('reconnect'));
         r.append(b);
         box.append(r);
       }

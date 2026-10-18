@@ -1032,6 +1032,7 @@
   "spotify.failed": "Spotify sign-in failed: {error}",
   "spotify.portBusy": "Spotify sign-in couldn't start: port {port} on this computer is in use. Close whatever uses it and try again.",
   "spotify.timeout": "Spotify sign-in timed out. Try again.",
+  "spotify.timeoutBuiltin": "Spotify never came back. If its page said this account isn’t allowed: Lumen’s own Spotify app lets 25 people in while Spotify keeps it in development mode. Use your own free Spotify app instead: it takes a minute.",
   "openrouter.cantStart": "OpenRouter sign-in couldn't start: {error}",
   "openrouter.failed": "OpenRouter sign-in failed: {error}",
   "openrouter.timeout": "OpenRouter sign-in timed out. Try again.",
@@ -3473,6 +3474,10 @@
   "spotify.home.empty": "Nothing here yet.",
   "spotify.home.loading": "Loading…",
   "spotify.home.retry": "Try again",
+  "spotify.home.connectText": "Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.",
+  "spotify.home.connectButton": "Connect Spotify",
+  "spotify.home.waiting": "Waiting for Spotify in the tab that just opened…",
+  "spotify.home.ownApp": "Use my own Spotify app",
   "spotify.home.scrollLeft": "Scroll {title} left",
   "spotify.home.scrollRight": "Scroll {title} right",
   "spotify.home.tab": "Home"

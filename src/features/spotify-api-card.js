@@ -312,12 +312,18 @@ async function loadShelf(call, key, ctx) {
   ctx.onPart?.();
 }
 // What the card is given for the Home tab: { home: { shelves: { <shelf>: { ok, why, pending, items } } }, homeText } (null: nothing asked yet).
+// `signIn`: a Reconnect / Connect press in progress or that failed ({ state: 'waiting' | 'allowlist' | 'failed', message }), null when none.
 function homeFields(ui, text) {
+  const out = {};
+  if (text) out.homeText = text;
+  if (ui) out.signIn = ui.signIn || null;
   const home = ui && ui.home;
-  if (!home) return text ? { homeText: text } : null;
-  const shelves = {};
-  for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [] };
-  return { home: { shelves }, ...(text ? { homeText: text } : {}) };
+  if (home) {
+    const shelves = {};
+    for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [] };
+    out.home = { shelves };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // ---- the card's buttons ----
@@ -522,6 +528,6 @@ function directLibrary(ui) {
 }
 
 // The Home tab's words (locales/en.json: spotify.home.<key>); {title} is replaced by the card.
-const HOME_STRINGS = { greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
+const HOME_STRINGS = { greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', connectText: 'Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.', connectButton: 'Connect Spotify', waiting: 'Waiting for Spotify in the tab that just opened…', ownApp: 'Use my own Spotify app', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
 
 module.exports = { HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
