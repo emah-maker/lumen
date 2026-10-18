@@ -49,7 +49,7 @@ const STALE_MS = 5 * 60e3; // ...and, unless the user picks the tab again, only 
 const LOADING_MS = 3500; // "Loading…" is shown this long after a tab was asked, when nothing has come yet
 const PIN_SLOTS = ['pin0', 'pin1', 'pin2', 'pin3']; // (the tab names of the pinned playlists, in pin order)
 const PIN_KINDS = ['playlist', 'album'];
-const TAB_ORDER = [['search', 'Search', 'search'], ['queue', 'Up next', 'queue'], ['library', 'Library', 'library'], ['devices', 'Devices', 'devices'], ['tracks', 'Album', 'tracks'], ['lyrics', 'Lyrics', 'lyrics']];
+const TAB_ORDER = [['home', 'Home', 'home'], ['search', 'Search', 'search'], ['queue', 'Up next', 'queue'], ['library', 'Library', 'library'], ['devices', 'Devices', 'devices'], ['tracks', 'Album', 'tracks'], ['lyrics', 'Lyrics', 'lyrics']];
 
 // What differs between the services; everything else is one card. (Spotify's "Now playing" API mode has its own entry.)
 const ENGINES = {
@@ -129,7 +129,7 @@ function build(w, card, o) {
     const can = d.can && typeof d.can === 'object' ? d.can : null;
     if (!base[f]) return false;
     if (d.source === 'app' && !['art', 'title', 'playPause', 'next', 'prev', 'progress', 'tabs'].includes(f)) return false; // (the desktop app: only its own buttons)
-    return !['search', 'seek', 'like', 'shuffle', 'repeat', 'volume', 'queue', 'library', 'devices', 'tracks', 'lyrics', 'playlists'].includes(f) || Boolean(can && can[f]);
+    return !['search', 'seek', 'like', 'shuffle', 'repeat', 'volume', 'queue', 'library', 'devices', 'tracks', 'lyrics', 'playlists', 'home'].includes(f) || Boolean(can && can[f]);
   };
   view.cap = cap;
 
@@ -348,6 +348,7 @@ function build(w, card, o) {
   // A tab's data is asked for when the tab is shown (the card is large enough for tabs, and the tab is the open one), not again for a few seconds.
   function askTab(name, byUser) {
     if (name.startsWith('pin')) { const p = pinOf(name); if (p && (view.tier === 'large' || view.tier === 'xl')) askList(p, byUser === true); return; }
+    if (name === 'home') return; // (its shelves are asked for as they scroll into view: renderer/newtab-music-home.js)
     if (name === 'search') { if (view.tier !== 'small' && view.tier !== 'medium') view.warmSearch?.(); return; } // (the Search tab is shown: the hidden player starts now)
     if (!name || (name === 'devices' && o.engine !== 'spotify-api')) return;
     if (view.tier === 'small' || view.tier === 'medium') return;
@@ -458,6 +459,18 @@ function build(w, card, o) {
       items.forEach((it, i) => box.append(listRow(it, { withThumbs: pics, label: `Play ${text(it.title, 60)} from the queue`, onClick: () => act('playqueue', { arg: String(i), with: it.id }) })));
     });
   }
+  // The Home tab: shelves like Spotify's Home. Its code is a file of its own, loaded the first time the tab is shown (the page never loads it otherwise).
+  let homeScript = null;
+  function drawHome() {
+    if (window.MusicHome) { window.MusicHome.draw({ panel: tab.home.p, d: view.d, ui, act, el, thumbOk, fill, sig }); return; }
+    fill(tab.home.p, 'loading', (box) => note(box, (view.d && view.d.homeText && view.d.homeText.loading) || 'Loading…'));
+    if (homeScript) return;
+    homeScript = document.createElement('script');
+    homeScript.src = 'newtab-music-home.js';
+    homeScript.onload = () => { if (root.isConnected) drawHome(); };
+    homeScript.onerror = () => { homeScript = null; };
+    document.head.append(homeScript);
+  }
   function drawLibrary() {
     const d = view.d;
     const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs); const albums = rowsOf(d.albums); const artists = rowsOf(d.artists);
@@ -470,7 +483,8 @@ function build(w, card, o) {
     const op = ui.openList && cap('playlists') ? ui.openList : null; // (a playlist opened in the card: its songs take the panel until Back)
     if (op) { fill(tab.library.p, sig(['open', listSig(op)]), (box) => drawList(box, op, { onBack: () => { ui.openList = null; drawLibrary(); }, redraw: drawLibrary })); return; }
     const state = out ? 'out' : d.needsScopes === true && !any ? 'scope' : any ? 'rows' : waiting ? 'loading' : failed ? 'err' : 'empty';
-    fill(tab.library.p, sig([state, recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), albums.map((i) => i.id), artists.map((i) => i.id), d.needsScopes === true, d.libraryWhy, d.libraryEmpty === true, pinsOf().map((p) => p.id), cap('playlists')]), (box) => {
+    const withPic = (list) => list.filter((i) => thumbOk(i.thumb)).length;
+    fill(tab.library.p, sig([state, withPic(recent) + withPic(liked) + withPic(lists) + withPic(albums) + withPic(artists), recent.map((i) => i.id), liked.map((i) => i.id), lists.map((i) => i.id), albums.map((i) => i.id), artists.map((i) => i.id), d.needsScopes === true, d.libraryWhy, d.libraryEmpty === true, pinsOf().map((p) => p.id), cap('playlists')]), (box) => {
       if (state === 'err') { note(box, LIBRARY_FAIL(o, d.libraryWhy), { button: 'Try again', onClick: retry('library') }); return; }
       if (state === 'out') { note(box, `Sign in to ${o.name} to see your library.`); if (o.signIn) { const b = el('button', 'w-btn primary am-signin', o.signIn); b.type = 'button'; b.addEventListener('click', () => act('esignin')); box.append(b); } return; }
       if (state === 'loading') { note(box, 'Loading your library…'); return; }
@@ -482,8 +496,8 @@ function build(w, card, o) {
         g.append(el('div', 'am-heading', heading));
         for (const it of items) {
           if (!KINDS.includes(it.kind)) continue;
-          if (cap('playlists') && PIN_KINDS.includes(it.kind)) { g.append(listRow(it, { withThumbs: false, label: `Open ${text(it.title, 60)}`, onClick: () => { ui.openList = { kind: it.kind, id: it.id, title: text(it.title, 60) }; askList(ui.openList, true); drawLibrary(); }, acts: pinToggle(it) })); continue; }
-          g.append(listRow(it, { withThumbs: false, label: `Play ${text(it.title, 60)}`, onClick: () => act('playitem', { kind: it.kind, arg: it.id }) }));
+          if (cap('playlists') && PIN_KINDS.includes(it.kind)) { g.append(listRow(it, { label: `Open ${text(it.title, 60)}`, onClick: () => { ui.openList = { kind: it.kind, id: it.id, title: text(it.title, 60) }; askList(ui.openList, true); drawLibrary(); }, acts: pinToggle(it) })); continue; }
+          g.append(listRow(it, { label: `Play ${text(it.title, 60)}`, onClick: () => act('playitem', { kind: it.kind, arg: it.id }) }));
         }
         box.append(g);
       };
@@ -495,6 +509,17 @@ function build(w, card, o) {
       if (d.needsScopes === true) reconnectNote(box);
     });
     if (state === 'loading') later(LOADING_MS + 50, drawLibrary);
+    if (state === 'rows') askLibraryThumbs([recent, liked, lists, albums, artists]);
+  }
+  // The pictures of the library rows (Web API cards; the engine's rows come with theirs): the first rows of each list without one are asked for together, a dozen a
+  // time, and the card is redrawn as they arrive (which asks for the next dozen). Each row is asked once.
+  function askLibraryThumbs(lists) {
+    const asked = (ui.libAsked ||= new Set());
+    const fresh = [];
+    for (const list of lists) for (const it of list.slice(0, 24)) if (!thumbOk(it.thumb) && !asked.has(it.id) && SAFE_ID.test(it.id) && fresh.length < 12) fresh.push(it.id);
+    if (!fresh.length) return;
+    for (const id of fresh) asked.add(id);
+    act('ethumb', { arg: fresh.join(',') });
   }
   // A Library row's pin: pins it as a tab (up to four), or takes it off again.
   function pinToggle(it) {
@@ -583,7 +608,7 @@ function build(w, card, o) {
   function drawPanels() {
     if (view.tier === 'small' || view.tier === 'medium') return;
     const name = ui.tab;
-    if (name === 'queue') drawQueue(); else if (name === 'library') drawLibrary(); else if (name === 'devices') drawDevices(); else if (name === 'tracks') drawTracks(); else if (name === 'lyrics') drawLyrics(); else if (name === 'search') inline.draw(); else if (name.startsWith('pin')) drawPinned(name);
+    if (name === 'home') drawHome(); else if (name === 'queue') drawQueue(); else if (name === 'library') drawLibrary(); else if (name === 'devices') drawDevices(); else if (name === 'tracks') drawTracks(); else if (name === 'lyrics') drawLyrics(); else if (name === 'search') inline.draw(); else if (name.startsWith('pin')) drawPinned(name);
   }
 
   // ---- progress: main sends where the playhead was and when; this page moves it on once a second ----
@@ -780,7 +805,7 @@ function build(w, card, o) {
     side.hidden = !names.size;
     const idleTab = stateOf() === 'idle' && ['queue', 'tracks', 'lyrics'].includes(ui.tab) && !ui.userTab;
     if (!names.has(ui.tab) || idleTab) {
-      const first = stateOf() === 'idle' ? (names.has('library') ? 'library' : 'search') : (names.has('queue') ? 'queue' : 'search');
+      const first = stateOf() === 'idle' ? (names.has('home') ? 'home' : names.has('library') ? 'library' : 'search') : (names.has('queue') ? 'queue' : 'search');
       if (names.has(first)) { ui.tab = first; ui.userTab = false; } else ui.tab = [...names][0] || '';
     }
     if (ui.tab) selectTab(ui.tab, false);

@@ -1,7 +1,7 @@
 // The ad blocker's let-through of captcha and sign-in providers (features/adblock.js isProviderUrl): hCaptcha, reCAPTCHA, Turnstile, Arkose and
 // the others, and sign-in hosts, on every site; look-alikes and ordinary trackers are not let through. The window-level flow (a cross-origin
 // iframe form behind a captcha, POSTs, cookies) is test/iframe-post.js.
-const { isProviderUrl, challengeFor } = require('../src/features/adblock');
+const { isProviderUrl, challengeFor, spotifyOwn } = require('../src/features/adblock');
 
 let failed = 0;
 let total = 0;
@@ -33,6 +33,12 @@ check('providers: a sign-in host is let through as a frame or form POST target, 
 check('providers: ...and for scripts, images, fetches and pings from the same site', ['script', 'image', 'xhr', 'ping'].every((t) => challengeFor('https://connect.garmin.com/profile', G, t)), '');
 check('providers: ...but never for those from another site (a tracker served from auth.tracker.example)', ['script', 'image', 'xhr', 'ping', 'other'].every((t) => !challengeFor('https://news.example/', G, t) && !challengeFor('https://news.example/', 'https://auth.tracker.example/t.js', t) && !challengeFor('', 'https://auth.tracker.example/t.js', t)), '');
 check('providers: a look-alike page is not the same site', !challengeFor('https://garmin.com.evil.example/', G, 'script') && !challengeFor('https://evilgarmin.com/', G, 'script'), '');
+
+// Spotify's own pictures and API (the Spotify cards' cover art): never turned into the 1x1 stand-in; its ads and logging still are.
+const SP_IMG = ['https://i.scdn.co/image/ab67616d00001e02x', 'https://mosaic.scdn.co/640/abc', 'https://image-cdn-ak.spotifycdn.com/image/x', 'https://seeded-session-images.scdn.co/v1/x'];
+check('spotify: its picture hosts are let through as images on any page', SP_IMG.every((u) => spotifyOwn(u, 'image', true)), '');
+check('spotify: ...and for the cards own requests (no page behind them), with the API', SP_IMG.every((u) => spotifyOwn(u, 'other', false)) && spotifyOwn('https://api.spotify.com/v1/me/player/queue', 'xhr', false) && spotifyOwn('https://accounts.spotify.com/api/token', 'other', false), '');
+check('spotify: a page script or fetch to its hosts, its ads, logging and look-alikes are not let through', !spotifyOwn('https://i.scdn.co/x.js', 'script', true) && !spotifyOwn('https://api.spotify.com/v1/x', 'xhr', true) && !spotifyOwn('https://spclient.wg.spotify.com/ads/v1/x', 'other', false) && !spotifyOwn('https://i.scdn.co.evil.example/x', 'image', true) && !spotifyOwn('https://notscdn.co/x', 'image', true) && !spotifyOwn('http://i.scdn.co/x', 'image', true), '');
 
 console.log(failed ? `${failed}/${total} FAILED` : `${total}/${total} passed`);
 process.exit(failed ? 1 : 0);
