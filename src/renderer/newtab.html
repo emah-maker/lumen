@@ -449,7 +449,9 @@
     .w-card:hover .w-stack, .w-card:focus-within .w-stack, .w-card.rail-on .w-stack, .w-card.w-moving .w-stack { opacity: 1; background: var(--rail-bg-hot); box-shadow: 0 0 0 0.5px var(--border); }
     .w-stack:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 1px; }
     .w-stack-dots { display: flex; flex-direction: column; align-items: center; width: 100%; min-height: 0; }
-    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 1 24px; width: 24px; height: 24px; min-height: 13px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: default; }
+    .w-stack-dot { appearance: none; display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; min-height: 24px; margin: 0; padding: 0; border: 0; border-radius: 8px; background: transparent; outline: none; cursor: pointer; transition: background-color 150ms var(--ease); }
+    .w-stack-dot:hover { background: var(--hover); }
+    .w-stack-dot:focus-visible { background: var(--hover); }
     .w-stack-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rail-dot); box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg) 60%, transparent); transition: scale 220ms var(--ease), background-color 220ms var(--ease); }
     .w-stack-dot[aria-current="true"]::before { background: var(--rail-dot-on); scale: 1.25; }
     .w-card:hover .w-stack-dot::before, .w-card:focus-within .w-stack-dot::before, .w-card.rail-on .w-stack-dot::before { background: color-mix(in srgb, var(--text) 52%, transparent); }
@@ -472,7 +474,7 @@
     .w-card.rail-end .w-stack-dot[aria-current="true"]::before { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
     @keyframes w-rail-end { 0%, 100% { scale: 1.25; } 40% { scale: 1.9; } }
     @keyframes w-rail-intro { 0%, 100% { scale: 1; opacity: 0.92; } 22%, 62% { scale: 1.14; opacity: 1; background: color-mix(in srgb, var(--bg) 58%, transparent); box-shadow: 0 0 0 0.5px var(--border), 0 0 0 5px color-mix(in srgb, var(--accent) 24%, transparent); } }
-    @container card (max-height: 150px) { .w-stack-dot { min-height: 11px; } .w-stack-nav { display: none; } }
+    @container card (max-height: 150px) { .w-stack-dot { min-height: 24px; } .w-stack-nav { display: none; } }
     .w-stack-nav { appearance: none; display: grid; place-items: center; flex: none; width: 24px; height: 14px; margin: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; outline: none; cursor: default; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
     .w-stack-nav svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .w-card:hover .w-stack-nav, .w-stack:focus-within .w-stack-nav { opacity: 1; }
@@ -496,8 +498,8 @@
     .w-stack-edit:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     body.w-editing .w-stack-edit { display: grid; pointer-events: auto; }
     .w-ghost.stack { border-style: solid; background: color-mix(in srgb, var(--accent) 16%, transparent); scale: 0.96; }
-    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot::before, .w-stack-nav { transition: none; } }
-    body.calm .w-stack, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
+    @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot, .w-stack-dot::before, .w-stack-nav { transition: none; } }
+    body.calm .w-stack, body.calm .w-stack-dot, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
     /* Edit stack: a small panel beside the card (Edit layout) */
     .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
     .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }
