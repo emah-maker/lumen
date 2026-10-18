@@ -1463,9 +1463,9 @@ async function buildWidgets(card) {
         section('Account', [loginRow]),
         section('Can’t sign in? Use your own Spotify app', [steps]));
       const showBox = section('Show', [inputs.art]);
-      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them.' });
+      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them. Log in with Spotify below as well to get the Home tab, faster search and your library.' });
       const webNote = h('p', { class: 'wf-foot wf-mode-web', text: 'The card shows open.spotify.com. Sign in there once; Lumen never sees your Spotify password or token.' });
-      const syncMode = () => { apiBox.hidden = inputs.mode.value !== 'api'; webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
+      const syncMode = () => { apiBox.hidden = inputs.mode.value === 'web'; /* (Plays in Lumen needs the account too, for Home, search and your library) */ webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
       inputs.mode.addEventListener('change', syncMode);
       syncMode();
       fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox);

@@ -15,6 +15,7 @@ const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`;
 // What the card needs: playback (read state, devices, the queue; control it), and for the bigger sizes the library: playlists, recent plays, saved
 // songs (the heart), saved albums, followed artists. An account signed in before these were added keeps working for the playback buttons; the calls that need a new one answer
 // 403 "Insufficient client scope" and the card then offers to reconnect (scopeError() recognises that answer).
+const ALLOWLIST_MESSAGE = 'This Spotify account isn’t on the list for Lumen’s own Spotify app (while Spotify keeps it in development mode it lets 25 people in). Use your own free Spotify app instead: it takes a minute.';
 const BASE_SCOPES = ['user-read-playback-state', 'user-modify-playback-state'];
 const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify', 'user-follow-read', 'user-top-read']; // (user-top-read: the Home tab's top artists and songs)
 const SCOPES = [...BASE_SCOPES, ...LIBRARY_SCOPES].join(' ');
@@ -118,8 +119,11 @@ function errorCode(text) {
   } catch { return { error: '', reason: '', message: '' }; }
 }
 // A failed token request -> what the user should read.
+// Did Spotify refuse because the account is not on the list of Lumen's own Spotify app (development mode: 25 people)?
+const isAllowlistError = (status, text) => (status === 400 || status === 401 || status === 403) && /not registered|developer dashboard|user_not_approved|not approved/i.test(String(text || '').slice(0, 600));
 function tokenError(status, text) {
   const { error } = errorCode(text);
+  if (isAllowlistError(status, text)) return ALLOWLIST_MESSAGE;
   if (error === 'invalid_client') return 'Spotify doesn’t know that Client ID. Check it in Settings.';
   if (error === 'invalid_grant' || status === 400 || status === 401) return 'Spotify signed Lumen out. Connect Spotify again in Settings.';
   if (status === 429) return 'Spotify asked Lumen to slow down. It will try again shortly.';
@@ -494,5 +498,5 @@ module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
   scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
-  isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
+  isAllowlistError, ALLOWLIST_MESSAGE, isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

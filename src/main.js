@@ -4636,6 +4636,7 @@ function widgetAction(event, url, wc = null) {
   if (!action) return false;
   event.preventDefault();
   if (action.invalid) return true;
+  if (action.do === 'reconnect') { widgets.spotifyReconnect(action.id, spotifySignIn).catch((err) => console.error('[lumen] spotify reconnect:', err.message)); return true; } // (the Spotify card's Reconnect / Connect button: the sign-in starts here, in Spotify's own tab)
   const done = widgets.act(action);
   // The page's own add/edit form (do=setup) hears how it went: saved, or what to fix.
   if (action.do === 'setup') {
@@ -10955,8 +10956,9 @@ ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
 let cancelSpotifySignIn = null;
 ipcMain.handle('spotify:cancel', () => { cancelSpotifySignIn?.(); return true; });
 ipcMain.handle('spotify:disconnect', () => widgets.spotifyDisconnect());
-ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) => {
-  cancelSpotifySignIn?.(); // one sign-in at a time
+// One sign-in at a time; resolves { ok, message, cancelled?, allowlist? }. Used by Settings (spotify:sign-in) and by the Spotify card's Reconnect / Connect buttons (do=reconnect).
+const spotifySignIn = (clientId) => new Promise((resolve) => {
+  cancelSpotifySignIn?.();
   let session;
   try { session = widgets.spotifyStart(clientId); } catch (err) { resolve({ ok: false, message: err.message }); return; }
   let authTab = null;
@@ -10990,13 +10992,15 @@ ipcMain.handle('spotify:sign-in', (_event, clientId) => new Promise((resolve) =>
       finish({ ok: true, message: t('spotify.connected') });
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Sign-in failed', 'Spotify sign-in failed. Close this tab and try again.'));
-      finish({ ok: false, message: t('spotify.failed', { error: err.message }) });
+      finish({ ok: false, allowlist: err.allowlist === true, message: err.allowlist === true ? err.message : t('spotify.failed', { error: err.message }) });
     }
   });
-  const timer = setTimeout(() => finish({ ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
+  // (Lumen's own Spotify app, in Spotify's development mode, only lets 25 listed accounts in: for anyone else Spotify's own page says so and never comes back here)
+  const timer = setTimeout(() => finish(session.builtin ? { ok: false, allowlist: true, message: t('spotify.timeoutBuiltin') } : { ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
   server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: spotifyRedirectPort() }) }));
   server.listen(spotifyRedirectPort(), '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
-}));
+});
+ipcMain.handle('spotify:sign-in', (_event, clientId) => spotifySignIn(clientId));
 
 // ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
 const CLI_BIN = () => path.join(app.getPath('userData'), 'bin');

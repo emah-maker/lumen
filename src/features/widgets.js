@@ -600,7 +600,8 @@ const CONNECTORS = {
         const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
         const lib = SAC.directLibrary(x.ui(c.id)); // (the Web API's library, when the account is connected and it answered; else the page's own)
         const homeOn = apiConnected(c, x);
-        const home = homeOn ? { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true } } : null; // (the Home tab: the Web API's shelves, when the account is connected)
+        // The Home tab: the Web API's shelves when the account is connected; else the tab says Spotify has to be connected (its button starts the sign-in).
+        const home = { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true }, ...(homeOn ? {} : { home: { shelves: {}, connect: true } }) };
         const merged = shown || lib || home ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}) } : d;
         return c.art === false ? { ...merged, art: '' } : merged;
       }
@@ -1353,6 +1354,7 @@ async function statusSearch(c, action, x, cached) {
   }
   if (action.do === 'ehome') {
     if (!SAC.HOME_SHELVES.includes(action.arg)) return false;
+    if (!apiConnected(c, x)) return { local: true }; // (nothing to read it with: the tab offers to connect)
     const sh = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, onPart: () => { Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {}); x.pushUpdate?.(); } };
     await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, sh).catch(() => {});
     Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {});
@@ -2330,13 +2332,14 @@ function createWidgets(deps) {
     return {
       url: SV.authorizeUrl(x.endpoint('spotifyAccounts'), { clientId, challenge: p.challenge, state: p.state }),
       state: p.state,
+      builtin: SV.clientIdSource({ user: clientIdInput, env: typeof process !== 'undefined' ? process.env?.LUMEN_SPOTIFY_CLIENT_ID : '' }) === 'builtin', // (Lumen's own app: limited to 25 listed accounts)
       async exchange(code) {
         if (typeof code !== 'string' || !/^[\w.~-]{1,2000}$/.test(code)) throw new Error('Spotify sent something unexpected.');
         const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
           method: 'POST', max: 65536, body: SV.tokenForm('code', { clientId, code, verifier: p.verifier }),
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         });
-        if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
+        if (!res.ok) throw Object.assign(new Error(SV.tokenError(res.status, res.body)), { allowlist: SV.isAllowlistError(res.status, res.body) });
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
         Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
@@ -2346,6 +2349,27 @@ function createWidgets(deps) {
         return true;
       },
     };
+  }
+  // The Spotify card's Reconnect / Connect button: the sign-in starts at once (main.js passes its flow as `signIn(clientId)`), whatever the card's mode. The card says it is
+  // waiting, and what went wrong if it did not work (Lumen's own app only lets 25 listed accounts in: then it offers the user's own app).
+  async function spotifyReconnect(id, signIn) {
+    const w = list().find((x) => x.id === id && x.type === 'spotify');
+    if (!w) return false;
+    const x = helpers('spotify');
+    const show = (ui, signInState) => {
+      ui.signIn = signInState;
+      const e = cache.get(id);
+      if (e && e.data) e.data = { ...e.data, ...(SAC.homeFields(ui, x.homeText()) || {}) };
+      deps.onUpdate?.();
+    };
+    show(x.ui(id), { state: 'waiting', message: tt('spotify.home.waiting', 'Waiting for Spotify in the tab that just opened…') });
+    let r;
+    try { r = await signIn(w.clientId || ''); } catch (err) { r = { ok: false, message: String(err?.message || err) }; }
+    const ui = x.ui(id); // (a sign-in that worked reset the card's state: a fresh one)
+    if (r.ok) { show(ui, null); const e = cache.get(id); if (e) e.at = 0; refresh(list().find((q) => q.id === id) || w, { force: true }).catch(() => {}); return true; }
+    if (r.cancelled) { show(ui, null); return false; }
+    show(ui, { state: r.allowlist ? 'allowlist' : 'failed', message: String(r.message || '').slice(0, 300) });
+    return false;
   }
   // Who is signed in, for Settings' status line (kept in memory, never stored). '' when unknown.
   async function spotifyName(x, clientId) {
@@ -2545,7 +2569,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
     if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
       action.routine = params.get('id');
@@ -2940,7 +2964,7 @@ function createWidgets(deps) {
     return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
