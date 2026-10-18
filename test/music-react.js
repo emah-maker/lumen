@@ -164,23 +164,24 @@ window.stopTone = () => { try { ctx.close(); } catch {} return true; };
   await waitFor(home, `document.body.dataset.mrMode === 'full'`, 8000);
 
   // ---- Settings: one line under the switch says why it is limited ----
-  const settingsTab = await openTab('lumen://settings#home');
+  const settingsTab = await app.evaluate((_e, sec) => global.__settings.open(sec), 'home');
+  const runS = (code) => app.evaluate((_e, [i, c]) => global.__settings.contents(i).executeJavaScript(c, true), [settingsTab, code]);
+  const waitForS = async (code, ms = 20000) => { const end = Date.now() + ms; while (Date.now() < end) { try { if (await runS(code)) return true; } catch { /* loading */ } await sleep(150); } return false; };
   const NOTE = `(() => { const n = document.getElementById('music-reactive-note'); const l = document.getElementById('music-reactive-link'); return n ? { text: n.hidden ? '' : n.textContent, link: Boolean(l && !l.hidden), label: document.getElementById('pref-newTabMusicReactive')?.getAttribute('aria-label') || null } : null; })()`;
-  const reload = async () => { await run(settingsTab, 'location.reload()').catch(() => {}); await sleep(500); await waitFor(settingsTab, `!!document.getElementById('music-reactive-note')`, 20000); };
-  await waitFor(settingsTab, `!!document.getElementById('music-reactive-note')`, 20000);
-  let n = await run(settingsTab, NOTE);
+  const reload = async () => { await runS('location.reload()').catch(() => {}); await sleep(500); await waitForS(`!!document.getElementById('music-reactive-note')`, 20000); };
+  await waitForS(`!!document.getElementById('music-reactive-note')`, 20000);
+  let n = await runS(NOTE);
   check('Settings: the switch has a label', n && n.label === 'Music-reactive home screen', JSON.stringify(n));
   check('Settings: Visual effects: Full, nothing limited: no line', n && n.text === '' && !n.link, JSON.stringify(n));
-  await set('graphicsMode', 'light'); await reload(); n = await run(settingsTab, NOTE);
+  await set('graphicsMode', 'light'); await reload(); n = await runS(NOTE);
   check('Settings: Light: "Simplified (glow only) because Visual effects is set to Light", with a link', n && /^Simplified \(glow only\) because Visual effects is set to Light\.$/.test(n.text) && n.link, JSON.stringify(n));
-  await run(settingsTab, `document.getElementById('music-reactive-link').click()`);
-  check('Settings: the link jumps to Visual effects', await waitFor(settingsTab, `document.activeElement && document.activeElement.id === 'pref-graphicsMode'`, 15000), JSON.stringify(await run(settingsTab, `document.activeElement && document.activeElement.id`)));
-  await set('graphicsMode', 'full'); await set('reduceMotion', true); await reload(); n = await run(settingsTab, NOTE);
+  await runS(`document.getElementById('music-reactive-link').click()`);
+  check('Settings: the link jumps to Visual effects', await waitForS(`document.activeElement && document.activeElement.id === 'pref-graphicsMode'`, 15000), JSON.stringify(await runS(`document.activeElement && document.activeElement.id`)));
+  await set('graphicsMode', 'full'); await set('reduceMotion', true); await reload(); n = await runS(NOTE);
   check('Settings: Reduce motion: says it is off, no link', n && /^Off because Reduce motion is on\.$/.test(n.text) && !n.link, JSON.stringify(n));
-  await set('reduceMotion', false); await set('performanceMode', 'on'); await reload(); n = await run(settingsTab, NOTE);
+  await set('reduceMotion', false); await set('performanceMode', 'on'); await reload(); n = await runS(NOTE);
   check('Settings: Performance mode: says it is off, no link', n && /^Off because Performance mode is on\.$/.test(n.text) && !n.link, JSON.stringify(n));
   await set('performanceMode', 'off');
-  await app.evaluate((_e, id) => { const t = global.__mrTabs.find((x) => x.id === id); global.__agent.browser.closeTab?.(id); return Boolean(t); }, settingsTab).catch(() => {});
 
   // ---- off again ----
   await set('newTabMusicReactive', false);
