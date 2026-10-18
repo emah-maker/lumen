@@ -45,6 +45,7 @@ function normalizeSettings(raw) {
     notifyDone: s.notifyDone !== false,
     timeoutMin: TIMEOUT_CHOICES.includes(to) ? to : DEFAULT_SETTINGS.timeoutMin,
     approvalWaitMin: APPROVAL_WAIT_CHOICES.includes(Number(s.approvalWaitMin)) ? Number(s.approvalWaitMin) : DEFAULT_SETTINGS.approvalWaitMin,
+    quiet: routines.cleanQuiet(s.quiet), // routines' quiet hours: { on, from, to }
   };
 }
 
@@ -416,7 +417,7 @@ function summarize(task, now = Date.now(), pending = [], info = {}) {
     cost: describeUsage(task.usage), stepCount: task.stepCount, error: task.error, notice: task.notice, allowedSites: task.allowedSites,
     signedIn: task.signedIn, allowMcp: task.allowMcp, currentUrl: task.currentUrl, pending,
     watching: task.watch ? { holding: task.watch.holding, checkedAt: task.watch.checkedAt, changedAt: task.watch.changedAt } : null,
-    routine: task.routine ? { startUrl: task.routine.startUrl, runs: task.routine.history.length, lastStatus: task.routine.history[task.routine.history.length - 1]?.status || null } : null,
+    routine: task.routine ? { startUrl: task.routine.startUrl, template: task.routine.template || '', runs: task.routine.history.length, lastStatus: task.routine.history[task.routine.history.length - 1]?.status || null } : null,
   };
 }
 

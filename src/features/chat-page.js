@@ -30,6 +30,33 @@ const displayUrl = () => 'lumen://chat';
 // lumen://chat (chrome://chat works too) typed in the address bar.
 const parseChatInput = (text) => (/^(?:lumen|chrome):\/\/chat\/?$/i.test(String(text || '').trim()) ? { page: 'chat' } : null);
 
+// Limits for what the page may send when it schedules a routine (the page is untrusted).
+const ROUTINE_LIMITS = { prompt: 8000, title: 80, when: 500 };
+const routineHelpers = {
+  parseScheduleText: (text) => require('./routines').parseScheduleText(text),
+  // Only the schedule's own fields, with plain types: nothing else the page sent gets through.
+  pickSchedule(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const out = {};
+    if (typeof raw.repeat === 'string') out.repeat = raw.repeat.slice(0, 16);
+    if (typeof raw.time === 'string') out.time = raw.time.slice(0, 16);
+    if (Array.isArray(raw.days)) out.days = raw.days.slice(0, 7).map(Number);
+    if (typeof raw.hours === 'number' || typeof raw.hours === 'string') out.hours = Number(raw.hours);
+    if (typeof raw.at === 'number' || typeof raw.at === 'string') out.at = typeof raw.at === 'string' ? raw.at.slice(0, 40) : raw.at;
+    if (typeof raw.cron === 'string') out.cron = raw.cron.slice(0, 120);
+    return out;
+  },
+  checkSpec(spec, limits) {
+    if (!spec || typeof spec !== 'object') return 'Nothing to save.';
+    if (typeof spec.prompt !== 'string' || !spec.prompt.trim()) return 'Write what the routine should do.';
+    if (spec.prompt.length > limits.prompt) return 'That request is too long.';
+    if (typeof spec.title !== 'string' || !spec.title.trim()) return 'Give the routine a name.';
+    if (spec.title.length > limits.title) return 'That name is too long.';
+    if (!routineHelpers.pickSchedule(spec.schedule)) return 'Pick when it runs.';
+    return '';
+  },
+};
+
 // What the page may ask main for, beyond the chat channels main.js already serves the sidebar:
 // the same handlers, opened to this page and nothing else. Anything not listed is refused.
 const CHAT_IPC = new Set([
@@ -42,6 +69,7 @@ const CHAT_IPC = new Set([
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', // the "/" menu (features/skills.js)
+  'chat:routine-preview', 'chat:routine-create', // "Schedule this" on the page: read a schedule phrase, save a routine (registerRoutines below)
 ]);
 
 // The tab an AI run started from the chat page works in: the one the user looked at most recently
@@ -221,6 +249,32 @@ function create(deps) {
     return id;
   }
 
+  // Scheduling from the page (deps.routines() is the background runner). The page is untrusted: only a chat page may ask, never from a
+  // private window, and every argument is checked here. Both answer { ... } and never throw.
+  function registerRoutines(ipcMain) {
+    const allowed = (event) => isChatSender(event) && !deps.isPrivateSender(event) && Boolean(deps.routines?.());
+    ipcMain.handle('chat:routine-preview', (event, req) => {
+      const none = { parsed: null, next: [] };
+      if (!allowed(event) || !req || typeof req !== 'object') return none;
+      try {
+        const text = typeof req.text === 'string' ? req.text.slice(0, ROUTINE_LIMITS.prompt + ROUTINE_LIMITS.when) : '';
+        const parsed = text.trim() ? routineHelpers.parseScheduleText(text) : null;
+        const schedule = parsed ? parsed.schedule : routineHelpers.pickSchedule(req.schedule);
+        const out = schedule ? deps.routines().routinePreview({ schedule }) : null;
+        return { parsed, next: out?.ok ? out.next : [], error: out && !out.ok ? String(out.error || '') : '' };
+      } catch { return none; }
+    });
+    ipcMain.handle('chat:routine-create', (event, spec) => {
+      if (!allowed(event)) return { ok: false, error: 'Not available here.' };
+      const bad = routineHelpers.checkSpec(spec, ROUTINE_LIMITS);
+      if (bad) return { ok: false, error: bad };
+      try {
+        const made = deps.routines().saveRoutine({ title: spec.title.trim(), prompt: spec.prompt.trim(), schedule: routineHelpers.pickSchedule(spec.schedule), enabled: spec.enabled !== false, confirmed: true });
+        return { ok: true, id: made.id };
+      } catch (err) { return { ok: false, error: String(err?.message || err) }; }
+    });
+  }
+
   function register() {
     const { ipcMain } = deps;
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
@@ -234,6 +288,7 @@ function create(deps) {
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
+    registerRoutines(ipcMain);
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 

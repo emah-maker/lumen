@@ -8250,6 +8250,7 @@ chatPageRt = chatPage.create({
   goHome: (id) => replaceTab(id, newTabUrl()), // the chat tab becomes the new-tab page, in its place
   goChat: (id) => { const { id: page } = openTab(chatPage.CHAT_URL, { managerPage: 'chat' }); takePlace(page, id); return page; }, // and the way back: the new-tab page becomes the chat page
   managersOpen: () => managers.open('chat'),
+  routines: () => bgTasks, // "Schedule this" on the page (features/chat-page.js registerRoutines); bgTasks is made below, so it is looked up when asked
   spareContents: () => spareChat?.view.webContents || null, // (the spare chat page, before a tab takes it: the strings it asks for at load)
   isPrivateSender: (event) => !syntheticTestEvent(event) && !recOfSender(event?.sender), // a private window's UI is in no window record
   chatView: () => chatView(),
@@ -8284,8 +8285,12 @@ agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));
 // Background tasks: jobs the AI does on its own in hidden tabs, on a schedule or watching a page
 // (features/background-runner.js). Kept out of the sidebar chat and the user's tabs.
+let routinesSoon = () => {}; // [widgets] the home page's Routines card looks again when a routine changes; set once the widgets exist
 const bgTasks = require('./features/background-runner').create({
   file: path.join(app.getPath('userData'), 'background-tasks.json'),
+  now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
+  connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
+  routinesChanged: () => routinesSoon(),
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
@@ -8620,6 +8625,8 @@ const widgets = createWidgets({
   appleMusicWebSignedIn: () => appleMusicEngine.signedIn(),
   appleMusicWebStatus: () => appleMusicWeb.status(),
   appleMusicWebReload: () => appleMusicWeb.reload(),
+  routines: () => bgTasks.routineView(), // the Routines card (features/routines-card.js shapes it)
+  routineAct: (req) => bgTasks.routineAct(req), // its New routine and result buttons: open the sidebar's editor / the routine's result page
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
   tradingviewLists: () => (TEST && global.__tvLists ? global.__tvLists() : tradingviewAccountLists()), // tests never reach TradingView
   onUpdate: () => {
@@ -8645,6 +8652,7 @@ const widgets = createWidgets({
   rateMax: () => (TEST && global.__widgetRateMax) || 0, // tests that drive many refreshes raise the per-minute cap
 });
 aiStatusSoon = widgets.aiStatusSoon;
+routinesSoon = widgets.routinesSoon;
 scheduler.every('ai-status', 15e3, () => { try { widgets.aiStatusChanged(); } catch { /* the card only looks again */ } }, { whenHidden: 60e3 }); // (runs at once when a window is back) // a limit that ended, a tab the AI opened or closed: nothing else announces them
 if (TEST) global.__widgets = widgets;
 // A profile that had no settings file when Lumen started (a fresh install) and has no cards yet gets the Files card: the new-tab page is not empty
@@ -9203,7 +9211,7 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
   ipcMain.on('newtab-files:strings', (event) => {
     const mine = (event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender))) || syntheticTestEvent(event);
     const all = i18n().strings;
-    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.')).map((k) => [k, all[k]])) : {};
+    event.returnValue = mine ? Object.fromEntries(Object.keys(all).filter((k) => k.startsWith('files.card.') || k.startsWith('routines.card.')).map((k) => [k, all[k]])) : {};
   });
   // The card's "Turn on" (when Remember files I open is off): this one setting, and nothing else, can be switched on from the new-tab page.
   ipcMain.handle('newtab-files:remember', (event) => {

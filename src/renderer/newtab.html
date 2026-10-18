@@ -1196,6 +1196,47 @@
     }
     @container card (min-width: 230px) and (min-height: 150px) { .ai-detail { display: block; } }
     @container card (min-width: 150px) and (min-height: 160px) { .ai-live { display: flex; } }
+    /* Routines: the next runs, then the latest results, every row a button. The card shows what its height has room for: the first next
+       run on a small card, three of them from 230px, and the results from 210px (one, two, then three rows). Status is a shape as well
+       as a colour (and the row says it in words): done is a filled dot, failed a dashed ring, stopped or interrupted a half-filled one,
+       skipped a ring, waiting for your OK a filled amber dot, and a coming run a thin ring. */
+    .w-card.routines { --ai-ok: #17772f; --ai-warn: #a85d00; --ai-bad: #c4262e; }
+    @media (prefers-color-scheme: dark) { .w-card.routines { --ai-ok: #4bd166; --ai-warn: #ffb454; --ai-bad: #ff7a72; } }
+    body.on-media .w-card.routines { --ai-ok: #6ce085; --ai-warn: #ffc46b; --ai-bad: #ff9a94; }
+    body.on-media.tone-light .w-card.routines { --ai-ok: #1a7f37; --ai-warn: #9a5b00; --ai-bad: #b3261e; }
+    .w-card.routines .w-body { overflow: hidden; }
+    .rt-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+    .rt-sec { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .rt-h { margin: 0 0 1px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: 0.02em; text-transform: uppercase; }
+    .rt-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; }
+    .rt-row { appearance: none; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 1px; align-items: baseline; width: 100%; margin: 0; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+    .rt-row:hover { background: var(--hover); }
+    .rt-row:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+    .rt-mark { display: block; box-sizing: border-box; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); align-self: center; }
+    .rt-st-done { background: var(--ai-ok); }
+    .rt-st-failed { border: 1.5px dashed var(--ai-bad); background: transparent; }
+    .rt-st-stopped, .rt-st-interrupted { border: 1.5px solid var(--ai-warn); background: linear-gradient(90deg, var(--ai-warn) 50%, transparent 50%); }
+    .rt-st-skipped { border: 1.5px solid var(--muted); background: transparent; }
+    .rt-st-wait { background: var(--ai-warn); }
+    .rt-st-next { border: 1.5px solid var(--muted); background: transparent; }
+    .rt-title { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+    .rt-when { color: var(--muted); font-size: 12px; line-height: 1.3; white-space: nowrap; }
+    .rt-sub { grid-column: 2 / -1; min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .rt-waiting .rt-sub { color: var(--ai-warn); font-weight: 600; }
+    .rt-none, .rt-off { margin: 0; padding: 2px 6px; color: var(--muted); font-size: 12px; line-height: 1.3; }
+    .rt-off { margin-top: auto; padding-top: 6px; border-top: 1px solid var(--border); font-size: 11px; }
+    .rt-state { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; min-height: 0; flex: 1 1 auto; }
+    .rt-state-title { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.25; }
+    .rt-state-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.3; }
+    .rt-new { margin-top: 6px; }
+    /* What there is room for: the sections show one row on a small card and more as it grows. */
+    .rt-latest, .rt-off { display: none; }
+    .rt-next .rt-item:nth-child(n+2) { display: none; }
+    @container card (min-height: 170px) { .rt-next .rt-item:nth-child(2) { display: block; } }
+    @container card (min-height: 215px) { .rt-next .rt-item:nth-child(3) { display: block; } .rt-latest { display: flex; } .rt-latest .rt-item:nth-child(n+2) { display: none; } }
+    @container card (min-height: 270px) { .rt-latest .rt-item:nth-child(2) { display: block; } .rt-off { display: block; } }
+    @container card (min-height: 320px) { .rt-latest .rt-item:nth-child(3) { display: block; } }
+    @container card (max-width: 189px) { .rt-sub { display: none; } }
     /* Stocks and Crypto: a price table and a simulated paper portfolio. Direction is always shown with ▲/▼ as well as colour. */
     .w-card.stocks, .w-card.crypto { --up: #17772f; --down: #c4262e; }
     @media (prefers-color-scheme: dark) { .w-card.stocks, .w-card.crypto { --up: #4bd166; --down: #ff7a72; } }

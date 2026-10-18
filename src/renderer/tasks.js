@@ -539,7 +539,7 @@
   setInterval(() => { if (!panel.hidden && !panel.querySelector('.task-edit') && state.tasks.some((t) => t.status === 'running')) render(); }, 20000);
   api.onState((s) => { state = s; applyState(); if (!panel.hidden) render(); });
   api.onToast(toast);
-  api.onOpen(({ id } = {}) => openPanel(id || null));
+  api.onOpen((p = {}) => (p.routine && window.lumenRoutines ? window.lumenRoutines.fromMain(p) : openPanel(p.id || null))); // (the home card and Settings can ask for the routine editor)
   api.onPropose((spec) => openCreate(spec || {}));
   // What renderer/routines.js builds the Routines view with (same page, loaded after this file).
   window.lumenTasks = {

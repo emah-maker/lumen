@@ -94,6 +94,7 @@ function create(deps) {
 
   const settings = () => bg.normalizeSettings(deps.readSettings().bgTasks);
   const find = (id) => tasks.find((t) => t.id === String(id));
+  const connectedIds = () => { try { return deps.connectedIds?.() || []; } catch { return []; } }; // connectors the user has set up (Gmail, Canvas…)
   const ui = () => deps.ui();
 
   // ---- persistence and UI updates
@@ -115,6 +116,7 @@ function create(deps) {
     return {
       tasks: [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).map((x) => bg.summarize(x, t, pendingOf(x.id), { queue: queue[x.id], waitingSince: runtimes.get(x.id)?.waitingSince || 0 })),
       badge: bg.badgeCounts(tasks), unseen: bg.unseenCount(tasks), settings: settings(), slots: slots(), running: runtimes.size, offline: routinesOffline.length > 0,
+      templates: routines.TEMPLATES, connected: connectedIds(),
     };
   }
   function broadcast() {
@@ -122,6 +124,7 @@ function create(deps) {
     broadcastTimer = setTimeout(() => {
       broadcastTimer = null;
       ui()?.send('tasks:state', state());
+      try { deps.routinesChanged?.(); } catch { /* the home card only looks again */ }
     }, 80);
   }
   function touch(task) {
@@ -318,7 +321,7 @@ function create(deps) {
   function runRoutines() {
     if (closed) return;
     const t = now();
-    const p = routines.plan(tasks, t, { online: onlineCheck() !== false, enabled: settings().enabled, isActive: (x) => bg.ACTIVE.has(x.status) || runtimes.has(x.id) || checking.has(x.id) });
+    const p = routines.plan(tasks, t, { online: onlineCheck() !== false, enabled: settings().enabled, isActive: (x) => bg.ACTIVE.has(x.status) || runtimes.has(x.id) || checking.has(x.id), quiet: settings().quiet });
     for (const { id, dueAt, trigger } of p.queue) {
       const task = find(id);
       if (!task || !bg.canTransition(task.status, 'queued')) continue;
@@ -347,7 +350,12 @@ function create(deps) {
     const start = routines.webUrl(spec.startUrl);
     if (start === null) throw new Error(deps.t('routines.error.startUrl'));
     const sites = Array.isArray(spec.sites) ? spec.sites.map(String) : undefined;
-    if (!spec.id) return createTask({ title: spec.title, prompt: spec.prompt, schedule, sites, model: spec.model, signedIn: spec.signedIn, allowMcp: spec.allowMcp, confirmed: spec.confirmed, startUrl: start });
+    if (!spec.id) {
+      const made = createTask({ title: spec.title, prompt: spec.prompt, schedule, sites, model: spec.model, signedIn: spec.signedIn, allowMcp: spec.allowMcp, confirmed: spec.confirmed, startUrl: start });
+      if (routines.TEMPLATES.some((x) => x.key === spec.template)) made.routine.template = spec.template; // so the template cards know it is added
+      if (spec.enabled === false) { made.enabled = false; touch(made); runRoutines(); } // a template: made switched off, the user turns it on
+      return made;
+    }
     const task = find(spec.id);
     if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
     if (bg.OCCUPYING.has(task.status)) throw new Error(deps.t('routines.error.busy'));
@@ -426,6 +434,7 @@ function create(deps) {
     return {
       background: true, // a task's own one-tab browser: agent.ownNavigationTab must not open the sidebar chat's background tab here
       externalTools: ext,
+      connectors: task.routine ? deps.connectors : undefined, // a routine reads the services the user connected (Gmail, Canvas…): reads go through, anything that changes something asks
       activeTab: tab,
       tabById: (id) => (id === WORK_TAB ? tab() : null),
       noTabReason: () => 'This background task’s tab is closed.',
@@ -510,7 +519,7 @@ function create(deps) {
       if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: task.resultOld ? '' : task.result, error: task.error });
       const notify = task.routine ? 'routines.notify' : 'tasks.notify';
       if (kind === 'judge') applyVerdict(task, rt, text);
-      else if (status === 'done') announce(task, 'done', deps.t(`${notify}.done`, { title: task.title }));
+      else if (status === 'done') announce(task, 'done', task.routine && rt.trigger === 'catch-up' && rt.scheduledFor ? deps.t('routines.notify.doneLate', { title: task.title, time: new Date(rt.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : deps.t(`${notify}.done`, { title: task.title }));
       else if (status === 'failed') announce(task, 'failed', deps.t(`${notify}.failed`, { title: task.title, error: task.error }));
       saveSoon();
       broadcast();
@@ -825,6 +834,56 @@ function create(deps) {
     ];
   }
 
+  function updateSettings(patch) {
+    const next = bg.normalizeSettings({ ...settings(), ...(patch && typeof patch === 'object' ? patch : {}) });
+    deps.writeSettings({ ...deps.readSettings(), bgTasks: next });
+    if (!next.enabled) for (const id of [...runtimes.keys()]) stop(id);
+    broadcast();
+    pump();
+    runRoutines();
+    return next;
+  }
+
+  // ---- one view of every routine for the places that list them (the home page card, Settings → Routines): the same
+  // tasks the sidebar shows, shaped small. `history`: each routine's last runs with their results (Settings only).
+  const plainSnippet = (text) => String(text || '').replace(/```[\s\S]*?```/g, ' ').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[#*_`>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  function routineView({ history = false } = {}) {
+    const t = now();
+    const rows = tasks.filter((x) => x.routine).map((task) => {
+      const hist = task.routine.history;
+      const last = hist[hist.length - 1] || null;
+      const entry = (h) => ({ status: h.status, at: h.endedAt || h.startedAt, trigger: h.trigger, scheduledFor: h.scheduledFor, snippet: plainSnippet(h.result), error: h.error });
+      const next = task.enabled === false ? null : bg.nextRunAt(task);
+      return {
+        id: task.id, title: task.title, schedule: task.schedule, enabled: task.enabled !== false, status: task.status, template: task.routine.template || '',
+        nextRun: next, lastRun: task.lastRun, unseen: task.unseen === true, pending: pendingOf(task.id).length, runs: hist.length,
+        last: last ? entry(last) : null,
+        ...(history ? { history: hist.slice(-10).reverse().map((h) => ({ ...entry(h), startedAt: h.startedAt, result: h.result })) } : {}),
+      };
+    }).sort((a, b) => (Number(b.enabled) - Number(a.enabled)) || ((a.nextRun ?? Infinity) - (b.nextRun ?? Infinity)) || a.title.localeCompare(b.title));
+    return { ok: true, now: t, enabled: settings().enabled, quiet: settings().quiet, offline: routinesOffline.length > 0, connected: connectedIds(), templates: routines.TEMPLATES.filter((x) => !x.page), routines: rows };
+  }
+  // A one-click template: made switched off. The same code the sidebar's Routines tab uses to build it (names and requests are locale strings).
+  function addTemplate(key) {
+    const tp = routines.TEMPLATES.find((x) => x.key === key && !x.page);
+    if (!tp) throw new Error(deps.t('routines.error.missing'));
+    return saveRoutine({ title: deps.t(`routines.template.${tp.key}.name`), prompt: deps.t(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, confirmed: true });
+  }
+  // What the home card and Settings ask for: act on a routine, or ask the sidebar (the editor lives there) to open.
+  function routineAct({ act, id, key, on, patch, prompt } = {}) {
+    try {
+      if (act === 'run') { if (!run(id)) throw new Error(deps.t('routines.error.busy')); } else if (act === 'stop') stop(id);
+      else if (act === 'enable') { if (!setEnabled(id, on !== false)) throw new Error(deps.t('routines.error.missing')); } else if (act === 'delete') { if (!remove(id)) throw new Error(deps.t('routines.error.missing')); } else if (act === 'template') addTemplate(String(key));
+      else if (act === 'settings') updateSettings({ quiet: patch?.quiet });
+      else if (act === 'edit' || act === 'new' || act === 'open') {
+        if ((act === 'edit' || act === 'open') && !find(id)) throw new Error(deps.t('routines.error.missing'));
+        deps.focusApp?.();
+        ui()?.send('tasks:open', act === 'open' ? { id } : { routine: act, id: act === 'edit' ? id : undefined, prompt: typeof prompt === 'string' ? prompt.slice(0, 2000) : undefined });
+      } else throw new Error('Unknown action.');
+    } catch (err) { return { ...routineView({ history: true }), ok: false, error: String(err?.message || err) }; }
+    return routineView({ history: true });
+  }
+
   // ---- IPC (renderer/tasks.js). All of these answer the browser UI only: main.js lists the channels
   // in UI_ONLY_IPC, so a page, a private window or an extension is refused before they run.
   function register(ipcMain) {
@@ -836,7 +895,7 @@ function create(deps) {
       const task = find(id);
       if (!task) return null;
       if (task.unseen && !bg.ACTIVE.has(task.status)) { task.unseen = false; saveSoon(); broadcast(); } // looking at it is seeing it
-      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [], ...(task.routine ? { routine: { startUrl: task.routine.startUrl, history: task.routine.history, runs: task.routine.history.length } } : {}) };
+      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [], ...(task.routine ? { routine: { startUrl: task.routine.startUrl, template: task.routine.template || '', history: task.routine.history, runs: task.routine.history.length } } : {}) };
     });
     ipcMain.handle('tasks:run', (_e, id, opts) => run(id, { resume: Boolean(opts?.resume) }));
     ipcMain.handle('tasks:edit', (_e, id, patch, opts) => edit(id, patch && typeof patch === 'object' ? { title: patch.title, prompt: patch.prompt, sites: patch.sites } : {}, { andRun: Boolean(opts?.run) }));
@@ -851,21 +910,15 @@ function create(deps) {
       deps.openTab(url);
       return true;
     });
-    ipcMain.handle('tasks:settings', (_e, patch) => {
-      const next = bg.normalizeSettings({ ...settings(), ...(patch && typeof patch === 'object' ? patch : {}) });
-      deps.writeSettings({ ...deps.readSettings(), bgTasks: next });
-      if (!next.enabled) for (const id of [...runtimes.keys()]) stop(id);
-      broadcast();
-      pump();
-      runRoutines();
-      return next;
-    });
+    ipcMain.handle('tasks:settings', (_e, patch) => updateSettings(patch));
+    ipcMain.handle('settings:routines', () => routineView({ history: true })); // Settings → Routines (answers the settings page only: PRIVILEGED_IPC)
+    ipcMain.handle('settings:routines-act', (_e, req) => routineAct(req && typeof req === 'object' ? req : {}));
     ipcMain.handle('routines:save', ok((spec) => ({ id: saveRoutine(spec && typeof spec === 'object' ? spec : {}).id })));
     ipcMain.handle('routines:preview', (_e, spec) => routinePreview(spec && typeof spec === 'object' ? spec : {}));
   }
 
   return {
-    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines,
+    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
     // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
     routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },

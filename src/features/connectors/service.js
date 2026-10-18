@@ -264,6 +264,7 @@ function create({
   const label = (input) => registry.stepLabel(input);
   const isWrite = (input) => Boolean(registry.get(input?.app)?.actions?.[input?.action]?.write);
   const hasAny = () => registry.connectedIds().length > 0;
+  const connectedIds = () => registry.connectedIds();
 
   // What the confirm card says before a write.
   function describeWrite(input) {
@@ -308,7 +309,7 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
-  return { list, detect, connect, disconnect, signInUrl, defs, validate, label, isWrite, hasAny, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { list, detect, connect, disconnect, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };
