@@ -66,3 +66,7 @@ Settings → Privacy and security → Clear browsing data clears history, cookie
 ## Contact
 
 Questions about this policy: open an issue on Lumen's GitHub repository. Security problems: see [SECURITY.md](SECURITY.md).
+
+## Music-reactive home screen
+
+Off by default (Settings → Appearance → New tab page). When on, the new-tab page asks Lumen which of your own tabs or music players is playing sound and analyses that one tab's audio inside the page, with a Web Audio analyser, to get three loudness numbers (bass, mids, highs) about 30 times a second. It never uses the microphone or the computer's sound, never records or stores audio, and nothing leaves the page or the computer. It looks only while the page is in front and something is playing.

@@ -76,6 +76,18 @@
          blur behind the cards below, left vertical bands on some graphics cards). */
     }
     @media (max-width: 760px) { #effect { opacity: 0.35; } }
+    /* [look] Music-reactive home screen (newtab-music-react.js; off by default). Two decorative layers behind the content, drawn in the accent
+       colour: a glow at the top that follows the bass, a soft wave along the bottom that follows the mids. Their opacity is capped well
+       under what would touch the text's contrast (features/music-react.js GLOW_CAP / WAVE_CAP; test/music-react-units.js works the worst
+       case out), and only opacity and transform change, so no layout and no repaint of the cards. The clock card and the music cards
+       grow by about one per cent on a beat. Visual effects: Light and software drawing get the glow only (no wave, no bounce). */
+    #mr-glow, #mr-wave { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+    #mr-glow { opacity: calc(var(--mr-glow, 0) * var(--mr-gain, 1)); background: radial-gradient(62% 46% at 50% 16%, var(--accent), transparent 72%); }
+    #mr-wave { opacity: calc(var(--mr-wave, 0) * var(--mr-gain, 1)); transform: translate3d(0, calc(var(--mr-wave, 0) * -400px), 0); background: radial-gradient(70% 22% at 30% 108%, var(--accent), transparent 72%), radial-gradient(60% 18% at 75% 112%, var(--accent), transparent 72%); }
+    body.on-media { --mr-gain: 1.5; } /* over a dark picture or gradient (features/music-react.js MEDIA_GAIN); a light background reads like Plain */
+    body.on-media.tone-light { --mr-gain: 1; }
+    body.mr-on :is(#clock-card, .w-card.spotify, .w-card.applemusic) { scale: calc(1 + var(--mr-beat, 0) * 0.012); }
+    @media (prefers-reduced-motion: reduce) { #mr-glow, #mr-wave { display: none; } body.mr-on :is(#clock-card, .w-card) { scale: none; } }
     /* Over an effect the search box, switch and cards are less see-through. */
     body.on-media.has-effect input:not(:focus) { background: rgba(28, 28, 32, 0.78); }
     body.on-media.has-effect .w-card, body.on-media.has-effect .privacy,
