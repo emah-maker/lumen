@@ -3393,7 +3393,7 @@ const CATEGORY_ICONS = {
 const ALIASES = {
   'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
-  accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
+  accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
@@ -4041,6 +4041,30 @@ function buildEffectOptions() {
   render();
   return box;
 }
+
+
+
+function musicReactiveRow() {
+  const row = toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'The new-tab page’s glow and clock move with the music playing in Lumen: Spotify, YouTube or any tab. Lumen only reads how loud the bass, mids and highs are; nothing is recorded or sent anywhere. Glow only with Visual effects: Light; off with Reduce motion or Performance mode.'));
+  const note = h('span', { class: 'note', id: 'music-reactive-note', hidden: true });
+  const link = h('button', { type: 'button', class: 'linkish', id: 'music-reactive-link', hidden: true, text: tr('settings.musicReactive.linkLight', 'Change Visual effects'), onclick: () => { location.hash = '#visual-effects'; } });
+  const show = () => {
+    const g = st.graphics; const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.software) || (Boolean(g?.drawing) && mode !== 'full');
+    const light = mode === 'light' || (mode === 'auto' && Boolean(g?.integrated)) || soft;
+    let text = '';
+    if (st.prefs?.reduceMotion) text = tr('settings.musicReactive.offMotion', 'Off because Reduce motion is on.');
+    else if (st.performance?.active) text = tr('settings.musicReactive.offPerformance', 'Off because Performance mode is on.');
+    else if (soft) text = tr('settings.musicReactive.lightSoftware', 'Simplified (glow only) because Lumen is drawing in software.');
+    else if (light) text = mode === 'light' ? tr('settings.musicReactive.lightChosen', 'Simplified (glow only) because Visual effects is set to Light.') : tr('settings.musicReactive.lightAuto', 'Simplified (glow only) because Visual effects is on Automatic, which uses Light on this computer.');
+    note.textContent = text; note.hidden = !text;
+    link.hidden = !(text && light && !st.prefs?.reduceMotion && !st.performance?.active);
+  };
+  show();
+  window.addEventListener('lumen-pref', (e) => { if (['reduceMotion', 'performanceMode', 'graphicsMode'].includes(e.detail.key)) setTimeout(show, 0); });
+  row.querySelector('.text').append(note, link);
+  return row;
+}
 function buildLook(card) {
 
   const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Accent color' });
@@ -4239,7 +4263,7 @@ async function buildHome(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
-    toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'The new-tab page’s glow and clock move with the music playing in Lumen: Spotify, YouTube or any tab. Lumen only reads how loud the bass, mids and highs are; nothing is recorded or sent anywhere. Still when nothing plays, with Reduce motion, and in Light visual effects.')),
+    musicReactiveRow(),
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();

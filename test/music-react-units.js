@@ -92,11 +92,22 @@ for (const hz of [2, 4, 8, 12, 20]) {
 check('css: three variables, plain strings, rounded', (() => { const v = MR.cssVars({ glow: 0.123456, wave: 0.01, beat: 1 }); return Object.keys(v).join() === '--mr-glow,--mr-wave,--mr-beat' && Object.values(v).every((x) => typeof x === 'string' && Number.isFinite(Number(x))) && v['--mr-glow'] === '0.124'; })(), JSON.stringify(MR.cssVars({ glow: 0.123456, wave: 0.01, beat: 1 })));
 
 // ---- when it may move ----
-const on = { musicReactive: true, still: false, light: false, soft: false, lite: false };
-check('motion: allowed only when on and nothing says calm', MR.motionAllowed(on, false) === true, '');
-check('motion: off when the setting is off', MR.motionAllowed({ ...on, musicReactive: false }, false) === false && MR.motionAllowed(null, false) === false, '');
-check('motion: none with the system\'s Reduce motion, Settings\' Reduce motion, Visual effects: Light, software drawing or Performance mode',
-  MR.motionAllowed(on, true) === false && ['still', 'light', 'soft', 'lite'].every((k) => MR.motionAllowed({ ...on, [k]: true }, false) === false), '');
+const on = { musicReactive: true, still: false, reduceMotion: false, light: false, soft: false, lite: false };
+check('mode: full when on and nothing limits it', MR.modeOf(on, false) === 'full' && MR.motionAllowed(on, false) === true, '');
+check('mode: off when the setting is off or the look is missing', MR.modeOf({ ...on, musicReactive: false }, false) === 'off' && MR.modeOf(null, false) === 'off' && MR.motionAllowed(null, false) === false, '');
+check('mode: Reduce motion (the system\'s or Settings\') and Performance mode turn it off fully', MR.modeOf(on, true) === 'off' && MR.modeOf({ ...on, reduceMotion: true }, false) === 'off' && MR.modeOf({ ...on, lite: true }, false) === 'off', '');
+check('mode: Visual effects: Light and software drawing give the reduced version, not nothing', MR.modeOf({ ...on, light: true }, false) === 'reduced' && MR.modeOf({ ...on, light: true, soft: true, still: true }, false) === 'reduced' && MR.motionAllowed({ ...on, light: true }, false) === true, '');
+check('mode: software drawing\'s "still" is not Reduce motion (the setting itself is look.reduceMotion)', MR.modeOf({ ...on, soft: true, light: true, still: true, reduceMotion: false }, false) === 'reduced', '');
+check('mode: Reduce motion beats Light (off, not reduced), and Performance mode too', MR.modeOf({ ...on, light: true, reduceMotion: true }, false) === 'off' && MR.modeOf({ ...on, light: true, lite: true }, false) === 'off', '');
+check('reduced: at most 10 writes a second', MR.REDUCED_MS >= 100, String(MR.REDUCED_MS));
+{
+  // the reduced mode steps the mapper every 100 ms: the caps and the flash ceiling hold at that cadence too
+  for (const hz of [2, 4, 8, 12]) {
+    const period = 1000 / hz;
+    const o = run((t) => (t % period < period / 2 ? { bass: 1, mids: 1, level: 1 } : { bass: 0, mids: 0, level: 0 }), 10000, MR.REDUCED_MS);
+    check(`reduced: at 10 updates a second a ${hz} Hz on/off bass stays under the cap and flashes at most 3 times a second`, o.every((x) => x.glow <= MR.GLOW_CAP + 1e-9) && worstPerSecond(swings(o, 'glow', MR.GLOW_CAP)) <= 3, '');
+  }
+}
 
 // ---- which sound ----
 check('source: Lumen\'s own players first, then any tab, never the page itself, nothing when quiet',
@@ -172,12 +183,19 @@ check('page: nothing of it is loaded until the setting is on (not in the page\'s
 check('page: the CSP is unchanged (no media-src, no new sources)', /default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src data: file:; frame-src https:; form-action https:/.test(page), '');
 check('page: the layers are decorative: hidden from screen readers, never take a click, behind the content', /setAttribute\('aria-hidden', 'true'\)/.test(drv) && /#mr-glow, #mr-wave \{ position: fixed; inset: 0; z-index: -1; pointer-events: none; \}/.test(page), '');
 check('page: only opacity and transform move (no layout, no filter, no blur)', !/#mr-(glow|wave) \{[^}]*(filter|width:|height:|top:|left:)/.test(page), '');
-check('page: reduced motion, Visual effects: Light and software drawing hide the layers in CSS too', /prefers-reduced-motion: reduce\) \{ #mr-glow, #mr-wave \{ display: none/.test(page) && /body\.still #mr-glow, body\.still #mr-wave, body\.gfx-light #mr-glow, body\.gfx-light #mr-wave \{ display: none/.test(page), '');
+check('page: the system\'s Reduce motion hides the layers in CSS too, and Light does not (it gets the glow)', /prefers-reduced-motion: reduce\) \{ #mr-glow, #mr-wave \{ display: none/.test(page) && !/gfx-light #mr-glow|body\.still #mr-glow/.test(page), '');
 const code = drv.replace(/\/\/.*$/gm, '');
 check('driver: only tab capture, audio only, never the microphone or the screen', /chromeMediaSource: 'tab'/.test(code) && /video: false/.test(code) && !/audio: true/.test(code) && !/getDisplayMedia/.test(code), '');
 check('driver: the analyser is never connected to the speakers and nothing is recorded, stored or sent', !/destination/.test(code) && !/MediaRecorder|localStorage|sessionStorage|indexedDB|fetch\(|XMLHttpRequest|WebSocket|sendBeacon|postMessage|ipcRenderer/.test(code), '');
 check('driver: it stops with the page hidden, with the setting off and with the stream ended', /visibilitychange/.test(code) && /function pause\(\)/.test(code) && /stopCapture\(\)/.test(code) && /'ended'/.test(code), '');
 check('driver: frames are throttled (about 30 a second live, fewer idle) and variables are set on the element that uses them', /LIVE_MS = 33/.test(code) && /IDLE_MS = 80/.test(code) && !/document\.body\.style\.setProperty/.test(code), '');
+check('driver: the reduced mode has the glow only (no wave layer, no bounce) and writes at most 10 times a second', /waveEl = mode === 'full' \? el\('mr-wave'\) : null/.test(code) && /mode === 'full' \? \[\.\.\.document\.querySelectorAll\(BEAT_TARGETS\)\] : \[\]/.test(code) && /mode === 'reduced' \? MR\.REDUCED_MS/.test(code) && /mrMode/.test(code), '');
+const settingsJs = read('src/renderer/settings.js');
+const en2 = JSON.parse(read('src/locales/en.json'));
+check('settings: one line under the switch says why the effect is limited, in the same cases as the page', ['offMotion', 'offPerformance', 'lightSoftware', 'lightChosen', 'lightAuto', 'linkLight'].every((k) => typeof en2['settings.musicReactive.' + k] === 'string' && settingsJs.includes('settings.musicReactive.' + k))
+  && /st\.prefs\?\.reduceMotion\) text/.test(settingsJs) && /st\.performance\?\.active\) text/.test(settingsJs) && /id: 'music-reactive-note'/.test(settingsJs), '');
+check('settings: the Light note links to Visual effects, which the page can route to', /location\.hash = '#visual-effects'/.test(settingsJs) && /'visual-effects': \{ cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' \}/.test(settingsJs) && /select\('graphicsMode'/.test(settingsJs), '');
+check('settings: the note follows the three settings that decide it', /\['reduceMotion', 'performanceMode', 'graphicsMode'\]\.includes\(e\.detail\.key\)/.test(settingsJs), '');
 const preload = read('src/preload/newtab-preload.js');
 check('preload: the new-tab page\'s own preload carries it (the main preload is untouched)', /musicSource/.test(preload) && !/newtab-music/.test(read('src/preload/preload.js')), '');
 const main = read('src/main.js');

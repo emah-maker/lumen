@@ -10,7 +10,9 @@
 //     on the beat (newtab.html: #mr-glow, #mr-wave, body.mr-on). All decorative: aria-hidden, never takes a click, under the content.
 //   - Nothing playing: a very slow idle drift (under 1 Hz, a few per cent of opacity), and no capture is open.
 //   - Page not in front (another tab, minimised): no frames, no timer, no capture.
-//   - Reduce motion (the setting or the system's), Visual effects: Light, software drawing, Performance mode: nothing runs at all.
+//   - Reduce motion (the setting or the system's) and Performance mode: nothing runs at all.
+//   - Visual effects: Light and software drawing: a reduced version, the glow only (no wave, no bounce), at most 10 updates a second, one CSS
+//     variable on one element (features/music-react.js modeOf).
 //   - The limits on intensity and the 2.8-flashes-a-second ceiling are in features/music-react.js and tested there.
 (() => {
   const MR = window.MusicReact;
@@ -22,6 +24,7 @@
   const FFT = 1024;
 
   let look = null;
+  let mode = 'off'; // 'full' | 'reduced' (features/music-react.js modeOf)
   let active = false;
   let raf = 0; let pollTimer = 0;
   let glowEl = null; let waveEl = null;
@@ -41,12 +44,12 @@
   }
   function write(vars) {
     set(glowEl, '--mr-glow', vars['--mr-glow']);
-    set(waveEl, '--mr-wave', vars['--mr-wave']);
+    if (waveEl) set(waveEl, '--mr-wave', vars['--mr-wave']);
     for (const n of beatEls) set(n, '--mr-beat', vars['--mr-beat']);
   }
   const BEAT_TARGETS = '#clock-card, .w-card.spotify:not(:has(.sp-web-slot)), .w-card.applemusic:not(:has(.sp-web-slot))'; // (a web player's card holds a native view: it stays put)
   function findBeatEls() {
-    const now = [...document.querySelectorAll(BEAT_TARGETS)];
+    const now = mode === 'full' ? [...document.querySelectorAll(BEAT_TARGETS)] : [];
     for (const n of beatEls) if (!now.includes(n)) { n.style.removeProperty('--mr-beat'); written.delete(n); }
     beatEls = now;
   }
@@ -105,14 +108,14 @@
     const live = Boolean(cap) && cap.ctx.state === 'running';
     const shown = live ? 'live' : 'idle'; // (what the page is doing, for the tests: 'live' only while an analyser is really running)
     if (document.body.dataset.mr !== shown) document.body.dataset.mr = shown;
-    if (t - lastFrameT < (live ? LIVE_MS : IDLE_MS)) return;
+    if (t - lastFrameT < (mode === 'reduced' ? MR.REDUCED_MS : live ? LIVE_MS : IDLE_MS)) return;
     lastFrameT = t;
     let input = null;
     if (live) {
       cap.analyser.getByteFrequencyData(cap.bytes);
       const b = MR.bandsOf(cap.bytes, cap.ctx.sampleRate, FFT);
       if (!MR.isSilent(b)) silentSince = 0; else if (!silentSince) silentSince = t;
-      if (!silentSince || t - silentSince < SILENT_MS) input = { bass: b.bass, mids: b.mids, level: b.level, beat: beats.push(t, b.bass) };
+      if (!silentSince || t - silentSince < SILENT_MS) input = { bass: b.bass, mids: b.mids, level: b.level, beat: mode === 'full' && beats.push(t, b.bass) };
     }
     write(MR.cssVars(mapper.step(input, t)));
   }
@@ -121,10 +124,11 @@
     if (active) return;
     active = true;
     mapper = MR.createMapper(); beats = MR.beatDetector();
-    glowEl = el('mr-glow'); waveEl = el('mr-wave');
-    for (const e of [glowEl, waveEl]) e.setAttribute('aria-hidden', 'true');
-    document.body.prepend(glowEl, waveEl);
+    glowEl = el('mr-glow'); waveEl = mode === 'full' ? el('mr-wave') : null; // (reduced: the glow only)
+    for (const e of [glowEl, waveEl]) e?.setAttribute('aria-hidden', 'true');
+    document.body.prepend(...[glowEl, waveEl].filter(Boolean));
     document.body.classList.add('mr-on');
+    document.body.dataset.mrMode = mode;
     document.body.dataset.mr = 'idle';
     findBeatEls();
     resume();
@@ -147,10 +151,15 @@
     glowEl?.remove(); waveEl?.remove(); glowEl = waveEl = null;
     document.body.classList.remove('mr-on');
     delete document.body.dataset.mr;
+    delete document.body.dataset.mrMode;
   }
 
   function apply() {
-    if (MR.motionAllowed(look, reduced.matches)) start(); else stop();
+    const next = MR.modeOf(look, reduced.matches);
+    if (next === mode && (next === 'off') === !active) return;
+    stop();
+    mode = next;
+    if (next !== 'off') start();
   }
   window.setMusicReactive = (l) => { look = l; apply(); };
   reduced.addEventListener('change', apply);

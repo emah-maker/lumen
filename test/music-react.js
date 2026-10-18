@@ -4,7 +4,8 @@
 //   off (the default)  nothing is loaded, nothing runs, and the browser answers the page nothing
 //   on                 the variables follow the beat, stay under their caps and never flash more than 3 times a second; an idle drift when the
 //                      sound stops; nothing while the page is not in front
-//   calm               Reduce motion (the setting) and Visual effects: Light stop it at once, and turning it off removes everything
+//   calm               Reduce motion (the setting) and Performance mode stop it at once; Visual effects: Light gives a reduced version (glow only,
+//                      at most 10 writes a second); Settings says why under the switch; turning it off removes everything
 //   main process       no task over 20 ms while it all runs
 // Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/music-react.js (under scripts/e2e-lock.js, with a timeout).
 require('./_tmp-cleanup');
@@ -137,10 +138,49 @@ window.stopTone = () => { try { ctx.close(); } catch {} return true; };
   check('Reduce motion: no layers, no variables, no class', g.layers === 0 && !g.cls && g.beat === '', JSON.stringify(g));
   await set('reduceMotion', false);
   check('Reduce motion off again: it comes back', await waitFor(home, `!!document.getElementById('mr-glow')`, 8000), '');
+  // ---- Visual effects: Light: the reduced version (glow only, no wave, no bounce, at most 10 writes a second) ----
   await set('graphicsMode', 'light');
-  check('Visual effects: Light: nothing runs', await waitFor(home, `!document.getElementById('mr-glow') && !document.body.dataset.mr`, 6000), JSON.stringify(await run(home, gone)));
+  check('Visual effects: Light: the reduced version starts (glow only, no wave layer)', await waitFor(home, `document.body.dataset.mrMode === 'reduced' && !!document.getElementById('mr-glow') && !document.getElementById('mr-wave')`, 8000), JSON.stringify(await run(home, SAMPLE)));
+  check('Visual effects: Light: it still listens to the tone', await waitFor(home, `document.body.dataset.mr === 'live'`, 20000), JSON.stringify(await run(home, SAMPLE)));
+  await run(home, `window.__mrRec = []; window.__mrStop = false; (function f() { const g = document.getElementById('mr-glow'); const c = document.getElementById('clock-card'); window.__mrRec.push({ glow: g ? g.style.getPropertyValue('--mr-glow') : null, beat: c ? c.style.getPropertyValue('--mr-beat') : null, scale: c ? getComputedStyle(c).scale : null }); if (!window.__mrStop) requestAnimationFrame(f); })(); true`);
+  await sleep(4000);
+  const red = await run(home, `window.__mrStop = true; window.__mrRec`);
+  const writes = red.filter((f, i) => i > 0 && f.glow !== red[i - 1].glow).length;
+  const gv = red.map((f) => Number(f.glow)).filter(Number.isFinite);
+  check('Visual effects: Light: the glow still follows the sound', Math.max(...gv) - Math.min(...gv) > MR.GLOW_CAP * 0.3, `${Math.min(...gv)}..${Math.max(...gv)}`);
+  check('Visual effects: Light: at most 10 writes a second (about 4 s measured)', writes <= 42, `${writes} changes in 4 s`);
+  check('Visual effects: Light: no wave, no bounce: no --mr-beat anywhere and the clock card never scales', red.every((f) => !f.beat && (f.scale === 'none' || f.scale === '1' || !f.scale)), JSON.stringify(red[0]));
+  check('Visual effects: Light: the layer stays under its cap', Math.max(...gv) <= MR.GLOW_CAP + 0.003, String(Math.max(...gv)));
   await set('graphicsMode', 'full');
-  check('Visual effects: Full again: it comes back', await waitFor(home, `!!document.getElementById('mr-glow')`, 8000), '');
+  check('Visual effects: Full again: the full version comes back', await waitFor(home, `document.body.dataset.mrMode === 'full' && !!document.getElementById('mr-wave')`, 8000), JSON.stringify(await run(home, SAMPLE)));
+  // ---- Performance mode turns it off fully ----
+  await set('performanceMode', 'on');
+  check('Performance mode: everything stops (not even the reduced version)', await waitFor(home, `!document.getElementById('mr-glow') && !document.body.dataset.mr && !document.body.dataset.mrMode`, 8000), JSON.stringify(await run(home, gone)));
+  await set('performanceMode', 'off');
+  check('Performance mode off again: it comes back', await waitFor(home, `!!document.getElementById('mr-glow')`, 8000), '');
+  await set('graphicsMode', 'light'); await set('reduceMotion', true);
+  check('Light and Reduce motion together: off, not reduced', await waitFor(home, `!document.getElementById('mr-glow') && !document.body.dataset.mrMode`, 8000), JSON.stringify(await run(home, gone)));
+  await set('reduceMotion', false); await set('graphicsMode', 'full');
+  await waitFor(home, `document.body.dataset.mrMode === 'full'`, 8000);
+
+  // ---- Settings: one line under the switch says why it is limited ----
+  const settingsTab = await openTab('lumen://settings#home');
+  const NOTE = `(() => { const n = document.getElementById('music-reactive-note'); const l = document.getElementById('music-reactive-link'); return n ? { text: n.hidden ? '' : n.textContent, link: Boolean(l && !l.hidden), label: document.getElementById('pref-newTabMusicReactive')?.getAttribute('aria-label') || null } : null; })()`;
+  const reload = async () => { await run(settingsTab, 'location.reload()').catch(() => {}); await sleep(500); await waitFor(settingsTab, `!!document.getElementById('music-reactive-note')`, 20000); };
+  await waitFor(settingsTab, `!!document.getElementById('music-reactive-note')`, 20000);
+  let n = await run(settingsTab, NOTE);
+  check('Settings: the switch has a label', n && n.label === 'Music-reactive home screen', JSON.stringify(n));
+  check('Settings: Visual effects: Full, nothing limited: no line', n && n.text === '' && !n.link, JSON.stringify(n));
+  await set('graphicsMode', 'light'); await reload(); n = await run(settingsTab, NOTE);
+  check('Settings: Light: "Simplified (glow only) because Visual effects is set to Light", with a link', n && /^Simplified \(glow only\) because Visual effects is set to Light\.$/.test(n.text) && n.link, JSON.stringify(n));
+  await run(settingsTab, `document.getElementById('music-reactive-link').click()`);
+  check('Settings: the link jumps to Visual effects', await waitFor(settingsTab, `document.activeElement && document.activeElement.id === 'pref-graphicsMode'`, 15000), JSON.stringify(await run(settingsTab, `document.activeElement && document.activeElement.id`)));
+  await set('graphicsMode', 'full'); await set('reduceMotion', true); await reload(); n = await run(settingsTab, NOTE);
+  check('Settings: Reduce motion: says it is off, no link', n && /^Off because Reduce motion is on\.$/.test(n.text) && !n.link, JSON.stringify(n));
+  await set('reduceMotion', false); await set('performanceMode', 'on'); await reload(); n = await run(settingsTab, NOTE);
+  check('Settings: Performance mode: says it is off, no link', n && /^Off because Performance mode is on\.$/.test(n.text) && !n.link, JSON.stringify(n));
+  await set('performanceMode', 'off');
+  await app.evaluate((_e, id) => { const t = global.__mrTabs.find((x) => x.id === id); global.__agent.browser.closeTab?.(id); return Boolean(t); }, settingsTab).catch(() => {});
 
   // ---- off again ----
   await set('newTabMusicReactive', false);

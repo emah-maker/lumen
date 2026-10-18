@@ -45,6 +45,7 @@ function lookOf(l) {
     background, image,
     effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true || look.softwareGfx === true, lite: look.lite === true, light: look.lightGfx === true || look.softwareGfx === true, soft: look.softwareGfx === true, // [igpu] Graphics: Light; software drawing: still too, no blur, no shadows (settings-backend.js [igpu])
     effectStyle: effectStyleOf(look.effectStyle),
+    reduceMotion: look.still === true, // (the setting itself: `still` above also stands for software drawing)
     musicReactive: look.musicReactive === true, // [look] Music-reactive home screen: off unless switched on (newtab-music-react.js)
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,

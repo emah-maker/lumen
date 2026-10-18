@@ -19,6 +19,7 @@ const MEDIA_GAIN = 1.5; // over a dark picture or gradient (white text on a dark
 const BOUNCE = 0.012; // the clock and the music card grow by at most this share on a beat (CSS: scale: calc(1 + var(--mr-beat) * 0.012))
 const MIN_RISE_GAP_MS = 360;
 const MIN_BEAT_GAP_MS = 400;
+const REDUCED_MS = 100; // the reduced mode (Light, software drawing) writes at most 10 times a second
 const MAX_FLASH_HZ = 3;
 const BANDS = { bass: [20, 250], mids: [250, 4000], highs: [4000, 16000] };
 
@@ -134,10 +135,14 @@ function cssVars(out) {
   return { '--mr-glow': String(round3(out.glow)), '--mr-wave': String(round3(out.wave)), '--mr-beat': String(round3(out.beat)) };
 }
 
-// Is the effect allowed to move at all? Reduce motion, Visual effects: Light, software drawing and Performance mode each say no.
-function motionAllowed(look, prefersReduced) {
-  return Boolean(look) && look.musicReactive === true && !prefersReduced && !look.still && !look.light && !look.soft && !look.lite;
+// How much of the effect runs: 'off' (the setting is off, or Reduce motion (the setting or the system's) or Performance mode say stop), 'reduced'
+// (Visual effects: Light, or software drawing: the glow only, no wave, no bounce, about 10 updates a second) or 'full'. look.reduceMotion is the
+// Reduce motion setting itself (look.still also stands for software drawing).
+function modeOf(look, prefersReduced) {
+  if (!look || look.musicReactive !== true || prefersReduced || look.reduceMotion === true || look.lite) return 'off';
+  return look.light || look.soft ? 'reduced' : 'full';
 }
+const motionAllowed = (look, prefersReduced) => modeOf(look, prefersReduced) !== 'off';
 
 // Which window to listen to, among those playing sound: Lumen's own music players first (Spotify, Apple Music), then any tab.
 // `players` and `tabs` are lists of { id, audible }. -> the chosen id, or null when nothing is playing.
@@ -147,7 +152,7 @@ function pickSource(players, tabs, selfId) {
   return null;
 }
 
-const api = { GLOW_CAP, WAVE_CAP, MEDIA_GAIN, BOUNCE, MIN_RISE_GAP_MS, MIN_BEAT_GAP_MS, MAX_FLASH_HZ, BANDS, bandsOf, isSilent, flashLimiter, beatDetector, createMapper, cssVars, motionAllowed, pickSource };
+const api = { GLOW_CAP, WAVE_CAP, MEDIA_GAIN, BOUNCE, MIN_RISE_GAP_MS, MIN_BEAT_GAP_MS, REDUCED_MS, MAX_FLASH_HZ, BANDS, bandsOf, isSilent, flashLimiter, beatDetector, createMapper, cssVars, modeOf, motionAllowed, pickSource };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.MusicReact = api;
 })();
