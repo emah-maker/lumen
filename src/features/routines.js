@@ -27,6 +27,28 @@ const cleanTime = (t, fallback = '08:00') => {
   return m ? `${m[1].padStart(2, '0')}:${m[2]}` : fallback;
 };
 
+// ---- quiet hours: a daily window (local time, may cross midnight) in which no routine starts on its own.
+// A run due inside it waits for the end and then runs once, marked as late. "Run now" is the user's own and ignores it.
+function cleanQuiet(raw) {
+  const q = raw && typeof raw === 'object' ? raw : {};
+  return { on: q.on === true, from: cleanTime(q.from, '22:00'), to: cleanTime(q.to, '07:00') };
+}
+const minutesOf = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+// When the quiet window that contains `now` ends (ms), or null when it is not quiet (or there is no window).
+function quietEnd(quiet, now) {
+  const q = cleanQuiet(quiet);
+  if (!q.on || q.from === q.to) return null;
+  const d = new Date(now);
+  const m = d.getHours() * 60 + d.getMinutes();
+  const [from, to] = [minutesOf(q.from), minutesOf(q.to)];
+  const inside = from < to ? m >= from && m < to : m >= from || m < to;
+  if (!inside) return null;
+  const [th, tm] = q.to.split(':').map(Number);
+  let end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), th, tm).getTime();
+  if (end <= now) end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, th, tm).getTime();
+  return end;
+}
+
 // ---- cron (five fields: minute hour day-of-month month day-of-week; *, lists, ranges and steps)
 
 const CRON_FIELDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
@@ -157,6 +179,18 @@ function upcoming(schedule, from, n = 3) {
   return out;
 }
 
+// ---- one-click templates. They are made switched off: the user turns them on. `connector` is the
+// connector (features/connectors) the routine reads from; `page`: it starts at the tab in front.
+// The names and requests are locale strings: routines.template.<key>.name / .description / .prompt.
+const TEMPLATES = [
+  { key: 'email', schedule: { repeat: 'weekdays', time: '08:00' }, connector: 'gmail' },
+  { key: 'canvas', schedule: { repeat: 'weekdays', time: '07:30' }, connector: 'canvas' },
+  { key: 'news', schedule: { repeat: 'daily', time: '08:00' } },
+  { key: 'calendar', schedule: { repeat: 'weekly', days: [0], time: '18:00' }, connector: 'gcal' },
+  { key: 'changes', schedule: { repeat: 'daily', time: '09:00' }, page: true },
+  { key: 'weekly', schedule: { repeat: 'weekly', days: [1], time: '09:00' }, page: true },
+];
+
 // ---- the routine's own state on the task (task.routine)
 
 const cleanLine = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
@@ -174,7 +208,7 @@ const TRIGGERS = ['schedule', 'catch-up', 'manual'];
 // lastDue: the scheduled time last handled (run, skipped, or "from now on" after an edit or a resume),
 // so missed times before it never run. trigger/scheduledFor: what the queued run is, for its history entry.
 function newRoutineState({ startUrl = '' } = {}) {
-  return { startUrl: startUrl || '', lastDue: null, trigger: null, scheduledFor: null, history: [] };
+  return { startUrl: startUrl || '', template: '', lastDue: null, trigger: null, scheduledFor: null, history: [] };
 }
 
 function sanitizeRoutine(raw) {
@@ -182,6 +216,7 @@ function sanitizeRoutine(raw) {
   const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
   return {
     startUrl: webUrl(r.startUrl) || '',
+    template: TEMPLATES.some((x) => x.key === r.template) ? r.template : '',
     lastDue: num(r.lastDue),
     trigger: TRIGGERS.includes(r.trigger) ? r.trigger : null,
     scheduledFor: num(r.scheduledFor),
@@ -218,7 +253,7 @@ function dueAt(task) {
 // The scheduler's decision at `now`. Missed times run once (one catch-up however many were missed); a
 // routine whose previous run is still going skips the time (never two copies); offline, nothing starts
 // and the scheduler looks again in a minute. wakeAt: when to look next (one timer for all routines).
-function plan(tasks, now, { online = true, enabled = true, isActive = () => false } = {}) {
+function plan(tasks, now, { online = true, enabled = true, isActive = () => false, quiet = null } = {}) {
   const out = { queue: [], skip: [], offline: [], wakeAt: null };
   if (!enabled) return out;
   const wake = (t) => { if (t !== null && (out.wakeAt === null || t < out.wakeAt)) out.wakeAt = t; };
@@ -226,6 +261,8 @@ function plan(tasks, now, { online = true, enabled = true, isActive = () => fals
     const due = dueAt(task);
     if (due === null) continue;
     if (due > now) { wake(due); continue; }
+    const quietUntil = quietEnd(quiet, now);
+    if (quietUntil !== null) { wake(quietUntil); continue; } // quiet hours: it waits, then runs once (as a late run)
     if (isActive(task)) { out.skip.push({ id: task.id, dueAt: due }); continue; }
     if (!online) { out.offline.push(task.id); continue; }
     out.queue.push({ id: task.id, dueAt: due, trigger: now - due > LATE_MS ? 'catch-up' : 'schedule' });
@@ -283,6 +320,6 @@ function parseScheduleText(text) {
 
 module.exports = {
   REPEATS, WEEKDAYS, ALL_DAYS, LIMITS, LATE_MS, MAX_SLEEP_MS, OFFLINE_RETRY_MS,
-  parseCron, normalizeRoutineSchedule, validateNew, nextOccurrence, upcoming,
+  cleanQuiet, quietEnd, TEMPLATES, parseCron, normalizeRoutineSchedule, validateNew, nextOccurrence, upcoming,
   webUrl, newRoutineState, sanitizeRoutine, addHistory, dueAt, plan, sleepFor, parseClock, parseScheduleText,
 };

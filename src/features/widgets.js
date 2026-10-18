@@ -72,6 +72,7 @@ const MK = lazy(() => require('./markets-view'));
 const TVW = lazy(() => require('./tradingview-view'));
 const CW = lazy(() => require('./custom-widget'));
 const LW = lazy(() => require('./local-widgets'));
+const RC = lazy(() => require('./routines-card')); // the Routines card's data (shaped from the runner's view: deps.routines)
 const AS = lazy(() => require('./aistatus-view')); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
 const CS = lazy(() => require('./calendar-sources')); // the Calendar card's sources: one or several, merged
 const WCFG = lazy(() => require('./widget-config')); // the home page's own editor: what it may see, and its form laid over what is saved
@@ -160,6 +161,7 @@ async function engineAct(am, name, action, x, cached) {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
+  routines: () => ({}),
   files: () => ({}),
   applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app }),
   countdown: (w) => ({ cd: w.cd }),
@@ -1058,6 +1060,20 @@ const CONNECTORS = {
     summary: () => 'Which AIs are ready, working or at a limit',
     async fetch() { return {}; },
     present: (c, d, ctx) => ctx.aiStatus(),
+  },
+
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last, from the runner's view
+  // (deps.routines). No account, never online; present() asks on every read, routinesChanged() tells the page when it moved, and
+  // the card's buttons (do=routine-new, do=routine-open&id=) are handled in act() below: they open the sidebar, nothing is saved.
+  routines: {
+    label: 'Routines',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows what your routines run next and what they did last. It updates by itself and never goes online.' }; },
+    title: () => 'Routines',
+    summary: () => 'What your routines run next and their latest results',
+    async fetch() { return {}; },
+    present: (c, d, ctx) => ctx.routines(),
   },
 
   // Apple Music. Two modes, like Spotify's. 'status' (the default) is a now-playing card driven by the Apple Music engine
@@ -1983,7 +1999,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()), routines: () => RC.shape(deps.routines ? deps.routines() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -2529,8 +2545,12 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
+    if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
+      action.routine = params.get('id');
+      if (typeof action.routine !== 'string' || !RC.ROUTINE_ID_RE.test(action.routine)) return { invalid: true };
+    }
     if (action.do === 'reschedule') { // a task's new day, from the card's small menu
       action.arg = params.get('arg');
       if (!['today', 'tomorrow', 'nextweek', 'none'].includes(action.arg)) return { invalid: true };
@@ -2776,6 +2796,11 @@ function createWidgets(deps) {
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
+    if (action.do === 'routine-new' || action.do === 'routine-open') { // the Routines card: open the sidebar's editor or a routine's result; the widget itself is not touched
+      if (w.type !== 'routines' || !deps.routineAct) return false;
+      const done = deps.routineAct(action.do === 'routine-new' ? { act: 'new' } : { act: 'open', id: action.routine });
+      return done?.ok !== false;
+    }
     if (action.do === 'refresh') return refresh(w, { force: true, user: action.arg !== 'auto' }); // arg=auto: the page's own timer (a card that went stale, a timer that ended)
     if (action.do === 'tdsource') { // the Todoist card's Today / Upcoming / Inbox switch: the card keeps showing the old list until the new one arrives
       const todo = w.type === 'todoist' ? TV.applyView(w.todo, action.arg) : null;
@@ -2891,6 +2916,21 @@ function createWidgets(deps) {
   }
   const aiStatusSoon = () => { if (aiTimer) return; aiTimer = setTimeout(() => { aiTimer = null; try { aiStatusChanged(); } catch (err) { console.error('[lumen] AI status:', err.message); } }, 300); aiTimer.unref?.(); };
 
+  // The Routines card shows the runner's live view (next runs, latest results, approvals waiting), so main.js says when a routine
+  // may have moved (routinesSoon: several changes in a row become one look). Like the AI status card, the page is only refreshed
+  // when the shaped data differs from what it was last given.
+  let routinesLast = '';
+  let routinesTimer = null;
+  function routinesChanged() {
+    if (!deps.routines || !list().some((w) => w.type === 'routines')) return false;
+    const now = JSON.stringify(RC.shape(deps.routines(), Date.now()));
+    if (now === routinesLast) return false;
+    routinesLast = now;
+    deps.onUpdate?.();
+    return true;
+  }
+  const routinesSoon = () => { if (routinesTimer) return; routinesTimer = setTimeout(() => { routinesTimer = null; try { routinesChanged(); } catch (err) { console.error('[lumen] Routines card:', err.message); } }, 300); routinesTimer.unref?.(); };
+
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
   // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
@@ -2900,7 +2940,7 @@ function createWidgets(deps) {
     return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

@@ -122,6 +122,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       apply: call('settings:updates-apply'),
     },
     // Skills (features/skills.js)
+    routines: { state: call('settings:routines'), act: call('settings:routines-act') }, // [routines] Settings → AI → Routines (features/background-runner.js)
     skills: {
       list: call('skills:list'),
       save: call('skills:save'),

@@ -88,7 +88,7 @@ check('a routine counts as repeating: the store never drops it to make room', bg
 const stored = bg.sanitizeTask(JSON.parse(JSON.stringify(task)));
 check('a stored routine comes back whole (schedule, start page, history)', stored && stored.schedule.repeat === 'weekdays' && stored.routine.startUrl === task.routine.startUrl && Array.isArray(stored.routine.history) && stored.status === 'scheduled');
 check('a damaged routine schedule makes the task unusable, not a crash', bg.sanitizeTask({ ...JSON.parse(JSON.stringify(task)), schedule: { type: 'routine', repeat: 'weekly', days: [] } }) === null);
-check('garbage in the routine state is cleaned', JSON.stringify(R.sanitizeRoutine({ startUrl: 'file:///etc/passwd', lastDue: 'x', history: [{ status: 'evil', result: 5 }] })) === JSON.stringify({ startUrl: '', lastDue: null, trigger: null, scheduledFor: null, history: [{ startedAt: 0, endedAt: 0, scheduledFor: null, trigger: 'schedule', status: 'done', result: '5', error: '' }] }));
+check('garbage in the routine state is cleaned', JSON.stringify(R.sanitizeRoutine({ startUrl: 'file:///etc/passwd', lastDue: 'x', history: [{ status: 'evil', result: 5 }] })) === JSON.stringify({ startUrl: '', template: '', lastDue: null, trigger: null, scheduledFor: null, history: [{ startedAt: 0, endedAt: 0, scheduledFor: null, trigger: 'schedule', status: 'done', result: '5', error: '' }] }));
 const paused = { ...task, enabled: false };
 check('a disabled routine is never due', bg.nextRunAt(paused) === null && R.dueAt(paused) === null);
 const running = { ...task, status: 'running', lastRun: t0, routine: { ...task.routine, trigger: 'schedule', scheduledFor: t0 } };
@@ -170,6 +170,83 @@ check('"every 4 hours, check the status page"', parsed('every 4 hours, check the
 check('"every morning: ..." is daily at 8:00', R.parseScheduleText('every morning: brief me').schedule.time === '08:00');
 check('a prompt with no schedule in front gives null', R.parseScheduleText('summarize the news every day') === null && R.parseScheduleText('every monkey at 8') === null);
 check('"every day at 13pm" is not a time', R.parseScheduleText('every day at 13pm x') === null);
+
+// ---- quiet hours (a fake clock: every time below is passed in, nothing reads the real one)
+{
+  const night = { on: true, from: '22:00', to: '07:00' };
+  check('quiet hours are off by default and a bad value is cleaned', R.cleanQuiet(undefined).on === false && R.cleanQuiet({ on: 'yes', from: '99:99' }).from === '22:00' && R.quietEnd({ on: false, from: '22:00', to: '07:00' }, at(2026, 10, 2, 23)) === null);
+  check('inside an overnight window (23:00): it ends at 07:00 the next day', R.quietEnd(night, at(2026, 10, 2, 23)) === at(2026, 10, 3, 7), show(R.quietEnd(night, at(2026, 10, 2, 23))));
+  check('inside it after midnight (03:00): it ends at 07:00 the same day', R.quietEnd(night, at(2026, 10, 3, 3)) === at(2026, 10, 3, 7));
+  check('the window starts at 22:00 sharp and ends at 07:00 sharp (07:00 is not quiet)', R.quietEnd(night, at(2026, 10, 2, 22)) !== null && R.quietEnd(night, at(2026, 10, 3, 7)) === null && R.quietEnd(night, at(2026, 10, 2, 21, 59)) === null);
+  check('a daytime window works too (13:00-14:30)', R.quietEnd({ on: true, from: '13:00', to: '14:30' }, at(2026, 10, 2, 14)) === at(2026, 10, 2, 14, 30) && R.quietEnd({ on: true, from: '13:00', to: '14:30' }, at(2026, 10, 2, 15)) === null);
+  check('a window with the same start and end means no quiet hours', R.quietEnd({ on: true, from: '08:00', to: '08:00' }, at(2026, 10, 2, 8, 30)) === null);
+  // the window across the spring-forward night: 22:00 to 07:00 on 7 to 8 March is 8 real hours, the end is still 07:00 on the clock
+  check('across the daylight-saving change the end is still 07:00 on the clock', new Date(R.quietEnd(night, at(2026, 3, 8, 1))).getHours() === 7 && new Date(R.quietEnd(night, at(2026, 3, 8, 1))).getDate() === 8);
+  const early = mk({ repeat: 'daily', time: '06:30' });
+  const dueEarly = at(2026, 10, 2, 6, 30);
+  let q = R.plan([early], dueEarly + 1000, { isActive, quiet: night });
+  check('due during quiet hours: nothing starts, the timer wakes when they end', q.queue.length === 0 && q.skip.length === 0 && q.wakeAt === at(2026, 10, 2, 7), JSON.stringify(q));
+  q = R.plan([early], at(2026, 10, 2, 7, 0, 5), { isActive, quiet: night });
+  check('when quiet hours end it runs once, marked as ran late (catch-up)', q.queue.length === 1 && q.queue[0].trigger === 'catch-up' && q.queue[0].dueAt === dueEarly, JSON.stringify(q));
+  q = R.plan([early], at(2026, 10, 4, 7, 0, 5), { isActive, quiet: night });
+  check('several nights of quiet and a closed Lumen still make just one late run', q.queue.length === 1 && q.queue[0].trigger === 'catch-up');
+  q = R.plan([early], dueEarly + 1000, { isActive });
+  check('without quiet hours the same run is on time', q.queue.length === 1 && q.queue[0].trigger === 'schedule');
+  const noon = mk({ repeat: 'daily', time: '12:00' });
+  q = R.plan([noon], at(2026, 10, 2, 12, 0, 5), { isActive, quiet: night });
+  check('a routine due outside quiet hours is not held back', q.queue.length === 1 && q.queue[0].trigger === 'schedule');
+  q = R.plan([early, noon], dueEarly + 1000, { isActive, quiet: night });
+  check('with one held and one later, one wake time: the end of quiet hours', q.wakeAt === at(2026, 10, 2, 7));
+  q = R.plan([early], dueEarly + 1000, { isActive, quiet: night, online: false });
+  check('quiet hours win over offline (it is not "offline", it is waiting)', q.offline.length === 0 && q.queue.length === 0);
+}
+
+// ---- a time-travel simulation with a fake clock across a wake from sleep and quiet hours
+{
+  const r = mk({ repeat: 'weekdays', time: '08:00' });
+  const night = { on: true, from: '22:00', to: '07:00' };
+  let clock = at(2026, 10, 2, 21, 0); // Friday evening
+  r.routine.lastDue = clock; // (made just now)
+  r.createdAt = clock;
+  const ran = [];
+  const step = () => {
+    const pl = R.plan([r], clock, { isActive, quiet: night });
+    for (const x of pl.queue) { ran.push({ at: clock, trigger: x.trigger, due: x.dueAt }); r.routine.lastDue = clock; }
+    return pl.wakeAt;
+  };
+  step();
+  clock = at(2026, 10, 5, 9, 30); // the PC slept the whole weekend and wakes Monday 9:30
+  step();
+  check('a weekend asleep: one late run on Monday morning, none for the days in between', ran.length === 1 && ran[0].trigger === 'catch-up' && ran[0].due === at(2026, 10, 5, 8), JSON.stringify(ran));
+  clock = at(2026, 10, 6, 8, 0, 1);
+  step();
+  const wake = R.plan([r], clock + 60000, { isActive, quiet: night }).wakeAt; // (after the run finishes the runner plans again)
+  check('and Tuesday 8:00 runs on time again', ran.length === 2 && ran[1].trigger === 'schedule' && wake === at(2026, 10, 7, 8), JSON.stringify(ran));
+}
+
+// ---- templates
+{
+  check('four one-click templates need no page, and all have a name, description and request in the locale file', (() => {
+    const en = require('../src/locales/en.json');
+    const oneClick = R.TEMPLATES.filter((x) => !x.page).map((x) => x.key);
+    return JSON.stringify(oneClick) === JSON.stringify(['email', 'canvas', 'news', 'calendar']) && R.TEMPLATES.every((x) => ['name', 'description', 'prompt'].every((f) => typeof en[`routines.template.${x.key}.${f}`] === 'string'));
+  })());
+  check('every template schedule is a valid routine schedule', R.TEMPLATES.every((x) => { try { R.validateNew(R.normalizeRoutineSchedule(x.schedule, t0), t0); return true; } catch { return false; } }));
+  check('the connector templates name a connector that exists', (() => {
+    const ids = require('../src/features/connectors/registry').CONNECTORS.map((c) => c.id);
+    return R.TEMPLATES.filter((x) => x.connector).every((x) => ids.includes(x.connector)) && R.TEMPLATES.filter((x) => x.connector).map((x) => x.connector).join() === 'gmail,canvas,gcal';
+  })());
+  check('the connector prompts name only actions the connector really has', (() => {
+    const en = require('../src/locales/en.json');
+    const reg = require('../src/features/connectors/registry');
+    return [['email', 'gmail', 'unread'], ['canvas', 'canvas', 'upcoming'], ['canvas', 'canvas', 'announcements'], ['calendar', 'gcal', 'events']].every(([key, app, action]) => reg.get(app).actions[action] && en[`routines.template.${key}.prompt`].includes(`action ${action}`) && en[`routines.template.${key}.prompt`].includes(`app ${app}`));
+  })());
+  check('the template that was added is remembered on the routine and survives storage', R.sanitizeRoutine({ template: 'email' }).template === 'email' && R.sanitizeRoutine({ template: 'nope' }).template === '' && R.newRoutineState().template === '');
+  check('a template routine made switched off is never due until it is turned on', (() => {
+    const off = mk({ repeat: 'weekdays', time: '08:00' }, { enabled: false });
+    return R.dueAt({ ...off, enabled: false }) === null && R.plan([{ ...off, enabled: false }], at(2026, 10, 5, 9), { isActive }).queue.length === 0;
+  })());
+}
 
 console.log(failures ? `${failures} failed` : 'all passed');
 process.exit(failures ? 1 : 0);
