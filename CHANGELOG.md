@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Pause stays paused on the Spotify card.** Pressing Pause showed Pause, then Play, then Pause again: Spotify's API (and the Plays in Lumen player's page) keeps reporting "playing" for a second or two after the press, and that late answer overwrote the card. A press now shows its state at once and keeps it until the source says the same (answers read before the press are ignored and Spotify is asked again shortly); if the source still disagrees after 3 seconds the card goes back with "It didn’t pause. Try again." Play works the same way, and so does Apple Music's card. Tests: `spotify-pause-units`, `spotify-pause-ui`.
+
 ## 0.5.49 (2026-10-18)
 
 - **Fixed: the music-reactive home screen no longer mutes your music.** Chromium takes a captured tab's sound away from the speakers, so with the option on the music went silent. The new-tab page now plays the captured sound back, once, straight to the output (about 70 ms later), and only captures a tab while its own output is running; if that output ever stops, it lets go and the tab plays by itself again. Turning the option off, leaving the page or closing it returns everything at once. `test/music-react.js` now listens to what really reaches the speakers (system loopback in a hidden window) and fails if the music goes quiet or is doubled.
