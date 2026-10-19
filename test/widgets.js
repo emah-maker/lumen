@@ -409,7 +409,7 @@ function server(opts) {
   const cfg = async (todoCfg) => { await W('save', { type: 'todoist', token: '', todo: todoCfg }, ID.todo); };
   const asked = () => fake.log.filter((l) => l.path === '/todoist/tasks/filter' || l.path === '/todoist/tasks').slice(-1)[0];
   await cfg({ source: 'inbox' });
-  t = await untilTodo((x) => x.tasks.join() === 'Someday');
+  t = await untilTodo((x) => x.tasks.join() === 'Someday' && x.header === 'Inbox'); // (the header changes with the new request: the list alone could be the one shown before it)
   check('Todoist filter: Inbox asks “#Inbox” and shows that list', t.tasks.join() === 'Someday' && asked().params.query === '#Inbox' && t.header === 'Inbox', JSON.stringify([t.tasks, asked()]));
   await cfg({ source: 'project', projectId: 'p1', projectName: 'Home' });
   t = await untilTodo((x) => x.tasks.length === 2);
