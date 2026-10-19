@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.51 (2026-10-18)
+
 - **Homework diagrams work.** Asking for a picture of "each problem", or for free-body diagrams, circuits, flowcharts or trusses, no longer goes straight to an image engine with only your words: the chat model reads the page, PDF, files and chat, finds each problem and draws one exact labelled SVG diagram per problem with short steps. Illustrative pictures still go to image generation; if an image engine declines a diagram, Lumen says so in one line and draws it instead.
 - **PowerPoint EMF/WMF pictures convert on slow PCs too.** A slow PowerShell start no longer times out the whole conversion: pictures that finished are kept, and the limit is now 30 s with no progress (60 s at most).
 
