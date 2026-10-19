@@ -1852,7 +1852,7 @@ async function buildWidgets(card) {
       draw();
       const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHint', 'Only if you can’t sign in above. Saving replaces the current sign-in.')), 'github', tr('settings.widgets.github.createToken', 'Create a token on GitHub'));
       fields.replaceChildren(
-        section(tr('settings.widgets.github.account', 'Account'), [accountRow], tr('settings.widgets.github.accountFoot', 'One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page.')),
+        section(tr('settings.widgets.github.account', 'Account'), [accountRow], tr('settings.widgets.github.accountFoot', 'One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page. A GitHub connector connected with its own token keeps that token.')),
         section(tr('settings.widgets.github.show', 'Show'), [inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts, setting(tr('settings.widgets.github.max', 'Items per list'), inputs.max)], tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
         advanced([
           tokenRow,

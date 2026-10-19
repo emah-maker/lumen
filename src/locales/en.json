@@ -2396,7 +2396,7 @@
   "settings.widgets.github.tokenHint": "Only if you can’t sign in above. Saving replaces the current sign-in.",
   "settings.widgets.github.createToken": "Create a token on GitHub",
   "settings.widgets.github.account": "Account",
-  "settings.widgets.github.accountFoot": "One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page.",
+  "settings.widgets.github.accountFoot": "One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page. A GitHub connector connected with its own token keeps that token.",
   "settings.widgets.github.tokenPermsLabel": "Token permissions",
   "github.card.signedout": "Sign in to GitHub to see your review requests, assigned issues and notifications.",
   "github.card.expired": "GitHub signed Lumen out (the sign-in was revoked or ran out).",

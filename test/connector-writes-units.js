@@ -106,7 +106,11 @@ async function main() {
   for (const m of ['locked', 'archived', 'notfound', 'rate429']) { fake.mode.github = m; why[m] = await fails(() => svc.call(comment)); }
   check('a locked conversation, an archived repo, Not Found and a 429 each say what they are, not "can only read"', /locked/.test(why.locked) && /archived/.test(why.archived) && /can’t find/.test(why.notfound) && /limiting requests/.test(why.rate429) && !Object.values(why).some((m) => /can only read/.test(m)), JSON.stringify(why));
   fake.mode.github = 'oauthread';
-  const signin = await fails(() => svc.call(comment));
+  const classic = await fails(() => svc.call(comment));
+  check('a pasted classic token without repo is told which scope to give it (not sign-in advice)', /This token can’t write/.test(classic) && /public_repo/.test(classic) && /Read and write/.test(classic) && !/Include private repositories/.test(classic), classic);
+  const ghProvider = require('../src/features/connectors/providers/github');
+  const sharedCtx = { config: { shared: true }, http: async () => ({ status: 404, ok: false, text: '{"message":"Not Found"}', headers: new Headers({ 'x-oauth-scopes': 'notifications, read:user' }) }) };
+  const signin = await fails(() => ghProvider.actions.comment(sharedCtx, comment.args));
   check('a read-only "Sign in with GitHub" token says how to allow writing (Include private repositories, or the GitHub CLI)', /sign-in can only read/.test(signin) && /Include private repositories/.test(signin) && /GitHub CLI/.test(signin), signin);
   fake.mode.github = 'oauthrepo';
   const withRepo = await fails(() => svc.call(comment));

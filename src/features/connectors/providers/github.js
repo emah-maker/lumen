@@ -47,10 +47,12 @@ async function post(ctx, path, json) {
   try { message = flat(JSON.parse(res.text)?.message, 200); } catch { message = flat(res.text, 200); }
   const limited = res.status === 429 || (res.status === 403 && (/rate limit|secondary/i.test(message) || res.headers.get('x-ratelimit-remaining') === '0'));
   if (limited) throw new ConnectorError('GitHub is limiting requests right now. Try again in a minute.', 'rate');
-  // A "Sign in with GitHub" token (OAuth) lists its scopes; without repo or public_repo it can't write, and GitHub answers 404 or 403.
+  // A "Sign in with GitHub" token (OAuth) or a classic token lists its scopes; without repo or public_repo it can't write, and GitHub answers 404 or 403.
   const scopes = res.headers.get('x-oauth-scopes');
   if ((res.status === 404 || res.status === 403) && typeof scopes === 'string' && !scopes.split(',').map((x) => x.trim()).some((x) => x === 'repo' || x === 'public_repo')) {
-    throw new ConnectorError('The GitHub sign-in can only read, so it can’t comment or open issues (or that repository doesn’t exist). To allow it, turn on “Include private repositories” in Settings → Home → Widgets → GitHub and sign in again (GitHub’s “repo” permission, which allows writing), or use the GitHub CLI sign-in there.', 'scope');
+    throw new ConnectorError(ctx.config?.shared
+      ? 'The GitHub sign-in can only read, so it can’t comment or open issues (or that repository doesn’t exist). To allow it, turn on “Include private repositories” in Settings → Home → Widgets → GitHub and sign in again (GitHub’s “repo” permission, which allows writing), or use the GitHub CLI sign-in there.'
+      : 'This token can’t write (or that repository doesn’t exist): give it repo (or public_repo) scope, or use a fine-grained token with Issues and Pull requests “Read and write”. Then connect GitHub again in Settings → You and AI → Connectors.', 'scope');
   }
   if (res.status === 404) throw new ConnectorError('GitHub can’t find that repository, issue or pull request (or the token can’t see it). Check the name and number.', 'missing');
   if (res.status === 403) {

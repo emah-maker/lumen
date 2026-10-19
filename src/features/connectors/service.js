@@ -265,10 +265,12 @@ function create({
   }
 
   // Make a shared connector's entry match its owner's sign-in: signed in -> connected (as that account); signed out -> gone.
+  // A connector connected with its own token is left alone either way.
   function syncShared(id) {
     const def = registry.get(id);
     const src = shared[id];
     if (!def || !src) return list();
+    if (connected[id] && !connected[id].config?.shared) return list(); // connected with its own token: it keeps it (never swapped for the card's broader sign-in)
     const info = src.info();
     if (info) connected[id] = { at: now(), account: flat(info.account, 60), config: { shared: true } };
     else if (connected[id]?.config?.shared) delete connected[id];
