@@ -5,9 +5,10 @@
 // One request does one thing: POST /routines/<routine id>/run with `Authorization: Bearer <key>`. The key is 32 random
 // bytes made for that routine, shown to the user once; only its SHA-256 is kept (with the routine, in the encrypted
 // task store), and it is compared in constant time. An optional JSON body { "text": "..." } (at most 4 KB) is handed
-// to the run as untrusted input. Everything else is refused: other paths and methods (so a web page's CORS preflight
-// fails and the browser never sends the request), a missing or wrong key, more than one run a minute per routine, and
-// a routine that is off, busy or gone. The run itself is an ordinary routine run: same approvals, same "never two at once".
+// to the run as untrusted input. Everything else is refused: a Host header other than 127.0.0.1:<port> or
+// localhost:<port> (DNS rebinding; a tunnel must rewrite it), other paths and methods (so a web page's CORS preflight
+// fails and the browser never sends the request), a missing or wrong key, more than one started run a minute per
+// routine (only a run that starts counts), and a routine that is off, busy or gone. The run itself is an ordinary routine run: same approvals, same "never two at once".
 'use strict';
 const crypto = require('crypto');
 const http = require('http');
@@ -58,19 +59,23 @@ function parseBody(buf) {
   return { text: data.text.slice(0, MAX_BODY) };
 }
 
-// At most one run per routine every `ms`. take(id, now) -> 0 when allowed (and counted), else the ms to wait.
+// At most one started run per routine every `ms`. wait(id, now) -> 0 when a run may start, else the ms to wait;
+// took(id, now) counts a run that did start (a refused request costs nothing).
 function createLimiter(ms = RATE_MS) {
   const last = new Map();
+  const wait = (id, now) => { const prev = last.get(id); return prev !== undefined && now - prev < ms ? ms - (now - prev) : 0; };
   return {
-    take(id, now) {
-      const prev = last.get(id);
-      if (prev !== undefined && now - prev < ms) return ms - (now - prev);
+    wait,
+    took(id, now) {
+      last.delete(id);
       last.set(id, now);
       if (last.size > 500) last.delete(last.keys().next().value);
-      return 0;
     },
   };
 }
+
+// Is the Host header this listener's own address? (127.0.0.1:<port> or localhost:<port>, any case.)
+const hostAllowed = (host, port) => [`127.0.0.1:${port}`, `localhost:${port}`].includes(String(host || '').trim().toLowerCase());
 
 const cleanPort = (v) => { const n = Math.round(Number(v)); return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null; };
 const runUrl = (port, id) => `http://${HOST}:${port}/routines/${id}/run`;
@@ -91,12 +96,14 @@ function createServer({ port = DEFAULT_PORT, hashOf, fire, now = Date.now, limit
   };
 
   function handle(req, res) {
+    if (!hostAllowed(req.headers.host, server?.address()?.port ?? port)) { req.resume(); send(res, 403, { ok: false, error: 'Wrong Host.' }); return; }
     const r = route(req.method, req.url);
     if (r.status) { req.resume(); send(res, r.status, { ok: false, error: r.status === 405 ? 'Use POST.' : 'Not found.' }, r.status === 405 ? { Allow: 'POST' } : {}); return; }
     if (!keyMatches(hashOf(r.id), bearer(req.headers.authorization))) { req.resume(); send(res, 401, { ok: false, error: 'Wrong or missing key.' }); return; } // (an unknown routine looks the same)
     if (Number(req.headers['content-length']) > MAX_BODY) { req.resume(); send(res, 413, { ok: false, error: 'The body is over 4 KB.' }); return; }
-    const wait = limiter.take(r.id, now());
-    if (wait) { req.resume(); send(res, 429, { ok: false, error: 'At most one run a minute.' }, { 'Retry-After': String(Math.ceil(wait / 1000)) }); return; }
+    const tooSoon = (wait) => send(res, 429, { ok: false, error: 'At most one run a minute.' }, { 'Retry-After': String(Math.ceil(wait / 1000)) });
+    const wait = limiter.wait(r.id, now());
+    if (wait) { req.resume(); tooSoon(wait); return; }
     const chunks = [];
     let size = 0;
     let done = false;
@@ -114,8 +121,11 @@ function createServer({ port = DEFAULT_PORT, hashOf, fire, now = Date.now, limit
       clearTimeout(timer);
       const body = parseBody(Buffer.concat(chunks));
       if (body.status) { send(res, body.status, { ok: false, error: body.status === 413 ? 'The body is over 4 KB.' : 'The body must be JSON like {"text": "..."}.' }); return; }
+      const late = limiter.wait(r.id, now()); // another request started a run while this body came in
+      if (late) { tooSoon(late); return; }
       let out;
       try { out = fire(r.id, body.text) || { ok: false, code: 'missing' }; } catch (err) { console.error('[lumen] routine web link:', err?.message || err); out = { ok: false, code: 'error' }; }
+      if (out.ok) limiter.took(r.id, now()); // only a run that started uses up the minute
       const status = out.ok ? 202 : (STATUS_OF[out.code] || 500);
       send(res, status, out.ok ? { ok: true, started: true } : { ok: false, error: out.error || out.code || 'Could not start the routine.' });
     });
@@ -140,4 +150,4 @@ function createServer({ port = DEFAULT_PORT, hashOf, fire, now = Date.now, limit
   return { start, stop, handle, port: () => server?.address()?.port ?? null };
 }
 
-module.exports = { HOST, DEFAULT_PORT, MAX_BODY, RATE_MS, newKey, hashKey, keyMatches, bearer, route, parseBody, createLimiter, cleanPort, runUrl, curlCommand, createServer };
+module.exports = { HOST, DEFAULT_PORT, MAX_BODY, RATE_MS, newKey, hashKey, keyMatches, bearer, route, parseBody, createLimiter, hostAllowed, cleanPort, runUrl, curlCommand, createServer };

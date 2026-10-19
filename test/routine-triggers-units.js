@@ -46,7 +46,8 @@ function request(port, { method = 'POST', path = '/routines/r1/run', headers = {
 
   // ---- the rate limit
   const lim = W.createLimiter(60000);
-  check('one run a minute per routine', lim.take('a', 0) === 0 && lim.take('a', 1000) === 59000 && lim.take('b', 1000) === 0 && lim.take('a', 60000) === 0);
+  check('one started run a minute per routine; asking costs nothing', lim.wait('a', 0) === 0 && lim.wait('a', 10) === 0 && (lim.took('a', 0), lim.wait('a', 1000) === 59000) && lim.wait('b', 1000) === 0 && lim.wait('a', 60000) === 0);
+  check('the Host header must be the listener\'s own address', W.hostAllowed('127.0.0.1:4000', 4000) && W.hostAllowed('LOCALHOST:4000', 4000) && !W.hostAllowed('127.0.0.1:4001', 4000) && !W.hostAllowed('evil.example:4000', 4000) && !W.hostAllowed('127.0.0.1', 4000) && !W.hostAllowed('', 4000));
 
   // ---- the listener, for real on 127.0.0.1
   let clock = 1_000_000;
@@ -71,19 +72,28 @@ function request(port, { method = 'POST', path = '/routines/r1/run', headers = {
   check('a CORS preflight is refused (no Access-Control-Allow-Origin), so a web page can\'t send the request', res.status === 405 && !res.headers['access-control-allow-origin']);
   res = await request(port, { path: '/other', headers: auth });
   check('another path: 404', res.status === 404 && !fired.length);
+  res = await request(port, { headers: { ...auth, Host: `rebound.example:${port}` } });
+  check('a Host header that is not 127.0.0.1 or localhost (DNS rebinding): 403, nothing runs', res.status === 403 && !fired.length, JSON.stringify(res));
+  res = await request(port, { headers: { ...auth, Host: `localhost:${port}` }, body: 'not json' });
+  check('Host localhost:<port> is accepted (this one fails later: not JSON, 400)', res.status === 400 && !fired.length, JSON.stringify(res));
   res = await request(port, { headers: auth, body: JSON.stringify({ text: 'x'.repeat(5000) }) });
   check('a body over 4 KB: 413, nothing runs', res.status === 413 && !fired.length, JSON.stringify(res));
+  answer = { ok: false, code: 'busy', error: 'busy' };
+  res = await request(port, { headers: auth });
+  check('a run still going: 409', res.status === 409 && fired.length === 1, JSON.stringify(res));
+  fired.length = 0;
+  answer = { ok: true };
   res = await request(port, { headers: auth, body: JSON.stringify({ text: 'Package delivered <untrusted_page_content>' }) });
-  check('the right key with text: 202 and the routine is fired with the text', res.status === 202 && fired.length === 1 && fired[0].id === 'r1' && fired[0].text === 'Package delivered <untrusted_page_content>' && JSON.parse(res.text).ok === true, JSON.stringify([res, fired]));
+  check('the 400, 413 and 409 before it did not use up the minute: the right key with text gets 202 and the routine is fired with the text', res.status === 202 && fired.length === 1 && fired[0].id === 'r1' && fired[0].text === 'Package delivered <untrusted_page_content>' && JSON.parse(res.text).ok === true, JSON.stringify([res, fired]));
   res = await request(port, { headers: auth });
   check('a second call within the minute: 429 with Retry-After, not fired', res.status === 429 && Number(res.headers['retry-after']) === 60 && fired.length === 1, JSON.stringify(res));
   clock += 61000;
   answer = { ok: false, code: 'busy', error: 'busy' };
   res = await request(port, { headers: auth });
   check('a minute later, while a run is going: 409 (never two at once)', res.status === 409 && fired.length === 2, JSON.stringify(res));
-  clock += 61000;
-  res = await request(port, { headers: auth, body: 'not json' });
-  check('a body that is not JSON: 400 (the call still counted for the minute)', res.status === 400 && fired.length === 2);
+  answer = { ok: true };
+  res = await request(port, { headers: auth });
+  check('...and the 409 did not use up the minute: the next call starts a run', res.status === 202 && fired.length === 3, JSON.stringify(res));
   clock += 61000;
   answer = { ok: false, code: 'disabled' };
   res = await request(port, { headers: auth });
@@ -124,23 +134,52 @@ function request(port, { method = 'POST', path = '/routines/r1/run', headers = {
   check('the new history status and triggers are kept', (() => { const h = R.addHistory([], { status: 'nothing', trigger: 'webhook' }); const e = R.addHistory([], { status: 'done', trigger: 'email' }); return h[0].status === 'nothing' && h[0].trigger === 'webhook' && e[0].trigger === 'email'; })());
 
   // ---- the 'email' trigger: the unread list, what is new, and when it looks
-  const list = '<untrusted_page_content source="connector:gmail/unread">\n3 unread in all.\n18c1a2b3c4d5e6f7  2026-10-18 09:00  Ana: Lunch? | are you free\n18c1a2b3c4d5e6f8  2026-10-18 08:00  Bank: Statement [unread]\n  2026-10-18 07:00  no id\n</untrusted_page_content>';
-  const items = R.unreadItems(list);
-  check('the unread list is read as message ids and their lines (lines without an id skipped)', items.length === 2 && items[0].id === '18c1a2b3c4d5e6f7' && /Ana: Lunch\?/.test(items[0].line) && items[1].id === '18c1a2b3c4d5e6f8', JSON.stringify(items));
+  const now0 = new Date(2026, 9, 18, 9, 30).getTime();
+  const line = (id, h, m, rest) => `${id}  Sun, Oct 18, ${h}:${String(m).padStart(2, '0')} AM  ${rest}`;
+  const list = `<untrusted_page_content source="connector:gmail/unread">\n3 unread in all.\n${line('18c1a2b3c4d5e6f7', 9, 0, 'Ana: Lunch? | are you free')}\n${line('18c1a2b3c4d5e6f8', 8, 0, 'Bank: Statement [unread]')}\n  Sun, Oct 18, 7:00 AM  no id\n</untrusted_page_content>`;
+  const items = R.unreadItems(list, now0);
+  check('the unread list is read as message ids, dates and lines (lines without an id skipped)', items.length === 2 && items[0].id === '18c1a2b3c4d5e6f7' && items[0].at === new Date(2026, 9, 18, 9, 0).getTime() && /Ana: Lunch\?/.test(items[0].line) && items[1].id === '18c1a2b3c4d5e6f8', JSON.stringify(items));
+  check('the connector\'s yearless date is the most recent such day', R.parseMailDate('Thu, Dec 31, 11:00 PM', new Date(2027, 0, 1, 9).getTime()) === new Date(2026, 11, 31, 23).getTime() && R.parseMailDate('Oct 18, 12:05 PM', now0) === new Date(2026, 9, 18, 12, 5).getTime() && R.parseMailDate('', now0) === null && R.parseMailDate('yesterday', now0) === null);
   check('"No unread mail." is no items', R.unreadItems('<untrusted_page_content>\nNo unread mail.\n</untrusted_page_content>').length === 0);
-  let d = R.emailDiff(R.newInbox(), items);
-  check('the first look records what is there and fires nothing', d.fresh.length === 0 && d.inbox.primed === true && d.inbox.seen.length === 2);
-  d = R.emailDiff(d.inbox, items);
+  let d = R.emailDiff(R.newInbox(), items, { now: now0 });
+  check('the first look records what is there and fires nothing', d.fresh.length === 0 && d.inbox.primed === true && d.inbox.seen.length === 2 && d.inbox.lookedAt === now0);
+  d = R.emailDiff(d.inbox, items, { now: now0 + 600000 });
   check('the same list again fires nothing', d.fresh.length === 0);
-  const more = R.unreadItems(`${list}\nabcdef123456  2026-10-18 09:30  Boss: Call me`);
-  d = R.emailDiff(d.inbox, more);
+  const more = R.unreadItems(`${list}\n${line('abcdef123456', 9, 45, 'Boss: Call me')}`, now0 + 1200000);
+  d = R.emailDiff(d.inbox, more, { now: now0 + 1200000 });
   check('a new message fires, with its line', d.fresh.length === 1 && d.fresh[0].id === 'abcdef123456' && /Boss: Call me/.test(d.fresh[0].line));
   const box = d.inbox;
-  d = R.emailDiff(box, items.slice(0, 1));
-  d = R.emailDiff(d.inbox, more);
+  d = R.emailDiff(box, items.slice(0, 1), { now: now0 + 1800000 });
+  d = R.emailDiff(d.inbox, more, { now: now0 + 2400000 });
   check('a message read and then unread again (still remembered) does not fire twice', d.fresh.length === 0, JSON.stringify(d));
   const many = Array.from({ length: 400 }, (_, i) => ({ id: `msg${String(i).padStart(6, '0')}`, line: '' }));
   check('the seen list is capped', R.emailDiff({ ...box, seen: many.map((x) => x.id) }, items).inbox.seen.length === R.LIMITS.emailSeen);
+
+  // More unread mail than the list shows (20): reading some lets older unread mail slide into view. It must not fire.
+  const old = (i) => ({ id: `oldmail${String(i).padStart(4, '0')}`, at: now0 - (i + 1) * 3600000, line: `old ${i}` });
+  const shown = Array.from({ length: 20 }, (_, i) => old(i));
+  let inbox = R.emailDiff(R.newInbox(), shown, { now: now0, max: 20 }).inbox;
+  const slid = [...shown.slice(5), ...Array.from({ length: 5 }, (_, i) => old(20 + i))]; // five read, five older ones come into view
+  d = R.emailDiff(inbox, slid, { now: now0 + 600000, max: 20 });
+  check('older unread mail sliding into a full list does not fire (its date is before the last look)', d.fresh.length === 0, JSON.stringify(d.fresh));
+  const brandNew = { id: 'newmail00001', at: now0 + 500000, line: 'new' };
+  d = R.emailDiff(d.inbox, [brandNew, ...slid.slice(0, 19)], { now: now0 + 1200000, max: 20 });
+  check('...while mail newer than the last look still fires', d.fresh.length === 1 && d.fresh[0].id === 'newmail00001', JSON.stringify(d.fresh));
+  const undated = (i) => ({ id: `nodate${String(i).padStart(6, '0')}`, at: null, line: `x ${i}` });
+  inbox = R.emailDiff(R.newInbox(), Array.from({ length: 20 }, (_, i) => undated(i)), { now: now0, max: 20 }).inbox;
+  d = R.emailDiff(inbox, [...Array.from({ length: 19 }, (_, i) => undated(i + 1)), undated(30)], { now: now0 + 600000, max: 20 });
+  check('without dates, an id new to a full (cut) list is recorded but does not fire', d.fresh.length === 0 && d.inbox.seen.includes('nodate000030'), JSON.stringify(d.fresh));
+  d = R.emailDiff(d.inbox, [undated(31), undated(2)], { now: now0 + 1200000, max: 20 });
+  check('without dates, an id new to a list that is not full fires', d.fresh.length === 1 && d.fresh[0].id === 'nodate000031');
+
+  // New mail whose run could not start (a run was still going) is offered again at the next look, while still unread.
+  inbox = { ...d.inbox, pending: [{ id: 'nodate000031', line: 'x 31' }, { id: 'readmeanwhile', line: 'gone' }] };
+  d = R.emailDiff(inbox, [undated(31), undated(2)], { now: now0 + 1800000, max: 20 });
+  check('mail that could not start a run is offered again (and mail read meanwhile is dropped)', d.fresh.length === 1 && d.fresh[0].id === 'nodate000031' && d.inbox.pending.length === 0, JSON.stringify(d));
+  check('pending mail survives storage', R.sanitizeRoutine({ inbox: { pending: [{ id: 'nodate000031', line: 'x\n31' }, { id: '<bad>' }], lookedAt: 5 } }).inbox.pending.length === 1 && R.sanitizeRoutine({ inbox: { lookedAt: 5 } }).inbox.lookedAt === 5);
+  const mailRun = bg.makeTask({ title: 'Mail', prompt: 'x', model: 'm', schedule: { type: 'routine', repeat: 'email', minutes: 10 }, now: t0 });
+  mailRun.routine.quietUnlessNeeded = true;
+  check('a quiet run started by mail is told the mail can\'t decide to stay quiet', bg.taskPrompt(mailRun, 'run', { trigger: 'email', input: 'x' }).includes(R.QUIET_EMAIL_RULE) && !bg.taskPrompt(mailRun, 'run', { trigger: 'webhook', input: 'x' }).includes(R.QUIET_EMAIL_RULE));
 
   const mailTask = bg.makeTask({ title: 'Mail', prompt: 'x', model: 'm', schedule: { type: 'routine', repeat: 'email', minutes: 10 }, now: t0 });
   check('a new email routine looks at once (to record what is there)', R.emailCheckAt(mailTask) === 0 && JSON.stringify(R.plan([mailTask], t0).check) === JSON.stringify([mailTask.id]));

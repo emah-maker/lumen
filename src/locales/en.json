@@ -1655,6 +1655,7 @@
   "routines.history.skipped": "Skipped: the previous run was still going.",
   "routines.history.status.done": "Done",
   "routines.history.status.nothing": "Nothing to report",
+  "routines.history.nothingMail": "The AI found nothing that needs you in this new mail:",
   "routines.history.status.failed": "Failed",
   "routines.history.status.interrupted": "Interrupted",
   "routines.history.status.skipped": "Skipped",

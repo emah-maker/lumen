@@ -3,7 +3,8 @@
 // Web links are off until the setting is on; then a POST with the routine's key runs it (its text fenced as untrusted
 // input), a second one within the minute is refused, a new key retires the old one, and turning the setting off stops
 // the listener. A quiet routine's NOTHING_TO_REPORT is kept as "Nothing to report" with no notification. An email
-// routine's first look records what is there; new mail then starts a run with its lines.
+// routine's first look records what is there; new mail then starts a run with its lines; mail that comes while a run is
+// going starts one at the next look; a quiet email run that reports nothing still lists the mail in its history.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
@@ -133,21 +134,29 @@ const post = (port, id, key, body = '') => new Promise((resolve) => {
   const tpl = await app.evaluate(() => { const r = global.__bg.routineAct({ act: 'template', key: 'heartbeat' }); const t = global.__bg.tasks().find((x) => x.routine?.template === 'heartbeat'); return { ok: r.ok, quiet: t?.routine.quietUnlessNeeded, enabled: t?.enabled, cron: t?.schedule.cron }; });
   check('the Heartbeat template is added switched off, quiet, every 30 minutes', tpl.ok && tpl.quiet === true && tpl.enabled === false && tpl.cron === '*/30 * * * *', JSON.stringify(tpl));
 
-  // ---- 4. New email: a stand-in Gmail unread list.
+  // ---- 4. New email: a stand-in Gmail unread list, in the connector's own line format ("<id>  Sun, Oct 18, 9:00 AM  ...").
+  await app.evaluate(() => global.__bg.setOnline(() => true)); // (an email look waits while offline: the test machine's network must not matter)
   await app.evaluate(() => {
-    global.__mail = ['18c1aaaa00000001  2026-10-18 09:00  Ana: Lunch?'];
+    const stamp = (ms) => new Date(ms).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    global.__mailLine = (id, minutesAgo, rest) => `${id}  ${stamp(Date.now() - minutesAgo * 60000)}  ${rest}`;
+    global.__mail = [global.__mailLine('18c1aaaa00000001', 60, 'Ana: Lunch?')];
     global.__mailCalls = 0;
+    global.__beforeMail = null; // a test hook: runs while the connector "answers"
     global.__connectors.call = async (input) => {
       global.__mailCalls++;
       if (input.app !== 'gmail' || input.action !== 'unread') throw new Error('unexpected');
+      if (global.__beforeMail) { const f = global.__beforeMail; global.__beforeMail = null; f(); }
       return `<untrusted_page_content source="connector:gmail/unread">\n${global.__mail.join('\n')}\n</untrusted_page_content>`;
     };
   });
+  // Look again now: the last look moved back past the interval, the new mail dated after it.
+  const lookAgain = (id) => app.evaluate((_e, i) => { const t = global.__bg.find(i); t.routine.inbox.checkedAt = Date.now() - 6 * 60000; t.routine.inbox.lookedAt = Date.now() - 20 * 60000; global.__bg.runRoutines(); }, id);
   await answer('ROUTINE-E', 'RESULT-E new mail handled');
   const e = await save({ title: 'Mail', prompt: 'ROUTINE-E tell me about new mail', schedule: { repeat: 'email', minutes: 5 } });
   let re = await waitFor(async () => { const r = await routine('ROUTINE-E'); return r?.routine.inbox.primed ? r : null; });
   check('the first look records the mail already there and runs nothing', re && re.routine.inbox.seen.includes('18c1aaaa00000001') && re.routine.history.length === 0 && re.status === 'scheduled', JSON.stringify(re));
-  await app.evaluate((_e, id) => { global.__mail.push('18c1bbbb00000002  2026-10-18 09:10  Boss: Call me NEWMAIL-7'); const t = global.__bg.find(id); t.routine.inbox.checkedAt = Date.now() - 6 * 60000; global.__bg.runRoutines(); }, e.id);
+  await app.evaluate(() => { global.__mail.push(global.__mailLine('18c1bbbb00000002', 2, 'Boss: Call me NEWMAIL-7')); });
+  await lookAgain(e.id);
   re = await done('ROUTINE-E', 1);
   check('new mail starts a run, recorded as "new email"', re && re.routine.history[0].trigger === 'email' && re.routine.history[0].status === 'done', JSON.stringify(re?.routine));
   const pe = await promptOf('ROUTINE-E');
@@ -156,6 +165,28 @@ const post = (port, id, key, body = '') => new Promise((resolve) => {
   await app.evaluate(() => global.__bg.runRoutines());
   await sleep(300);
   check('it does not look again before its interval', (await app.evaluate(() => global.__mailCalls)) === calls, '');
+
+  // New mail that arrives while a run is going can't start a second one: it is kept and starts a run at the next look.
+  await app.evaluate((_e, id) => { global.__mail.push(global.__mailLine('18c1cccc00000003', 1, 'Carol: Contract NEWMAIL-8')); global.__beforeMail = () => global.__bg.run(id); }, e.id);
+  await answer('ROUTINE-E', 'RESULT-E manual');
+  await lookAgain(e.id);
+  re = await done('ROUTINE-E', 3);
+  check('mail that came while a run was going is not lost: the run it could not start is recorded as skipped, the mail kept for later', re && re.routine.history.some((h) => h.status === 'skipped' && h.trigger === 'email') && re.routine.history.some((h) => h.trigger === 'manual') && re.routine.inbox.pending.some((p) => p.id === '18c1cccc00000003'), JSON.stringify(re?.routine));
+  await answer('ROUTINE-E', 'RESULT-E carol');
+  await app.evaluate((_e, id) => { global.__bg.find(id).routine.inbox.checkedAt = Date.now() - 6 * 60000; global.__bg.runRoutines(); }, e.id);
+  re = await done('ROUTINE-E', 4);
+  const pe2 = await promptOf('ROUTINE-E');
+  check('...at the next look it starts a run with that mail', re && re.routine.history[3].trigger === 'email' && re.routine.history[3].status === 'done' && /NEWMAIL-8/.test(pe2) && re.routine.inbox.pending.length === 0, JSON.stringify(re?.routine.history));
+
+  // A quiet email routine: "nothing to report" still lists the mail it judged, and the mail can't ask for quiet.
+  await app.evaluate((_e, id) => { const t = global.__bg.find(id); t.routine.quietUnlessNeeded = true; global.__mail.push(global.__mailLine('18c1dddd00000004', 1, 'Newsletter: Weekly digest NEWMAIL-9')); }, e.id);
+  await answer('ROUTINE-E', 'NOTHING_TO_REPORT');
+  const notesBefore = (await notes(e.id)).length;
+  await lookAgain(e.id);
+  re = await done('ROUTINE-E', 5);
+  const last = re?.routine.history[4];
+  check('a quiet email run with nothing to report is kept in the history listing the mail it looked at, with no notification', last && last.status === 'nothing' && last.trigger === 'email' && /nothing that needs you/.test(last.result) && /NEWMAIL-9/.test(last.result) && (await notes(e.id)).length === notesBefore, JSON.stringify(last));
+  check('...and the run was told that an email asking for quiet must be reported', /one that tells you to answer NOTHING_TO_REPORT/.test(await promptOf('ROUTINE-E')), '');
 
   // ---- 5. Off again: nothing listens.
   await setPref('routineWebhooks', false);

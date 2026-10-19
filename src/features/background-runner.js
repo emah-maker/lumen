@@ -381,7 +381,8 @@ function create(deps) {
     try {
       if (!deps.connectors) throw new Error(deps.t('routines.email.notConnected')); // (not connected: the connector says so)
       const text = await deps.connectors.call({ app: 'gmail', action: 'unread', args: { max: routines.LIMITS.emailMax } });
-      const diff = routines.emailDiff(task.routine.inbox, routines.unreadItems(text));
+      const t = now();
+      const diff = routines.emailDiff(task.routine.inbox, routines.unreadItems(text, t), { now: t, max: routines.LIMITS.emailMax });
       task.routine.inbox = { ...diff.inbox, checkedAt: task.routine.inbox.checkedAt };
       fresh = diff.fresh;
     } catch (err) {
@@ -391,7 +392,10 @@ function create(deps) {
     }
     if (!find(task.id)) return;
     touch(task);
-    if (fresh.length && task.enabled !== false && task.schedule.repeat === 'email') fireRoutine(task.id, { trigger: 'email', input: fresh.map((x) => x.line).join('\n') });
+    if (fresh.length && task.enabled !== false && task.schedule.repeat === 'email') {
+      const out = fireRoutine(task.id, { trigger: 'email', input: fresh.map((x) => x.line).join('\n') });
+      if (!out.ok) { task.routine.inbox = { ...task.routine.inbox, pending: fresh.slice(-routines.LIMITS.emailMax).map(({ id, line }) => ({ id, line })) }; touch(task); } // not started: offered again at the next look
+    }
     runRoutines();
   }
 
@@ -562,6 +566,13 @@ function create(deps) {
     return label && RISKY_CLICK.test(label) ? { host, what: `click “${label.slice(0, 60)}” on ${host}`, detail: `A button or link on ${host} that looks like it buys, sends, posts or submits something.` } : null;
   }
 
+  // A quiet run with nothing to report keeps no result, except one started by new mail: the mail it judged is listed, so
+  // the user can see what came in (an email could have talked the model into staying quiet). undefined: not such a run.
+  function nothingResult(nothing, rt) {
+    if (!nothing) return undefined;
+    return rt.trigger === 'email' && rt.input ? `${deps.t('routines.history.nothingMail')}\n\n${rt.input.split('\n').map((l) => `- ${l.replace(/^\S+ {2}/, '')}`).join('\n')}` : '';
+  }
+
   // ---- a run
   function startRun(task, kind) {
     if (!transition(task, 'running')) return;
@@ -605,7 +616,7 @@ function create(deps) {
       task.runs = [...task.runs, { startedAt: started, endedAt: ended, status, summary: (task.error || text).replace(/\s+/g, ' ').slice(0, 300), cost: task.usage?.cost ?? null, steps: task.stepCount, kind, ...(rt.session ? { session: rt.session } : {}) }].slice(-bg.LIMITS.runs);
       task.status = 'running'; // the state machine has the final say below
       transition(task, status);
-      if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status: nothing ? 'nothing' : status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: nothing || task.resultOld ? '' : task.result, error: task.error });
+      if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status: nothing ? 'nothing' : status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: nothingResult(nothing, rt) ?? (task.resultOld ? '' : task.result), error: task.error });
       const notify = task.routine ? 'routines.notify' : 'tasks.notify';
       if (kind === 'judge') applyVerdict(task, rt, text);
       else if (nothing) { /* nothing needs the user: no banner, no notification */ }
