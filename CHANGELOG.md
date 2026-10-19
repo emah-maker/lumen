@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Slide chooser in the PowerPoint viewer.** The toolbar now has a slide-number box like the PDF viewer's ("3 / 24": type a number and press Enter to jump, with Previous and Next beside it), and a **Slides** button (or **F4**) that opens a column of small slide previews on the left. Click one to jump to that slide; the one you are on is highlighted and kept in view, and previews are drawn only as they scroll near, so a 200-slide deck stays quick. Page Up, Page Down, Home, End and the arrow keys move between slides, except while you are typing in the number box. The address remembers the slide you are on (**#slide=N**), so a reopened session lands on it.
+
 ## 0.5.56 (2026-10-19)
 
 - **Outside AI agents (MCP) no longer make Lumen stutter when several start together.** Opening an agent's window used to hold the browser up for about 12 ms in one go (making the window, showing it, loading its page and its blank first tab), and a full-size page capture meant for the sidebar's first open ran for every agent window as well. Each step now runs on its own and waits for a moment when no screenshot is landing, agent windows skip that capture, and the first web request no longer loads its machinery in the middle of the calls, so with six agents at once the longest pause is about 12 ms instead of 20 or more.

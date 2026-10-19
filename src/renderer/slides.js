@@ -6,6 +6,7 @@
 (() => {
   const EMU_PER_PT = 12700;
   const $ = (id) => document.getElementById(id);
+  const nav = window.lumenSlidesNav; // slides-nav.js: slide numbers and the #slide=N fragment
   const el = (tag, cls) => { const n = document.createElement(tag); if (cls) n.className = cls; return n; };
   const pt = (emu) => (Number(emu) || 0) / EMU_PER_PT;
   const HEX = /^#[0-9a-f]{6}$/i;
@@ -438,23 +439,105 @@
     }
   }, { rootMargin: '1200px 0px' });
 
-  function setCurrent(i, { scroll = false } = {}) {
+  function setCurrent(i, { scroll = false, instant = false } = {}) {
     if (!frames.length) return;
     current = Math.max(0, Math.min(frames.length - 1, i));
     frames.forEach((f, k) => f.classList.toggle('current', k === current));
     $('counter').textContent = `Slide ${current + 1} of ${frames.length}`;
+    if (document.activeElement !== $('slideNumber')) $('slideNumber').value = String(current + 1);
+    $('slideCount').textContent = `/ ${frames.length}`;
+    markThumb();
+    rememberSlide();
     $('prev').disabled = current === 0;
     $('next').disabled = current === frames.length - 1;
     if (scroll) {
       const top = frames[current].getBoundingClientRect().top + window.scrollY - document.querySelector('header').offsetHeight - 14;
-      window.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-      scrollLockUntil = Date.now() + 600;
+      window.scrollTo({ top, behavior: instant || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      const room = Math.max(0, document.documentElement.scrollHeight - window.innerHeight); // (the last slides cannot reach the top)
+      glideTarget = Math.abs(Math.min(Math.max(top, 0), room) - window.scrollY) > 2 ? Math.min(Math.max(top, 0), room) : null;
+      glideEnds = Date.now() + 3000;
     }
     if (presenting) showPresented();
   }
-  let scrollLockUntil = 0;
+  // ---- the address keeps the slide being read (#slide=N, replacing this entry: no history), which is what a saved session reopens the deck at
+  let slideTimer = 0;
+  function rememberSlide() {
+    clearTimeout(slideTimer);
+    slideTimer = setTimeout(() => { try { const href = nav.withSlide(location.href, current); if (href !== location.href) history.replaceState(null, '', href); } catch {} }, 300);
+  }
+
+  // ---- the slide chooser: a column of small previews, each drawn (by drawStage, scaled to fit) only when it comes near the panel's view
+  const thumbsEl = $('thumbs');
+  let thumbs = [];
+  const thumbSeen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const box = e.target;
+      if (!box.firstChild && deck) { box.append(drawStage(deck.slides[Number(box.dataset.index)])); fit(box); }
+      thumbSeen.unobserve(box);
+    }
+  }, { root: thumbsEl, rootMargin: '400px 0px' });
+  function buildThumbs() {
+    thumbSeen.disconnect();
+    thumbs = deck.slides.map((slide, i) => {
+      const b = el('button', 'thumb');
+      b.type = 'button';
+      b.dataset.index = String(i);
+      b.setAttribute('aria-label', `Slide ${i + 1}${slide.hidden ? ' (hidden)' : ''}`);
+      if (slide.hidden) b.classList.add('hidden-slide');
+      const box = el('div', 'tslide');
+      box.dataset.index = String(i);
+      box.style.aspectRatio = `${deck.width} / ${deck.height}`;
+      const num = el('span', 'tnum');
+      num.textContent = String(i + 1);
+      b.append(box, num);
+      b.addEventListener('click', () => setCurrent(i, { scroll: true }));
+      resize.observe(box);
+      thumbSeen.observe(box);
+      return b;
+    });
+    thumbsEl.replaceChildren(...thumbs);
+    markThumb();
+  }
+  function markThumb() {
+    if (!thumbs.length) return;
+    thumbs.forEach((b, k) => { b.classList.toggle('current', k === current); if (k === current) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
+    if (document.body.classList.contains('thumbs-open')) thumbs[current].scrollIntoView({ block: 'nearest' });
+  }
+  const thumbsOpen = () => document.body.classList.contains('thumbs-open');
+  function setThumbs(open) {
+    if (!deck || !frames.length) return;
+    document.body.classList.toggle('thumbs-open', open);
+    $('thumbsBtn').setAttribute('aria-pressed', String(open));
+    $('thumbsBtn').title = `${open ? 'Hide' : 'Show'} slide thumbnails (F4)`;
+    if (open) {
+      document.documentElement.style.setProperty('--hdr', `${document.querySelector('header').offsetHeight}px`);
+      if (!thumbs.length) buildThumbs(); else markThumb();
+    }
+  }
+  $('thumbsBtn').addEventListener('click', () => setThumbs(!thumbsOpen()));
+
+  // ---- the slide-number box
+  const numberBox = $('slideNumber');
+  numberBox.addEventListener('focus', () => numberBox.select());
+  numberBox.addEventListener('change', () => {
+    const n = nav.parseSlideNumber(numberBox.value, frames.length);
+    if (n !== null) setCurrent(n - 1, { scroll: true });
+    numberBox.value = String(current + 1);
+  });
+  numberBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); numberBox.dispatchEvent(new Event('change')); numberBox.blur(); } else if (e.key === 'Escape') { e.preventDefault(); numberBox.value = String(current + 1); numberBox.blur(); }
+  });
+
+  // While the page glides to a slide that was asked for, the scroll position says nothing about which slide is current: trackScroll waits until it arrives (or 3 s pass).
+  let glideTarget = null;
+  let glideEnds = 0;
   function trackScroll() {
-    if (Date.now() < scrollLockUntil || presenting) return;
+    if (glideTarget !== null) {
+      if (Date.now() > glideEnds || Math.abs(window.scrollY - glideTarget) < 2) glideTarget = null;
+      return;
+    }
+    if (presenting) return;
     const line = window.innerHeight * 0.35;
     let best = 0;
     for (let k = 0; k < frames.length; k++) { if (frames[k].getBoundingClientRect().top <= line) best = k; else break; }
@@ -511,19 +594,20 @@
     if (media[key].length >= total) { complete.add(key); arrival(key).resolve(); }
   };
   // For tests: what the pictures are doing.
-  window.lumenSlidesInfo = () => ({ blobs: shown.size, shrunk: [...shrunk], images: document.querySelectorAll('.stage img').length });
+  window.lumenSlidesInfo = () => ({ current, thumbsDrawn: thumbsEl.querySelectorAll('.stage').length, blobs: shown.size, shrunk: [...shrunk], images: document.querySelectorAll('.stage img').length });
 
   // ---- keys
   document.addEventListener('keydown', (e) => {
     if (!deck || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
-    let to = null;
-    if (k === 'PageDown' || k === 'ArrowDown' || k === 'ArrowRight' || (k === ' ' && !e.shiftKey) || (presenting && (k === 'Enter' || k === 'n'))) to = current + 1;
-    else if (k === 'PageUp' || k === 'ArrowUp' || k === 'ArrowLeft' || (k === ' ' && e.shiftKey) || (presenting && (k === 'Backspace' || k === 'p'))) to = current - 1;
-    else if (k === 'Home') to = 0;
-    else if (k === 'End') to = frames.length - 1;
-    else if (k === 'Escape' && presenting) { e.preventDefault(); stopPresenting(); return; }
-    else if (k === 'F5') { e.preventDefault(); present(); return; }
+    const tag = e.target && e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target && e.target.isContentEditable)) return; // typing in the number box is not navigation
+    if (k === 'F4') { e.preventDefault(); if (!presenting) setThumbs(!thumbsOpen()); return; }
+    if (tag === 'BUTTON' && k === ' ') return; // Space presses the focused button
+    if (k === 'Escape' && presenting) { e.preventDefault(); stopPresenting(); return; }
+    if (k === 'F5') { e.preventDefault(); present(); return; }
+    let to = nav.slideForKey(k, current, frames.length, e.shiftKey);
+    if (to === null && presenting) to = k === 'Enter' || k === 'n' ? Math.min(frames.length - 1, current + 1) : k === 'Backspace' || k === 'p' ? Math.max(0, current - 1) : null;
     if (to === null) return;
     e.preventDefault();
     setCurrent(to, { scroll: !presenting });
@@ -577,7 +661,13 @@
       return frame;
     });
     $('presentBtn').disabled = false;
-    setCurrent(0);
+    $('thumbsBtn').disabled = false;
+    numberBox.disabled = false;
+    const wanted = nav.slideFromUrl(location.href); // a reopened session lands on the slide it was on
+    thumbs = [];
+    thumbsEl.replaceChildren();
+    if (thumbsOpen()) buildThumbs();
+    setCurrent(wanted === null ? 0 : wanted, { scroll: wanted !== null && wanted > 0, instant: true });
     window.addEventListener('scroll', trackScroll, { passive: true });
     document.body.dataset.ready = 'true';
   };
