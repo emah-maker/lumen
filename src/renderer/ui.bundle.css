@@ -653,6 +653,14 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .code-block .mermaid-view { padding: 10px; overflow-x: auto; text-align: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .code-block.show-source .mermaid-view { display: none; }
 .msg.assistant .mermaid-view svg { max-width: 100%; height: auto; }
+
+.msg.assistant .code-block.svg-ok:not(.show-source) pre { display: none; }
+.msg.assistant .code-block.svg-ok:not(.show-source) .code-wrap { display: none; }
+.msg.assistant .code-block .svg-view { padding: 10px; overflow-x: auto; text-align: center; background: #fafbfc; color-scheme: light; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block.show-source .svg-view { display: none; }
+.msg.assistant .svg-pic { display: block; max-width: 100%; margin: 0 auto; padding: 0; border: none; background: transparent; cursor: zoom-in; }
+.msg.assistant .svg-pic:focus-visible { outline: 2px solid var(--accent, #5b8def); outline-offset: 2px; }
+.msg.assistant .svg-pic img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 
 .msg.assistant .reply-regen { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; display: grid; place-items: center; border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }

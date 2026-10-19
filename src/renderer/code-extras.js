@@ -4,6 +4,8 @@
 //    loads the first time a reply has such a block, never at start-up. Any failure (not loaded, bad syntax, too slow, too
 //    big) leaves the plain code block as it was. securityLevel is 'strict' (labels sanitised, no click handlers), and the
 //    SVG is scrubbed again here before it goes into the page.
+//  - a ```svg block (or xml/html holding one <svg>; markdown.js lifts a raw <svg> into one) drawn as a picture: renderer/svg-view.js loads
+//    the first time a reply has one, never at start-up, and sanitizes the SVG from an allowlist before it is shown as an image.
 (() => {
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
   const MAX_SOURCE = 20000;
@@ -117,6 +119,31 @@
     }).catch((e) => { box.dataset.diagram = 'failed'; })); // the code block stays as it is
   }
 
+  // ---------- svg ----------
+  const SVG_BLOCK = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype[^>]*>\s*)?<svg[\s>]/i;
+  let svgLoading = null;
+  function loadSvgView() {
+    if (window.svgView) return Promise.resolve(window.svgView);
+    if (svgLoading) return svgLoading;
+    svgLoading = new Promise((resolve, reject) => {
+      if (typeof document === 'undefined' || !here) { reject(new Error('no page')); return; }
+      const js = Object.assign(document.createElement('script'), { src: new URL('svg-view.js', here).href, async: true });
+      js.onload = () => (window.svgView ? resolve(window.svgView) : reject(new Error('svg-view missing')));
+      js.onerror = () => reject(new Error('svg-view did not load'));
+      document.head.append(js);
+    }).catch((e) => { svgLoading = null; throw e; });
+    return svgLoading;
+  }
+  // A block that is, or may be, one SVG: drawn as a picture when it is complete; any failure leaves the code as it is.
+  function svgPicture(box, pre) {
+    const lang = pre.dataset.lang || '';
+    const text = pre.querySelector('code')?.textContent ?? '';
+    if (lang !== 'svg' && !(['', 'xml', 'html'].includes(lang) && SVG_BLOCK.test(text))) return;
+    if (!/<\/svg\s*>\s*$/i.test(text) || text.length > 200 * 1024) return;
+    if (window.svgView) { window.svgView.decorate(box, pre); return; }
+    loadSvgView().then((v) => { if (box.isConnected) v.decorate(box, pre); }).catch(() => {});
+  }
+
   // ---------- wrap ----------
   const wrapped = () => { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } };
   const remember = (on) => { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch { /* (no storage: per block only) */ } };
@@ -140,6 +167,7 @@
     const head = box.querySelector('.code-head');
     if (head && pre.dataset.lang !== 'mermaid') wrapButton(box, head);
     if (pre.dataset.lang === 'mermaid' && finished) diagram(box, pre, pre.querySelector('code')?.textContent ?? '');
+    else svgPicture(box, pre); // (a block whose </svg> has arrived is drawn even while the reply streams)
   }
 
   // A table of five or more columns gets a Fit / Scroll switch: scroll keeps each column readable (the table
