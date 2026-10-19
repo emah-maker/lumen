@@ -10,6 +10,7 @@
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
 //   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
+//   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI and agents → Memory.
 //   /help      lists every command.
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows
 (() => {
@@ -223,6 +224,33 @@
     run() {
       if (!extras.openUsage) return { ok: false, message: tr('slash.usage.none', 'Usage is in Settings → Usage.') };
       extras.openUsage();
+      return { ok: true };
+    },
+  });
+  slash.register({
+    name: 'memory',
+    label: tr('slash.memory', 'Memory'),
+    description: tr('slash.memory.description', 'What the AI has saved about you between chats.'),
+    takesInput: false,
+    async run() {
+      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI and agents.') };
+      const view = await window.assistant.memory.list().catch(() => null);
+      const box = Object.assign(document.createElement('div'), { className: 'notice slash-help memory-list' });
+      const entries = view?.entries || [];
+      box.append(Object.assign(document.createElement('strong'), { textContent: tr('slash.memory.title', 'Memory') }), ' ');
+      if (!view?.on) box.append(tr('slash.memory.off', 'Memory is off: the AI doesn’t save or read anything between chats.'));
+      else if (!entries.length) box.append(tr('slash.memory.empty', 'Nothing saved yet. Tell the AI “remember that …”.'));
+      if (entries.length) {
+        const list = document.createElement('ul');
+        for (const e of entries.slice(0, 50)) list.append(Object.assign(document.createElement('li'), { textContent: e.text }));
+        box.append(list);
+        if (entries.length > 50) box.append(tr('slash.memory.more', '…and {n} more.', { n: entries.length - 50 }), ' ');
+        if (!view.on) box.append(tr('slash.memory.offKept', 'These are kept but not used while Memory is off.'), ' ');
+      }
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.memory.open', 'Manage memory') });
+      open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
+      box.append(' ', open);
+      note(box);
       return { ok: true };
     },
   });

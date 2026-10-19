@@ -51,6 +51,11 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
       open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
     },
+    memory: { // [memory] the chat's "Remembered" row (Undo / Forget) and /memory (ai/memory.js)
+      list: () => ipcRenderer.invoke('memory:list'),
+      undo: (token) => ipcRenderer.invoke('memory:undo', token),
+      forget: (id) => ipcRenderer.invoke('memory:forget', id),
+    },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),
@@ -98,6 +103,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
     helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
     routines: { preview: (text) => ipcRenderer.invoke('chat:routine-preview', { text }), create: (spec) => ipcRenderer.invoke('chat:routine-create', spec) }, // [routines] "Schedule this" (renderer/chat-routines.js)
+    dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once

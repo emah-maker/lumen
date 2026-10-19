@@ -187,6 +187,8 @@ body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:foc
 body.chat-page .composer textarea { order: 1; flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 0 var(--cp-1); min-height: 1lh; max-height: min(320px, 40vh); }
 body.chat-page .composer .attach-btn { order: 2; }
 body.chat-page .composer .screen-btn { order: 3; }
+body.chat-page .composer .mic-btn { order: 3; width: 32px; height: 32px; }
+body.chat-page .composer .dictation-bar { order: 0; padding: 0 var(--cp-1); }
 body.chat-page .composer .meter-strip { order: 4; flex: 1 1 0; min-width: 0; margin: 0; padding: 0; }
 body.chat-page .composer .send-now { order: 5; }
 body.chat-page .composer .send { order: 6; margin-left: auto; }
