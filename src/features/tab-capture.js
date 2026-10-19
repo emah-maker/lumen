@@ -342,10 +342,23 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
 // Here the main process receives only the finished JPEG. One at a time across all pages, with the event loop let through in between, so
 // several agents' screenshots do not stack their readback and encode work into one stall; and in the page's own queue (see oneAtATime).
 let captureChain = Promise.resolve();
+let capturing = 0; // screenshots queued or being taken
+const idleWaiters = new Set();
 function captureJpeg(wc, opts) {
+  capturing++;
   const run = captureChain.then(() => oneAtATime(wc, () => captureJpegNow(wc, opts)));
-  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve)));
+  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve))).then(() => { if (--capturing === 0) for (const done of [...idleWaiters]) done(); });
   return run;
+}
+// Resolves once no screenshot is being taken, or after maxMs. A screenshot's result lands on the main process as a ~9 ms task; a step of making an
+// agent's window (5-6 ms each) that ran just as one landed stacked into a stall of 15 ms and more (test/mcp-perf.js), so those steps wait for a gap.
+function whenCaptureIdle(maxMs = 150) {
+  if (capturing === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, maxMs);
+    function done() { clearTimeout(timer); idleWaiters.delete(done); resolve(); }
+    idleWaiters.add(done);
+  });
 }
 async function captureJpegNow(wc, { maxWidth, quality }) {
   const dbg = wc.debugger;
@@ -367,4 +380,4 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
   }
 }
 
-module.exports = { checkPageSize, captureJpeg, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { checkPageSize, captureJpeg, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
