@@ -19,6 +19,7 @@ const PAGES = {
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
   'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
+  focus: { title: 'Focus mode', file: 'docs/focus.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },

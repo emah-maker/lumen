@@ -6096,6 +6096,13 @@ sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  if (typed && attachments.length === 0 && pastes.length === 0 && window.focusPhrase?.parseStart(typed) && window.focusUi) {
+    prompt.value = '';
+    renderAttachments();
+    autosize();
+    await window.focusUi.tryStart(typed);
+    return;
+  }
   const text = window.chatDrafts.withPastes(typed, pastes);
   const hadPastes = pastes.length > 0;
   const images = attachments;
@@ -13220,6 +13227,128 @@ $('agent-stop')?.addEventListener('click', () => {
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.routinePhrase = api;
 })(this);
+;
+// ---- focus-phrase.js
+
+
+
+(function (root) {
+  const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, 'half an': 0.5, half: 0.5 };
+  const AMOUNT = '(\\d+(?:[.,]\\d+)?|half an|half|an|a|one|two|three|four|five|six)';
+  const UNIT = '(hours?|hrs?|h|minutes?|mins?|m)';
+  const LENGTH = new RegExp(`^${AMOUNT}\\s*${UNIT}\\b\\.?$`, 'i');
+  const START = new RegExp(`^(?:please\\s+)?(?:(?:start|begin|turn\\s+on|enable|enter|activate|set)\\s+)?(?:a\\s+|an\\s+|my\\s+)?focus(?:\\s+(?:mode|session|time))?(?:\\s+on)?(?:\\s+for)?\\s+(.+?)[.!]?(?:\\s+please)?$`, 'i');
+
+
+  function parseLength(text) {
+    const m = LENGTH.exec(String(text || '').trim().replace(/\s+/g, ' '));
+    if (!m) return null;
+    const raw = m[1].toLowerCase();
+    const n = raw in WORDS ? WORDS[raw] : Number(raw.replace(',', '.'));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const minutes = Math.round(/^h/i.test(m[2]) ? n * 60 : n);
+    return minutes >= 1 && minutes <= 720 ? minutes : null;
+  }
+
+  function parseStart(text) {
+    const s = String(text || '').trim();
+    if (s.length < 7 || s.length > 80) return null;
+    const m = START.exec(s);
+    return m ? parseLength(m[1]) : null;
+  }
+
+  const api = { parseLength, parseStart };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.focusPhrase = api;
+})(this);
+;
+// ---- focus.js
+
+
+(() => {
+  const api = window.assistant?.focus;
+  const button = document.getElementById('focus-btn');
+  const label = document.getElementById('focus-time');
+  if (!api || !button) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+
+  let state = null;
+  let ticker = 0;
+  const clock = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`;
+  };
+  function draw() {
+    const on = Boolean(state?.active);
+    const left = on ? Math.max(0, state.until - Date.now()) : 0;
+    button.classList.toggle('on', on);
+    label.hidden = !on;
+    label.textContent = on ? clock(left) : '';
+    const name = on ? tr('focus.button.on', 'Focus mode: {time} left', { time: clock(left) }) : tr('focus.button', 'Focus mode');
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    if (on && left === 0) api.state().then(apply).catch(() => {});
+  }
+  function apply(next) {
+    state = next;
+    if (state?.active && !ticker) ticker = setInterval(draw, 1000);
+    else if (!state?.active && ticker) { clearInterval(ticker); ticker = 0; }
+    draw();
+  }
+  button.addEventListener('click', () => {
+    const r = button.getBoundingClientRect();
+    api.menu({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+  });
+  api.onState(apply);
+  api.state().then(apply).catch(() => {});
+
+  const notice = (text) => {
+    if (typeof window.append !== 'function') return;
+    window.append(Object.assign(document.createElement('div'), { className: 'notice', textContent: text }));
+  };
+  const endsAt = (until) => new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  async function start(minutes) {
+    try {
+      const s = await api.start(minutes);
+      apply(s);
+      return { ok: true, state: s };
+    } catch (err) {
+      return { ok: false, message: String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') };
+    }
+  }
+
+
+  window.slashCommands?.register({
+    name: 'focus',
+    label: tr('focus.slash', 'Start focus mode'),
+    description: tr('focus.slash.description', 'Block distracting sites for a while. Tab: say how long.'),
+    hint: tr('focus.slash.hint', 'How long, like 90 minutes or 2 hours (Enter alone: 45 minutes)'),
+    takesInput: false,
+    async run({ input }) {
+      const minutes = String(input || '').trim() ? window.focusPhrase?.parseLength(input) : 45;
+      if (!minutes) return { ok: false, message: tr('focus.slash.bad', 'Say how long, like 90 minutes or 2 hours.') };
+      const r = await start(minutes);
+      if (r.ok) notice(tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }));
+      return r;
+    },
+  });
+
+
+  window.focusUi = {
+    async tryStart(text) {
+      const minutes = window.focusPhrase?.parseStart(text);
+      if (!minutes) return false;
+      const r = await start(minutes);
+      notice(r.ok ? tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }) : r.message);
+      return true;
+    },
+  };
+})();
 ;
 // ---- routines.js
 

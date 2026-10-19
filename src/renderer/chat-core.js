@@ -2810,6 +2810,13 @@ sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  if (typed && attachments.length === 0 && pastes.length === 0 && window.focusPhrase?.parseStart(typed) && window.focusUi) { // [focus] "focus for 90 minutes" starts focus mode here (renderer/focus.js)
+    prompt.value = '';
+    renderAttachments();
+    autosize();
+    await window.focusUi.tryStart(typed);
+    return;
+  }
   const text = window.chatDrafts.withPastes(typed, pastes);
   const hadPastes = pastes.length > 0; // (a pasted block is the message's subject, not the words of a new topic)
   const images = attachments;

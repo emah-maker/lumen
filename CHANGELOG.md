@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Focus mode for homework sessions.** Click the new circle button in the toolbar, type `focus for 90 minutes` in the chat, or use `/focus`, and the sites that pull you away (YouTube, Reddit, TikTok, Instagram, X, Facebook, Twitch and Netflix by default) are blocked until the timer ends. A blocked site never loads: the tab shows a calm page with the time left. **I need this for school** opens that one site for 10 minutes (noted in the focus log), and **End focus** has to be held down for 10 seconds, so quitting is a decision rather than a click. The toolbar button shows the time left, and a session survives restarting Lumen. Settings → General → Focus mode has the length to start, the list of blocked sites (editable; locked while a session is on), recurring schedules you can type in words ("weekdays 7–9 pm") that start and end focus by themselves, and the focus log. Nothing is blocked until you start it, and nothing leaves your computer. See [Focus mode](docs/focus.md). New tests: `test/focus-units.js`, `test/focus.js`.
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)
