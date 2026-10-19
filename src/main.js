@@ -138,6 +138,7 @@ const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
 const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
+const planModeLib = { approvedKeys: (plan) => require('./ai/plan-mode').approvedKeys(plan) }; // [plan mode] an approved plan's sites (loaded with the first approved plan)
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
@@ -1041,6 +1042,7 @@ function ownPageMic(wc, permission, details) {
   if (permission !== 'media') return false;
   const own = (url) => isUiUrl(url) || chatPage.isChatUrl(url);
   const isOwnView = uiContents.has(wc) ? isUiUrl(wc.getURL()) : Boolean(chatPageRt?.everyChatTab().some((t) => t.view.webContents === wc));
+  if (!isOwnView || details?.isMainFrame !== true) return false; // (the rule's own first checks: web pages and frames never load the dictation module)
   return require('./ai/dictation').ownPageMic({ permission, mediaTypes: details?.mediaTypes, requestingUrl: details?.requestingUrl, pageUrl: wc.getURL(), isMainFrame: details?.isMainFrame, isOwnView, isOwnPage: own });
 }
 
@@ -4237,6 +4239,7 @@ function tabMenuTemplate(id) {
     ...pinToFilesItem(url), // [files] a file tab: Pin to Files
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+    { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
     { type: 'separator' },
     ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
     { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
@@ -4690,8 +4693,8 @@ function widgetAction(event, url, wc = null) {
 async function cacheFavicon(pageUrl, iconUrls) {
   const host = hostOf(pageUrl);
   if (!host || faviconStore.has(host)) return;
-  // Only sites the new-tab page shows: favorites and frequently visited ones.
-  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host)) return;
+  // Only sites the new-tab page shows (favorites and frequently visited ones) and the sites on the reading list.
+  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host) && !readingListStore?.list().some((e) => hostOf(e.url) === host)) return;
   for (const iconUrl of iconUrls.filter((u) => /^https?:/.test(u))) {
     try {
       const res = await net.fetch(iconUrl);
@@ -4740,6 +4743,30 @@ function bookmarkAllTabs() {
   return folder;
 }
 
+// ---------- Reading list: Save for later (features/reading-list.js; the page is lumen://readinglist) ----------
+// The list is read from <userData>/reading-list.json the first time a page is saved or the list is opened, so a profile that never uses it pays nothing.
+let readingListStore = null;
+function readingList() {
+  if (!readingListStore) {
+    readingListStore = require('./features/reading-list').create({ file: path.join(app.getPath('userData'), 'reading-list.json') });
+    readingListStore.onChange(() => managers.pushReadingList()); // an open Reading list page redraws
+  }
+  return readingListStore;
+}
+app.on('before-quit', () => { try { readingListStore?.flushSync(); } catch { /* nothing pending */ } });
+const readingIcon = (host) => (host ? faviconStore.get(host) || '' : ''); // a data: URL (the page's CSP allows only those), kept for hosts the new-tab page or the list shows
+function saveForLaterUrl(url, title, icons) {
+  const r = isWebUrl(url) ? readingList().add({ url, title }) : { ok: false };
+  toast(t(!r.ok ? 'readingList.cantSave' : r.added ? 'readingList.saved' : 'readingList.savedAgain'));
+  if (r.ok && icons?.length) cacheFavicon(url, icons); // (the list shows a site's icon the way the new-tab page does)
+  return r.ok;
+}
+// Ctrl+Shift+Y, the tab menu, the Bookmarks menu: the page in that tab. (A research tab's own session is not the user's browsing.)
+function saveForLater(tab) {
+  if (!tab || tab.isolated) { toast(t('readingList.cantSave')); return false; }
+  return saveForLaterUrl(tabUrl(tab), tabTitle(tab), tab.favicons);
+}
+
 function bookmarksMenu() {
   const list = bookmarks();
   const wc = activeTab()?.webContents;
@@ -4749,6 +4776,8 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: t('menu.saveForLater'), accelerator: 'CmdOrCtrl+Shift+Y', enabled: isWebUrl(current), click: () => saveForLater(tabs.find((x) => x.id === activeId)) },
+    { label: t('menu.showReadingList'), click: () => managers.open('readinglist') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
@@ -4809,6 +4838,8 @@ const managers = createManagers({
   bookmarks: () => bookmarks(),
   saveBookmarks: (list) => writeSettings({ ...readSettings(), bookmarks: list }),
   bookmarksChanged: () => sendTabs(),
+  readingList: () => readingList(),
+  readingIcon: (host) => readingIcon(host),
   downloads,
   openFolder: () => shell.openPath(settingsBackend.downloadDir()),
 });
@@ -4816,6 +4847,7 @@ managers.setup();
 // When each site last stored cookies: lets Clear browsing data honour a time range for them.
 const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
+if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/reading-list.js
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
@@ -5015,6 +5047,7 @@ function showContextMenu(wc, p) {
       ...link.open, // Open Link in New Window, … in Private Window
       { type: 'separator' },
       ...link.save, // Save Link As…
+      ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveLinkForLater'), click: () => saveForLaterUrl(p.linkURL, p.linkText) }]),
       { label: t('menu.copyLink'), click: () => { clipboard.writeText(p.linkURL); toast(t('menu.linkCopied')); } },
       { type: 'separator' },
     );
@@ -5049,6 +5082,7 @@ function showContextMenu(wc, p) {
     if (isWebUrl(wc.getURL())) {
       items.push(
         { label: t('menu.savePageAs'), ...shortcutHint('CmdOrCtrl+S'), click: () => pageTools.savePage(wc).catch(() => {}) },
+        ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), click: () => saveForLater(tabByContents(wc)) }]),
         { label: t('menu.print'), ...shortcutHint('CmdOrCtrl+P'), click: () => printTab(wc) },
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
@@ -5097,6 +5131,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') openFindBar();
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
+  else if (mod && input.shift && !input.alt && key === 'y') saveForLater(tabs.find((x) => x.id === activeId)); // Save for later (the reading list: lumen://readinglist)
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
@@ -6260,7 +6295,7 @@ function macMenu() {
         normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') })] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
@@ -7936,7 +7971,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -8111,9 +8146,10 @@ signedInSites.register(ipcMain);
 const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
 sharedFiles.register(ipcMain);
 // [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
-const gapLog = require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false });
-ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog.list(), report: gapLog.report() }));
-ipcMain.handle('settings:clear-ai-gaps', () => { gapLog.clear(); return { entries: [], report: '' }; });
+let gapLogRt = null; // (loaded with the first gap recorded, or Settings asking for the list)
+const gapLog = () => (gapLogRt ||= require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false }));
+ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog().list(), report: gapLog().report() }));
+ipcMain.handle('settings:clear-ai-gaps', () => { gapLog().clear(); return { entries: [], report: '' }; });
 const tabAnywhere = (id) => {
   for (const rec of winRecs) {
     const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
@@ -8228,7 +8264,7 @@ const agent = new Agent({
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
-  recordGap: (info) => gapLog.record(info), // [no handoff]
+  recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
@@ -8261,7 +8297,7 @@ const agent = new Agent({
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
   },
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -8361,6 +8397,39 @@ const bgTasks = require('./features/background-runner').create({
 bgTasks.register(ipcMain);
 app.on('will-quit', () => bgTasks.shutdown());
 if (TEST) global.__bg = bgTasks;
+// [telegram] Phone (Telegram): requests from the user's own Telegram bot run as background tasks (features/telegram.js).
+// Off by default (telegramChannel); the bot token is encrypted like the API keys (keys.telegram) and never leaves this
+// process except to api.telegram.org. Tests never reach Telegram: only a stand-in (global.__telegramFetch).
+// Loaded only once it is needed (Phone on, or its Settings section asked): most starts never touch it (perf-budget's module count).
+let telegramRt = null;
+const telegramHandlers = {};
+const telegramNow = () => {
+  if (telegramRt) return telegramRt;
+  telegramRt = require('./features/telegram').create(telegramDeps());
+  telegramRt.register({ handle: (channel, fn) => { telegramHandlers[channel] = fn; } });
+  if (TEST) global.__telegram = telegramRt;
+  return telegramRt;
+};
+const telegramDeps = () => ({
+  fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
+  readSettings, writeSettings, t,
+  getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !safeStorage.isEncryptionAvailable()) return null; try { return decryptKey(enc); } catch { return null; } },
+  setToken: (token) => {
+    const settings = readSettings();
+    const keys = { ...(settings.keys || {}) };
+    if (token) keys.telegram = safeStorage.encryptString(String(token)).toString('base64');
+    else delete keys.telegram;
+    writeSettings({ ...settings, keys });
+  },
+  canEncrypt: () => safeStorage.isEncryptionAvailable(),
+  isOnline: () => net.isOnline(),
+  tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
+});
+for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
+  ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
+}
+const telegram = { refresh: () => { if (telegramRt || readSettings().telegramChannel === true) telegramNow().refresh(); } };
+app.on('will-quit', () => telegramRt?.shutdown());
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -8460,6 +8529,9 @@ async function completeSkillJsonOn(model, { system, user, schema }) {
   if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Settings first.`);
   return providers.completeJSON({ provider, model: id, apiKey, system, user });
 }
+// [skills] The skills the AI may use on its own, as the system prompt lists them (fixed when a chat starts). '' before
+// skillsFeature exists (a chat begun during start-up) or when there are none.
+function skillsListNow() { try { return skillsFeature.promptBlock(); } catch { return ''; } }
 const skillsFeature = require('./features/skills').create({
   ipcMain,
   dialog: electronDialog,
@@ -8488,10 +8560,14 @@ const skillsFeature = require('./features/skills').create({
   broadcast: (channel, payload) => { for (const wc of skillSurfaces()) wc.send(channel, payload); },
   openSettings: (section) => openSettingsPage(section),
   emitDraft: (draft) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:draft', draft); },
+  emitUpdate: (update) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:update', update); },
+  settings: () => readSettings(),
+  homeDir: () => app.getPath('home'),
   transcript: () => agent.transcript(),
   complete: (args) => (TEST && global.__skillsComplete ? global.__skillsComplete(args) : completeSkillJson(args)),
 });
 skillsFeature.register();
+agent.browser.skills = skillsFeature; // the use_skill tool (ai/agent.js)
 if (TEST) global.__skills = skillsFeature;
 
 // ---------- meeting helper (features/meeting.js): live prompting, agenda/resume, stealth, listener ----------
@@ -8511,12 +8587,12 @@ if (TEST) global.__meetingHelper = meetingHelper;
 // [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). The recording arrives once, goes to the
 // provider chosen in Settings with the user's key (the page never sees the key), and the buffer is cleared afterwards;
 // nothing is written to disk. The sidebar and the chat page may ask (UI_ONLY_IPC, chat-page.js CHAT_IPC).
-const dictationLib = require('./ai/dictation');
+const dictationLib = () => require('./ai/dictation'); // (loaded with the first use of the mic)
 function dictationState() {
   const s = readSettings();
-  const choice = dictationLib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
-  if (!choice.provider) { const m = dictationLib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
-  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, maxBytes: dictationLib.MAX_BYTES, autoSend: s.dictationAutoSend === true };
+  const choice = dictationLib().choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
+  if (!choice.provider) { const m = dictationLib().unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
+  return { provider: choice.provider, label: dictationLib().LABELS[choice.provider], format: dictationLib().FORMATS[choice.provider], maxSeconds: dictationLib().MAX_SECONDS, maxBytes: dictationLib().MAX_BYTES, autoSend: s.dictationAutoSend === true };
 }
 ipcMain.handle('dictation:status', () => dictationState());
 ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
@@ -8526,7 +8602,7 @@ ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
   if (format !== state.format) return { error: t('dictation.error.changed') }; // the setting changed while recording
   const audio = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   try {
-    const res = await dictationLib.transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
+    const res = await dictationLib().transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
     return res.error ? { error: t(res.error.key, res.error.params), settings: res.error.key === 'dictation.error.key' } : { text: res.text, autoSend: state.autoSend };
   } finally {
     audio.fill(0); // (the only copy in this process)
@@ -8602,6 +8678,7 @@ const macrosFeature = require('./features/macros-runtime').create({
 });
 macrosFeature.register();
 agent.browser.macros = macrosFeature; // the run_macro tool (ai/agent.js)
+agent.browser.readingList = (input, tab, hidden) => require('./features/reading-list').toolText(input, { store: readingList(), tab, hidden }); // the reading_list tool (ai/agent.js)
 if (TEST) global.__macros = macrosFeature;
 
 // ---------- [settings] lumen://settings ----------
@@ -9010,8 +9087,10 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
+  onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
   onTabReadyChange: () => { for (const rec of [...winRecs]) scheduleReadySync(rec); },
@@ -9830,7 +9909,7 @@ function stampRun(run, done = null) {
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null, askOpts = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   let shownPick = null; // what every picker shows right now (the open chat's model, or the saved pick while it has none), before the sender's own chat is brought up
   try { shownPick = shownModel().pick || null; } catch { /* not set up yet */ }
@@ -9923,6 +10002,14 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     out.push(msg);
     for (const ev of afterMsg) pushThumb(ev);
+    if (msg.type === 'tool' && msg.name === 'use_skill') { // [skills] the AI loaded a skill: a correction after this run can offer to update it
+      const used = skillsFeature.autoSkills().find((x) => x.name === String(msg.input?.name || '').trim().toLowerCase());
+      if (used) skillsFeature.learning.used(runChat, { id: used.id, name: used.name });
+    }
+    if (msg.type === 'done' && !run.deleted) { // [skills] Settings → Skills → "Offer to save and improve skills": a card under the reply, never a save
+      const offer = skillsFeature.learning.done(runChat, { enabled: readSettings().skillsSuggest === true, ok: !run.error && !run.stopped, toolNames: run.details.tools.filter((x) => x.id).map((x) => x.name), skillInfo: (id) => skillsFeature.findAny(id) });
+      if (offer) sendOut({ type: 'skill_offer', ...offer });
+    }
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
@@ -9936,6 +10023,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; modelsChanged(); }
   };
   const skillRun = skillsFeature.takeRun(askText);
+  skillsFeature.learning.ask(runChat, askText, skillRun ? { id: skillRun.id, name: skillRun.name } : null); // [skills] a "/" run, or a follow-up that may correct one
   const tabsPicked = tabsAsk.cleanIds(tabIds);
   const start = () => {
     if (run.deleted) { runSlots.release(runChat); return; }
@@ -9947,6 +10035,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     const askExtra = { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, fromPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } };
+    // [plan mode] askOpts.plan: this message only reads and proposes a plan (agent.js planCheck). askOpts.approvedPlan: the user pressed
+    // Run plan, so the plan's sites join this chat's approved sites for clicking and typing only ("interact:<host>", ai/plan-mode.js
+    // approvedKeys): opening or sending to one after reading a page, and scripts there, still ask.
+    const planOpts = askOpts && typeof askOpts === 'object' ? askOpts : {};
+    if (planOpts.approvedPlan) for (const key of planModeLib.approvedKeys(planOpts.approvedPlan)) hosts.add(key);
+    else if (planOpts.plan === true) askExtra.plan = true;
     // [working-on chip] A chat-page run takes a tab at once only when the request is about the page the user is looking at; any other
     // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).
     if (fromChatPage && agent.aboutCurrentPage(askText, askExtra)) { const cand = chatPageRt.pick(); if (cand != null) chatPageRt.retarget(cand); }
@@ -10830,6 +10924,10 @@ ipcMain.handle('eml:open', async (e, index) => {
   return true;
 });
 ipcMain.on('pdf:print', (e) => { if (e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url)) printTab(e.sender); });
+ipcMain.on('pdf:fallback', (e, why) => { // the viewer could not open its PDF: Chrome's viewer shows it instead (features/pdf-viewer.js fallback)
+  if (e.senderFrame !== e.sender.mainFrame || !pdfViewer.isViewerUrl(e.senderFrame?.url)) return;
+  if (pdfRt.fallback(e.sender)) console.warn(`[pdf] Lumen's viewer could not open a PDF (${String(why || 'unknown').slice(0, 300)}); showing it in Chrome's viewer`);
+});
 aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).
@@ -11303,6 +11401,7 @@ app.whenReady().then(async () => {
   downloads.load(); // the list from last time (downloads.json)
   usage.load(); // [usage] the log from earlier sessions (usage.json)
   bgTasks.init(); // background tasks: restore them and start the scheduler
+  telegram.refresh(); // [telegram] listen to the user's bot, when Phone (Telegram) is on and a token is saved
   downloads.setup();
   siteActivity.watch(session.defaultSession);
   loadChat();

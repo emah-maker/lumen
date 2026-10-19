@@ -30,6 +30,7 @@
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false })); // [subagents] the sidebar's Helpers button follows Settings → AI
+    if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); } // [plan mode] the composer's Plan chip in a new chat
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false; // [sidebar new chat] app.js: the AI button opens on a new chat
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true; // [diagnostics] app.js reports when the strip drew a switch
   };

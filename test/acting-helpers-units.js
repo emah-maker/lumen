@@ -61,7 +61,7 @@ const mockExecute = (agent, browser, ran) => {
 (async () => {
   // ---- the allowlist
   check('allowlist: the tab tools, nothing else', J([...A.ACT_TOOLS].sort()) === J(['click', 'fill_form', 'find', 'go_back', 'navigate', 'press_key', 'read_page', 'screenshot', 'scroll', 'type_text', 'wait_for']));
-  check('allowlist: no scripts, uploads, apps, connectors, memory, delegation or tab switching', ['run_script', 'upload_file', 'desktop', 'connector', 'memory', 'delegate', 'parallel_tasks', 'open_tab', 'switch_tab', 'close_tab', 'read_urls', 'batch', 'drag'].every((n) => !A.isActTool(n)));
+  check('allowlist: no scripts, uploads, apps, connectors, memory, plans, skills, delegation or tab switching', ['run_script', 'upload_file', 'desktop', 'connector', 'memory', 'propose_plan', 'use_skill', 'reading_list', 'delegate', 'parallel_tasks', 'open_tab', 'switch_tab', 'close_tab', 'read_urls', 'batch', 'drag'].every((n) => !A.isActTool(n)));
   check('input: read_page is always compact, screenshot never names another tab, navigate opens web pages only', A.prepareInput('read_page', { mode: 'full', extract: 'links' }).mode === 'compact' && !('extract' in A.prepareInput('read_page', { extract: 'links' })) && !('tab_id' in A.prepareInput('screenshot', { tab_id: 1 })) && (() => { try { A.prepareInput('navigate', { url: 'file:///etc/passwd' }); return false; } catch (e) { return /web pages only/.test(e.message); } })() && A.prepareInput('navigate', { url: 'https://a.test' }).url === 'https://a.test');
   check('prompt: the helpers are told never to buy, send or submit, and to hand that step back to the lead', /NEVER buy/.test(A.SYSTEM) && /send/.test(A.SYSTEM) && /submit/.test(A.SYSTEM) && /lead decides/.test(A.SYSTEM));
 
@@ -209,6 +209,21 @@ const mockExecute = (agent, browser, ran) => {
     wired.agent.getClient = () => ({ beta: { messages: { stream: (p) => { params.push(p); return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => reply([text('hi')]) }; } } } });
     await wired.agent.claudeTurn(chat, new AbortController().signal, () => {});
     check('setting: claudeTurn offers the tool while the setting is on', params[0].tools.some((t) => t.name === 'parallel_tasks'));
+  }
+  {
+    // [plan mode] while planning, parallel_tasks is neither offered nor allowed
+    const pm = require('../src/ai/plan-mode');
+    check('plan mode: parallel_tasks is not in the planning allowlist', !pm.PLAN_TOOLS.has('parallel_tasks'));
+    const { agent } = makeAgent();
+    let refused = '';
+    await agent.inTask(1, new AbortController().signal, async () => {
+      try { await agent.ensureAllowed('parallel_tasks', () => {}, new AbortController().signal, { input: { tasks: [{ task: 'x' }] } }); } catch (e) { refused = e.message; }
+    }, chatOf(), null, { planMode: true, hosts: new Set() });
+    check('plan mode: a parallel_tasks call while planning is refused before anything runs', refused.length > 0, refused);
+    const params = [];
+    agent.getClient = () => ({ beta: { messages: { stream: (p) => { params.push(p); return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => reply([text('hi')]) }; } } } });
+    await agent.inTask(1, new AbortController().signal, () => agent.claudeTurn(chatOf(), new AbortController().signal, () => {}), chatOf(), null, { planMode: true });
+    check('plan mode: the tool is not offered while planning', params.length === 1 && !params[0].tools.some((t) => t.name === 'parallel_tasks'));
   }
   {
     check('label events: approval cards carry the helper number; other helper events stay out of the chat', A.labelEvent({ type: 'approval', approvalId: 1, host: 'x' }, 2).helper === 2 && A.labelEvent({ type: 'tool', name: 'click', id: 'a' }, 2) === null && A.labelEvent({ type: 'approval_done', approvalId: 1 }, 2).approvalId === 1);

@@ -21,6 +21,10 @@ check('Sunday sorts last', /^Fri, Sun at /.test(text({ repeat: 'weekly', days: [
 check('every hour and every n hours', text({ repeat: 'hours', hours: 1 }) === 'Every hour' && text({ repeat: 'hours', hours: 3 }) === 'Every 3 hours');
 check('cron is shown as written', text({ repeat: 'cron', cron: '30 8 * * 1-5' }) === 'Cron: 30 8 * * 1-5');
 check('once names the date', /^Once, Oct 20, 3:00\s?PM$/.test(text({ repeat: 'once', at: at(2026, 10, 20, 15) })), text({ repeat: 'once', at: at(2026, 10, 20, 15) }));
+check('cron every n minutes is said in words', text({ repeat: 'cron', cron: '*/30 * * * *' }) === 'Every 30 minutes');
+check('the event triggers are said in words', text({ repeat: 'webhook' }) === 'When its web link is called' && text({ repeat: 'email', minutes: 10 }) === 'When new email arrives (checked every 10 min)');
+check('a run with nothing to report and the new triggers have words', X.historyLine({ startedAt: at(2026, 10, 18, 8), status: 'nothing', trigger: 'webhook' }, T).includes('Nothing to report · from its web link') && T('routines.trigger.email') === 'new email');
+check('the web links line: listening, port in use, or nothing when off', X.webhookStatus({ on: true, listening: true, port: 47821 }, T) === 'Listening on 127.0.0.1:47821.' && /Port 47821 is used by another program/.test(X.webhookStatus({ on: true, listening: false, port: 47821, error: 'in-use' }, T)) && X.webhookStatus({ on: false, port: 47821 }, T) === '');
 check('a task that is not a routine has no schedule text', X.scheduleText({ type: 'task' }, T) === '' && X.scheduleText(null, T) === '');
 
 // ---- a row

@@ -996,7 +996,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
@@ -1023,10 +1023,11 @@ async function askInNewChat(text, files = []) {
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
-function ask(text, images = [], tabs = null, screen) {
+// `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry; // (for Send now)
@@ -1051,7 +1052,8 @@ function ask(text, images = [], tabs = null, screen) {
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined; // [plan mode] (/plan sends opts.plan)
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
@@ -1361,6 +1363,7 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'), // [plan mode]
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }), // [acting helpers]
@@ -1460,6 +1463,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+  // [skills] After a run ended (opt-in, Settings → Skills): "Save how I did this as a skill?" or "Update the skill?" (skills.js)
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
   // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
   // text): drawn under that reply, not dropped with the finished turn.
@@ -1615,6 +1620,16 @@ window.assistant.onEvent((event) => {
     case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
       showHelperCard(event);
       break;
+    case 'plan': { // [plan mode] propose_plan: the plan as a card with Run plan / Edit / Keep planning (renderer/plan-mode.js)
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
@@ -2543,6 +2558,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) { // [plan mode] a proposed plan: its card again, after any words that came with it
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -2700,6 +2720,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
@@ -2935,6 +2956,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false); // [plan mode] a new chat starts as Settings says
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
