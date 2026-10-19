@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Quick notes: a small notepad in the sidebar.** Open **⋯ → Notes** to keep notes that stay across tabs and restarts: a list with search, and an editor with plain text you can write Markdown in (a Preview tab draws it) that saves as you type. **Add to notes** sits under every AI reply, so homework summaries and the diagrams the AI draws can be saved (a diagram has its own Notes button, and a picture the AI made can be added too), and right-clicking selected text on a page now offers **Add to notes** with a link back to the page. **Ask AI** at the bottom of a note sends it to the chat with your question. The AI can read your notes and add to them when you ask (a short `notes` tool for the API models in the sidebar; it never edits or deletes what you wrote). Notes are one local file, `notes.json`, written safely so a crash can't damage it. Details: [Notes](docs/notes.md). Tests: `test/notes-units.js` (the store, the Add buttons' logic and the tool) and `test/notes.js` (a real window: create, edit, autosave, search, add from a reply and from the page, restart).
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)

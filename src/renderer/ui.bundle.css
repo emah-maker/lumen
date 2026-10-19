@@ -2220,6 +2220,7 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .msg.assistant:hover .reply-thumb, .reply-thumb:focus-visible, .reply-thumbs.rated .reply-thumb[aria-pressed="true"] { opacity: 1; }
 .reply-thumb:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
 .reply-thumb[aria-pressed="true"] { color: var(--accent); }
+.reply-note.done { opacity: 1; color: var(--accent); }
 .reply-thumb[aria-pressed="true"] svg { fill: currentColor; fill-opacity: 0.18; }
 
 .msg.user.clamped:not(.expanded):not(.editing) { max-height: 11.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
