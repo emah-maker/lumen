@@ -149,6 +149,7 @@ const DEFAULTS = {
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   aiSubagents: true, // [ai] the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). The sidebar's Helpers button and Settings > AI are this one setting
+  actingHelpers: false, // [ai] Settings > AI > "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
   aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)

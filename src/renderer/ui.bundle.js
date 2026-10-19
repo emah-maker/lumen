@@ -3718,6 +3718,8 @@ $('model').addEventListener('change', async (e) => {
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title');
   const full = optional('open-chat-page');
   if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
+  const mission = optional('mission-btn');
+  if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘X' : t('shortcut.ctrlShiftX');
 })();
 
 
@@ -4546,7 +4548,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
 
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4656,6 +4658,7 @@ const TOOL_LABELS = {
   propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
@@ -4907,6 +4910,9 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'helper_card':
+      showHelperCard(event);
+      break;
     case 'plan': {
       settleThinking();
       finishReply(turn.text, turn.textSource);
@@ -4919,8 +4925,8 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       chatHost.needSidebar?.();
-      announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel });
+      announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -5412,7 +5418,60 @@ const approvals = new Map();
 
 
 
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
+function showApproval(approvalId, host, opts = {}) {
+  showApprovalCard(approvalId, host, opts);
+  if (opts.helper) markHelperApproval(approvalId, opts.helper);
+}
+
+
+function markHelperApproval(approvalId, n) {
+  const card = approvals.get(approvalId)?.card;
+  const title = card?.querySelector('.approval-title');
+  if (!title) return;
+  const tag = t('approval.helper', { n });
+  title.textContent = `${tag} ${title.textContent}`;
+  card.setAttribute('aria-label', `${tag} ${card.getAttribute('aria-label') || title.textContent}`);
+  card.dataset.helper = String(n);
+}
+
+
+
+
+const helperCards = new Map();
+function showHelperCard(e) {
+  let card = helperCards.get(e.key);
+  if (!card || !card.isConnected) {
+    card = Object.assign(document.createElement('div'), { className: 'helper-card' });
+    card.setAttribute('role', 'group');
+    const head = Object.assign(document.createElement('div'), { className: 'helper-card-head' });
+    const name = Object.assign(document.createElement('span'), { className: 'helper-card-name', textContent: t('helper.name', { n: e.n }) });
+    const state = Object.assign(document.createElement('span'), { className: 'helper-card-state' });
+    head.append(name, state);
+    const task = Object.assign(document.createElement('p'), { className: 'helper-card-task', textContent: e.task || '' });
+    const step = Object.assign(document.createElement('p'), { className: 'helper-card-step' });
+    const actions = Object.assign(document.createElement('div'), { className: 'helper-card-actions' });
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'helper-card-tab', textContent: t('helper.tab'), hidden: true });
+    chip.title = t('helper.tabTitle');
+    chip.onclick = () => { const id = Number(card.dataset.tab); if (Number.isInteger(id)) window.browser?.switchTab?.(id); };
+    if (!window.browser?.switchTab) chip.disabled = true;
+    const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'btn helper-card-stop', textContent: t('helper.stop') });
+    stop.onclick = () => { stop.disabled = true; window.assistant.stopHelper?.(e.key); };
+    actions.append(chip, stop);
+    card.append(head, task, step, actions);
+    appendToTurn(card);
+    helperCards.set(e.key, card);
+  }
+  const ended = ['done', 'timeout', 'failed', 'stopped'].includes(e.status);
+  const label = t(`helper.status.${ended ? e.status : 'working'}`);
+  card.querySelector('.helper-card-state').textContent = label;
+  card.querySelector('.helper-card-step').textContent = ended ? '' : e.step || '';
+  card.setAttribute('aria-label', `${t('helper.name', { n: e.n })}: ${label}`);
+  card.classList.toggle('ended', ended);
+  if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.querySelector('.helper-card-tab').hidden = false; }
+  if (ended) card.querySelector('.helper-card-stop').hidden = true;
+}
+
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
@@ -8001,6 +8060,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  tasks: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
   readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
@@ -10958,6 +11018,7 @@ chatHost.identity = (who, first) => {
 
 
 $('open-chat-page').onclick = () => window.assistant.openFullPage();
+$('mission-btn').onclick = () => window.assistant.tasks?.openFull?.();
 window.assistant.onSidebar?.((visible) => {
 
   if (($('toggle-sidebar').getAttribute('aria-pressed') === 'true') !== Boolean(visible)) showSidebar(Boolean(visible));
@@ -11318,6 +11379,7 @@ $('agent-stop')?.addEventListener('click', () => {
   const btn = (text, onclick, cls = 'btn') => h('button', { type: 'button', className: cls, textContent: text, onclick });
   const iconBtn = (svg, label, onclick, cls = 'icon-btn') => { const b = h('button', { type: 'button', className: cls, title: label, onclick }); b.setAttribute('aria-label', label); b.innerHTML = svg; return b; };
   const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  const FULL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>';
   const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
 
   const clock = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -11455,7 +11517,9 @@ $('agent-stop')?.addEventListener('click', () => {
 
   function head(title, left) {
     const close = iconBtn(CLOSE, T('tasks.close'), () => closePanel(true), 'icon-btn task-close');
-    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), close);
+
+    const full = left ? null : iconBtn(FULL, T('mission.openFull'), () => { closePanel(false); api.openFull?.(); }, 'icon-btn task-full');
+    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), full, close);
   }
 
   function renderList() {
