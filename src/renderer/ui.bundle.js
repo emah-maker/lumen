@@ -4282,7 +4282,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 
@@ -4309,10 +4309,11 @@ async function askInNewChat(text, files = []) {
 }
 
 
-function ask(text, images = [], tabs = null, screen) {
+
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry;
@@ -4337,7 +4338,8 @@ function ask(text, images = [], tabs = null, screen) {
 
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null;
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined;
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 
@@ -4647,6 +4649,7 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
@@ -4745,6 +4748,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
 
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
 
 
@@ -4898,6 +4903,16 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'plan': {
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.();
       announce(event.title || t('chat.approvalWaiting'));
@@ -5787,6 +5802,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) {
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -5944,6 +5964,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null;
+  window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
@@ -6179,6 +6200,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false);
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
@@ -7803,6 +7825,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
@@ -12992,6 +13015,28 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
 
+
+  window.showSkillOffer = function showSkillOffer(append, offer) {
+    if (!offer?.token || typeof append !== 'function') return;
+    const update = offer.kind === 'update';
+    if (!update && offer.kind !== 'save') return;
+    const box = append(Object.assign(document.createElement('div'), { className: 'run-undo skill-offer', role: 'status' }));
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: update ? tr('skills.offer.update', 'Update the skill “{title}” with what changed?', { title: offer.skill?.title || offer.skill?.name || '' }) : tr('skills.offer.save', 'Save how I did this as a skill?') });
+    const yes = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: update ? tr('skills.offer.updateButton', 'Show the change') : tr('skills.offer.saveButton', 'Draft a skill') });
+    const no = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('skills.offer.no', 'No thanks') });
+    yes.addEventListener('click', async () => {
+      yes.disabled = true;
+      no.disabled = true;
+      text.textContent = tr('skills.create.working', 'Asking the model for a skill…');
+      const call = update ? api.offerUpdate : api.offerSave;
+      const r = call ? await call(offer.token).catch((err) => ({ ok: false, error: String(err?.message || err) })) : null;
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: r?.ok ? (update ? tr('skills.offer.updateOpened', 'The change is open in Settings → Skills. Nothing changes until you accept it.') : tr('skills.create.opened', 'The editor is open in Settings. Review it and save.')) : (r?.error || tr('skills.failed', 'That skill could not run.')) }));
+    });
+    no.addEventListener('click', () => box.remove());
+    box.append(text, ' ', yes, ' ', no);
+  };
+
+
   const decode = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
   const REQUEST = /^<skill_request name="([^"]*)" title="([^"]*)" input="([^"]*)">\n([\s\S]*?)\n?<\/skill_request>\s*$/;
   function decorate(bubble) {
@@ -13213,12 +13258,17 @@ $('agent-stop')?.addEventListener('click', () => {
   const timeText = (hhmm) => { const [hh, mm] = String(hhmm || '08:00').split(':').map(Number); return new Date(2026, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const routinesOf = (state) => state.tasks.filter((t) => t.schedule?.type === 'routine');
 
+  const TRIGGERS = ['schedule', 'webhook', 'email'];
+  const triggerOf = (s) => (s && ['webhook', 'email'].includes(s.repeat) ? s.repeat : 'schedule');
 
   function scheduleText(s) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -13302,14 +13352,14 @@ $('agent-stop')?.addEventListener('click', () => {
       const when = [clock(r.startedAt || r.endedAt), T(`routines.history.status.${r.status}`), T(`routines.trigger.${r.trigger}`),
         r.trigger === 'catch-up' && r.scheduledFor ? T('routines.history.dueAt', { time: clock(r.scheduledFor) }) : ''].filter(Boolean).join(' · ');
       const details = h('details', { className: 'routine-run', open: i === 0 && r.status !== 'done' },
-        h('summary', {}, h('span', { className: `task-dot ${r.status === 'skipped' ? 'stopped' : r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
+        h('summary', {}, h('span', { className: `task-dot ${{ skipped: 'stopped', nothing: 'done' }[r.status] || r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
       if (r.error) details.append(h('p', { className: r.status === 'skipped' ? 'task-meta' : 'task-error', textContent: r.error }));
       if (r.result) {
         const body = h('div', { className: 'msg assistant task-result routine-result' });
         body.innerHTML = window.renderMarkdown(r.result);
         body.addEventListener('click', (e) => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); window.browser.newTab(a.href); } });
         details.append(body);
-      } else if (!r.error) details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
+      } else if (!r.error && r.status !== 'nothing') details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
       return h('li', {}, details);
     })));
     return out;
@@ -13317,7 +13367,8 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
   let card = null;
-  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false } = {}) {
+
+  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false, shownKey = null } = {}) {
     const state = core.state();
     if (!state.settings.enabled) { core.openPanel(null, { tab: 'routines' }); return; }
     card?.remove();
@@ -13352,12 +13403,17 @@ $('agent-stop')?.addEventListener('click', () => {
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });
+    const quiet = h('input', { type: 'checkbox', className: 'routine-quiet-check', checked: Boolean(task?.routine?.quietUnlessNeeded) });
     const syncMcp = () => { const cli = pv.models.find((m) => m.id === model.value)?.engine !== 'api'; mcp.disabled = cli; if (cli) mcp.checked = false; };
     model.addEventListener('change', syncMcp);
 
 
     const s0 = task?.schedule || schedule || { repeat: 'weekdays', time: '08:00' };
-    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === s0.repeat })));
+
+    const trigger = h('select', { className: 'routine-trigger' }, TRIGGERS.map((k) => h('option', { value: k, textContent: T(`routines.trigger.kind.${k}`), selected: k === triggerOf(s0) })));
+    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === (triggerOf(s0) === 'schedule' ? s0.repeat : 'weekdays') })));
+    const emailEvery = h('input', { type: 'number', min: 5, max: 1440, value: s0.minutes || 10, className: 'task-minutes routine-email-every' });
+    emailEvery.setAttribute('aria-label', T('routines.field.emailEvery'));
     const time = h('input', { type: 'time', value: s0.time || '08:00', required: true });
     time.setAttribute('aria-label', T('routines.field.time'));
     const days = h('fieldset', { className: 'routine-days' }, h('legend', { textContent: T('routines.field.days') }),
@@ -13378,7 +13434,40 @@ $('agent-stop')?.addEventListener('click', () => {
       cron: h('div', {}, h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.cron') }), cron), h('p', { className: 'task-meta', textContent: T('routines.field.cron.hint') })),
     };
     const next = h('p', { className: 'task-meta routine-next', 'aria-live': 'polite' });
+    const hooks = core.state().webhooks || { on: false, port: 47821, listening: false, error: '' };
+    const emailBox = h('div', { className: 'routine-email' },
+      h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.emailEvery') }), emailEvery, h('span', { textContent: T('routines.field.minutesUnit') })),
+      h('p', { className: 'task-meta', textContent: T('routines.email.hint') }),
+      (state.connected || []).includes('gmail') ? null : h('p', { className: 'task-meta task-error routine-email-needs', textContent: T('routines.email.needsGmail') }),
+      task?.routine?.emailError ? h('p', { className: 'task-meta task-error', textContent: T('routines.email.error', { error: task.routine.emailError }) }) : null);
+    const hookBox = h('div', { className: 'routine-webhook' }, h('p', { className: 'task-meta', textContent: T('routines.webhook.hint') }));
+    if (!hooks.on) hookBox.append(h('p', { className: 'task-meta task-error routine-webhook-off', textContent: T('routines.webhook.settingOff') }));
+    else if (hooks.error) hookBox.append(h('p', { className: 'task-meta task-error', textContent: T('routines.webhook.inUse', { port: hooks.port }) }));
+    if (!task) hookBox.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.saveFirst') }));
+    else {
+      const url = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-url', value: shownKey?.url || `http://127.0.0.1:${hooks.port}/routines/${task.id}/run` });
+      hookBox.append(field(T('routines.webhook.url'), url));
+      const copyText = async (b, text) => { try { await navigator.clipboard.writeText(text); b.textContent = T('routines.webhook.copied'); setTimeout(() => { b.textContent = T('routines.webhook.copyCurl'); }, 1500); } catch (err) { console.error('[lumen] copy failed:', err); } };
+      const showKey = (made) => {
+        const keyBox = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-key', value: made.key });
+        const copy = btn(T('routines.webhook.copyCurl'), () => copyText(copy, made.curl), 'btn routine-webhook-copy');
+        return h('div', { className: 'routine-webhook-made' }, field(T('routines.webhook.key'), keyBox), h('p', { className: 'task-meta', textContent: T('routines.webhook.keyShown') }), copy);
+      };
+      const keyArea = h('div', {});
+      const makeKey = btn(task.routine?.hasKey || shownKey ? T('routines.webhook.regenerate') : T('routines.webhook.make'), async () => {
+        const res = await api.routineWebhookKey(task.id);
+        if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
+        keyArea.replaceChildren(showKey(res));
+        makeKey.textContent = T('routines.webhook.regenerate');
+      }, 'btn routine-webhook-make');
+      if (shownKey) keyArea.append(showKey(shownKey));
+      else if (task.routine?.hasKey) keyArea.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.hasKey') }));
+      hookBox.append(keyArea, h('div', { className: 'approval-actions' }, makeKey));
+    }
+    const scheduleBox = h('div', { className: 'routine-schedule-box' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron);
     const getSchedule = () => {
+      if (trigger.value === 'webhook') return { repeat: 'webhook' };
+      if (trigger.value === 'email') return { repeat: 'email', minutes: Number(emailEvery.value) };
       const r = repeat.value;
       if (r === 'once') return { repeat: r, at: new Date(when.value).getTime() };
       if (r === 'hours') return { repeat: r, hours: Number(hours.value), ...(task?.schedule.repeat === 'hours' && Number(hours.value) === task.schedule.hours ? { anchor: task.schedule.anchor } : {}) };
@@ -13391,9 +13480,15 @@ $('agent-stop')?.addEventListener('click', () => {
       const res = await api.routinePreview({ schedule: getSchedule() });
       if (seq !== previewSeq) return;
       next.classList.toggle('task-error', !res.ok);
-      next.textContent = res.ok ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : res.error;
+      next.textContent = res.ok ? (trigger.value === 'schedule' ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : '') : res.error;
     };
+    const enabledLabel = h('span', {});
     const sync = () => {
+      const k = trigger.value;
+      scheduleBox.hidden = k !== 'schedule';
+      emailBox.hidden = k !== 'email';
+      hookBox.hidden = k !== 'webhook';
+      enabledLabel.textContent = k === 'schedule' ? T('routines.field.enabled') : T('routines.field.enabled.event');
       const r = repeat.value;
       rows.time.hidden = !['daily', 'weekdays', 'weekly'].includes(r);
       rows.days.hidden = r !== 'weekly';
@@ -13403,7 +13498,8 @@ $('agent-stop')?.addEventListener('click', () => {
       updateNext();
     };
     repeat.addEventListener('change', sync);
-    for (const c of [time, hours, when, cron, days]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
+    trigger.addEventListener('change', sync);
+    for (const c of [time, hours, when, cron, days, emailEvery]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
 
 
     let siteTimer = null;
@@ -13422,8 +13518,11 @@ $('agent-stop')?.addEventListener('click', () => {
       name.value = T(`routines.template.${tp.key}.name`);
       what.value = T(`routines.template.${tp.key}.prompt`);
       if (tp.page) start.value = /^https?:/i.test(pv.pageUrl) ? pv.pageUrl : '';
+      trigger.value = triggerOf(tp.schedule);
       repeat.value = tp.schedule.repeat;
       time.value = tp.schedule.time || '08:00';
+      if (tp.schedule.cron) cron.value = tp.schedule.cron;
+      quiet.checked = Boolean(tp.quiet);
       for (const i of days.querySelectorAll('input')) i.checked = (tp.schedule.days || [1]).includes(Number(i.value));
       templateKey = tp.key;
       sitesTouched = false;
@@ -13437,14 +13536,20 @@ $('agent-stop')?.addEventListener('click', () => {
       save.disabled = true;
       const res = await api.saveRoutine({
         id: task?.id, title: name.value, prompt: what.value, startUrl: start.value, sites: sitesTouched ? sites.value.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
-        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, confirmed: true,
+        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, quietUnlessNeeded: quiet.checked, confirmed: true,
       });
       if (!res.ok) { error.textContent = res.error; error.hidden = false; save.disabled = false; return; }
       if (fromComposer) { composerInput.value = ''; composerInput.dispatchEvent(new Event('input')); }
       core.announce(task ? T('routines.saved') : T('routines.created'));
       fromComposer = false;
+      const firstKey = !task?.routine?.hasKey && trigger.value === 'webhook' && !shownKey;
       close();
       await core.openPanel(res.id, { tab: 'routines' });
+      if (firstKey) {
+        const made = await api.routineWebhookKey(res.id);
+        const saved = made.ok ? await api.get(res.id) : null;
+        if (saved) open({ task: saved, shownKey: made });
+      }
     }, 'btn primary');
 
     box.append(
@@ -13454,12 +13559,14 @@ $('agent-stop')?.addEventListener('click', () => {
       field(T('routines.field.name'), name),
       field(T('tasks.create.prompt'), what),
       field(T('routines.field.start'), start),
-      h('div', { className: 'task-schedule' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron, next),
+      h('div', { className: 'task-schedule' }, field(T('routines.field.trigger'), trigger, false),
+        scheduleBox, emailBox, hookBox, next),
       field(T('tasks.create.sites'), sites),
       h('label', { className: 'task-field' }, model, h('span', { textContent: T('tasks.create.model') })),
       h('label', { className: 'task-check' }, signedIn, T('tasks.create.signedIn')),
       pv.hasMcp ? h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp')) : null,
-      task ? h('label', { className: 'task-check' }, enabled, T('routines.field.enabled')) : null,
+      h('label', { className: 'task-check', title: T('routines.field.quiet.hint') }, quiet, T('routines.field.quiet')),
+      task ? h('label', { className: 'task-check' }, enabled, enabledLabel) : null,
       h('p', { className: 'task-meta', textContent: `${T('tasks.create.asks')} ${T('routines.create.whileOpen')}` }),
       ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
@@ -13845,6 +13952,297 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 })();
 ;
+// ---- ../ai/plan-mode.js
+
+
+
+
+
+
+
+{
+
+
+
+
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
+  const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
+  const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
+
+
+  function planToolError(name, input = {}) {
+    if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
+    return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
+  }
+
+
+  function planSite(raw) {
+    const text = String(raw ?? '').trim().toLowerCase();
+    if (!text || text.length > 255 || /\s/.test(text)) return '';
+    let url;
+    try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`); } catch { return ''; }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return '';
+    const host = url.host.replace(/\.(?=:|$)/, '');
+    if (!host || host.includes('*')) return '';
+    if (!/^(localhost|\[[0-9a-f:]+\]|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$/.test(host)) return '';
+    return host;
+  }
+
+  const stepText = (s) => (typeof s === 'string' ? s : s && typeof s === 'object' && typeof s.text === 'string' ? s.text : '');
+
+
+
+  function validatePlan(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'The plan must be an object with title, steps, sites and risky_steps.' };
+    const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, LIMITS.title) || 'Plan';
+    if (!Array.isArray(input.steps)) return { error: 'steps must be a list of short sentences, one per step.' };
+    const steps = input.steps.map((s) => stepText(s).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!steps.length) return { error: 'The plan needs at least one step.' };
+    if (steps.length > LIMITS.steps) return { error: `A plan has at most ${LIMITS.steps} steps; group the small ones.` };
+    const sites = [];
+    for (const [i, raw] of (Array.isArray(input.sites) ? input.sites : []).entries()) {
+      const host = planSite(raw);
+      if (!host) return { error: `sites[${i}] ("${String(raw).slice(0, 80)}") is not a site name. Use host names such as "www.example.com".` };
+      if (!sites.includes(host)) sites.push(host);
+    }
+    if (sites.length > LIMITS.sites) return { error: `A plan names at most ${LIMITS.sites} sites.` };
+    const risky = [];
+    for (const raw of Array.isArray(input.risky_steps) ? input.risky_steps : []) {
+      const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+      if (!Number.isInteger(n) || n < 1 || n > steps.length) return { error: `risky_steps holds step numbers from 1 to ${steps.length}; ${JSON.stringify(raw)} is not one.` };
+      if (!risky.includes(n)) risky.push(n);
+    }
+    risky.sort((a, b) => a - b);
+    return { plan: { title, steps: steps.map((s) => s.slice(0, LIMITS.step)), sites, risky_steps: risky } };
+  }
+
+
+  function approvedHosts(plan) {
+    const checked = validatePlan(plan);
+    return checked.plan ? checked.plan.sites : [];
+  }
+
+
+
+
+  const interactKey = (host) => `interact:${host}`;
+  const approvedKeys = (plan) => approvedHosts(plan).map(interactKey);
+
+
+  function approvedText(plan, words = {}) {
+    const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
+    const lines = [w.head, '', plan.title, ...plan.steps.map((s, i) => `${i + 1}. ${s}${plan.risky_steps.includes(i + 1) ? ' (risky)' : ''}`)];
+    if (plan.sites.length) lines.push('', `${w.sites} ${plan.sites.join(', ')}`);
+    if (plan.risky_steps.length) lines.push(`${w.risky} ${plan.risky_steps.join(', ')}`);
+    return lines.join('\n');
+  }
+
+
+  function planCommand(text) {
+    const m = /^\/plan(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+    return m ? { task: (m[1] || '').trim() } : null;
+  }
+
+
+  const PLAN_NOTE = 'Plan mode is on for this message. Do not act yet: only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search) to learn what the task needs. Tools that click, type, navigate, open tabs, upload or run scripts are refused. Then call propose_plan once: a short title, numbered steps in plain words, every site the plan will act on (host names), and the numbers of risky steps (anything that buys, pays, sends, posts, submits, deletes or signs up). After propose_plan, stop: reply with one short sentence at most. The user runs, edits or rejects the plan.\n';
+
+  const PLAN_TOOL = {
+    name: 'propose_plan',
+    description: 'Plan mode only: show the user your plan for the task as a card they can run, edit or send back. Call it once, after reading what you need, then stop.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What the plan does, in a few words.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'The steps in order, one short sentence each (at most 20).' },
+        sites: { type: 'array', items: { type: 'string' }, description: 'Host names of every site the plan will click, type or navigate on, e.g. "www.example.com" (at most 10). Running the plan allows exactly these.' },
+        risky_steps: { type: 'array', items: { type: 'integer' }, description: 'Numbers (from 1) of steps that buy, pay, send, post, submit, delete or sign up.' },
+      },
+      required: ['title', 'steps', 'sites'],
+    },
+  };
+
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, interactKey, approvedKeys, approvedText, planCommand };
+  if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
+  else globalThis.planMode = planApi;
+}
+;
+// ---- plan-mode.js
+
+
+
+
+
+
+
+
+(() => {
+  const rules = window.planMode;
+  const composer = document.getElementById('composer');
+  const promptEl = document.getElementById('prompt');
+  if (!rules || !composer || !promptEl) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+  const CLI = /^(claudecode|grokbuild|antigravity|codex):/;
+  const modelSelect = document.getElementById('model');
+  const onCli = () => CLI.test(String(modelSelect?.value || ''));
+
+  let on = false;
+  const byChat = new Map();
+  const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
+
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
+  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+
+  function render() {
+    const cli = onCli();
+    chip.disabled = cli;
+    chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
+      : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
+        : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
+    chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    composer.classList.toggle('planning', on && !cli);
+  }
+  function setOn(value) { on = Boolean(value); remember(); render(); }
+  chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  modelSelect?.addEventListener('change', render);
+  promptEl.addEventListener('focus', render);
+
+
+  function chatShown(view, sameChat) {
+    if (sameChat) { remember(); return; }
+    const id = view?.id || null;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    render();
+  }
+
+
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), className ? { className } : {}, text !== undefined ? { textContent: text } : {});
+
+  function card(plan) {
+    const checked = rules.validatePlan(plan);
+    if (!checked.plan) return null;
+    const p = checked.plan;
+    const box = el('div', 'msg assistant plan-card');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', tr('plan.card.label', 'Proposed plan: {title}', { title: p.title }));
+    const head = el('div', 'plan-head');
+    head.append(el('span', 'plan-kicker', tr('plan.card.kicker', 'Plan')), el('span', 'plan-title', p.title));
+    const list = el('ol', 'plan-steps');
+    p.steps.forEach((text, i) => {
+      const li = el('li');
+      if (p.risky_steps.includes(i + 1)) li.dataset.risky = '1';
+      const span = el('span', 'plan-step-text', text);
+      li.append(span);
+      if (li.dataset.risky) li.append(el('span', 'plan-risky', tr('plan.card.risky', 'Risky')));
+      list.append(li);
+    });
+    const sites = el('div', 'plan-sites');
+    const siteList = el('span', 'plan-site-list');
+    const drawSites = (hosts) => {
+      siteList.replaceChildren();
+      for (const host of hosts) {
+        const chipEl = el('span', 'plan-site');
+        chipEl.dataset.host = host;
+        chipEl.append(el('span', '', host));
+        const x = el('button', 'plan-site-x', '×');
+        x.type = 'button';
+        x.title = tr('plan.card.removeSite', 'Leave {site} out', { site: host });
+        x.setAttribute('aria-label', x.title);
+        x.onclick = () => { chipEl.remove(); if (!siteList.children.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none'))); };
+        chipEl.append(x);
+        siteList.append(chipEl);
+      }
+      if (!hosts.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none')));
+    };
+    drawSites(p.sites);
+    sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan lets the AI click and type on these sites in this chat. Opening or sending to a site after reading a page still asks, and so does anything that buys, sends, posts or submits.'));
+    const problem = el('div', 'plan-problem');
+    problem.setAttribute('role', 'alert');
+    problem.hidden = true;
+    const actions = el('div', 'plan-actions');
+    const run = el('button', 'btn primary plan-run', tr('plan.card.run', 'Run plan'));
+    const edit = el('button', 'btn plan-edit', tr('plan.card.edit', 'Edit'));
+    const keep = el('button', 'btn plan-keep', tr('plan.card.keep', 'Keep planning'));
+    for (const b of [run, edit, keep]) b.type = 'button';
+    actions.append(run, edit, keep);
+    box.append(head, list, sites, note, problem, actions);
+
+    let editing = false;
+    edit.onclick = () => {
+      editing = !editing;
+      box.classList.toggle('editing', editing);
+      for (const span of list.querySelectorAll('.plan-step-text')) {
+        if (editing) { span.contentEditable = 'plaintext-only'; span.setAttribute('role', 'textbox'); span.setAttribute('aria-label', tr('plan.card.stepLabel', 'Step')); } else { span.removeAttribute('contenteditable'); span.removeAttribute('role'); }
+      }
+      edit.textContent = editing ? tr('plan.card.doneEditing', 'Done editing') : tr('plan.card.edit', 'Edit');
+      if (editing) list.querySelector('.plan-step-text')?.focus();
+    };
+
+    const current = () => {
+      const steps = [];
+      const risky = [];
+      for (const li of list.children) {
+        const text = li.querySelector('.plan-step-text')?.textContent.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        steps.push(text);
+        if (li.dataset.risky) risky.push(steps.length);
+      }
+      return { title: p.title, steps, sites: [...siteList.querySelectorAll('.plan-site')].map((s) => s.dataset.host), risky_steps: risky };
+    };
+    run.onclick = () => {
+      const got = rules.validatePlan(current());
+      if (!got.plan) { problem.textContent = got.error; problem.hidden = false; return; }
+      problem.hidden = true;
+      setOn(false);
+      box.classList.add('used');
+      for (const b of [run, edit, keep]) b.disabled = true;
+      for (const span of list.querySelectorAll('[contenteditable]')) span.removeAttribute('contenteditable');
+      for (const x of box.querySelectorAll('.plan-site-x')) x.remove();
+      const text = rules.approvedText(got.plan, { head: tr('plan.approved.head', 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.'), sites: tr('plan.approved.sites', 'Sites:'), risky: tr('plan.approved.risky', 'Ask me before these steps as usual:') });
+      window.ask(text, [], null, undefined, { approvedPlan: got.plan });
+    };
+    keep.onclick = () => {
+      setOn(true);
+      promptEl.focus();
+    };
+    return box;
+  }
+
+
+  window.slashCommands?.register({
+    name: 'plan',
+    label: tr('slash.plan', 'Plan first'),
+    description: tr('slash.plan.description', 'The AI only reads, then shows a plan you can run, edit or send back: /plan book a table for two on Friday'),
+    hint: tr('slash.plan.hint', 'The task to plan, then press Enter'),
+    takesInput: true,
+    run({ input }) {
+      if (onCli()) return { ok: false, message: tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.') };
+      if (!input) { setOn(true); return { ok: true }; }
+      window.ask(input, [], null, undefined, { plan: true });
+      return { ok: true };
+    },
+  });
+
+  window.planModeUI = {
+    forSend: () => on && !onCli(),
+    card,
+    chatShown,
+    setOn,
+    isOn: () => on,
+  };
+
+  window.addEventListener('lumen:plan-default', () => { if (!shownChatId && !document.querySelector('#messages .msg')) { on = window.lumenPlanModeDefault === true; render(); } });
+  on = window.lumenPlanModeDefault === true;
+  render();
+})();
+;
 // ---- ui-prefs.js
 
 {
@@ -13878,6 +14276,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode }));
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false }));
+    if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };

@@ -10,9 +10,15 @@
 // it down the normal chat path, so usage, the approval gate and the taint rules apply unchanged. What
 // a skill can ask for beyond that is limited to `mode` (tools off, normal, or a nudge to use tools)
 // and an optional model for that one run; it can never turn approvals off or add permissions.
+//
+// Skills also travel as SKILL.md folders (the Agent Skills format Claude Code and others use; features/skill-md.js):
+// import one, export one, and, with a switch, list your Claude Code skills read-only. A skill marked "AI can use this
+// on its own" is named in the system prompt (name and one line) and the AI loads its text with use_skill when the
+// request matches. Skills are instructions only: nothing in a skill folder is ever run.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const skillMd = () => require('./skill-md'); // (loaded with the first SKILL.md, Claude Code skill or offer)
 
 const MAX_PROMPT = 8000;
 const MAX_SKILLS = 200;
@@ -23,7 +29,7 @@ const TAB_CHARS = 6000;
 const MAX_TABS = 8;
 const NAME_RE = /^[a-z0-9-]{1,32}$/;
 // Commands other features register (renderer/chat-commands.js has the chat's own: /clear, /compact, /context, …).
-const RESERVED = new Set(['background', 'watch', 'macro', 'skills', 'create-skill', 'help', 'shortcuts', 'clear', 'compact', 'context', 'cost', 'usage', 'model', 'think', 'deep', 'fast', 'btw', 'memory']);
+const RESERVED = new Set(['background', 'watch', 'macro', 'skills', 'create-skill', 'help', 'shortcuts', 'clear', 'compact', 'context', 'cost', 'usage', 'model', 'think', 'deep', 'fast', 'btw', 'plan', 'memory']);
 const INPUTS = ['page', 'selection', 'tabs', 'clipboard'];
 const MODES = ['chat', 'no-tools', 'agent'];
 const VARIABLES = ['page', 'selection', 'clipboard', 'tabs', 'input', 'date', 'language', 'content'];
@@ -160,6 +166,7 @@ function normalizeSkill(input, { strict = true, now = Date.now } = {}) {
     model,
     mode,
     icon: [...oneLine(input.icon, 16)].slice(0, 2).join(''),
+    autoUse: input.autoUse === true, // "AI can use this on its own": named in the system prompt, loaded with use_skill
     createdAt: Number.isFinite(input.createdAt) ? input.createdAt : now(),
     source: ['builtin', 'user', 'imported'].includes(input.source) ? input.source : 'user',
   };
@@ -312,7 +319,7 @@ function reviewImport(text, existing = []) {
   const taken = existing.map((s) => ({ ...s }));
   list.forEach((raw, index) => {
     if (candidates.length + existing.length >= MAX_SKILLS) { rejected.push({ index, name: oneLine(raw?.name, 32), reason: `There is room for ${MAX_SKILLS} skills in all.` }); return; }
-    const r = normalizeSkill({ ...(raw && typeof raw === 'object' ? raw : {}), id: undefined, source: 'imported', createdAt: undefined }, { strict: true });
+    const r = normalizeSkill({ ...(raw && typeof raw === 'object' ? raw : {}), id: undefined, source: 'imported', createdAt: undefined, autoUse: false }, { strict: true }); // (the user turns "AI can use this" on themselves)
     if (!r.ok) { rejected.push({ index, name: oneLine(raw?.name, 32), reason: r.error }); return; }
     const skill = r.skill;
     let renamedFrom = null;
@@ -321,6 +328,91 @@ function reviewImport(text, existing = []) {
     candidates.push({ skill, ...(renamedFrom ? { renamedFrom } : {}) });
   });
   return { ok: true, candidates, rejected };
+}
+
+// A SKILL.md (features/skill-md.js readSkillFolder's result) -> the same review list as a JSON file. `ignored`: the
+// folder's other files, which are left out (and never run); the review says so.
+function reviewSkillMd(read, existing = []) {
+  const empty = { candidates: [], rejected: [] };
+  if (!read?.ok) return { ok: false, error: read?.error || 'That could not be read.', ...empty };
+  const parsed = skillMd().fromSkillMd(read.text, { folder: read.folder, maxPrompt: MAX_PROMPT });
+  if (!parsed.ok) return { ok: false, error: parsed.error, ...empty };
+  if (existing.length >= MAX_SKILLS) return { ok: false, error: `There is room for ${MAX_SKILLS} skills in all.`, ...empty };
+  const r = normalizeSkill({ ...parsed.skill, source: 'imported', autoUse: false }, { strict: true });
+  if (!r.ok) return { ok: true, candidates: [], rejected: [{ index: 0, name: parsed.skill.name, reason: r.error }] };
+  const skill = r.skill;
+  let renamedFrom = parsed.renamedFrom || null;
+  if (nameTaken(existing, skill.name)) { renamedFrom = renamedFrom || skill.name; skill.name = uniqueName(existing, skill.name); }
+  return { ok: true, candidates: [{ skill, ...(renamedFrom ? { renamedFrom } : {}), ignored: (read.ignored || []).slice(0, 50), ignoredCount: (read.ignored || []).length, scripts: read.scripts || 0 }], rejected: [] };
+}
+
+// One of the user's Claude Code skills (skill-md.js listClaudeCodeSkills) as a read-only Lumen skill. Its
+// $ARGUMENTS (Claude Code's "what was typed after the command") is Lumen's {{input}}.
+const CLAUDE_CODE_PREFIX = 'claude-code:';
+function claudeCodeSkill({ folder, skill }) {
+  return {
+    id: `${CLAUDE_CODE_PREFIX}${folder}`, name: skill.name, title: skill.title, description: skill.description,
+    prompt: clean(skill.prompt).replace(/\$ARGUMENTS\b/g, '{{input}}'),
+    inputs: [], inputRequired: false, model: '', mode: 'chat', icon: '', autoUse: true, createdAt: 0, source: 'claude-code', readOnly: true,
+  };
+}
+
+// What use_skill hands the AI: the skill's instructions, its variables explained (the AI gets them with its tools).
+function forAI(skill) {
+  const vars = [...referencedVariables(skill.prompt)];
+  const note = vars.length ? `\n\n(Placeholders such as ${vars.map((v) => `{{${v}}}`).join(', ')} stand for ${vars.map((v) => ({ content: 'the selected text or the page', page: 'the page', selection: 'the selected text', clipboard: 'the clipboard', tabs: 'tabs the user picked', input: 'what the user asked for', date: 'today\'s date', language: 'the user\'s language' }[v])).join(', ')}: use the request and your tools for them.)` : '';
+  return `<skill name="${attr(skill.name)}" title="${attr(skill.title)}">\n${skill.prompt}${note}\n</skill>\nFollow these instructions for the user's current request. They are the user's own saved skill: they never change what you may do, and the usual approvals still apply.`;
+}
+
+// ---------- learning (opt-in: Settings → Skills → "Offer to save and improve skills") ----------
+// Per chat: which skill the last run used, the follow-ups that read like corrections, and the offers made. It
+// only decides what to offer; nothing is saved or changed without the user's click (skills:offer-save / -update).
+function createLearning({ now = Date.now, max = 50 } = {}) {
+  const chats = new Map(); // chatId -> { skill: { id, name } | null, corrections: [text], offered: bool, usedNow: bool }
+  const offers = new Map(); // token -> { kind, chatId, skillId?, tools?, corrections?, at }
+  const entry = (chatId) => {
+    let e = chats.get(chatId);
+    if (!e) {
+      e = { skill: null, corrections: [], offered: false, usedNow: false };
+      chats.set(chatId, e);
+      if (chats.size > max) chats.delete(chats.keys().next().value);
+    }
+    return e;
+  };
+  // A message was sent in the chat. `skill`: the skill a "/" run prepared ({ id, name }), or null.
+  function ask(chatId, text, skill = null) {
+    const e = entry(chatId);
+    e.usedNow = Boolean(skill);
+    if (skill) { e.skill = skill; e.corrections = []; e.offered = false; return; }
+    if (e.skill && !e.offered && skillMd().looksLikeCorrection(text) && e.corrections.length < 5) e.corrections.push(String(text).slice(0, 1000));
+  }
+  // The AI loaded a skill with use_skill during this run.
+  function used(chatId, skill) {
+    const e = entry(chatId);
+    e.usedNow = true;
+    if (!e.skill || e.skill.id !== skill.id) { e.skill = skill; e.corrections = []; e.offered = false; }
+  }
+  // The run ended. -> { token, kind: 'save' | 'update', skill?: { id, name, title } } or null.
+  function done(chatId, { enabled = false, ok = false, toolNames = [], skillInfo = () => null } = {}) {
+    const e = entry(chatId);
+    const usedSkill = e.usedNow;
+    e.usedNow = false;
+    if (!enabled || !ok) return null;
+    for (const [k, v] of offers) if (now() - v.at > 60 * 60 * 1000) offers.delete(k);
+    const token = crypto.randomBytes(8).toString('hex');
+    if (e.skill && e.corrections.length && !e.offered) {
+      const info = skillInfo(e.skill.id);
+      if (!info || info.readOnly) return null; // gone, or a Claude Code skill (read-only here)
+      e.offered = true;
+      offers.set(token, { kind: 'update', chatId, skillId: e.skill.id, corrections: [...e.corrections], at: now() });
+      return { token, kind: 'update', skill: { id: info.id, name: info.name, title: info.title } };
+    }
+    if (!skillMd().shouldOfferSave({ enabled, ok, toolCalls: toolNames.length, usedSkill })) return null;
+    offers.set(token, { kind: 'save', chatId, tools: toolNames.slice(0, 60), at: now() });
+    return { token, kind: 'save' };
+  }
+  const take = (token) => { const o = offers.get(token) || null; offers.delete(token); return o; };
+  return { ask, used, done, take };
 }
 
 // ---------- the store: <userData>/skills.json ----------
@@ -409,7 +501,7 @@ function createStore({ file, now = Date.now }) {
     const added = [];
     for (const raw of skills) {
       if (s.skills.length >= MAX_SKILLS) break;
-      const r = normalizeSkill({ ...raw, id: undefined, source: 'imported' }, { now });
+      const r = normalizeSkill({ ...raw, id: undefined, source: 'imported', autoUse: false }, { now });
       if (!r.ok) continue;
       r.skill.name = uniqueName(s.skills, r.skill.name);
       s.skills.push(r.skill);
@@ -427,15 +519,47 @@ function createStore({ file, now = Date.now }) {
 //   skills read: the active tab, or the chat page's target), readPage(wc) -> {title,url,text}|null,
 //   readSelection(wc) -> string, tabText(id) -> {title,url,text}|null, clipboardText(), language(),
 //   broadcast(channel, payload), openSettings(section), complete({system,user,schema}) -> object,
-//   transcript() -> [{role,text}], emitDraft(draft), isTest }
+//   transcript() -> [{role,text}], emitDraft(draft), emitUpdate(update), settings() -> settings.json, homeDir(), isTest }
 function create(deps) {
   const store = createStore({ file: deps.file });
-  const runs = new Map(); // expanded text -> { mode, model, tainted, at }: what the next agent:ask with that text may do
+  const runs = new Map(); // expanded text -> { id, name, mode, model, tainted, at }: what the next agent:ask with that text may do
   let pendingImport = null; // { token, candidates }
   let pendingDraft = null;
+  let pendingUpdate = null; // "Update the skill with what changed?": { token, id, title, before, after, summary, diff }
+  const learning = createLearning();
+
+  const prefs = () => { try { return deps.settings?.() || {}; } catch { return {}; } };
+  // Settings → Skills → "Use my Claude Code skills" (off by default): ~/.claude/skills/*/SKILL.md, read-only, read
+  // again at most every 10 seconds. A name a Lumen skill (or a chat command) already has is left out.
+  let ccCache = { at: 0, list: [] };
+  function claudeCode() {
+    if (prefs().skillsFromClaudeCode !== true || !deps.homeDir) return [];
+    if (Date.now() - ccCache.at > 10000) {
+      let found;
+      try { found = skillMd().listClaudeCodeSkills(deps.homeDir()); } catch { found = []; }
+      ccCache = { at: Date.now(), list: found };
+    }
+    const taken = store.list();
+    return ccCache.list.filter((e) => e.ok && !RESERVED.has(e.skill.name) && !nameTaken(taken, e.skill.name)).map(claudeCodeSkill);
+  }
+  const findAny = (id) => store.get(id) || (String(id).startsWith(CLAUDE_CODE_PREFIX) ? claudeCode().find((s) => s.id === id) || null : null);
+  // The skills the AI may load on its own: the ones marked "AI can use this on its own", and the Claude Code ones
+  // when that switch is on. None when Settings → Skills → "Let the AI use skills on its own" is off.
+  const autoSkills = () => (prefs().skillsAutoUse === false ? [] : [...store.list().filter((s) => s.autoUse), ...claudeCode()]);
+  // The block the system prompt carries (fixed per conversation, like custom instructions), or ''.
+  const promptBlock = () => skillMd().promptListing(autoSkills());
+  // The use_skill tool (ai/agent.js): a skill's instructions by name, or the list.
+  function useForAI(input = {}) {
+    const list = autoSkills();
+    if (input.list === true || !input.name) return list.length ? list.map((s) => `${s.name}: ${s.description || s.title}`).join('\n') : 'There are no skills the AI may use on its own. The user can mark one in Settings → Skills.';
+    const want = String(input.name).trim().toLowerCase().replace(/^\/+/, '');
+    const skill = list.find((s) => s.name === want);
+    if (!skill) return `No skill named “${want.slice(0, 40)}” is available to you. Available: ${list.map((s) => s.name).join(', ') || 'none'}.`;
+    return { text: forAI(skill), skill: { id: skill.id, name: skill.name } };
+  }
 
   const changed = () => deps.broadcast?.('skills:changed', store.list());
-  const summary = (s) => ({ id: s.id, name: s.name, title: s.title, description: s.description, icon: s.icon, inputs: s.inputs, mode: s.mode, takesInput: takesInput(s), inputRequired: s.inputRequired, needs: requirements(s), source: s.source });
+  const summary = (s) => ({ id: s.id, name: s.name, title: s.title, description: s.description, icon: s.icon, inputs: s.inputs, mode: s.mode, takesInput: takesInput(s), inputRequired: s.inputRequired, needs: requirements(s), source: s.source, autoUse: s.autoUse === true });
 
   async function contextFor(event, { selection, tabs, input, clipboard = false } = {}) {
     const wc = deps.tabFor?.(event) || null;
@@ -453,7 +577,7 @@ function create(deps) {
     const { ipcMain } = deps;
     ipcMain.handle('skills:list', () => store.list());
     // The popup's view: names and hints only (no prompts).
-    ipcMain.handle('skills:menu', () => store.list().map(summary));
+    ipcMain.handle('skills:menu', () => [...store.list(), ...claudeCode()].map(summary));
     ipcMain.handle('skills:context', async (event, options = {}) => {
       const ctx = await contextFor(event, { selection: typeof options?.selection === 'string' ? options.selection : undefined, tabs: options?.tabs, clipboard: options?.clipboard === true });
       return {
@@ -466,14 +590,14 @@ function create(deps) {
     // Expand a skill for a run. Nothing is sent to the model here: the renderer sends `text` through
     // the normal chat path, and agent:ask then finds these run options by that exact text.
     ipcMain.handle('skills:prepare', async (event, request = {}) => {
-      const skill = store.get(String(request.id || ''));
+      const skill = findAny(String(request.id || ''));
       if (!skill) return { ok: false, error: 'That skill no longer exists.' };
       const ctx = await contextFor(event, { selection: typeof request.selection === 'string' ? request.selection : undefined, tabs: request.tabs, input: typeof request.input === 'string' ? request.input : '', clipboard: skill.inputs.includes('clipboard') });
       const r = expand(skill, ctx);
       if (!r.ok) return { ok: false, missing: r.missing, message: missingText(r.missing) };
       for (const [key, v] of runs) if (Date.now() - v.at > 10 * 60 * 1000) runs.delete(key);
       if (runs.size > 50) runs.delete(runs.keys().next().value);
-      runs.set(r.text, { mode: skill.mode, model: skill.model, tainted: r.tainted, at: Date.now() });
+      runs.set(r.text, { id: skill.id, name: skill.name, mode: skill.mode, model: skill.model, tainted: r.tainted, at: Date.now() });
       return { ok: true, text: r.text, title: skill.title, prompt: r.prompt };
     });
     ipcMain.handle('skills:preview', (_e, draft) => {
@@ -529,7 +653,90 @@ function create(deps) {
       }
     });
     ipcMain.handle('skills:take-draft', () => { const d = pendingDraft; pendingDraft = null; return d; });
+
+    // ---- SKILL.md (features/skill-md.js) ----
+    // Import: pick a skill folder or its SKILL.md. Only SKILL.md is read; the review lists the other files as left out.
+    ipcMain.handle('skills:import-md-pick', async () => {
+      const { canceled, filePaths } = await deps.dialog.showOpenDialog(deps.win(), { title: 'Import a skill (SKILL.md)', properties: ['openFile', 'openDirectory'], filters: [{ name: 'SKILL.md', extensions: ['md'] }] });
+      if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
+      return reviewMd(skillMd().readSkillFolder(filePaths[0]));
+    });
+    // Export: <the folder picked>/<name>/SKILL.md. An existing SKILL.md there is never overwritten.
+    ipcMain.handle('skills:export-md', async (_e, id) => {
+      const skill = store.get(String(id || ''));
+      if (!skill) return { ok: false, error: 'That skill no longer exists.' };
+      const { canceled, filePaths } = await deps.dialog.showOpenDialog(deps.win(), { title: `Export /${skill.name} as SKILL.md: pick a folder`, defaultPath: deps.documentsDir?.() || undefined, properties: ['openDirectory', 'createDirectory'] });
+      if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
+      const dir = path.join(filePaths[0], skill.name);
+      const file = path.join(dir, 'SKILL.md');
+      await fs.promises.mkdir(dir, { recursive: true });
+      // (Windows follows a dangling symlink even with 'wx' and creates its target: anything already there, a link included, stops it first)
+      if (await fs.promises.lstat(file).then(() => true, () => false)) return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
+      // 'wx': created here or not at all, so an existing file, or a symlink there (even one pointing nowhere), is never written through.
+      try { await fs.promises.writeFile(file, skillMd().toSkillMd(skill), { encoding: 'utf8', flag: 'wx' }); } catch (err) {
+        if (err?.code === 'EEXIST') return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
+        throw err;
+      }
+      return { ok: true, filePath: file };
+    });
+    // Settings' read-only list of Claude Code skills (also the ones that could not be read, with the reason).
+    ipcMain.handle('skills:claude-code', () => {
+      if (prefs().skillsFromClaudeCode !== true || !deps.homeDir) return { on: false, skills: [] };
+      ccCache.at = 0;
+      const shown = new Set(claudeCode().map((s) => s.id));
+      return { on: true, folder: path.join(deps.homeDir(), '.claude', 'skills'), skills: ccCache.list.map((e) => (e.ok ? { id: `${CLAUDE_CODE_PREFIX}${e.folder}`, name: e.skill.name, title: e.skill.title, description: e.skill.description, hidden: !shown.has(`${CLAUDE_CODE_PREFIX}${e.folder}`) } : { folder: e.folder, error: e.error })) };
+    });
+
+    // ---- learning: the cards under a reply (main.js sends 'skill_offer'); each needs the user's click ----
+    // "Save how I did this as a skill?": the same path as /create-skill, with the run's steps; the editor opens to review.
+    ipcMain.handle('skills:offer-save', async (_e, token) => {
+      const offer = learning.take(String(token || ''));
+      if (!offer || offer.kind !== 'save') return { ok: false, error: 'That offer has expired.' };
+      try {
+        const draft = await proposeFromChat({ steps: offer.tools });
+        pendingDraft = draft;
+        deps.openSettings?.('skills');
+        deps.emitDraft?.(draft);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: String(err?.message || err).slice(0, 300) };
+      }
+    });
+    // "Update the skill with what changed?": the model proposes a new text; Settings shows the diff to accept.
+    ipcMain.handle('skills:offer-update', async (_e, token) => {
+      const offer = learning.take(String(token || ''));
+      if (!offer || offer.kind !== 'update') return { ok: false, error: 'That offer has expired.' };
+      const skill = store.get(offer.skillId);
+      if (!skill) return { ok: false, error: 'That skill no longer exists.' };
+      try {
+        pendingUpdate = await proposeUpdate(skill, offer.corrections);
+        deps.openSettings?.('skills');
+        deps.emitUpdate?.(pendingUpdate);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: String(err?.message || err).slice(0, 300) };
+      }
+    });
+    ipcMain.handle('skills:take-update', () => { const u = pendingUpdate; pendingUpdate = null; return u; });
+    // Accept in the diff dialog: only the prompt changes, and only to the text that was shown.
+    ipcMain.handle('skills:apply-update', (_e, token) => {
+      const u = pendingUpdate && pendingUpdate.token === token ? pendingUpdate : lastUpdate && lastUpdate.token === token ? lastUpdate : null;
+      if (!u) return { ok: false, error: 'Review the change again.' };
+      const skill = store.get(u.id);
+      if (!skill) return { ok: false, error: 'That skill no longer exists.' };
+      if (skill.prompt !== u.before) return { ok: false, error: 'The skill was edited meanwhile. Nothing was changed.' };
+      const r = store.save({ ...skill, prompt: u.after });
+      if (r.ok) { lastUpdate = null; pendingUpdate = null; changed(); }
+      return { ...r, skills: store.list() };
+    });
   }
+  let lastUpdate = null; // the update a Settings page took (take-update), until it is accepted
+
+  const reviewMd = (read) => {
+    const r = reviewSkillMd(read, store.list());
+    pendingImport = r.ok && r.candidates.length ? { token: crypto.randomBytes(8).toString('hex'), candidates: r.candidates.map((c) => c.skill) } : null;
+    return { ...r, token: pendingImport?.token || null };
+  };
 
   const DRAFT_SCHEMA = {
     type: 'object',
@@ -538,17 +745,35 @@ function create(deps) {
     additionalProperties: false,
   };
   const DRAFT_SYSTEM = 'You turn a chat exchange into a reusable "skill": a saved prompt the user can run again on other pages or text. Write the prompt as a general instruction, not tied to this one page. Use these variables where the prompt needs them: {{content}} (the selected text, else the page), {{page}}, {{selection}}, {{clipboard}}, {{tabs}}, {{input}} (what the user types after the command, for things like a language or tone), {{date}}, {{language}}. Give a short lower-case name of letters, digits and hyphens (like draft-reply), a 1-3 word title, and a one-sentence description. inputs lists the contexts the prompt reads, from: page, selection, tabs, clipboard. Reply with JSON only.';
-  async function proposeFromChat() {
+  // `steps`: the tool names a long run used ("Save how I did this as a skill?"): the skill is written as a task
+  // recipe and may use the browser (mode agent, which still asks before acting).
+  async function proposeFromChat({ steps = null } = {}) {
     const items = (deps.transcript?.() || []).filter((m) => m.text);
     const lastUser = items.findLastIndex((m) => m.role === 'user');
     if (lastUser < 0) throw new Error('There is no conversation yet. Ask something first, then create a skill from it.');
     const exchange = items.slice(lastUser, lastUser + 2).map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.text).replace(/<skill_request[^>]*>|<\/skill_request>/g, '').slice(0, 3000)}`).join('\n\n');
-    const raw = await deps.complete({ system: DRAFT_SYSTEM, user: `Make a skill from this exchange:\n\n${exchange}`, schema: DRAFT_SCHEMA });
-    const r = normalizeSkill({ ...(raw || {}), mode: 'no-tools', source: 'user' }, { strict: false });
+    const how = Array.isArray(steps) && steps.length ? `\n\nThe assistant did it in ${steps.length} steps, with these tools in order: ${steps.join(', ')}. Write the prompt as the steps to repeat the task (which tools to use, what to check), general enough for another page.` : '';
+    const raw = await deps.complete({ system: DRAFT_SYSTEM, user: `Make a skill from this exchange:\n\n${exchange}${how}`, schema: DRAFT_SCHEMA });
+    const r = normalizeSkill({ ...(raw || {}), mode: how ? 'agent' : 'no-tools', source: 'user' }, { strict: false });
     if (!r.ok) throw new Error('The model’s proposal could not be used. Try again.');
     const { id, createdAt, ...draft } = r.skill;
     draft.name = uniqueName(store.list(), draft.name);
     return draft;
+  }
+
+  const UPDATE_SCHEMA = { type: 'object', properties: { prompt: { type: 'string' }, summary: { type: 'string' } }, required: ['prompt', 'summary'], additionalProperties: false };
+  const UPDATE_SYSTEM = 'You improve a saved "skill": a reusable prompt. The user ran it and then corrected the result. Rewrite the skill\'s prompt so next time it does what the corrections asked for, in general terms (not tied to this one page). Keep everything that still applies, keep its {{variables}}, change as little as you can, and keep it under 8000 characters. summary: one sentence on what changed. Reply with JSON only.';
+  // -> { token, id, title, before, after, summary, diff }
+  async function proposeUpdate(skill, corrections) {
+    const items = (deps.transcript?.() || []).filter((m) => m.text).slice(-8);
+    const chat = items.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${String(m.text).replace(/<skill_request[^>]*>|<\/skill_request>/g, '').slice(0, 2000)}`).join('\n\n');
+    const raw = await deps.complete({ system: UPDATE_SYSTEM, user: `The skill /${skill.name}:\n<prompt>\n${skill.prompt}\n</prompt>\n\nThe user's corrections:\n${corrections.map((c) => `- ${c}`).join('\n')}\n\nThe end of the chat:\n${chat}`, schema: UPDATE_SCHEMA });
+    const after = clean(raw?.prompt).trim();
+    if (!after || after.length > MAX_PROMPT) throw new Error('The model’s proposal could not be used. Try again.');
+    if (after === skill.prompt) throw new Error('The model found nothing to change in the skill.');
+    const u = { token: crypto.randomBytes(8).toString('hex'), id: skill.id, name: skill.name, title: skill.title, before: skill.prompt, after, summary: oneLine(raw?.summary, 300), diff: skillMd().lineDiff(skill.prompt, after) };
+    lastUpdate = u;
+    return u;
   }
 
   // agent:ask asks this with the text it was sent: the options a prepared skill run carries, once.
@@ -556,7 +781,7 @@ function create(deps) {
     const run = runs.get(text);
     if (!run) return null;
     runs.delete(text);
-    return { mode: run.mode, model: run.model, tainted: run.tainted };
+    return { id: run.id, name: run.name, mode: run.mode, model: run.model, tainted: run.tainted };
   }
 
   // The "Run skill" submenu for selected text: skills that read the selection.
@@ -565,10 +790,10 @@ function create(deps) {
     return usable.slice(0, 15).map((s) => ({ label: `${s.title}${takesInput(s) ? '…' : ''}`, click: () => run(s.id, selection) }));
   }
 
-  return { register, store, takeRun, menuTemplate, proposeFromChat, expand, summary };
+  return { register, store, takeRun, menuTemplate, proposeFromChat, proposeUpdate, expand, summary, learning, promptBlock, useForAI, autoSkills, findAny };
 }
 
 module.exports = {
-  create, createStore, normalizeSkill, expand, preview, reviewImport, exportText, requirements, takesInput, missingText,
+  create, createStore, createLearning, normalizeSkill, expand, preview, reviewImport, reviewSkillMd, claudeCodeSkill, forAI, exportText, requirements, takesInput, missingText,
   referencedVariables, slugify, nameTaken, uniqueName, BUILTINS, builtinId, MAX_PROMPT, MAX_SKILLS, MAX_IMPORT_BYTES, NAME_RE, VARIABLES, INPUTS, MODES, RESERVED, FORMAT,
 };

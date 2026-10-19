@@ -220,7 +220,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await ui.click('#task-tab-routines');
   await ui.waitForSelector('.routine-template-card');
   const cards = await ui.evaluate(() => [...document.querySelectorAll('.routine-template-card')].map((c) => ({ name: c.querySelector('.task-title').textContent, meta: c.textContent, disabled: c.querySelector('button').disabled })));
-  check('the Routines tab has the four one-click templates', cards.map((c) => c.name).join('|') === 'Morning email check|Canvas: what’s due today|Daily news brief|Weekly calendar preview', JSON.stringify(cards));
+  check('the Routines tab has the five one-click templates', cards.map((c) => c.name).join('|') === 'Morning email check|Canvas: what’s due today|Daily news brief|Weekly calendar preview|Heartbeat: inbox and calendar', JSON.stringify(cards));
   check('the Gmail and Canvas ones say they need a connector, the news one does not', /Needs Gmail/.test(cards[0].meta) && /Needs Canvas/.test(cards[1].meta) && !/Needs/.test(cards[2].meta) && /Needs Google Calendar/.test(cards[3].meta), JSON.stringify(cards));
   await ui.evaluate(() => document.querySelector('.routine-template-card .routine-template-add').click());
   const email = await waitFor(async () => (await view()).routines.find((r) => r.template === 'email'));
@@ -292,7 +292,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await inSettings(`${rowOf('Email check')}.querySelector('.rt-delete').click(); true`);
   await inSettings(`${rowOf('Email check')}.querySelector('.rt-delete').click(); true`);
   check('Delete in Settings (two clicks) removes it from the store', await waitFor(async () => !(await view()).routines.some((r) => r.id === rid)), '');
-  check('Settings has the quiet hours and the one-click templates', (await inSettings("document.querySelectorAll('#routines-templates .rt-template').length")) === 4 && (await inSettings("document.getElementById('routines-quiet-on') !== null")) === true, '');
+  check('Settings has the quiet hours and the one-click templates', (await inSettings("document.querySelectorAll('#routines-templates .rt-template').length")) === 5 && (await inSettings("document.getElementById('routines-quiet-on') !== null")) === true, '');
   await inSettings("document.querySelector('#routines-templates .rt-template[data-template=news] .rt-template-add').click(); true");
   const sNews = await waitFor(async () => (await view()).routines.find((r) => r.template === 'news'));
   check('a template added in Settings is made switched off, like the sidebar’s', sNews && sNews.enabled === false && sNews.schedule.repeat === 'daily', JSON.stringify(sNews));

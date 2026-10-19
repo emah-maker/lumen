@@ -31,6 +31,7 @@ const quiet = require('./agents-quiet');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 const routines = require('./routines');
+const webhooks = () => require('./routine-webhooks'); // (loaded, and the listener started, only when the user turns routine web links on)
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
 const CLAUDE_WORLD = 1001; // agent.js's isolated world: where page-scripts keep their element registry
@@ -91,6 +92,14 @@ function create(deps) {
   let routineTimer = null; // the one timer for every routine: set for the earliest next run (runRoutines)
   let routinesOffline = []; // routines due while there is no connection: they start when it is back
   let onlineCheck = () => (deps.isOnline ? deps.isOnline() : true);
+  const emailChecks = new Set(); // 'email' routines looking for new mail right now
+  let hook = { server: null, port: null, listening: false, error: '' }; // the routine web links' listener (syncWebhooks)
+  let hookSync = Promise.resolve();
+  // Who else hears about a task's cards and its end (features/telegram.js): { type: 'approval', taskId, approvalId, card },
+  // { type: 'approval_done', taskId, approvalId, ok }, { type: 'finished', taskId, status, title, result, error }.
+  const listeners = new Set();
+  const tell = (e) => { for (const fn of listeners) { try { fn(e); } catch (err) { console.error('[lumen] a background task listener failed:', err.message); } } };
+  const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 
   const settings = () => bg.normalizeSettings(deps.readSettings().bgTasks);
   const find = (id) => tasks.find((t) => t.id === String(id));
@@ -116,7 +125,7 @@ function create(deps) {
     return {
       tasks: [...tasks].sort((a, b) => b.updatedAt - a.updatedAt).map((x) => bg.summarize(x, t, pendingOf(x.id), { queue: queue[x.id], waitingSince: runtimes.get(x.id)?.waitingSince || 0 })),
       badge: bg.badgeCounts(tasks), unseen: bg.unseenCount(tasks), settings: settings(), slots: slots(), running: runtimes.size, offline: routinesOffline.length > 0,
-      templates: routines.TEMPLATES, connected: connectedIds(),
+      templates: routines.TEMPLATES, connected: connectedIds(), webhooks: webhookState(),
     };
   }
   function broadcast() {
@@ -228,7 +237,7 @@ function create(deps) {
     else if (task.status !== 'queued') task.resume = null;
     if (task.schedule.type === 'watch' && !task.judge) { checkWatch(task, { manual: true }); return true; }
     if (task.status !== 'queued' && !transition(task, 'queued')) return false;
-    if (task.routine && !task.routine.trigger) { task.routine.trigger = 'manual'; task.routine.scheduledFor = null; }
+    if (task.routine && !task.routine.trigger) { task.routine.trigger = 'manual'; task.routine.scheduledFor = null; task.routine.input = ''; }
     task.queuedAt = now();
     task.unseen = false;
     touch(task);
@@ -279,7 +288,7 @@ function create(deps) {
     const task = find(id);
     if (!task) return false;
     task.enabled = Boolean(on);
-    if (task.routine && task.enabled) task.routine.lastDue = now(); // resuming doesn't run the times it was paused for
+    if (task.routine && task.enabled) { task.routine.lastDue = now(); task.routine.inbox = routines.newInbox(); } // resuming doesn't run the times it was paused for (nor the mail that came meanwhile)
     touch(task);
     if (task.routine) runRoutines();
     return true;
@@ -338,9 +347,91 @@ function create(deps) {
       task.routine.history = routines.addHistory(task.routine.history, { startedAt: t, endedAt: t, status: 'skipped', trigger: 'schedule', scheduledFor: dueAt, error: deps.t('routines.history.skipped') });
       touch(task);
     }
+    for (const id of p.check) { const task = find(id); if (task) checkEmail(task); }
     if (p.offline.join() !== routinesOffline.join()) { routinesOffline = p.offline; broadcast(); }
     if (p.queue.length) pump();
     armRoutines(routines.sleepFor(p.wakeAt, t));
+  }
+
+  // ---- routines started by an event: a web link (routine-webhooks.js) or new mail (checkEmail)
+  // Queue one run now. { ok } or { ok: false, code, error }: 'missing', 'disabled' (background tasks off), 'off' (the
+  // routine is switched off) or 'busy' (a run is going or waiting: never two at once; the history says it was skipped).
+  function fireRoutine(id, { trigger, input = '' } = {}) {
+    const task = find(id);
+    if (!task?.routine) return { ok: false, code: 'missing', error: deps.t('routines.error.missing') };
+    if (!settings().enabled) return { ok: false, code: 'disabled', error: deps.t('tasks.error.disabled') };
+    if (task.enabled === false) return { ok: false, code: 'off', error: deps.t('routines.webhook.off') };
+    const t = now();
+    if (bg.ACTIVE.has(task.status) || runtimes.has(task.id) || checking.has(task.id) || !bg.canTransition(task.status, 'queued')) {
+      task.routine.history = routines.addHistory(task.routine.history, { startedAt: t, endedAt: t, status: 'skipped', trigger, error: deps.t('routines.history.skipped') });
+      touch(task);
+      return { ok: false, code: 'busy', error: deps.t('routines.error.busy') };
+    }
+    task.status = 'queued';
+    task.queuedAt = t;
+    task.resume = null;
+    Object.assign(task.routine, { trigger, scheduledFor: null, input: routines.cleanInput(input) });
+    touch(task);
+    pump();
+    return { ok: true };
+  }
+
+  // An 'email' routine looks at the Gmail connector's unread list; mail it hasn't seen starts a run (the new lines go
+  // with it). The first look after it is made or turned on only records what is already there.
+  async function checkEmail(task) {
+    if (emailChecks.has(task.id)) return;
+    emailChecks.add(task.id);
+    task.routine.inbox = { ...task.routine.inbox, checkedAt: now() }; // (a failed look waits for the next interval, not a tight loop)
+    let fresh = [];
+    try {
+      if (!deps.connectors) throw new Error(deps.t('routines.email.notConnected')); // (not connected: the connector says so)
+      const text = await deps.connectors.call({ app: 'gmail', action: 'unread', args: { max: routines.LIMITS.emailMax } });
+      const t = now();
+      const diff = routines.emailDiff(task.routine.inbox, routines.unreadItems(text, t), { now: t, max: routines.LIMITS.emailMax });
+      task.routine.inbox = { ...diff.inbox, checkedAt: task.routine.inbox.checkedAt };
+      fresh = diff.fresh;
+    } catch (err) {
+      task.routine.inbox = { ...task.routine.inbox, error: String(err?.message || err).replace(/\s+/g, ' ').slice(0, 200) };
+    } finally {
+      emailChecks.delete(task.id);
+    }
+    if (!find(task.id)) return;
+    touch(task);
+    if (fresh.length && task.enabled !== false && task.schedule.repeat === 'email') {
+      const out = fireRoutine(task.id, { trigger: 'email', input: fresh.map((x) => x.line).join('\n') });
+      if (!out.ok) { task.routine.inbox = { ...task.routine.inbox, pending: fresh.slice(-routines.LIMITS.emailMax).map(({ id, line }) => ({ id, line })) }; touch(task); } // not started: offered again at the next look
+    }
+    runRoutines();
+  }
+
+  // The web links' listener follows the settings: on with routineWebhooks, on routineWebhookPort. Another program on
+  // the port: it says so (Settings shows it) and listens nowhere.
+  const hookPort = () => webhooks().cleanPort(deps.readSettings().routineWebhookPort) || webhooks().DEFAULT_PORT;
+  const hooksOn = () => deps.readSettings().routineWebhooks === true;
+  function webhookState() { return { on: hooksOn(), port: hookPort(), listening: hook.listening, error: hook.error }; }
+  function syncWebhooks() {
+    hookSync = hookSync.then(async () => {
+      const want = !closed && started && hooksOn() ? hookPort() : null;
+      if (hook.server && hook.port === want && hook.listening) return;
+      if (hook.server) { await hook.server.stop(); hook = { server: null, port: null, listening: false, error: '' }; }
+      if (want === null) { hook.error = ''; return; }
+      const server = webhooks().createServer({ port: want, now, hashOf: (id) => find(id)?.routine?.webhookHash || '', fire: (id, text) => (find(id)?.schedule.repeat === 'webhook' ? fireRoutine(id, { trigger: 'webhook', input: text }) : { ok: false, code: 'missing' }) });
+      const res = await server.start();
+      hook = { server: res.listening ? server : null, port: want, listening: res.listening, error: res.error };
+      if (!res.listening) console.error(`[lumen] routine web links: could not listen on port ${want}: ${res.error}`);
+    }).catch((err) => { console.error('[lumen] routine web links:', err?.message || err); }).then(() => broadcast());
+    return hookSync;
+  }
+  // A new key for a routine's web link (Make a key / Regenerate). Only its hash is kept: the key is shown this once.
+  function webhookKey(id) {
+    const task = find(id);
+    if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
+    const key = webhooks().newKey();
+    task.routine.webhookHash = webhooks().hashKey(key);
+    touch(task);
+    saveNow();
+    const port = hookPort();
+    return { key, url: webhooks().runUrl(port, task.id), curl: webhooks().curlCommand(port, task.id, key), webhooks: webhookState() };
   }
 
   // Create or change a routine (the Routines editor). Throws with a message for the user.
@@ -352,7 +443,9 @@ function create(deps) {
     const sites = Array.isArray(spec.sites) ? spec.sites.map(String) : undefined;
     if (!spec.id) {
       const made = createTask({ title: spec.title, prompt: spec.prompt, schedule, sites, model: spec.model, signedIn: spec.signedIn, allowMcp: spec.allowMcp, confirmed: spec.confirmed, startUrl: start });
-      if (routines.TEMPLATES.some((x) => x.key === spec.template)) made.routine.template = spec.template; // so the template cards know it is added
+      const tp = routines.TEMPLATES.find((x) => x.key === spec.template);
+      if (tp) made.routine.template = spec.template; // so the template cards know it is added
+      made.routine.quietUnlessNeeded = spec.quietUnlessNeeded === undefined ? Boolean(tp?.quiet) : spec.quietUnlessNeeded === true;
       if (spec.enabled === false) { made.enabled = false; touch(made); runRoutines(); } // a template: made switched off, the user turns it on
       return made;
     }
@@ -370,7 +463,8 @@ function create(deps) {
     next.allowMcp = Boolean(spec.allowMcp ?? task.allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(next.model);
     next.schedule = schedule;
     next.enabled = spec.enabled !== false;
-    next.routine = { ...task.routine, startUrl: start, lastDue: now() };
+    next.routine = { ...task.routine, startUrl: start, lastDue: now(), quietUnlessNeeded: spec.quietUnlessNeeded === undefined ? task.routine.quietUnlessNeeded : spec.quietUnlessNeeded === true };
+    if (schedule.repeat !== 'email' || task.schedule.repeat !== 'email') next.routine.inbox = routines.newInbox(); // a new email trigger looks first, then fires on what comes after
     Object.assign(task, next);
     touch(task);
     runRoutines();
@@ -477,6 +571,13 @@ function create(deps) {
     return label && RISKY_CLICK.test(label) ? { host, what: `click “${label.slice(0, 60)}” on ${host}`, detail: `A button or link on ${host} that looks like it buys, sends, posts or submits something.` } : null;
   }
 
+  // A quiet run with nothing to report keeps no result, except one started by new mail: the mail it judged is listed, so
+  // the user can see what came in (an email could have talked the model into staying quiet). undefined: not such a run.
+  function nothingResult(nothing, rt) {
+    if (!nothing) return undefined;
+    return rt.trigger === 'email' && rt.input ? `${deps.t('routines.history.nothingMail')}\n\n${rt.input.split('\n').map((l) => `- ${l.replace(/^\S+ {2}/, '')}`).join('\n')}` : '';
+  }
+
   // ---- a run
   function startRun(task, kind) {
     if (!transition(task, 'running')) return;
@@ -496,8 +597,9 @@ function create(deps) {
     task.judge = false;
     const trigger = task.routine?.trigger || 'manual';
     const scheduledFor = task.routine?.scheduledFor ?? null;
-    if (task.routine) { task.routine.trigger = null; task.routine.scheduledFor = null; }
-    const rt = { task, kind, started, previous, resume, trigger, scheduledFor, pending: new Map(), turnText: '', stopped: false, timedOut: false, waitedMs: 0, waitingSince: 0, steps: new Map(), agent: null, view: null, wc: null, timer: null };
+    const input = task.routine?.input || ''; // what came with a web link or new mail: this run's only
+    if (task.routine) { task.routine.trigger = null; task.routine.scheduledFor = null; task.routine.input = ''; }
+    const rt = { task, kind, started, previous, resume, trigger, scheduledFor, input, pending: new Map(), turnText: '', stopped: false, timedOut: false, waitedMs: 0, waitingSince: 0, steps: new Map(), agent: null, view: null, wc: null, timer: null };
     runtimes.set(task.id, rt);
     touch(task);
 
@@ -509,18 +611,23 @@ function create(deps) {
       const ended = now();
       const status = rt.stopped ? 'stopped' : (rt.timedOut || task.error) ? 'failed' : 'done';
       if (rt.timedOut && !task.error) task.error = deps.t('tasks.error.timeout', { minutes: settings().timeoutMin });
-      if (kind !== 'judge') { const kept = bg.chooseResult(text.slice(0, bg.LIMITS.result), previous); task.result = kept.result; task.resultOld = kept.old; }
+      // "Only tell me if something needs me": a reply of NOTHING_TO_REPORT is no news. The history says so, the last real
+      // result stays, and nobody is told.
+      const nothing = kind === 'run' && status === 'done' && task.routine?.quietUnlessNeeded === true && routines.isNothingToReport(text);
+      if (nothing) { task.result = previous || ''; task.resultOld = Boolean(previous); } else if (kind !== 'judge') { const kept = bg.chooseResult(text.slice(0, bg.LIMITS.result), previous); task.result = kept.result; task.resultOld = kept.old; }
       task.resume = status === 'failed' && kind !== 'judge' ? bg.resumeInfo(task) : null;
-      task.unseen = kind !== 'judge' && status !== 'stopped';
+      task.unseen = kind !== 'judge' && status !== 'stopped' && !nothing;
       if (rt.stopped) task.error = '';
       task.runs = [...task.runs, { startedAt: started, endedAt: ended, status, summary: (task.error || text).replace(/\s+/g, ' ').slice(0, 300), cost: task.usage?.cost ?? null, steps: task.stepCount, kind, ...(rt.session ? { session: rt.session } : {}) }].slice(-bg.LIMITS.runs);
       task.status = 'running'; // the state machine has the final say below
       transition(task, status);
-      if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: task.resultOld ? '' : task.result, error: task.error });
+      if (task.routine && kind === 'run') task.routine.history = routines.addHistory(task.routine.history, { startedAt: started, endedAt: ended, status: nothing ? 'nothing' : status, trigger: rt.trigger, scheduledFor: rt.scheduledFor, result: nothingResult(nothing, rt) ?? (task.resultOld ? '' : task.result), error: task.error });
       const notify = task.routine ? 'routines.notify' : 'tasks.notify';
       if (kind === 'judge') applyVerdict(task, rt, text);
+      else if (nothing) { /* nothing needs the user: no banner, no notification */ }
       else if (status === 'done') announce(task, 'done', task.routine && rt.trigger === 'catch-up' && rt.scheduledFor ? deps.t('routines.notify.doneLate', { title: task.title, time: new Date(rt.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : deps.t(`${notify}.done`, { title: task.title }));
       else if (status === 'failed') announce(task, 'failed', deps.t(`${notify}.failed`, { title: task.title, error: task.error }));
+      if (kind === 'run') tell({ type: 'finished', taskId: task.id, status, title: task.title, result: task.resultOld ? '' : task.result, error: task.error });
       saveSoon();
       broadcast();
       pump();
@@ -558,7 +665,7 @@ function create(deps) {
           if (now() - rt.started - rt.waitedMs > settings().timeoutMin * 60000) { rt.timedOut = true; agent.stop(); }
         }, 2000);
         rt.timer.unref?.();
-        const words = bg.taskPrompt(task, kind, { previous: task.runs.length ? rt.previous : '', resume: rt.resume });
+        const words = bg.taskPrompt(task, kind, { previous: task.runs.length ? rt.previous : '', resume: rt.resume, input: rt.input, trigger: rt.trigger });
         if (isLocalEngine(task.model)) await runCli(rt, agent, words);
         else await agent.run(words, (e) => onEvent(rt, e));
       } catch (err) {
@@ -652,6 +759,7 @@ function create(deps) {
       case 'approval': {
         rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '' });
         if (!rt.waitingSince) rt.waitingSince = now();
+        tell({ type: 'approval', taskId: task.id, approvalId: e.approvalId, card: rt.pending.get(e.approvalId) });
         const was = task.status;
         if (transition(task, 'waiting-approval') && was !== 'waiting-approval') announce(task, 'approval', deps.t(task.routine ? 'routines.notify.approval' : 'tasks.notify.approval', { title: task.title })); // one message per wait, not per card
         else broadcast();
@@ -659,6 +767,7 @@ function create(deps) {
       }
       case 'approval_done': {
         rt.pending.delete(e.approvalId);
+        tell({ type: 'approval_done', taskId: task.id, approvalId: e.approvalId, ok: Boolean(e.ok) });
         if (!rt.pending.size) {
           if (rt.waitingSince) { rt.waitedMs += now() - rt.waitingSince; rt.waitingSince = 0; }
           transition(task, 'running');
@@ -698,7 +807,7 @@ function create(deps) {
     if (!task) return false;
     const rt = runtimes.get(task.id);
     if (rt) { rt.stopped = true; rt.agent?.stop(); return true; }
-    if (task.status === 'queued') { transition(task, 'stopped'); task.lastRun = now(); if (task.routine) Object.assign(task.routine, { trigger: null, scheduledFor: null }); return true; }
+    if (task.status === 'queued') { transition(task, 'stopped'); task.lastRun = now(); if (task.routine) Object.assign(task.routine, { trigger: null, scheduledFor: null, input: '' }); return true; }
     return false;
   }
 
@@ -807,11 +916,14 @@ function create(deps) {
     // a few seconds later (the network comes back first). A sleeping Mac's timers don't fire on time.
     armRoutines(deps.test ? 300 : 3000);
     deps.powerMonitor?.()?.on('resume', () => armRoutines(deps.test ? 0 : 5000));
+    syncWebhooks(); // routine web links, when the user turned them on
   }
 
   function shutdown() {
     if (ticker?.stop) ticker.stop(); else clearInterval(ticker);
     armRoutines(null);
+    hook.server?.stop();
+    hook = { server: null, port: null, listening: false, error: '' };
     saveNow(); // a running task is saved as running: the next start marks it interrupted
     closed = true;
     for (const rt of runtimes.values()) { rt.stopped = true; rt.agent?.stop(); }
@@ -856,18 +968,19 @@ function create(deps) {
       const next = task.enabled === false ? null : bg.nextRunAt(task);
       return {
         id: task.id, title: task.title, schedule: task.schedule, enabled: task.enabled !== false, status: task.status, template: task.routine.template || '',
+        quietUnlessNeeded: task.routine.quietUnlessNeeded === true, hasKey: Boolean(task.routine.webhookHash), emailError: task.routine.inbox?.error || '',
         nextRun: next, lastRun: task.lastRun, unseen: task.unseen === true, pending: pendingOf(task.id).length, runs: hist.length,
         last: last ? entry(last) : null,
         ...(history ? { history: hist.slice(-10).reverse().map((h) => ({ ...entry(h), startedAt: h.startedAt, result: h.result })) } : {}),
       };
     }).sort((a, b) => (Number(b.enabled) - Number(a.enabled)) || ((a.nextRun ?? Infinity) - (b.nextRun ?? Infinity)) || a.title.localeCompare(b.title));
-    return { ok: true, now: t, enabled: settings().enabled, quiet: settings().quiet, offline: routinesOffline.length > 0, connected: connectedIds(), templates: routines.TEMPLATES.filter((x) => !x.page), routines: rows };
+    return { ok: true, now: t, enabled: settings().enabled, quiet: settings().quiet, offline: routinesOffline.length > 0, connected: connectedIds(), templates: routines.TEMPLATES.filter((x) => !x.page), webhooks: webhookState(), routines: rows };
   }
   // A one-click template: made switched off. The same code the sidebar's Routines tab uses to build it (names and requests are locale strings).
   function addTemplate(key) {
     const tp = routines.TEMPLATES.find((x) => x.key === key && !x.page);
     if (!tp) throw new Error(deps.t('routines.error.missing'));
-    return saveRoutine({ title: deps.t(`routines.template.${tp.key}.name`), prompt: deps.t(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, confirmed: true });
+    return saveRoutine({ title: deps.t(`routines.template.${tp.key}.name`), prompt: deps.t(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, quietUnlessNeeded: Boolean(tp.quiet), confirmed: true });
   }
   // What the home card and Settings ask for: act on a routine, or ask the sidebar (the editor lives there) to open.
   function routineAct({ act, id, key, on, patch, prompt } = {}) {
@@ -895,7 +1008,7 @@ function create(deps) {
       const task = find(id);
       if (!task) return null;
       if (task.unseen && !bg.ACTIVE.has(task.status)) { task.unseen = false; saveSoon(); broadcast(); } // looking at it is seeing it
-      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [], ...(task.routine ? { routine: { startUrl: task.routine.startUrl, template: task.routine.template || '', history: task.routine.history, runs: task.routine.history.length } } : {}) };
+      return { ...bg.summarize(task, now(), pendingOf(task.id), { queue: bg.queueInfo(tasks, slots(), now())[task.id], waitingSince: runtimes.get(task.id)?.waitingSince || 0 }), prompt: task.prompt, steps: task.steps, result: task.result, runs: task.runs, pages: task.pages || [], ...(task.routine ? { routine: { startUrl: task.routine.startUrl, template: task.routine.template || '', history: task.routine.history, runs: task.routine.history.length, quietUnlessNeeded: task.routine.quietUnlessNeeded === true, hasKey: Boolean(task.routine.webhookHash), emailError: task.routine.inbox?.error || '', emailCheckedAt: task.routine.inbox?.checkedAt ?? null } } : {}) };
     });
     ipcMain.handle('tasks:run', (_e, id, opts) => run(id, { resume: Boolean(opts?.resume) }));
     ipcMain.handle('tasks:edit', (_e, id, patch, opts) => edit(id, patch && typeof patch === 'object' ? { title: patch.title, prompt: patch.prompt, sites: patch.sites } : {}, { andRun: Boolean(opts?.run) }));
@@ -915,10 +1028,12 @@ function create(deps) {
     ipcMain.handle('settings:routines-act', (_e, req) => routineAct(req && typeof req === 'object' ? req : {}));
     ipcMain.handle('routines:save', ok((spec) => ({ id: saveRoutine(spec && typeof spec === 'object' ? spec : {}).id })));
     ipcMain.handle('routines:preview', (_e, spec) => routinePreview(spec && typeof spec === 'object' ? spec : {}));
+    ipcMain.handle('routines:webhook-key', ok((id) => webhookKey(String(id)))); // a new key for a routine's web link, shown once
   }
 
   return {
-    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
+    init, shutdown, register, propose, subscribe, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
+    fireRoutine, checkEmail, syncWebhooks, webhookKey, webhookState,
     // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
     routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },
@@ -926,6 +1041,6 @@ function create(deps) {
 }
 
 // The renderer-to-main channels above; main.js lists them in UI_ONLY_IPC.
-const CHANNELS = ['tasks:state', 'tasks:preview', 'tasks:create', 'tasks:get', 'tasks:run', 'tasks:edit', 'tasks:stop', 'tasks:delete', 'tasks:approve', 'tasks:schedule', 'tasks:enable', 'tasks:open-page', 'tasks:settings', 'routines:save', 'routines:preview'];
+const CHANNELS = ['tasks:state', 'tasks:preview', 'tasks:create', 'tasks:get', 'tasks:run', 'tasks:edit', 'tasks:stop', 'tasks:delete', 'tasks:approve', 'tasks:schedule', 'tasks:enable', 'tasks:open-page', 'tasks:settings', 'routines:save', 'routines:preview', 'routines:webhook-key'];
 
 module.exports = { create, TaskAgent, WORK_TAB, RISKY_CLICK, CHANNELS };
