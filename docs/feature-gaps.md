@@ -82,7 +82,7 @@ Polish in the same round:
 | **Media hub and autoplay** | — | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Missing | Later: a small media button for tabs playing audio would fit the tab strip, which already shows audio | M |
 | **Profiles and guest mode** | One profile, plus private windows | Profiles, guest | Spaces with profiles | Profiles | Missing | Later: every store (settings, keys, history) would need a profile root | L |
 | **Sync** | — | Google account | Arc account | iCloud | Missing | No: Lumen has no servers of its own (no telemetry, no accounts) | L |
-| **Split view** | — | Edge and Chrome split screen | Split view | — | Missing | Later: the sidebar covers the most common side-by-side use | L |
+| **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have | Not kept across restarts; two tabs only | — |
 | **Translation** | Your connected AI, or Google Translate with consent | Built in | Built in | Built in, on device | Have (by AI) | On-device (Bergamot): declined by the owner | — |
 | **Error pages** | Certificate, HTTPS-only, Safe Browsing, crashed, and network errors with their own wording and hint: offline, site not found, refused, timed out, reset, proxy, redirect loop, blocked (added) | Same, plus an offline game | Same | Same | Partial: the error, history, bookmarks and downloads pages aren't localized | Yes: localize these pages (they need the strings handed in, as the settings page does) | M |
 | **Notifications** | Web notifications through the permission prompt; Lumen's own for background tasks | Plus quieter prompts | Same | Same | Have | — | — |

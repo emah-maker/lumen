@@ -1950,6 +1950,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source); // "Add to notes" (renderer/chat-actions.js)
 }
 
 // ---------- permissions: how much the sidebar's AI asks (the bolt in the sidebar head) ----------
