@@ -118,6 +118,9 @@ const SAMPLER = `(() => {
         return JSON.stringify({ clean: before.defaultPrevented, dirty: after.defaultPrevented });
       })()`);
       check('Home > Widgets from a link is built, and its open form asks before the tab closes with unsaved changes (and not when unchanged)', state === JSON.stringify({ clean: false, dirty: true }), state);
+      // The guard is verified: let this tab close without it. A page with unsaved changes opens a native "Leave site?" dialog on close, which Playwright answers
+      // at the same moment Lumen does ("No dialog is showing"), and that unhandled error ends the run.
+      await run(id, "window.addEventListener('beforeunload', (e) => e.stopImmediatePropagation(), true); true");
       await closeSettings(id);
     }
   } finally { await app.close().catch(() => {}); }

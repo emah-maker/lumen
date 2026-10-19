@@ -46,6 +46,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.waitForSelector('.tab');
   await ui.waitForTimeout(500);
   await ui.evaluate(() => window.assistant.setMcpEnabled(true));
+  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default; this suite is about the approval cards, so it asks)
   await app.evaluate(({ app: electronApp }) => {
     global.__focusEvents = [];
     electronApp.on('browser-window-focus', (_e, w) => global.__focusEvents.push(w.id));
@@ -287,7 +288,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   // Its approval card is quiet: the sidebar stays closed, the AI button gets a badge, nothing takes focus, and it waits for the user.
   paused = true;
   const pendingClick = B.call('click', { text: 'Press B1' });
-  await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 });
+  await Promise.race([ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }), pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); })]);
   const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: document.getElementById('toggle-sidebar').classList.contains('approval-pending'), title: document.querySelector('.approval:not(.resolved) .approval-title')?.textContent }));
   check('an agent approval card does not open the sidebar: the AI button shows a badge instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
   check('...and it names the agent and the site', /Codex/.test(quiet.title) && /127[.]0[.]0[.]1/.test(quiet.title), quiet.title);

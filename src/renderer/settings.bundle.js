@@ -24,6 +24,7 @@
       ai: {
         ...S.ai,
         get: via('ai.get', S.ai.get),
+        searchEngines: S.ai.searchEngines ? via('ai.searchEngines', S.ai.searchEngines) : S.ai.searchEngines,
         mcpInfo: via('ai.mcpInfo', S.ai.mcpInfo),
         automationInfo: via('ai.automationInfo', S.ai.automationInfo),
         isDefaultBrowser: S.ai.isDefaultBrowser ? (...args) => (args[0]?.cached && fresh('ai.isDefaultBrowser')) || S.ai.isDefaultBrowser(...args) : S.ai.isDefaultBrowser,
@@ -36,6 +37,7 @@
   if (S.strings) prefetch('strings', () => S.strings());
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
+    if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines());
     prefetch('ai.get', () => S.ai.get());
     S.ai.onModelsUpdated?.(stop);
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
@@ -4157,9 +4159,6 @@ let gmailWatchOn = false;
 let slackWatch = null;
 let slackWatchOn = false;
 async function buildAi(card) {
-  const mcpAsked = S.ai.mcpInfo();
-  const autoAsked = S.ai.automationInfo();
-  mcpAsked.catch(() => {}); autoAsked.catch(() => {});
   let ai = await S.ai.get();
 
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
@@ -4502,7 +4501,7 @@ async function buildAi(card) {
   later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
 
-  const mcp = await mcpAsked;
+  const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
   agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
@@ -4581,7 +4580,7 @@ async function buildAi(card) {
   buildAntigravity(agents, refreshModels);
   buildTelegram(agents);
 
-  const auto = await autoAsked;
+  const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
   const port = h('input', { type: 'number', id: 'ai-automation-port', min: '1024', max: '65535', placeholder: '9222', 'aria-label': 'Automation port', value: String(auto.port) });
   const autoNote = status('ai-automation-status');
@@ -6087,7 +6086,7 @@ function alertLine(host, text) {
 }
 
 async function buildSearch(card) {
-  const ai = await S.ai.get();
+  const ai = await S.ai.searchEngines();
   const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
   card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));

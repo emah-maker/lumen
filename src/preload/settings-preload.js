@@ -227,6 +227,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       removeSharedFile: call('settings:remove-shared-file'),
       clearSharedFiles: call('settings:clear-shared-files'),
       setSearchEngine: call('settings:set-search-engine'),
+      searchEngines: call('settings:search-engines'),
       cliStatus: call('cli:status'),
       cliLogin: call('cli:login'),
       cliLogout: call('cli:logout'),
