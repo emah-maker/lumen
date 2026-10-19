@@ -11,13 +11,14 @@ Lumen has no servers. While it is open, it asks Telegram for new messages to you
 3. Paste the token under **Bot token** and press **Save token**. Lumen checks it with Telegram, then stores it encrypted with your OS keychain. It is never shown again, never logged, and only ever sent to Telegram (`api.telegram.org`).
 4. Press **Pair**. Lumen shows a 6-digit code for 10 minutes. Send `/pair <code>` to your bot from your Telegram account. Lumen replies **Paired**, and Settings shows the chat's name.
 
-Only that one chat can use the bot. Messages from anyone else are ignored, with one polite reply an hour at most, and group chats are never answered. Five wrong codes end a pairing; press **Pair** again for a new code.
+Only that one chat can use the bot. Messages from anyone else are ignored, with one polite reply an hour at most, and group chats are never answered. A chat that sends five wrong codes can't pair with that code any more; twenty wrong codes from all chats together end the pairing. Press **Pair** again for a new code.
 
-**Unpair** forgets the chat (pair again to use it). **Remove bot** forgets the token and the pairing and stops listening.
+**Unpair** forgets the chat. To pair a different chat, press **Unpair** first: **Pair** is only offered while no chat is paired, so a new pairing never replaces yours. **Remove bot** forgets the token and the pairing and stops listening.
 
 ## Using it
 
 - Send a request in plain words: "find the cheapest flight from Boston to Lisbon in May on google.com/travel". Lumen answers **Working on it…**, runs it as a background task with your default model, and sends the result when it is done. Long results come in several messages (Telegram allows 4096 characters each).
+- Forwarded messages are never run, since their words are someone else's. Type the request yourself.
 - `/status` lists the tasks you started from Telegram that are still running. `/stop` stops the latest one. `/help` lists the commands.
 - The task also shows in the sidebar's **Background tasks** panel, like one you made in Lumen.
 
@@ -25,7 +26,8 @@ Only that one chat can use the bot. Messages from anyone else are ignored, with 
 
 Exactly what a background task you make in Lumen may do:
 
-- It works in its own hidden tab, never in yours. Sites named in your message may be used without asking; any other site asks first.
+- It works in its own hidden tab, never in yours.
+- It starts with no allowed sites. Every site it wants to open asks on the phone first, even one your message names (in Lumen, the create card shows you the sites before you confirm; a Telegram message has no such preview). Allow lets it in for that step.
 - Steps that buy, send, post or submit something ask every time.
 - A question comes to the chat as a message with **Allow** and **Deny** buttons. Allow lets that one step through, the same as **Allow once** in the Tasks panel; it never allows a site for good. You can also answer in Lumen's Tasks panel; the phone's message then says it was answered there.
 - A question nobody answers is denied after the wait set in the Tasks panel (an hour unless you changed it), and the task finishes with what it has.

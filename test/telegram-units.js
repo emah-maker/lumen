@@ -18,9 +18,11 @@ function fakeApi() {
   const queue = [];
   let nextMessageId = 100;
   let failWith = null; // { status, description, retry_after } or 'network'
+  let delay = 0; // ms a getUpdates takes (a long poll in flight); like Telegram's, it ignores being aborted
   const api = {
     calls, queue,
     fail: (f) => { failWith = f; },
+    slow: (ms) => { delay = ms; },
     sent: () => calls.filter((c) => c.method === 'sendMessage'),
     fetch: async (url, init) => {
       const m = /^https:\/\/api\.telegram\.org\/bot([^/]+)\/(\w+)$/.exec(url);
@@ -32,7 +34,12 @@ function fakeApi() {
       if (failWith) return json({ ok: false, error_code: failWith.status, description: failWith.description || 'error', parameters: failWith.retry_after ? { retry_after: failWith.retry_after } : undefined }, failWith.status);
       if (m[1] !== TOKEN) return json({ ok: false, error_code: 401, description: 'Unauthorized' }, 401);
       if (method === 'getMe') return json({ ok: true, result: { id: 42, is_bot: true, username: 'my_lumen_bot' } });
-      if (method === 'getUpdates') return json({ ok: true, result: queue.splice(0).filter((u) => u.update_id >= (body.offset || 0)) });
+      if (method === 'getUpdates') {
+        // As Telegram does: an offset confirms (drops) everything before it; the rest comes back until confirmed.
+        while (queue.length && queue[0].update_id < (body.offset || 0)) queue.shift();
+        if (delay) await new Promise((r) => setTimeout(r, delay));
+        return json({ ok: true, result: queue.filter((u) => u.update_id >= (body.offset || 0)) }); // (what arrived while the poll was held comes back with it)
+      }
       if (method === 'sendMessage') return json({ ok: true, result: { message_id: nextMessageId++, chat: { id: body.chat_id }, text: body.text } });
       return json({ ok: true, result: true });
     },
@@ -66,6 +73,7 @@ function fakeTasks() {
     find: (id) => tasks.get(id),
     subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     approvalWaitMin: () => 60,
+    listeners: () => listeners.size,
     emit: (e) => { for (const fn of listeners) fn(e); },
   };
 }
@@ -159,6 +167,14 @@ const lastText = (api) => api.sent().at(-1)?.body.text || '';
   const task = [...tasks.tasks.values()][0];
   check('the owner\'s message becomes a confirmed background task now, signed out by default', task && task.spec.prompt.startsWith('Find the cheapest') && task.spec.confirmed === true && task.spec.schedule.type === 'now' && task.spec.signedIn === false && !task.spec.model, JSON.stringify(task?.spec));
   check('…and the reply says it is working', lastText(api) === 'Working on it…');
+  check('…with no allowed sites, even though the message names example.com: every site asks on the phone', Array.isArray(task.spec.sites) && task.spec.sites.length === 0, JSON.stringify(task.spec.sites));
+  for (const fwd of [{ forward_origin: { type: 'user', sender_user: { id: 9 } } }, { forward_from: { id: 9 } }, { forward_from_chat: { id: -100 } }, { forward_sender_name: 'Someone' }]) {
+    const m = msg(OWNER, 'buy the thing on shop.example.com');
+    Object.assign(m.message, fwd);
+    await tg.handleUpdate(m);
+  }
+  await tg.settled();
+  check('a forwarded message (any kind of forward) is refused and starts nothing', tasks.tasks.size === 1 && /Forwarded messages aren't run/.test(lastText(api)));
   await tg.handleUpdate(msg(OWNER, '/status'));
   await tg.settled();
   check('/status lists it', lastText(api).includes(task.title) && lastText(api).includes('working'));
@@ -201,6 +217,16 @@ const lastText = (api) => api.sent().at(-1)?.body.text || '';
   await tg.handleUpdate(press(OWNER, kb3[0].callback_data));
   check('…and its old Allow button does nothing', tasks.approvals.length === n);
   check('a forged button for a task Telegram did not start does nothing', (await tg.handleUpdate(press(OWNER, T.callbackData('ffffffffffffffff', 1, true))), tasks.approvals.length === n));
+
+  // ---- a card with long, punctuation-heavy fields is cut before escaping, so it stays valid MarkdownV2 under 4096
+  task.pending = new Set([10]);
+  tasks.emit({ type: 'approval', taskId: task.id, approvalId: 10, card: { host: 'a.'.repeat(400) + 'com', title: 'Click “Pay.” (now)! '.repeat(60), query: '[q].'.repeat(200), args: '.'.repeat(5000) } });
+  await tg.settled();
+  const big = api.sent().at(-1).body;
+  const unescaped = big.text.replace(/\\./g, '').match(/[_*[\]()~`>#+\-=|{}.!]/g) || [];
+  check('a long card is still sent, under 4096 characters', big.reply_markup && big.text.length <= 4096, big.text.length);
+  check('…with every reserved character still escaped (only the bold and italic marks are bare)', unescaped.every((c) => c === '*' || c === '_'), unescaped.join(''));
+  check('…and the fields are marked as cut', big.text.includes('…'));
 
   // ---- result
   const result = 'Cheapest: €49 on 3 May.\n\n' + 'detail '.repeat(1200);
@@ -278,11 +304,75 @@ const lastText = (api) => api.sent().at(-1)?.body.text || '';
     for (let i = 0; i < T.PAIR_TRIES; i++) await e.tg.handleUpdate(msg(STRANGER, `/pair ${bad}`));
     await e.tg.handleUpdate(msg(STRANGER, `/pair ${right}`));
     await e.tg.settled();
-    check('after five wrong codes even the right one no longer pairs', !e.settings().telegram.owner && e.tg.pairCode() === null);
+    check('after five wrong codes from one chat, even the right code from it no longer pairs', !e.settings().telegram.owner);
+    check('…but the pairing goes on for other chats (one chat can\'t lock the owner out)', e.tg.pairCode() === right);
+    await e.tg.handleUpdate(msg(OWNER, `/pair ${right}`));
+    check('…and the owner\'s chat can still pair with it', e.settings().telegram.owner?.id === OWNER);
+    let unpairFirst = '';
+    try { e.tg.startPairing(); } catch (x) { unpairFirst = x.message; }
+    check('with a chat paired, Pair is refused until Unpair', /Unpair first/.test(unpairFirst) && e.tg.pairCode() === null);
+    e.tg.unpair();
+    e.tg.startPairing();
+    const right2 = e.tg.pairCode();
+    const bad2 = right2 === '000000' ? '111111' : '000000';
+    for (let c = 0; c < 4; c++) for (let i = 0; i < T.PAIR_TRIES; i++) await e.tg.handleUpdate(msg(7770000 + c, `/pair ${bad2}`));
+    check('twenty wrong codes from many chats end the pairing for everyone', e.tg.pairCode() === null && !e.settings().telegram.owner);
     e.tg.startPairing();
     e.clock.now += 11 * 60000;
     await e.tg.handleUpdate(msg(OWNER, `/pair ${e.tg.pairCode() || '123456'}`));
     check('a code older than 10 minutes no longer pairs', !e.settings().telegram.owner);
+    e.tg.shutdown();
+  }
+
+  // ---- loops never overlap, offsets are saved per update, and a stopped loop writes nothing
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const e = setup({ settings: { telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    e.api.slow(40);
+    e.tg.refresh(); // a long poll goes out
+    await wait(10);
+    e.api.queue.push(msg(OWNER, 'run me once'));
+    e.settings().telegramChannel = false; e.tg.refresh(); // off and on again while the first poll is in flight
+    e.settings().telegramChannel = true; e.tg.refresh();
+    await wait(250);
+    const runs = [...e.tasks.tasks.values()].filter((x) => x.spec.prompt === 'run me once').length;
+    check('turning it off and on during a poll never runs a message twice', runs === 1, runs);
+    e.tg.shutdown();
+  }
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const e = setup({ settings: { telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    const seen = [];
+    const create = e.tasks.create;
+    e.tasks.create = (spec) => { seen.push(e.settings().telegram.offset); return create(spec); };
+    const a = msg(OWNER, 'first'); const b = msg(OWNER, 'second');
+    e.api.queue.push(a, b);
+    e.tg.refresh();
+    await wait(60);
+    check('each update\'s offset is saved before it is handled (a crash mid-batch never replays the ones done)', seen[0] === a.update_id + 1 && seen[1] === b.update_id + 1, JSON.stringify(seen));
+    e.tg.shutdown();
+  }
+  {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const e = setup({ settings: { telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    e.api.slow(40);
+    e.tg.refresh();
+    await wait(10);
+    e.api.queue.push(msg(OWNER, 'arrives as the bot is removed'));
+    e.tg.removeBot();
+    await wait(120);
+    check('a loop stopped by Remove bot handles nothing more and writes no stale offset', e.tasks.tasks.size === 0 && e.settings().telegram.offset === 0, JSON.stringify(e.settings().telegram));
+  }
+  {
+    const e = setup({ settings: { telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    e.tg.refresh();
+    check('while on, it listens to task events', e.tasks.listeners() === 1);
+    e.settings().telegramChannel = false;
+    e.tg.refresh();
+    check('turning it off stops listening to task events', e.tasks.listeners() === 0);
+    e.settings().telegramChannel = true;
+    e.tg.refresh();
+    check('turning it on listens again (once)', e.tasks.listeners() === 1);
     e.tg.shutdown();
   }
 

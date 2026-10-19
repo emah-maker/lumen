@@ -4,9 +4,12 @@
 //
 // - The bot token is stored encrypted with the OS keychain (main.js keys.telegram), never logged and never shown again.
 // - Pairing: Settings shows a 6-digit code for 10 minutes; the user sends "/pair <code>" to the bot, and that one chat
-//   becomes the owner. Every other chat is ignored (one polite reply an hour at most). Five wrong codes end the pairing.
+//   becomes the owner. Every other chat is ignored (one polite reply an hour at most). Five wrong codes lock a chat out of
+//   that pairing, twenty in all end it. With a chat already paired, Unpair comes first.
 // - A message from the owner becomes a background task (features/background-runner.js create, like /background with
-//   the default model). The reply is "Working on it…", then the result, split at Telegram's 4096 characters.
+//   the default model). The reply is "Working on it…", then the result, split at Telegram's 4096 characters. The task
+//   starts with no allowed sites: every site it opens asks on the phone first. A forwarded message is never run (its
+//   words are someone else's).
 // - The task's approval cards (a new site, a buy / send / submit step) come to the phone with Allow / Deny buttons,
 //   answered through the runner's approve(), the same call as the Tasks panel. Unanswered, the task's usual timeout
 //   denies them. Nothing here allows anything by itself.
@@ -18,12 +21,14 @@ const API = 'https://api.telegram.org';
 const MAX_TEXT = 4096; // Telegram's limit for one message
 const POLL_TIMEOUT_S = 25; // long poll: Telegram holds the request until a message comes, or this long
 const PAIR_TTL_MS = 10 * 60000;
-const PAIR_TRIES = 5;
+const PAIR_TRIES = 5; // wrong codes one chat may send during a pairing
+const PAIR_TRIES_ALL = 20; // ...and all chats together, before the pairing ends
 const STRANGER_REPLY_MS = 60 * 60000; // at most one reply an hour to a chat that is not the owner
 const STALE_S = 10 * 60; // a message older than this (sent while Lumen was closed) is not run
 const OFFLINE_WAIT_MS = 15000;
 const QUICK_POLL_MS = 1000;
 const BACKOFF = { base: 2000, max: 5 * 60000 };
+const CARD_CAPS = { task: 80, title: 200, host: 200, query: 300, args: 1000 }; // raw characters, before MarkdownV2 escaping (at most doubles them): a card stays under 4096
 const ACTIVE = new Set(['queued', 'running', 'waiting-approval']);
 const TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
 
@@ -97,12 +102,13 @@ function create(deps) {
     signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
   }));
   const pollTimeout = deps.pollTimeout ?? POLL_TIMEOUT_S;
-  let loop = null; // { controller, stopped }
+  let loop = null; // { controller, stopped, done }: the running loop
+  let lastDone = Promise.resolve(); // the previous loop's end: a new one starts only after it (never two reading at once)
   let state = 'off'; // off | no-token | polling | offline | retrying | conflict | bad-token
   let lastError = '';
   let halted = false; // Telegram refused the token: no polling until it changes
   let failures = 0;
-  let pair = null; // { code, expires, tries }
+  let pair = null; // { code, expires, tries: Map(chat id -> wrong codes), wrong: all wrong codes }
   const strangers = new Map(); // chat id -> when it was last answered
   const ours = new Map(); // task id -> { chatId, title, cards: Map(approvalId -> { messageId, text, done }) }
   let unsubscribe = null;
@@ -148,7 +154,7 @@ function create(deps) {
   // Send text (split as needed). Resolves to the last message Telegram made, or null when sending failed.
   function send(chatId, text, extra = {}) {
     const run = async () => {
-      const parts = extra.parse_mode ? [String(text).slice(0, MAX_TEXT)] : splitMessage(text);
+      const parts = extra.parse_mode ? [String(text)] : splitMessage(text); // (MarkdownV2 text is built short enough: cutting it could break an escape)
       let last = null;
       for (let i = 0; i < parts.length; i++) {
         const isLast = i === parts.length - 1;
@@ -164,7 +170,7 @@ function create(deps) {
   }
 
   function edit(chatId, messageId, text, extra = {}) {
-    const run = () => call('editMessageText', { chat_id: chatId, message_id: messageId, text: String(text).slice(0, MAX_TEXT), ...extra }).catch((err) => log('could not update a message', err));
+    const run = () => call('editMessageText', { chat_id: chatId, message_id: messageId, text: String(text), ...extra }).catch((err) => log('could not update a message', err));
     const p = sendChain.then(run);
     sendChain = p.catch(() => {});
     return p;
@@ -187,7 +193,8 @@ function create(deps) {
   async function tryPair(msg, code) {
     const chatId = msg.chat.id;
     if (!pairingActive()) return strangerReply(chatId);
-    pair.tries++;
+    const tries = pair.tries.get(chatId) || 0;
+    if (tries >= PAIR_TRIES) return null; // this chat already had its five tries (it was told once)
     if (sameCode(code, pair.code)) {
       pair = null;
       const name = String(msg.from?.username ? `@${msg.from.username}` : msg.from?.first_name || 'Telegram').slice(0, 64);
@@ -195,15 +202,21 @@ function create(deps) {
       strangers.delete(chatId);
       return send(chatId, t('telegram.reply.paired'));
     }
-    if (pair.tries >= PAIR_TRIES) { pair = null; return send(chatId, t('telegram.reply.pairLocked')); }
+    pair.tries.set(chatId, tries + 1);
+    if (++pair.wrong >= PAIR_TRIES_ALL) { pair = null; return send(chatId, t('telegram.reply.pairLocked')); }
+    if (tries + 1 >= PAIR_TRIES) return send(chatId, t('telegram.reply.pairLocked'));
     return send(chatId, t('telegram.reply.pairWrong'));
   }
+
+  // A forwarded message carries someone else's words: never run as the owner's request.
+  const isForwarded = (msg) => Boolean(msg.forward_origin || msg.forward_from || msg.forward_from_chat || msg.forward_sender_name || msg.forward_date || msg.is_automatic_forward);
 
   const activeOurs = () => [...ours.entries()].map(([id, entry]) => ({ id, entry, task: deps.tasks.find(id) })).filter((x) => x.task && ACTIVE.has(x.task.status));
 
   async function onOwnerMessage(msg) {
     const chatId = msg.chat.id;
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+    if (isForwarded(msg)) return send(chatId, t('telegram.reply.forwarded'));
     if (!text) return send(chatId, t('telegram.reply.textOnly'));
     const command = parseCommand(text, tg().bot?.username);
     if (command) {
@@ -226,7 +239,8 @@ function create(deps) {
     if (!prompt) return send(chatId, t('telegram.reply.help'));
     let task;
     try {
-      task = deps.tasks.create({ prompt, schedule: { type: 'now' }, signedIn: deps.readSettings().telegramSignedIn === true, confirmed: true });
+      // sites: none. Nobody saw a preview of the sites a request names (as the create card shows them), so each site asks on the phone.
+      task = deps.tasks.create({ prompt, schedule: { type: 'now' }, sites: [], signedIn: deps.readSettings().telegramSignedIn === true, confirmed: true });
     } catch (err) {
       return send(chatId, t('telegram.reply.couldNot', { error: String(err?.message || err).slice(0, 300) }));
     }
@@ -267,15 +281,18 @@ function create(deps) {
     return onOwnerMessage(msg);
   }
 
-  async function pollOnce(signal) {
+  // One getUpdates and its messages. `l` is the loop asking: once it is stopped (the setting went off, the bot was removed
+  // or changed) nothing more is handled and its offset is never written. Each update's offset is saved before it is
+  // handled, so a crash or a restart never runs a message twice (it may skip the one being handled).
+  async function pollOnce(l) {
     const offset = Number(tg().offset) || 0;
-    const updates = await call('getUpdates', { offset, timeout: pollTimeout, allowed_updates: ['message', 'callback_query'] }, { signal, timeoutMs: (pollTimeout + 15) * 1000 });
-    let next = offset;
+    const updates = await call('getUpdates', { offset, timeout: pollTimeout, allowed_updates: ['message', 'callback_query'] }, { signal: l.controller.signal, timeoutMs: (pollTimeout + 15) * 1000 });
     for (const u of Array.isArray(updates) ? updates : []) {
-      if (Number.isSafeInteger(u?.update_id)) next = Math.max(next, u.update_id + 1);
+      if (l.stopped) break;
+      if (!Number.isSafeInteger(u?.update_id) || u.update_id < offset) continue;
+      if (u.update_id + 1 > (Number(tg().offset) || 0)) saveTg({ offset: u.update_id + 1 });
       try { await handleUpdate(u); } catch (err) { log('could not handle a message', err); }
     }
-    if (next !== offset) saveTg({ offset: next }); // (Telegram forgets what was confirmed: the next getUpdates with this offset)
     return updates;
   }
 
@@ -287,7 +304,7 @@ function create(deps) {
       if (deps.isOnline && deps.isOnline() === false) { setState('offline'); await sleep(OFFLINE_WAIT_MS, l.controller.signal); continue; }
       try {
         const started = now();
-        const updates = await pollOnce(l.controller.signal);
+        const updates = await pollOnce(l);
         failures = 0;
         if (!l.stopped) setState('polling');
         // A long poll that came back at once with nothing (a proxy that doesn't hold the request): don't spin.
@@ -310,19 +327,26 @@ function create(deps) {
     loop = null;
   }
 
+  function startLoop() {
+    const l = { controller: new AbortController(), stopped: false, done: null };
+    loop = l;
+    failures = 0;
+    setState('polling');
+    l.done = lastDone.then(() => (l.stopped ? null : runLoop(l))).catch((err) => log('polling stopped', err));
+    lastDone = l.done;
+  }
+
   // Start or stop polling to match the setting and the token. Called at startup and after every change.
   function refresh() {
     const token = deps.getToken();
     const want = enabled() && Boolean(token) && !halted;
     if (want && !unsubscribe && deps.tasks.subscribe) unsubscribe = deps.tasks.subscribe(onTaskEvent);
-    if (want && !loop) {
-      const l = { controller: new AbortController(), stopped: false };
-      loop = l;
-      failures = 0;
-      setState('polling');
-      runLoop(l).catch((err) => log('polling stopped', err));
-    } else if (!want) {
+    if (want && !loop) startLoop();
+    else if (!want) {
       stopLoop();
+      unsubscribe?.(); // off: no more messages to the phone about tasks (they carry on in Lumen)
+      unsubscribe = null;
+      ours.clear();
       if (!halted) setState(!enabled() ? 'off' : 'no-token');
     }
   }
@@ -333,11 +357,13 @@ function create(deps) {
     if (!entry) return;
     if (e.type === 'approval') {
       const c = e.card || {};
-      const title = c.title || t('telegram.card.interact', { host: c.host || '?' });
-      const lines = [`*${escapeMarkdownV2(t('telegram.card.head', { title: entry.title }))}*`, escapeMarkdownV2(title)];
-      if (c.host && c.title) lines.push(escapeMarkdownV2(t('telegram.card.site', { host: c.host })));
-      if (c.query) lines.push(escapeMarkdownV2(String(c.query).slice(0, 300)));
-      if (c.args) lines.push(escapeMarkdownV2(String(c.args).slice(0, 1200)));
+      // Cut the raw words, then escape (cutting escaped text could split a "\." and break the message).
+      const host = cap(c.host, CARD_CAPS.host);
+      const title = cap(c.title, CARD_CAPS.title) || t('telegram.card.interact', { host: host || '?' });
+      const lines = [`*${escapeMarkdownV2(t('telegram.card.head', { title: cap(entry.title, CARD_CAPS.task) }))}*`, escapeMarkdownV2(title)];
+      if (host && c.title) lines.push(escapeMarkdownV2(t('telegram.card.site', { host })));
+      if (c.query) lines.push(escapeMarkdownV2(cap(c.query, CARD_CAPS.query)));
+      if (c.args) lines.push(escapeMarkdownV2(cap(c.args, CARD_CAPS.args)));
       lines.push(`_${escapeMarkdownV2(t('telegram.card.wait', { minutes: deps.tasks.approvalWaitMin?.() || 60 }))}_`);
       const text = lines.join('\n\n');
       const card = { messageId: null, text, done: false };
@@ -363,6 +389,12 @@ function create(deps) {
           : `${t('telegram.reply.failed', { title: e.title || entry.title, error: e.error || '' })}${result ? `\n\n${result}` : ''}`;
       send(entry.chatId, text);
     }
+  }
+  function cap(text, n) {
+    const s = String(text ?? '').trim();
+    if (s.length <= n) return s;
+    const cut = /[\uD800-\uDBFF]/.test(s[n - 2]) ? n - 2 : n - 1;
+    return `${s.slice(0, cut)}…`;
   }
   function closeCard(entry, card, key) {
     return edit(entry.chatId, card.messageId, `${card.text}\n\n${escapeMarkdownV2(t(key))}`, { parse_mode: 'MarkdownV2' });
@@ -404,7 +436,8 @@ function create(deps) {
   function startPairing() {
     if (!deps.getToken()) throw new Error(t('telegram.error.noToken'));
     if (!enabled()) throw new Error(t('telegram.error.off'));
-    pair = { code: newPairCode(), expires: now() + PAIR_TTL_MS, tries: 0 };
+    if (ownerId() !== null) throw new Error(t('telegram.error.unpairFirst')); // a new pairing never replaces the paired chat behind the user's back
+    pair = { code: newPairCode(), expires: now() + PAIR_TTL_MS, tries: new Map(), wrong: 0 };
     refresh();
     return status();
   }
@@ -452,4 +485,4 @@ function create(deps) {
   };
 }
 
-module.exports = { create, validToken, scrub, escapeMarkdownV2, splitMessage, parseCommand, backoffDelay, callbackData, parseCallback, newPairCode, MAX_TEXT, PAIR_TRIES, STALE_S };
+module.exports = { create, validToken, scrub, escapeMarkdownV2, splitMessage, parseCommand, backoffDelay, callbackData, parseCallback, newPairCode, MAX_TEXT, PAIR_TRIES, PAIR_TRIES_ALL, STALE_S };

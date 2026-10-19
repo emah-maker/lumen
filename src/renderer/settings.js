@@ -2620,10 +2620,11 @@ function buildTelegram(slot) {
     const buttons = [];
     if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
     else if (s.hasToken) {
-      buttons.push(h('button', { id: 'telegram-pair', class: s.owner ? '' : 'primary', text: s.owner ? tr('settings.telegram.repair', 'Pair again') : tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+      // A paired chat is unpaired first: a new pairing never replaces it on its own.
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
         try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
       } }));
-      if (s.owner) buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
     }
     pairControls.replaceChildren(...buttons, pairErr);
     // While a code is shown, look again every 2 s so "Paired with …" appears as soon as the phone sends it.
