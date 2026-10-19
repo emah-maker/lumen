@@ -13,6 +13,7 @@
     if (!p) return;
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
+    if ('tabLayout' in p) { window.lumenSideTabs = { tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed }; document.dispatchEvent(new Event('lumen:side-tabs')); } // [side tabs] Tab layout: renderer/side-tabs.js moves the list
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite)); // Performance mode (features/performance.js) also stops motion
