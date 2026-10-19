@@ -69,16 +69,19 @@ const formatAddress = ({ name, address }) => {
 };
 const addressHeader = (list) => list.map(formatAddress).join(',\r\n ');
 
-// A Message-ID (or one References entry): <…> with no spaces or angle brackets inside.
-const MSG_ID = /^<[^<>\s\u0000-\u001f\u007f]{1,900}>$/;
+// A Message-ID (or one References entry): <…> of printable ASCII, with no angle brackets inside.
+const MSG_ID = /^<[\x21-\x3b\x3d\x3f-\x7e]{1,900}>$/;
+const MSG_IDS = /<[\x21-\x3b\x3d\x3f-\x7e]{1,900}>/g;
+const MAX_REFERENCES = 10; // the thread's first, its last few, then the message replied to (RFC 5322 3.6.4 allows trimming the middle)
 // (Both come from Gmail's copy of the original, which may fold a long References over lines: whitespace is only a separator here,
-// and only <…> ids are kept, so nothing else from them reaches the draft's headers.)
+// and only <…> ids are kept, so nothing else from them reaches the draft's headers. References is folded between ids, so no
+// line passes 998 characters.)
 function replyHeaders(messageId, references) {
   const id = String(messageId || '').replace(/\s+/g, ' ').trim();
   if (!MSG_ID.test(id)) return null;
-  const earlier = String(references || '').replace(/\s+/g, ' ').match(/<[^<>\s\u0000-\u001f\u007f]{1,900}>/g) || [];
-  const refs = [...earlier.filter((r) => r !== id).slice(-19), id]; // the thread's last few, then the message replied to
-  return { inReplyTo: id, references: refs.join(' ') };
+  const earlier = [...new Set((String(references || '').replace(/\s+/g, ' ').match(MSG_IDS) || []).filter((r) => r !== id))];
+  const kept = earlier.length > MAX_REFERENCES - 1 ? [earlier[0], ...earlier.slice(-(MAX_REFERENCES - 2))] : earlier;
+  return { inReplyTo: id, references: [...kept, id].join('\r\n ') };
 }
 
 // The text, base64 in lines of 76 (any line length and any characters are safe that way).

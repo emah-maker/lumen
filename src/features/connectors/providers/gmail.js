@@ -119,9 +119,11 @@ const actions = {
     } catch (err) {
       if (err?.kind === 'scope') throw new ConnectorError(ALLOW_DRAFTS, 'auth');
       // Sent, but no answer came back: Lumen doesn't try again (that could make two). The user looks first.
-      if (err?.kind === 'maybe') throw new ConnectorError(`The draft may have been made; check Drafts before trying again: ${GD.draftsLink(email)} Don’t make it again unless the user says it isn’t there.`, 'other');
+      if (err?.kind === 'maybe' && !err.nothingMade) throw new ConnectorError(`The draft may have been made; check Drafts before trying again: ${GD.draftsLink(email)} Don’t make it again unless the user says it isn’t there.`, 'other');
       if (err?.reconnect) throw ctx.authError();
-      throw new ConnectorError(`${flat(String(err?.message || err), 200)} Nothing was made.`, 'other');
+      // Only an error the request certainly didn't get past (nothingMade) says nothing was made; anything else may have made it.
+      if (err?.nothingMade) throw new ConnectorError(`${flat(String(err?.message || err), 200)} Nothing was made.`, 'other');
+      throw new ConnectorError(`The draft may have been made; check Drafts before trying again: ${GD.draftsLink(email)} Don’t make it again unless the user says it isn’t there.`, 'other');
     }
     const msgId = /^[0-9a-f]{6,32}$/i.test(String(made?.message?.id || '')) ? String(made.message.id) : '';
     const what = `${orig ? 'Reply' : 'Draft'} to ${flat(to, 200)}: “${flat(subject, 120)}”`;

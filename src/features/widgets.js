@@ -2245,6 +2245,16 @@ function createWidgets(deps) {
         const res = await deps.fetch(`${deps.endpoints?.().gmail || ENDPOINTS.gmail}/users/me/profile`, { headers: { Authorization: `Bearer ${t.access}` } });
         if (res.ok) email = String((await res.json())?.emailAddress || '').slice(0, 320);
       } catch { /* shown as "a Google account" */ }
+      // Allow drafts is for the account already signed in. Google's page lets the user pick another one: then the sign-in Lumen had
+      // stays as it was (not replaced, not revoked), and the new grant, for a different account, is given back to Google. When Google
+      // didn't say which account it was, nothing is kept or revoked either (revoking a grant the same account shares would end both).
+      if (compose && before?.refresh && before.email) {
+        const same = email && email.toLowerCase() === before.email.toLowerCase();
+        if (!same) {
+          if (email) revokeGoogle({ refresh: t.refresh });
+          throw new Error(email ? `Choose ${before.email} to allow drafts for it.` : `Lumen couldn’t check which account Google used. Press Allow drafts again and choose ${before.email}.`);
+        }
+      }
       deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email, scope: t.scope })); // (scope: what Google says the token has)
       // Signed in again as someone else (or with another client): the grant it replaces is given back to Google. The
       // same account and client share one grant, so revoking its old token would end the new sign-in too.
@@ -3045,8 +3055,13 @@ function createWidgets(deps) {
     if (!gmailAuthState().compose) throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
     const x = helpers('gmail');
     const session = sessionFor('gmail');
+    // Errors that certainly made nothing carry nothingMade: true (not sent, or Google's 400, 401, 403 or 429). Every other failure after
+    // the request went out may have made the draft (kind 'maybe').
+    const certain = (err) => Object.assign(err, { nothingMade: true });
+    const maybe = () => new OA.OAuthError('The draft may have been made; check Drafts before trying again.', { kind: 'maybe' });
     for (let attempt = 0; ; attempt++) {
-      const access = await session.access({ force: attempt > 0 });
+      let access;
+      try { access = await session.access({ force: attempt > 0 }); } catch (err) { throw certain(err); } // (no token: nothing was sent)
       let res;
       try {
         // Sent once: no retry through a fresh session (retry: false). Only a failure that certainly happened before the request reached
@@ -3054,24 +3069,25 @@ function createWidgets(deps) {
         // dropped after sending, an unreadable answer) may have made the draft, and says so (kind 'maybe').
         res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search', retry: false }); // (one the user allowed: the search budget, not the cards' polling one)
       } catch (err) {
-        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw new OA.OAuthError(`Couldn’t reach Gmail, so no draft was made. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' });
-        throw new OA.OAuthError('The draft may have been made; check Drafts before trying again.', { kind: 'maybe' });
+        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw certain(new OA.OAuthError(`Couldn’t reach Gmail, so no draft was made. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' }));
+        throw maybe();
       }
       // (A 401 is Google's answer that the token was refused: nothing was made, so the one try with a new token is safe.)
       if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
       if (res.ok) {
-        try { return JSON.parse(res.body); } catch { throw new Error('Gmail sent something unexpected.'); }
+        try { return JSON.parse(res.body); } catch { throw maybe(); } // (Google said yes, but what it made can't be read)
       }
+      if (![400, 401, 403, 429].includes(res.status)) throw maybe(); // a 5xx, a 408 or anything else: it may have gone through
       let reason = '';
       try { const b = JSON.parse(res.body); reason = String(b?.error?.errors?.[0]?.reason || b?.error?.details?.[0]?.reason || b?.error?.status || ''); } catch { /* not JSON */ }
       if (res.status === 403 && /insufficient|scope/i.test(reason)) { // the permission was taken back at Google: Settings offers Allow drafts again
         const c = OA.decodeCreds(deps.getSecret('gmail'));
         if (c?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...c, scope: String(c.scope || '').split(/\s+/).filter((sc) => sc !== GV.COMPOSE_SCOPE).join(' ') }));
-        throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
+        throw certain(new OA.OAuthError('Allow drafts first.', { kind: 'scope' }));
       }
-      if (res.status === 400) throw new Error(`Gmail didn’t accept the draft (${str(reason, 60) || 'bad request'}).`);
+      if (res.status === 400) throw certain(new Error(`Gmail didn’t accept the draft (${str(reason, 60) || 'bad request'}).`));
       const e = GV.apiError(res.status, res.body);
-      throw new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' });
+      throw certain(new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' }));
     }
   }
   return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailAllowDrafts, gmailCompose, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };

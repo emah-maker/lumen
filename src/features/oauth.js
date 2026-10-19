@@ -239,18 +239,27 @@ function createSession({ tokenUrl, post, load, save, now = Date.now, messages = 
     const creds = load();
     if (!creds?.clientId || !creds.refresh) throw new OAuthError(msg.reconnect, { reconnect: true, kind: 'revoked' });
     const res = await post(typeof tokenUrl === 'function' ? tokenUrl() : tokenUrl, tokenForm('refresh', { clientId: creds.clientId, clientSecret: creds.clientSecret, refresh: creds.refresh }));
+    // The stored sign-in may have changed while the request was out (a new sign-in such as Gmail's Allow drafts, or a Disconnect):
+    // then this answer belongs to a grant that is no longer the one kept: nothing of it is saved over the new state, and the
+    // token comes from the grant stored now instead.
+    const current = load();
+    if (current?.refresh !== creds.refresh) {
+      token = null;
+      if (!current?.refresh) throw new OAuthError(msg.reconnect, { reconnect: true, kind: 'revoked' }); // disconnected meanwhile
+      return refreshNow(); // (signed in again meanwhile: a token from the grant stored now, with its own scopes)
+    }
     if (res.ok) {
       const t = parseToken(res.body, now(), creds.refresh);
       token = { access: t.access, exp: t.exp };
       // A new refresh token, or a scope list that changed (the user took a permission back at Google): kept, so a check
       // like "may this make drafts" reads what Google says now.
-      if (t.refresh !== creds.refresh || (t.scope && t.scope !== (creds.scope || ''))) save({ ...creds, refresh: t.refresh, ...(t.scope ? { scope: t.scope } : {}) });
+      if (t.refresh !== current.refresh || (t.scope && t.scope !== (current.scope || ''))) save({ ...current, refresh: t.refresh, ...(t.scope ? { scope: t.scope } : {}) });
       return token.access;
     }
     const f = classifyTokenFailure(res.status, res.body, res.retryAfter);
     if (f.kind === 'revoked' || f.kind === 'client') {
       token = null;
-      save({ ...creds, refresh: '' }); // keep the client id and secret: connecting again is one click
+      save({ ...current, refresh: '' }); // keep the client id and secret: connecting again is one click
       throw new OAuthError(f.kind === 'client' ? msg.client : msg.reconnect, { reconnect: true, kind: f.kind });
     }
     if (f.kind === 'rate') throw new OAuthError(msg.rate, { kind: 'rate', retryAfter: f.retryAfter });
