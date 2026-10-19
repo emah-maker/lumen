@@ -91,7 +91,7 @@ const fakeClient = (app) => app.evaluate(() => {
   const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
   const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
   check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 1.0M tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
-  check('context strip: above the textbox, reads "Context 1k / 1M" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 1M' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer') && Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
+  check('context strip: above the textbox, reads "Context 1k / 1M" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 1M' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer-status') && document.getElementById('composer-status').parentElement === document.getElementById('composer') &&Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
   // [usage bars] A chat on a Claude API key has the context ring and the tokens line but no plan bar: there are no plan numbers to show. (The meter may show today's tokens and cost, which arrive a moment after the reply: only a plan percentage is wrong.)
   check('usage bars: an API-key chat shows its context ring and tokens, and no made-up plan bar', await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return (!m || m.hidden || !/plan|d+%/i.test(m.textContent)) && [...document.querySelectorAll('.model-picker .ubar, #composer .ubar')].filter((b) => !b.closest('.picker-group')).length === 0; }), 'a plan bar is showing'); // (a provider's heading in the model list carries its own plan bar: on a machine with Claude Code or Codex signed in, those headings have one)
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
@@ -119,18 +119,21 @@ const fakeClient = (app) => app.evaluate(() => {
   const shown = await ui.evaluate(() => [...document.querySelectorAll('.chat-item')].map((li) => ({ title: li.querySelector('.chat-title').textContent, meta: li.querySelector('.chat-meta').textContent, current: li.classList.contains('current') })));
   check('the list shows both chats, newest first, the open one marked', shown.length === 2 && shown[0].title === 'a brand new topic' && shown[0].current && !shown[1].current, JSON.stringify(shown));
   check('each entry shows its usage', /2\.4k tokens · ~\$0\.02/.test(shown[1]?.meta || ''), shown[1]?.meta);
-  // The model menu opened over the history list is on top of it, not painted under it.
-  await ui.click('.sidebar-head .picker-button');
-  await ui.waitForSelector('.sidebar-head .picker-menu:not([hidden])');
+  // The model picker sits in the composer, which the history list covers: close the list, open the menu over the messages (it must be on top of them, not clipped by the composer), close it, and bring the list back.
+  await ui.click('#chat-history');
+  await ui.waitForSelector('#chat-list', { state: 'hidden' });
+  await ui.click('.composer-bar .picker-button');
+  await ui.waitForSelector('.composer-bar .picker-menu:not([hidden])');
   const menuOnTop = await ui.evaluate(() => {
-    const menu = document.querySelector('.sidebar-head .picker-menu');
+    const menu = document.querySelector('.composer-bar .picker-menu');
     const r = menu.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 30));
     return Boolean(hit && menu.contains(hit));
   });
-  check('the model menu opened over the chat list is not covered by it', menuOnTop === true, 'covered by the list');
-  await ui.evaluate(() => document.querySelector('.sidebar-head .picker-button').click()); // closes the menu again
-  await ui.waitForSelector('.sidebar-head .picker-menu[hidden]', { state: 'attached' });
+  check('the model menu opened from the composer is on top, not covered or clipped', menuOnTop === true, 'covered');
+  await ui.evaluate(() => document.querySelector('.composer-bar .picker-button').click()); // closes the menu again
+  await ui.waitForSelector('.composer-bar .picker-menu[hidden]', { state: 'attached' });
+  await ui.click('#chat-history');
   await ui.waitForSelector('#chat-list:not([hidden]) .chat-item');
   await rowAction(legacyId, '.chat-open');
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));

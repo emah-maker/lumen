@@ -20,6 +20,8 @@ const pptx = require('./pptx');
 
 const VIEWER_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'slides.html')).href;
 
+// The viewer keeps the slide being read in its own #fragment (replaceState), which is not a different page.
+const sameViewerUrl = (a, b) => String(a || '').split('#')[0] === String(b || '').split('#')[0];
 const bareOf = (url) => String(url || '').split(/[?#]/)[0];
 const isViewerUrl = (url) => typeof url === 'string' && bareOf(url).toLowerCase() === VIEWER_URL.toLowerCase();
 const isLocalPptx = (url) => { try { const u = new URL(url); return u.protocol === 'file:' && pptx.isPptxName(u.pathname); } catch { return false; } };
@@ -107,7 +109,7 @@ function create({ cacheDir } = {}) {
   async function render(wc, url) {
     const deckUrl = deckUrlOf(url);
     const data = deckUrl ? await loadDeck(deckUrl) : { name: 'Presentation', error: 'Only PowerPoint files (.pptx) on this computer can be shown here.' };
-    if (wc.isDestroyed() || wc.getURL() !== url) return;
+    if (wc.isDestroyed() || !sameViewerUrl(wc.getURL(), url)) return;
     // The deck's structure goes first (small), then the pictures one slice at a time, in the order the slides use them, with a turn of the
     // event loop between: 100 pictures are 10+ MB, and one call with all of them held the main process for 20 to 50 ms (stringify and send).
     const { media, ...structure } = data;
@@ -117,7 +119,7 @@ function create({ cacheDir } = {}) {
     const vector = ([, v]) => /^data:image\/x-(emf|wmf);/.test(v);
     const gdi = pictures.some(vector) ? metafilePngs(data, { cacheDir }).catch(() => ({})) : null;
     if (gdi) pictures = [...pictures.filter((e) => !vector(e)), ...pictures.filter(vector)];
-    const alive = () => !wc.isDestroyed() && wc.getURL() === url;
+    const alive = () => !wc.isDestroyed() && sameViewerUrl(wc.getURL(), url);
     const call = (code) => wc.executeJavaScript(code).catch(() => {});
     await call(`window.lumenSlides && window.lumenSlides(${JSON.stringify({ ...structure, mediaKeys: pictures.map(([k]) => k) })})`);
     let pngs = null;

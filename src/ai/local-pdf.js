@@ -51,4 +51,4 @@ function resolve(raw) {
   return { fileUrl: pathToFileURL(real).href, name: path.basename(real) };
 }
 
-module.exports = { resolve, isLocalRef, REFUSED };
+module.exports = { resolve, isLocalRef, unquote, REFUSED };

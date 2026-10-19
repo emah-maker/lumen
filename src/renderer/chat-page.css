@@ -183,25 +183,23 @@ body.chat-page .composer {
 }
 /* focus: a thin accent edge and a soft halo, not the sidebar's heavy ring */
 body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--border)), 0 0 0 3px var(--accent-soft), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); }
-/* the message box on the first line; attach (+) and the tools on the line under it, Send/Stop at the right */
-body.chat-page .composer textarea { order: 1; flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 0 var(--cp-1); min-height: 1lh; max-height: min(320px, 40vh); }
-body.chat-page .composer .attach-btn { order: 2; }
-body.chat-page .composer .screen-btn { order: 3; }
-body.chat-page .composer .mic-btn { order: 3; width: 32px; height: 32px; }
-body.chat-page .composer .dictation-bar { order: 0; padding: 0 var(--cp-1); }
-body.chat-page .composer .meter-strip { order: 4; flex: 1 1 0; min-width: 0; margin: 0; padding: 0; }
-body.chat-page .composer .send-now { order: 5; }
-body.chat-page .composer .send { order: 6; margin-left: auto; }
+/* the message box on its own row, roomy; the toolbar (+, model, mic, send) on the row under it */
+body.chat-page .composer textarea { flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 4px var(--cp-1); min-height: 64px; max-height: max(64px, 40vh); }
+body.chat-page .composer .dictation-bar { padding: 0 var(--cp-1); }
+body.chat-page .composer .composer-status { padding: 0 var(--cp-1); box-sizing: border-box; }
 body.chat-page .composer .composer-hint { order: 7; }
-body.chat-page .composer .attach-btn, body.chat-page .composer .screen-btn { width: 32px; height: 32px; }
-body.chat-page .composer .attach-btn { box-shadow: inset 0 0 0 1px var(--border); }
-body.chat-page .composer .attach-btn svg { width: 16px; height: 16px; stroke-width: 1.6; }
-body.chat-page .composer .send { width: 32px; height: 32px; margin-left: auto; }
+body.chat-page .composer .plus-btn { width: 32px; height: 32px; box-shadow: inset 0 0 0 1px var(--border); }
+body.chat-page .composer .plus-btn svg { width: 16px; height: 16px; }
+body.chat-page .composer .mic-btn { width: 32px; height: 32px; }
+body.chat-page .composer .send { width: 32px; height: 32px; }
 body.chat-page .composer .send svg { width: 16px; height: 16px; }
 body.chat-page .composer .send.stop { width: 32px; min-width: 32px; padding: 0; gap: 0; border-radius: 50%; }
 body.chat-page .composer .send.stop::after { content: none; }
 body.chat-page .composer .send.stop::before { width: 10px; height: 10px; border-radius: 2px; }
 body.chat-page .composer .send-now { height: 32px; border-radius: 16px; }
+body.chat-page .composer-bar .model-picker .picker-button { font-size: 14px; padding: 6px 2px 6px 10px; }
+body.chat-page .composer-bar .model-picker svg { right: auto; margin: 0 8px 0 0; }
+body.chat-page .composer-bar .model-picker { border-radius: 8px; }
 body.chat-page .cp-disclaimer { position: absolute; left: 0; right: 0; bottom: 0; z-index: var(--z-composer); margin: 0; height: var(--cp-bottom); padding: 0 var(--cp-3); box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); pointer-events: none; text-align: center; }
 
 /* ---------- an empty chat: the greeting, the composer in the middle of the page, starters under it ---------- */
@@ -231,7 +229,7 @@ body.chat-page:has(#setup:not([hidden])) #empty .empty-title, body.chat-page:has
 body.chat-page :is(button, a[href], select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 body.chat-page .cp-list .chat-open:focus-visible { outline: none; }
 body.chat-page .cp-list .chat-search:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-body.chat-page .composer :is(.attach-btn, .screen-btn, .send):focus-visible { outline-offset: 1px; }
+body.chat-page .composer :is(.plus-btn, .send, .send-more):focus-visible { outline-offset: 1px; }
 
 /* a narrower window */
 @media (max-width: 899px) {
