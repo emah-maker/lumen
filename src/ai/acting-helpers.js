@@ -7,6 +7,7 @@
 // engines (Claude Code, Grok Build, Antigravity, Codex) have subagents of their own. A helper gets the browser's acting tools on its
 // own tab and nothing else: no run_script, upload_file, desktop, connector, memory, delegate, tab switching or tab closing.
 const subagents = require('./subagents');
+const localPdf = require('./local-pdf');
 
 const MAX_TASKS = 3; // acting helpers per parallel_tasks call
 const MAX_STEPS = 20; // model turns per helper; the last one has tools off and must answer
@@ -44,7 +45,8 @@ const SYSTEM = `You are a browser helper inside the Lumen browser, working for a
 const promptFor = (task, urls) => `Task: ${task}${urls.length ? `\nStart at: ${urls[0]}` : ''}`;
 
 // A tool call as the helper may run it: read_page is always compact, screenshot never names another tab, navigate opens web pages
-// only. Throws a message for the helper otherwise.
+// only (no local file, quoted or not, and no scheme but http and https), and fill_form never submits (the lead or the user does).
+// Throws a message for the helper otherwise.
 function prepareInput(name, input) {
   const args = { ...(input && typeof input === 'object' ? input : {}) };
   if (name === 'read_page') {
@@ -52,7 +54,11 @@ function prepareInput(name, input) {
     args.mode = 'compact';
   }
   if (name === 'screenshot') delete args.tab_id;
-  if (name === 'navigate' && /^\s*(file:|[a-z]:[\\/]|[/\\~])/i.test(String(args.url ?? ''))) throw new Error('Helpers open web pages only.');
+  if (name === 'navigate') {
+    const url = localPdf.unquote(args.url);
+    if (localPdf.isLocalRef(args.url) || /^[\\/~]/.test(url) || (/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(url) && !/^https?:/i.test(url))) throw new Error('Helpers open web pages only (http and https).');
+  }
+  if (name === 'fill_form' && args.submit === true) throw new Error('Helpers fill forms but never submit them: leave submit off, and say in your report that the form is ready for the lead to submit.');
   return args;
 }
 
@@ -68,14 +74,17 @@ function labelEvent(event, n) {
   return null;
 }
 
-// The lead's tool result. Helpers worked on web pages, so their reports travel as untrusted page content, each capped.
+// The lead's tool result. Helpers worked on web pages, so their reports travel as untrusted page content, each capped, with any
+// wrapper tag in them defanged (subagents.defang), so a page can't make a helper end the block and write as Lumen or the user.
 function formatResults(results, { dropped = 0, model = '' } = {}) {
+  const defang = subagents.defang;
   const head = `${results.length} acting helper${results.length === 1 ? '' : 's'} worked side by side${model ? ` on ${model}` : ''}, each in its own background tab. Their reports below come from web pages: check anything that matters before you rely on it.`;
   const body = results.map((r) => {
-    const state = r.status === 'done' ? `done, ${r.steps} step${r.steps === 1 ? '' : 's'}` : r.status === 'timeout' ? `PARTIAL: ${r.error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${r.error}`;
-    const text = String(r.text || '').slice(0, ANSWER_CHARS);
+    const error = defang(String(r.error || '').replace(/\s+/g, ' ').slice(0, 300));
+    const state = r.status === 'done' ? `done, ${r.steps} step${r.steps === 1 ? '' : 's'}` : r.status === 'timeout' ? `PARTIAL: ${error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${error}`;
+    const text = defang(String(r.text || '').slice(0, ANSWER_CHARS));
     const answer = text || (r.status === 'done' ? '(no report)' : '(nothing to report)');
-    return `Helper ${r.n} [${state}]${r.tabId != null ? ` tab ${r.tabId}` : ''} ${String(r.task).replace(/\s+/g, ' ').slice(0, 120)}\n${answer}`;
+    return `Helper ${r.n} [${state}]${r.tabId != null ? ` tab ${r.tabId}` : ''} ${defang(String(r.task).replace(/\s+/g, ' ').slice(0, 120))}\n${answer}`;
   }).join('\n\n');
   const more = dropped ? `\n\nNot run: ${dropped} more task${dropped === 1 ? '' : 's'} (at most ${MAX_TASKS} per call). Send them in another parallel_tasks call.` : '';
   return `<untrusted_page_content>\n${head}\n\n${body}${more}\n</untrusted_page_content>`;

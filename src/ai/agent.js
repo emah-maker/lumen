@@ -1661,6 +1661,7 @@ class Agent {
     this.approvalSeq = 0;
     this.redirectGuards = new Map(); // webContents -> its redirect check while a tool runs (guardRedirects)
     this.openAsks = new WeakMap(); // approved-hosts set -> host -> the "wants to open" card showing for it
+    this.interactAsks = new WeakMap(); // approved-hosts set -> host (or script:host) -> the "interact with" card showing for it (sharedAsk)
     this.controller = null; // the latest run's controller
     this.current = null;
     this.runs = new Map(); // a chat's messages array -> its live run { controller, promise, hosts } (a chat left mid-run keeps going: detach())
@@ -4211,8 +4212,9 @@ ${prompt}` : prompt), historyImages: [] };
   // its tab's tools only (acting-helpers.js ACT_TOOLS). Every call goes through ensureAllowed like the chat's own: the chat's approved
   // sites carry over (and a site approved on a helper's card counts for the chat), every other site asks on the chat's usual card,
   // marked "Helper n:", and Ask / Auto-allow / Bypass answer exactly as for the chat. Each helper's taint starts from the chat's and is
-  // its own after that. Stopping the chat stops every helper; each helper's card has its own Stop (stopHelper). Their reports come back
-  // as untrusted page content, and the chat counts as having read page content after.
+  // its own after that. Stopping the chat stops every helper; each helper's card has its own Stop (stopHelper). A helper that is
+  // stopped, fails or runs out of time has its tab closed at once (it may hold a signed-in page half done); a finished helper's tab
+  // is left to "When the AI finishes". Their reports come back as untrusted page content, and the chat counts as having read page content after.
   actingHelpersOn() {
     try { return Boolean(this.browser.actingHelpers?.()); } catch { return false; }
   }
@@ -4291,7 +4293,18 @@ ${prompt}` : prompt), historyImages: [] };
       const st = states.get(e.n);
       if (!st) return;
       if (e.type === 'start') card(e.n, { status: 'working' });
-      else if (e.type === 'done') { card(e.n, { status: e.status, step: '' }); st.release(); if (st.scope) this.scopes.delete(st.scope); }
+      else if (e.type === 'done') {
+        card(e.n, { status: e.status, step: '' });
+        st.release();
+        if (st.scope) this.scopes.delete(st.scope);
+        if (e.status !== 'done') closeTab(st); // stopped, failed or out of time: its tab may hold a signed-in page half done
+      }
+    };
+    // A helper that did not finish gets its tab closed at once; a finished one's tab is left to "When the AI finishes" (closeAiTabs).
+    const closeTab = (st) => {
+      if (st.tabId == null || st.closed) return;
+      st.closed = true;
+      try { taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.closeTab?.(st.tabId)); } catch { /* already closed */ }
     };
     const limits = this.browser.subagentLimits?.() || {};
     let results;
@@ -4456,7 +4469,8 @@ ${prompt}` : prompt), historyImages: [] };
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
       if (!host || hosts.has(keyOf(host)) || planned(host)) return;
-      const ok = this.autoAllows(gate) ? true : await this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who });
+      // (callers acting on the same new site at once, such as acting helpers, share one card: sharedAsk; a host approved meanwhile asks nothing)
+      const ok = this.autoAllows(gate) ? true : await this.sharedAsk(this.interactAsks, hosts, keyOf(host), signal, () => (hosts.has(keyOf(host)) ? Promise.resolve(true) : this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who })));
       if (!ok) throw new Error(scripted
         ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
         : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
@@ -4975,15 +4989,32 @@ ${prompt}` : prompt), historyImages: [] };
       if (ok) hosts.add(host);
       return ok;
     }
-    if (!this.openAsks.has(hosts)) this.openAsks.set(hosts, new Map());
-    const asks = this.openAsks.get(hosts);
-    if (!asks.has(host)) {
-      asks.set(host, this.askApproval(host, emit, signal, { action: 'open', who }).then((ok) => {
-        if (ok) hosts.add(host);
-        return ok;
-      }).finally(() => asks.delete(host)));
+    return this.sharedAsk(this.openAsks, hosts, host, signal, () => this.askApproval(host, emit, signal, { action: 'open', who }).then((ok) => {
+      if (ok) hosts.add(host);
+      return ok;
+    }));
+  }
+
+  // One card for callers that need the same answer at once (several acting helpers heading to one site): the first caller's `ask()`
+  // shows it, the others wait on the same answer. The card is bound to the first caller's stop signal; if that caller is stopped,
+  // a caller still running asks again with its own card (its own signal and emit), so stopping one helper never fails another.
+  // `store`: WeakMap approved-hosts set -> key -> the pending answer.
+  async sharedAsk(store, hosts, key, signal, ask) {
+    if (!store.has(hosts)) store.set(hosts, new Map());
+    const asks = store.get(hosts);
+    const mine = !asks.has(key);
+    if (mine) {
+      const shown = ask().finally(() => { if (asks.get(key) === shown) asks.delete(key); });
+      asks.set(key, shown);
     }
-    return asks.get(host);
+    const pending = asks.get(key);
+    try {
+      return await pending;
+    } catch (err) {
+      const aborted = err instanceof sdk().APIUserAbortError || err?.name === 'AbortError' || /abort/i.test(String(err?.message || ''));
+      if (mine || signal?.aborted || !aborted) throw err;
+      return this.sharedAsk(store, hosts, key, signal, ask);
+    }
   }
 
   // Redirect check (exfiltration guard): an approved host could send the tab on to one that isn't.

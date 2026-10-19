@@ -183,16 +183,21 @@ async function runHelpers({ tasks, turn, exec, signal, tools, maxSteps, timeMs, 
   }));
 }
 
-// The parent's tool result. Helper answers come from web pages, so they travel as untrusted page content.
+// A literal wrapper tag in text that goes inside <untrusted_page_content> is defanged (as mcp-client.js and desktop/index.js do), so
+// page text a helper repeats can never end the block and pass as Lumen's or the user's own words.
+const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
+
+// The parent's tool result. Helper answers come from web pages, so they travel as untrusted page content (defanged, errors capped).
 function formatResults(results, { dropped = 0, model = '' } = {}) {
   const head = `${results.length} helper${results.length === 1 ? '' : 's'} ran side by side${model ? ` on ${model}` : ''}. They only read (read_urls, web_search): nothing was clicked or changed in any tab.`;
   const body = results.map((r) => {
-    const state = r.status === 'done' ? `done, ${r.steps} step${r.steps === 1 ? '' : 's'}` : r.status === 'timeout' ? `PARTIAL: ${r.error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${r.error}`;
-    const answer = r.text ? r.text : r.status === 'done' ? '(no answer)' : '(nothing to report)';
-    return `Helper ${r.n} [${state}] ${r.task.replace(/\s+/g, ' ').slice(0, 120)}\n${answer}`;
+    const error = defang(String(r.error || '').replace(/\s+/g, ' ').slice(0, 300));
+    const state = r.status === 'done' ? `done, ${r.steps} step${r.steps === 1 ? '' : 's'}` : r.status === 'timeout' ? `PARTIAL: ${error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${error}`;
+    const answer = r.text ? defang(r.text) : r.status === 'done' ? '(no answer)' : '(nothing to report)';
+    return `Helper ${r.n} [${state}] ${defang(r.task.replace(/\s+/g, ' ').slice(0, 120))}\n${answer}`;
   }).join('\n\n');
   const more = dropped ? `\n\nNot run: ${dropped} more task${dropped === 1 ? '' : 's'} (at most ${MAX_TASKS} per call). Send them in another delegate call.` : '';
   return `<untrusted_page_content>\n${head}\n\n${body}${more}\n</untrusted_page_content>`;
 }
 
-module.exports = { REFUSAL, imagesOf, dropOldImages, MAX_TASKS, MAX_STEPS, TIME_MS, READ_CHARS, READ_SLOTS, ANSWER_CHARS, HELPER_TOOLS, isHelperTool, helperModel, cleanTasks, runHelper, runHelpers, formatResults, createLimiter, SYSTEM };
+module.exports = { defang, REFUSAL, imagesOf, dropOldImages, MAX_TASKS, MAX_STEPS, TIME_MS, READ_CHARS, READ_SLOTS, ANSWER_CHARS, HELPER_TOOLS, isHelperTool, helperModel, cleanTasks, runHelper, runHelpers, formatResults, createLimiter, SYSTEM };
