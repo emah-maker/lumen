@@ -614,6 +614,11 @@ contextBridge.exposeInMainWorld('assistant', {
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
 
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
+
   research: {
     get: () => ipcRenderer.invoke('research:get'),
     addPage: () => ipcRenderer.invoke('research:add-page'),
@@ -626,6 +631,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url),
     onChanged: on('research:changed'),
   },
+  offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) },
   dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) },
 
   meeting: {
