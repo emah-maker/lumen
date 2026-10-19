@@ -149,6 +149,7 @@ const DEFAULTS = {
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
   aiSubagents: true, // [ai] the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). The sidebar's Helpers button and Settings > AI are this one setting
+  actingHelpers: false, // [ai] Settings > AI > "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
   aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
@@ -1198,6 +1199,11 @@ function create(deps) {
     handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); slackSetup.stopWatch(); slackSetup.close(); return deps.widgets.state(); });
     handle('prefs:slack-disconnect', async () => { slackSetup.stopWatch(); slackSetup.close(); await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
     handle('prefs:slack-channels', () => deps.widgets.slackChannels());
+    // GitHub sign-in (features/github-auth.js): the code comes back at once; the rest arrives as widgets:changed. Never a token.
+    handle('prefs:github-start', (opts) => deps.widgets.githubStart(opts));
+    handle('prefs:github-cli', () => deps.widgets.githubCli());
+    handle('prefs:github-cancel', () => deps.widgets.githubCancel());
+    handle('prefs:github-signout', () => deps.widgets.githubSignOut());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });
@@ -1291,6 +1297,8 @@ function create(deps) {
   }
 
   return {
+    warmTranslatePacks: () => { try { return Promise.resolve(deps.translateLocal().overview(translate.LANG_CODES)).catch(() => null); } catch { return null; } }, // (the language-pack index, read once after start-up: Settings > Languages asks for it when it opens)
+    warmGpuInfo: () => gpuInfoOnce(), // (asked once after start-up, so Settings > Internals finds it: asking costs the main process 20-40 ms)
     prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,

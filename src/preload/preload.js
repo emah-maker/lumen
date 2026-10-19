@@ -277,6 +277,7 @@ contextBridge.exposeInMainWorld('assistant', {
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),
     onPropose: on('tasks:propose'),
+    openFull: () => ipcRenderer.send('mission:open'), // lumen://tasks
   },
   onEvent: on('agent:event'),
   // AI agents over MCP
@@ -306,6 +307,7 @@ contextBridge.exposeInMainWorld('assistant', {
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions] 'ask' | 'auto' | 'bypass'; no argument: just read it
   helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents] true | false; no argument: just read it
+  stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers] a helper card's Stop
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card

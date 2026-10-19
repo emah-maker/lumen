@@ -1593,11 +1593,24 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const above = b.top - 12;
     const up = below < 260 && above > below;
     menu.style.width = `${width}px`;
-    menu.style.left = `${Math.max(left0, Math.min(b.left, right0 - width))}px`;
+    const wantLeft = Math.max(left0, Math.min(b.left, right0 - width));
+    menu.style.left = `${wantLeft}px`;
     menu.style.maxHeight = `${Math.max(180, Math.min(460, up ? above : below))}px`;
     menu.style.top = up ? '' : `${b.bottom + 6}px`;
     menu.style.bottom = up ? `${window.innerHeight - b.top + 6}px` : '';
     menu.classList.toggle('up', up);
+
+
+    const at = menu.getBoundingClientRect();
+    const dx = at.left - wantLeft;
+    if (Math.abs(dx) > 0.5) menu.style.left = `${wantLeft - dx}px`;
+    if (up) {
+      const dy = at.bottom - b.top + 6;
+      if (Math.abs(dy) > 0.5) menu.style.bottom = `${window.innerHeight - b.top + 6 + dy}px`;
+    } else {
+      const dy = at.top - (b.bottom + 6);
+      if (Math.abs(dy) > 0.5) menu.style.top = `${b.bottom + 6 - dy}px`;
+    }
   }
   function close(refocus = true) {
     if (menu.hidden) return;
@@ -3718,6 +3731,8 @@ $('model').addEventListener('change', async (e) => {
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title');
   const full = optional('open-chat-page');
   if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
+  const mission = optional('mission-btn');
+  if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘X' : t('shortcut.ctrlShiftX');
 })();
 
 
@@ -4546,7 +4561,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
 
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4656,6 +4671,7 @@ const TOOL_LABELS = {
   propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
@@ -4845,6 +4861,7 @@ window.assistant.onEvent((event) => {
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
+      if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') }));
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); }
       if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
@@ -4906,6 +4923,9 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'helper_card':
+      showHelperCard(event);
+      break;
     case 'plan': {
       settleThinking();
       finishReply(turn.text, turn.textSource);
@@ -4918,8 +4938,8 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       chatHost.needSidebar?.();
-      announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel });
+      announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -5311,10 +5331,12 @@ permBadge.className = 'bypass-badge';
 permBadge.id = 'bypass-badge';
 permBadge.hidden = true;
 permBadge.title = t('composer.bypass.title');
-permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text"></span></span>';
-permBadge.querySelector('.bb-text').textContent = t('composer.bypass');
+permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text" aria-hidden="true"></span><span class="bb-full"></span></span>';
+permBadge.querySelector('.bb-text').textContent = t('composer.bypass.short');
+permBadge.querySelector('.bb-full').textContent = t('composer.bypass');
 permBadge.addEventListener('click', () => cycleMode());
-$('hands-off')?.after(permBadge);
+if ($('composer-status')) $('composer-status').append(permBadge);
+else $('hands-off')?.after(permBadge);
 
 function disarmPerm() {
   if (permArmed) clearTimeout(permArmed.timer);
@@ -5411,10 +5433,63 @@ const approvals = new Map();
 
 
 
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
+function showApproval(approvalId, host, opts = {}) {
+  showApprovalCard(approvalId, host, opts);
+  if (opts.helper) markHelperApproval(approvalId, opts.helper);
+}
+
+
+function markHelperApproval(approvalId, n) {
+  const card = approvals.get(approvalId)?.card;
+  const title = card?.querySelector('.approval-title');
+  if (!title) return;
+  const tag = t('approval.helper', { n });
+  title.textContent = `${tag} ${title.textContent}`;
+  card.setAttribute('aria-label', `${tag} ${card.getAttribute('aria-label') || title.textContent}`);
+  card.dataset.helper = String(n);
+}
+
+
+
+
+const helperCards = new Map();
+function showHelperCard(e) {
+  let card = helperCards.get(e.key);
+  if (!card || !card.isConnected) {
+    card = Object.assign(document.createElement('div'), { className: 'helper-card' });
+    card.setAttribute('role', 'group');
+    const head = Object.assign(document.createElement('div'), { className: 'helper-card-head' });
+    const name = Object.assign(document.createElement('span'), { className: 'helper-card-name', textContent: t('helper.name', { n: e.n }) });
+    const state = Object.assign(document.createElement('span'), { className: 'helper-card-state' });
+    head.append(name, state);
+    const task = Object.assign(document.createElement('p'), { className: 'helper-card-task', textContent: e.task || '' });
+    const step = Object.assign(document.createElement('p'), { className: 'helper-card-step' });
+    const actions = Object.assign(document.createElement('div'), { className: 'helper-card-actions' });
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'helper-card-tab', textContent: t('helper.tab'), hidden: true });
+    chip.title = t('helper.tabTitle');
+    chip.onclick = () => { const id = Number(card.dataset.tab); if (Number.isInteger(id)) window.browser?.switchTab?.(id); };
+    if (!window.browser?.switchTab) chip.disabled = true;
+    const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'btn helper-card-stop', textContent: t('helper.stop') });
+    stop.onclick = () => { stop.disabled = true; window.assistant.stopHelper?.(e.key); };
+    actions.append(chip, stop);
+    card.append(head, task, step, actions);
+    appendToTurn(card);
+    helperCards.set(e.key, card);
+  }
+  const ended = ['done', 'timeout', 'failed', 'stopped'].includes(e.status);
+  const label = t(`helper.status.${ended ? e.status : 'working'}`);
+  card.querySelector('.helper-card-state').textContent = label;
+  card.querySelector('.helper-card-step').textContent = ended ? '' : e.step || '';
+  card.setAttribute('aria-label', `${t('helper.name', { n: e.n })}: ${label}`);
+  card.classList.toggle('ended', ended);
+  if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.querySelector('.helper-card-tab').hidden = false; }
+  if (ended) card.querySelector('.helper-card-stop').hidden = true;
+}
+
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways });
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle });
@@ -5519,12 +5594,15 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 
 
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
+
+
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '', fields = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || t('approval.tool.use', { host }));
+  const editing = note === 'connector' && Array.isArray(fields?.list) && fields.list.length > 0;
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
@@ -5533,9 +5611,18 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
-        : note === 'connector' ? t('approval.connector.details') : t('approval.tool.details'),
+        : note === 'connector' ? `${t('approval.connector.details')}${editing ? ` ${t('approval.connector.edit')}` : ''}` : t('approval.tool.details'),
   });
-  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
+  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: editing ? String(fields.fixed || '') : args || '{}' });
+  const boxes = editing ? fields.list.filter((f) => f && typeof f.key === 'string').map((f) => {
+    const box = Object.assign(document.createElement(f.multiline ? 'textarea' : 'input'), { className: 'approval-edit', value: String(f.value ?? ''), maxLength: Number(f.max) || 200, spellcheck: true });
+    if (f.multiline) box.rows = Math.min(12, Math.max(3, String(f.value ?? '').split('\n').length + 1)); else box.type = 'text';
+    box.dataset.key = f.key;
+    box.setAttribute('aria-label', String(f.label || f.key));
+    const label = Object.assign(document.createElement('label'), { className: 'approval-edit-label' });
+    label.append(Object.assign(document.createElement('span'), { textContent: String(f.label || f.key) }), box);
+    return { key: f.key, box, label };
+  }) : [];
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
@@ -5548,14 +5635,16 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     window.assistant.approve?.(approvalId, ok);
   };
   deny.onclick = () => answer(false);
-  allow.onclick = () => answer(true);
+  allow.onclick = note === 'connector'
+    ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])) } : true); }
+    : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); }
   });
   actions.append(...[deny, always, allow].filter(Boolean));
-  card.append(title, detail, pre, actions);
+  card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
   append(card, { force: true });
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();
@@ -7328,7 +7417,9 @@ function startChat() {
 
   const mic = Object.assign(document.createElement('button'), { type: 'button', className: 'mic-btn', id: 'mic-btn' });
   mic.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>';
-  attach.after(mic);
+  const barEnd = form.querySelector('.cb-end');
+  if (barEnd) barEnd.prepend(mic);
+  else attach.after(mic);
   const bar = Object.assign(document.createElement('div'), { className: 'dictation-bar', hidden: true });
   bar.setAttribute('role', 'status');
   bar.innerHTML = '<span class="dictation-dot" aria-hidden="true"></span><span class="dictation-meter" aria-hidden="true"><i></i></span><span class="dictation-time"></span><span class="dictation-hint"></span>';
@@ -7986,6 +8077,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  tasks: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
   readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
@@ -10943,6 +11035,7 @@ chatHost.identity = (who, first) => {
 
 
 $('open-chat-page').onclick = () => window.assistant.openFullPage();
+$('mission-btn').onclick = () => window.assistant.tasks?.openFull?.();
 window.assistant.onSidebar?.((visible) => {
 
   if (($('toggle-sidebar').getAttribute('aria-pressed') === 'true') !== Boolean(visible)) showSidebar(Boolean(visible));
@@ -11303,6 +11396,7 @@ $('agent-stop')?.addEventListener('click', () => {
   const btn = (text, onclick, cls = 'btn') => h('button', { type: 'button', className: cls, textContent: text, onclick });
   const iconBtn = (svg, label, onclick, cls = 'icon-btn') => { const b = h('button', { type: 'button', className: cls, title: label, onclick }); b.setAttribute('aria-label', label); b.innerHTML = svg; return b; };
   const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  const FULL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>';
   const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
 
   const clock = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -11440,7 +11534,9 @@ $('agent-stop')?.addEventListener('click', () => {
 
   function head(title, left) {
     const close = iconBtn(CLOSE, T('tasks.close'), () => closePanel(true), 'icon-btn task-close');
-    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), close);
+
+    const full = left ? null : iconBtn(FULL, T('mission.openFull'), () => { closePanel(false); api.openFull?.(); }, 'icon-btn task-full');
+    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), full, close);
   }
 
   function renderList() {
@@ -12254,7 +12350,8 @@ $('agent-stop')?.addEventListener('click', () => {
 
   const strip = Object.assign(document.createElement('div'), { id: 'meter-strip', className: 'meter-strip', hidden: true });
   strip.append(meter);
-  if ($('prompt')) $('prompt').before(strip);
+  if ($('composer-status')) $('composer-status').prepend(strip);
+  else if ($('prompt')) $('prompt').before(strip);
   else $('composer')?.prepend(strip);
   const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
   meter.setAttribute('aria-haspopup', 'dialog');
@@ -14429,23 +14526,36 @@ $('agent-stop')?.addEventListener('click', () => {
   const byChat = new Map();
   const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
 
-  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
-  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
-  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
-  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-item plan-chip', id: 'plan-chip' });
+  chip.setAttribute('role', 'menuitemcheckbox');
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="cm-label plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip.label', 'Plan first');
+  const menu = composer.querySelector('#composer-menu');
+  if (menu) menu.append(chip);
+  else composer.insertBefore(chip, composer.querySelector('#attach, #send'));
+  const tag = document.getElementById('plan-tag');
+  if (tag) tag.querySelector('.plan-tag-text').textContent = tr('plan.chip', 'Plan');
 
   function render() {
     const cli = onCli();
     chip.disabled = cli;
     chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.setAttribute('aria-checked', String(on && !cli));
     chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
       : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
         : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
     chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
     composer.classList.toggle('planning', on && !cli);
+    if (tag) {
+      tag.hidden = !(on && !cli);
+      tag.title = chip.title;
+      tag.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    }
   }
   function setOn(value) { on = Boolean(value); remember(); render(); }
   chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  tag?.addEventListener('click', () => { setOn(false); promptEl.focus(); });
   modelSelect?.addEventListener('change', render);
   promptEl.addEventListener('focus', render);
 
@@ -14577,6 +14687,90 @@ $('agent-stop')?.addEventListener('click', () => {
   window.addEventListener('lumen:plan-default', () => { if (!shownChatId && !document.querySelector('#messages .msg')) { on = window.lumenPlanModeDefault === true; render(); } });
   on = window.lumenPlanModeDefault === true;
   render();
+})();
+;
+// ---- composer-bar.js
+
+
+
+
+
+(() => {
+  const byId = (id) => document.getElementById(id);
+  const tr = (key, fallback) => { const text = typeof window.t === 'function' ? window.t(key) : key; return text && text !== key ? text : fallback; };
+  const menus = [];
+
+  function closeAll(except) {
+    for (const m of menus) if (m !== except && !m.menu.hidden) m.close(false);
+  }
+  function setup(button, menu) {
+    if (!button || !menu) return null;
+    const items = () => [...menu.querySelectorAll('[role^="menuitem"]:not(:disabled):not([hidden])')];
+    const api = {
+      menu,
+      open(focusFirst) {
+        closeAll(api);
+        menu.hidden = false;
+        button.setAttribute('aria-expanded', 'true');
+        if (focusFirst) items()[0]?.focus();
+      },
+      close(refocus) {
+        if (menu.hidden) return;
+        menu.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+        if (refocus) button.focus();
+      },
+    };
+    menus.push(api);
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (menu.hidden) api.open(e.detail === 0);
+      else api.close(false);
+    });
+    button.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); api.open(true); const list = items(); if (e.key === 'ArrowUp') list[list.length - 1]?.focus(); }
+      else if (e.key === 'Escape' && !menu.hidden) { e.preventDefault(); e.stopPropagation(); api.close(true); }
+    });
+    menu.addEventListener('keydown', (e) => {
+      const list = items();
+      const at = list.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); list[(at + 1) % list.length]?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); list[(at - 1 + list.length) % list.length]?.focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); list[0]?.focus(); }
+      else if (e.key === 'End') { e.preventDefault(); list[list.length - 1]?.focus(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); api.close(true); }
+      else if (e.key === 'Tab') api.close(false);
+    });
+    menu.addEventListener('click', (e) => { if (e.target.closest('[role^="menuitem"]')) api.close(false); });
+    return api;
+  }
+
+  setup(byId('composer-plus'), byId('composer-menu'));
+  const more = setup(byId('send-more'), byId('send-menu'));
+  document.addEventListener('pointerdown', (e) => { for (const m of menus) if (!m.menu.hidden && !m.menu.parentElement.contains(e.target)) m.close(false); });
+  window.addEventListener('blur', () => closeAll());
+  byId('send')?.addEventListener('contextmenu', (e) => { if (more && !byId('send-more').hidden) { e.preventDefault(); more.open(true); } });
+
+
+  const watch = (el, attrs, fn) => { if (!el) return; fn(); new MutationObserver(fn).observe(el, { attributes: true, attributeFilter: attrs }); };
+  const screenBtn = byId('screen-btn');
+  watch(screenBtn, ['data-state'], () => {
+    const state = screenBtn.dataset.state;
+    const lit = state === 'on' || state === 'auto';
+    screenBtn.setAttribute('aria-checked', String(lit));
+    const dot = byId('plus-dot');
+    if (dot) dot.hidden = !lit;
+    const label = byId('screen-state');
+    if (label) label.textContent = state === 'on' ? tr('sidebar.state.on', 'On') : state === 'auto' ? tr('composer.menu.auto', 'Auto') : state === 'off' ? tr('sidebar.state.off', 'Off') : '';
+    const plusBtn = byId('composer-plus');
+    if (plusBtn) plusBtn.dataset.lit = lit ? '1' : '';
+  });
+  const sendBg = byId('send-bg');
+  watch(sendBg, ['hidden'], () => {
+    const chevron = byId('send-more');
+    if (chevron) chevron.hidden = sendBg.hidden;
+    if (sendBg.hidden) more?.close(false);
+  });
 })();
 ;
 // ---- side-tabs-core.js

@@ -290,10 +290,12 @@ const UI_ONLY_IPC = new Set([
   'notes:act', // [notes] the Notes panel and the "Add to notes" buttons (features/notes-hub.js; the chat page has it too: CHAT_IPC)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
+  'agent:helper-stop', // the Stop button on a helper card in the chat (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  'mission:open', // lumen://tasks from the Tasks panel and the More menu (the page itself is checked in its handlers)
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
   'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
@@ -1700,6 +1702,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.toggleSidebar'), accelerator: 'CmdOrCtrl+J', click: toggleSidebarFromKeys }, // (a page that uses Ctrl+J gets it first: the menu still shows it)
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
+        { label: t('menu.missionControl'), accelerator: 'CmdOrCtrl+Shift+X', click: () => managers.open('tasks') }, // [mission control] lumen://tasks
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
       ], 'ai', t('menu.aiAndTasks'), 5),
     ],
@@ -2383,6 +2386,8 @@ scheduler.every('spare-policy', 60 * 1000, async () => {
     else if (action === 'make') makeSpareNewTab();
   }
   // the warm renderer (about:blank, for the next web page): likewise freed when memory is tight or no page has taken one for a while
+  if (settingsProc && (sparePolicy.isIdle(settingsProcUsedAt) || sparePolicy.memoryTight(facts) || !settingsProcOn())) dropSettingsProc(); // [settings process]
+  else if (!settingsProc && !sparePolicy.memoryTight(facts)) makeSettingsProc();
   if (warmTab && (sparePolicy.isIdle(warmUsedAt) || sparePolicy.memoryTight(facts))) { const w = warmTab; warmTab = null; try { w.view.webContents.close(); } catch { /* gone */ } }
   else if (!warmTab && !sparePolicy.memoryTight(facts)) makeWarmTab();
   // the spare chat page: dropped with the new-tab one when memory is tight, and when no chat page has been used for half an hour
@@ -2598,7 +2603,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
   if (curRec?.agent) tab.muted = true; // [agent window] no sound from the agent's window unless the user unmutes a tab
   tabs.push(tab);
   win.contentView.addChildView(view);
-  view.setVisible(false);
+  if (!(settings && adopted)) view.setVisible(false); // (the Settings view made ready is already shown, under the others: hiding it for an instant would make its first frame wait for the page to be told it is visible again)
   const wc = wireView(tab, url, history, { loaded: Boolean(adopted || spare || chatSpare) }); // `history`: Duplicate's copy of back/forward
   if (chatSpare) adoptSpareChat(chatSpare); // its held calls go out: it starts as this tab's chat page
   if (curRec?.agent) prepareAgentTab(wc); // [agent window]
@@ -3849,6 +3854,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   const [tab] = tabs.splice(index, 1);
   chatBind.unbindTab(id); // [chat per tab]
   finishLeaving(tab);
+  if (tab.settings) settingsProcSoon(300); // [settings process] the next open's process, made now the Settings tab is gone
   tabGroups.cleanup();
   // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
@@ -4852,10 +4858,16 @@ ipcMain.handle('settings:default-browser', (_e, o) => setup.isDefault(o?.cached 
 ipcMain.handle('settings:make-default', () => setup.makeDefault());
 ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
+// Settings or the Import menu was opened once: from the next start-up, the browsers to import from are looked for in advance (firstTabLoaded).
+// (written a moment later, not while the page opens)
+function noteImportLooked() {
+  if (readSettings().importLooked) return;
+  setTimeout(() => { const s = readSettings(); if (!s.importLooked) writeSettings({ ...s, importLooked: true }); }, 3000).unref?.();
+}
 function importMenu() {
   const found = importer.detectBrowsers();
   if (!found.length) return [{ label: t('menu.noBrowsers'), enabled: false }];
-  return found.map((b) => ({ label: b.label, click: () => runImport(b.id) }));
+  return found.map((b) => ({ label: b.label, click: () => { noteImportLooked(); runImport(b.id); } }));
 }
 
 // ---------- history menu ----------
@@ -5484,6 +5496,7 @@ function handleShortcut(event, input) {
   else if (mod && key === ',') openSettingsPage(); // [settings]
   else if (process.platform === 'darwin' && input.meta && key === '[') goBack(wc);
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
+  else if (mod && input.shift && !input.alt && key === 'x') managers.open('tasks'); // [mission control] lumen://tasks: everything the AI is doing
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && !mod && key === 'home' && activeTabIsChatPage()) chatPageRt.home(activeId); // Chrome's Home shortcut, on the full-page chat
@@ -5848,6 +5861,8 @@ function runView(run) {
 }
 // [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.
 let aiStatusSoon = () => {};
+// [mission control] An open lumen://tasks page looks again; set once the page's wiring exists (below, after the agents).
+let missionSoon = () => {};
 // The mark on each window's sidebar button, and the chat list's badges.
 function pushAttention() {
   const approvals = [...chatRuns.values()].reduce((n, r) => n + r.pending.size, 0);
@@ -5861,6 +5876,7 @@ function pushAttention() {
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
   aiStatusSoon();
+  missionSoon();
 }
 const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
   const run = chatRuns.get(id);
@@ -7834,6 +7850,12 @@ let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
 let firstTabDone = false;
 firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSoon(); }); // (a session with a chat page in it: its next one is made now start-up is over)
+firstTabLoaded.then(() => settingsProcSoon(3000)); // [settings process]
+firstTabLoaded.then(() => { const t = setTimeout(() => { try { settingsBackend.warmGpuInfo(); } catch { /* optional */ } setTimeout(() => { try { settingsBackend.warmTranslatePacks(); } catch { /* optional */ } }, 1500).unref?.();
+    // (what the Settings pages ask the main process on their first open, each a first use of some modules or folders: done here, apart, once)
+    // (other browsers' profile folders are looked for only by someone who has opened Settings or Import before: importLooked)
+    [() => { if (readSettings().importLooked) importer.detectBrowsers(); }, () => widgets.state(), () => app.getAppMetrics()].forEach((warm, i) => setTimeout(() => { try { warm(); } catch { /* optional */ } }, 1500 + i * 700).unref?.());
+  }, 4000); t.unref?.(); }); // [settings] (the graphics devices, once)
 firstTabLoaded.then(() => probeRecordMp4()); // [screen recording] is MP4 offered?
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
@@ -8339,7 +8361,7 @@ const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null
 const agentOpenTab = (url, opts = {}) => {
   const { ai = false, show: wantShow = false, ...rest } = opts || {};
   const mcp = mcpCall();
-  const fromPage = !mcp && chatPageRt?.runTarget() != null;
+  const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null; // ([acting helpers] a helper's tab never becomes the chat page's target)
   // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
@@ -8378,7 +8400,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat', tasks: 'AI activity' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -8446,6 +8468,9 @@ const connectorsGoogleReal = {
     return { oauth: auth.oauth, oneClick: auth.oneClick, session: signedIn, email };
   },
   api: (p) => widgets.gmailApi(p),
+  drafts: () => widgets.gmailAuthState().compose, // the shared Google sign-in has gmail.compose (the user pressed Allow drafts)
+  allowDrafts: () => widgets.gmailAllowDrafts(), // Settings' Allow drafts button only
+  compose: (body) => widgets.gmailCompose(body), // POST /users/me/drafts and nothing else (never send)
   feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
   connect: () => widgets.gmailConnect({}),
   disconnect: () => widgets.gmailDisconnect(),
@@ -8474,6 +8499,14 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   google: connectorsGoogle,
   mcp: mcpClient,
   openSignIn: connectorsOpen,
+  // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
+  // card's encrypted secret each time, never copied into connectors.json. Disconnecting the connector signs the card out too.
+  shared: {
+    github: {
+      info: () => { const a = require('./features/github-auth').unpack(widgetSecret('github')); return a ? { token: a.token, account: a.login } : null; },
+      signOut: () => widgets.githubSignOut(),
+    },
+  },
 }));
 let connectedOnDisk = null; // before the service exists: whether the file lists anything (read once)
 const anyConnected = () => {
@@ -8485,9 +8518,9 @@ const anyConnected = () => {
 };
 const connectorsFacade = {
   hasAny: () => anyConnected(),
-  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  defs: (opts) => (anyConnected() ? connectorsSvc().defs(opts) : []), // opts.readOnly: a background task or routine (no writes)
   isWrite: (input) => connectorsSvc().isWrite(input),
-  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
   list: () => connectorsSvc().list(),
 };
@@ -8495,6 +8528,7 @@ ipcMain.handle('connectors:list', () => connectorsSvc().list());
 ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id)));
 ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
 ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
+ipcMain.handle('connectors:allow-drafts', (_e, id) => connectorsSvc().allowDrafts(String(id))); // Gmail: ask Google for gmail.compose (an explicit click in Settings)
 ipcMain.handle('connectors:sign-in', (_e, id) => {
   const url = connectorsSvc().signInUrl(String(id));
   if (url) connectorsOpen(url);
@@ -8682,6 +8716,7 @@ const agent = new Agent({
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents !== false, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings > AI > "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
@@ -8786,7 +8821,7 @@ const bgTasks = require('./features/background-runner').create({
   file: path.join(app.getPath('userData'), 'background-tasks.json'),
   now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
   connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
-  routinesChanged: () => routinesSoon(),
+  routinesChanged: () => { routinesSoon(); missionSoon(); }, // (and an open lumen://tasks page)
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
@@ -8819,6 +8854,7 @@ const telegramNow = () => {
   if (TEST) global.__telegram = telegramRt;
   return telegramRt;
 };
+const missionFromPhone = new Set(); // [mission control] tasks Telegram started since Lumen started (lumen://tasks says so)
 const telegramDeps = () => ({
   fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
   readSettings, writeSettings, t,
@@ -8832,7 +8868,7 @@ const telegramDeps = () => ({
   },
   canEncrypt: () => safeStorage.isEncryptionAvailable(),
   isOnline: () => net.isOnline(),
-  tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
+  tasks: { create: (spec) => { const task = bgTasks.create(spec); missionFromPhone.add(task.id); return task; }, stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
 });
 for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
   ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
@@ -9147,7 +9183,7 @@ let widgetRefreshTimer = null;
 // new-tab page waiting for Ctrl+T, a new-tab page in a background tab) must not start it: no new-tab page in front of
 // any window means a read only looks at what is already known. The page asks again when it is shown (it refreshes when it becomes visible).
 const newTabInFront = () => [...winRecs].some((rec) => rcAlive(rec) && !isSpare(rec) && !rec.agent && !rec.win.isMinimized() && tabsOf(rec).some((t) => t.id === activeIdOf(rec) && alive(t) && isNewTab(t.view.webContents.getURL())));
-const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'command', 'search', 'searchMore', 'loadThumbs', 'warm', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'command', 'search', 'searchMore', 'readItem', 'loadThumbs', 'warm', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
 // After sleep or a network change Chromium may hold dead sockets and a stale DNS cache; drop both so the next request makes fresh ones.
 function resetNetwork() {
   const ses = session.defaultSession;
@@ -9174,6 +9210,17 @@ const widgets = createWidgets({
   canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+  // GitHub sign-in (features/github-auth.js): the device-flow page opens in a Lumen tab, https://github.com/login/device only (a test only
+  // records it); the shared token's other user is the GitHub connector, which is set up or taken down to match whenever the sign-in changes.
+  openGithubSignIn: (url) => {
+    if (/^https:\/\/github\.com\/login\/device(?:[?#]|$)/.test(String(url))) return openTab(url);
+    if (TEST) { (global.__githubOpened ||= []).push(String(url)); return undefined; }
+    throw new Error('Refusing to open that address.');
+  },
+  githubClientId: () => (TEST && global.__githubClientId) || '', // (the constant in features/github-auth.js, or LUMEN_GITHUB_CLIENT_ID, unless a test stands one in)
+  githubPollScale: () => (TEST && global.__githubPollScale) || 1, // (a test shrinks the device flow's waits)
+  onGithubChange: () => { try { connectorsSvc().syncShared('github'); } catch { setTimeout(() => { try { connectorsSvc().syncShared('github'); } catch { /* the connector looks again at the next sign-in change */ } }, 1500).unref?.(); } }, // (once more if the file was busy)
+  githubInUse: () => { try { return connectorsSvc().usesShared('github'); } catch { return false; } },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   // The Gmail widget's default mode: read the inbox's Atom feed with the Google sign-in already in Lumen's normal session.
   googleMail: {
@@ -9527,16 +9574,73 @@ function dropSpareSettings() {
   clearTimeout(s.timer);
   try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
   try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+  settingsProcSoon(); // (a press that was not followed by an open: the pooled process it took is made again)
 }
+// [settings process] A new view's renderer process takes about 90 ms to start (the navigation commits 100 ms in, against 17 ms in a view whose process is up), and
+// more on a busy PC. One blank view with the Settings page's preferences is kept, like the warm renderer for web pages (makeWarmTab): its process belongs to
+// no site yet, so the Settings page loads in it at once when the menu button is pressed. It is not the page, only a process: freed when memory is tight, with
+// Performance mode on, and after sparePolicy IDLE_MS without a Settings open; another is made a moment after one is used.
+let settingsProc = null; // { view, prefs }
+let settingsProcUsedAt = Date.now();
+const settingsProcOn = () => (!TEST || (spareForTest && !process.env.LUMEN_TEST_NO_SETTINGS_POOL)) && perfMode.mode() !== 'on' && !perfMode.reasons().some((r) => r.key === 'memory');
+// The first layout of the page was ~30 ms of creating the system font's instances (each weight of Segoe UI Variable takes ~7 ms the first time): done here,
+// in the pooled process while it waits, so the Settings page finds them made.
+const WARM_FONTS_JS = `(() => {
+  const d = document.createElement('div');
+  d.style.cssText = 'position:absolute;visibility:hidden;left:-9999px';
+  for (const w of [400, 450, 500, 600, 700]) for (const px of [11, 12, 13, 14, 28]) { const s = document.createElement('span'); s.style.cssText = 'font:' + w + ' ' + px + 'px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif'; s.textContent = 'Settings Aa 0'; d.append(s); }
+  document.body.append(d); void d.offsetWidth; d.remove(); return true;
+})()`;
+// (none is made while a Settings tab is open: the next open goes to that tab. The one used is replaced when the last Settings tab closes, not
+// while the page that took it is still opening: making a view holds the main process for 30-70 ms.)
+const settingsTabOpen = () => allTabsEverywhere().some((t) => t.settings && alive(t));
+function makeSettingsProc() {
+  if (settingsProc || !app.isReady() || quitting || !firstTabDone || !settingsProcOn() || sparePolicy.isIdle(settingsProcUsedAt) || settingsTabOpen()) return;
+  const prefs = settingsBackend.tabWebPreferences(true);
+  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
+  const s = { view, prefs: JSON.stringify(prefs) };
+  view.webContents.once('render-process-gone', () => { if (settingsProc === s) { settingsProc = null; try { view.webContents.close(); } catch { /* gone */ } } });
+  view.webContents.once('did-finish-load', () => { try { view.webContents.executeJavaScript(WARM_FONTS_JS, true).catch(() => {}); } catch { /* gone */ } });
+  settingsProc = s;
+  setImmediate(() => { if (settingsProc === s && !view.webContents.isDestroyed()) view.webContents.loadURL('about:blank').catch(() => {}); }); // (making the view and starting its process: two tasks, not one long one)
+}
+function dropSettingsProc() {
+  const s = settingsProc;
+  settingsProc = null;
+  try { if (s && !s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+}
+let settingsProcTimer = null;
+const settingsProcSoon = (ms = 1500) => { clearTimeout(settingsProcTimer); settingsProcTimer = setTimeout(makeSettingsProc, ms); settingsProcTimer.unref?.(); };
+// The pooled view, if it is ready (about:blank loaded, the same preferences as now); null otherwise.
+// Its about:blank never shows in the tab's back list.
+function forgetBlank(wc) {
+  wc.once('did-finish-load', () => { try { if (wc.navigationHistory.getEntryAtIndex(0)?.url === 'about:blank' && wc.navigationHistory.length() > 1) wc.navigationHistory.clear(); } catch { /* gone */ } });
+}
+function takeSettingsProc() {
+  settingsProcUsedAt = Date.now();
+  const s = settingsProc;
+  settingsProc = null;
+  clearTimeout(settingsProcTimer); // (its replacement is made when the Settings tab closes: closeTab)
+  if (!s) { if (TEST) global.__settingsProcTaken = 'none'; return null; }
+  const wc = s.view.webContents;
+  if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading() || wc.getURL() !== 'about:blank' || s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))) { if (TEST) global.__settingsProcTaken = 'rejected ' + [wc.isDestroyed(), wc.isCrashed(), wc.isLoading(), wc.getURL(), s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))].join(','); try { wc.close(); } catch { /* gone */ } return null; }
+  if (TEST) global.__settingsProcTaken = 'pooled';
+  forgetBlank(wc);
+  return s.view;
+}
+if (TEST) global.__settingsProc = { why: () => ({ firstTabDone, spares: spareForTest, noPool: Boolean(process.env.LUMEN_TEST_NO_SETTINGS_POOL), on: settingsProcOn(), perf: perfMode.mode(), perfReasons: perfMode.reasons().map((r) => r.key), has: Boolean(settingsProc), taken: global.__settingsProcTaken || null }), has: () => Boolean(settingsProc), ready: () => Boolean(settingsProc && !settingsProc.view.webContents.isLoading()), drop: dropSettingsProc };
 function prepareSettings() {
   if (spareSettings || quitting || !app.isReady() || tabs.some((t) => t.settings && alive(t))) { if (spareSettings) { clearTimeout(spareSettings.timer); spareSettings.timer = setTimeout(dropSpareSettings, SPARE_SETTINGS_MS); spareSettings.timer.unref?.(); } return; }
-  const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } });
+  const view = takeSettingsProc() || new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(true) } }); // (the pooled one: its process is up)
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch { /* sized when it becomes a tab */ }
   try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ }
   const s = { view, rec: curRec, timer: setTimeout(dropSpareSettings, SPARE_SETTINGS_MS) };
   // A page in a view that is not in the window runs at background priority (it loaded in about 330 ms instead of 200): it is in the window,
-  // shown but out of sight, far to the left of it, until it becomes the tab (which puts it in place).
-  try { const b = view.getBounds(); view.setBounds({ ...b, x: -30000 }); win.contentView.addChildView(view); view.setVisible(true); } catch { /* it loads without */ }
+  // shown at the place a tab has, but under every other view (so nothing of it is seen), until it becomes the tab. There it is drawn (rasterized)
+  // before the tab takes it: moved in from the side it was another 20 ms to its first frame.
+  // (placing the view and starting the load are two tasks, not one long one: each holds the main process for about 10 ms)
+  const rec = curRec;
+  setImmediate(() => { if (spareSettings !== s || view.webContents.isDestroyed()) return; try { withWindow(rec, () => { view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height }); win.contentView.addChildView(view, 0); view.setVisible(true); }); } catch { /* it loads without */ } });
   s.timer.unref?.();
   view.webContents.once('render-process-gone', () => { if (spareSettings === s) dropSpareSettings(); });
   spareSettings = s;
@@ -9549,11 +9653,11 @@ function takeSpareSettings() {
   clearTimeout(s.timer);
   const wc = s.view.webContents;
   if (wc.isDestroyed() || wc.isCrashed()) { try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ } try { wc.close(); } catch { /* gone */ } return null; }
-  try { s.view.setVisible(false); } catch { /* the tab shows it */ }
   return s.view;
 }
 ipcMain.on('prepare-settings', () => prepareSettings());
 function openSettingsPage(section = '', { replace = null } = {}) {
+  noteImportLooked();
   const url = settingsPage.urlFor(section);
   const existing = tabs.find((t) => t.settings && alive(t));
   if (existing) {
@@ -9564,9 +9668,12 @@ function openSettingsPage(section = '', { replace = null } = {}) {
     switchTab(existing.id);
     return existing.id;
   }
-  const spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  let spare = takeSpareSettings(); // (already loading: the tab takes it over)
+  let blank = false;
+  if (!spare) { spare = takeSettingsProc(); blank = Boolean(spare); if (blank) { try { spare.setBackgroundColor(pageBackground()); } catch { /* gone */ } } } // (no press before this open: the pooled process takes the page)
   const { id } = openTab(url, { settings: true, view: spare });
-  if (spare) {
+  if (blank) spare.webContents.loadURL(url).catch(() => {});
+  else if (spare) {
     const wc = spare.webContents;
     const go = () => { if (!wc.isDestroyed() && wc.getURL() !== url) wc.loadURL(url).catch(() => {}); };
     if (section) { if (wc.isLoading()) wc.once('did-stop-loading', go); else go(); }
@@ -10385,7 +10492,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
+  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
@@ -10465,6 +10572,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
+      if (!run.deleted && !temporaryChats.has(runChat)) missionFinished(run); // [mission control] the page's Recent list
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
@@ -11499,6 +11607,9 @@ ipcMain.handle('agent:helpers', (_e, on) => {
   return readSettings().aiSubagents !== false;
 });
 
+// [acting helpers] A helper card's Stop button: stops that helper only (agent.js stopHelper; Stop in the chat stops them all).
+ipcMain.handle('agent:helper-stop', (_e, key) => agent.stopHelper(String(key ?? '')));
+
 // The model the picker shows and the agent uses: one answer, so they can never disagree. A saved
 // model that isn't connected anymore (key removed, CLI gone) falls back to the first connected
 // option, or none (null) — never a model the user can't use. A saved Claude Code / Grok Build pick
@@ -11832,7 +11943,7 @@ ipcMain.handle('cli:logout', async () => {
 
 ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
 ipcMain.handle('settings:search-engines', () => ({ searchEngine: readSettings().searchEngine || DEFAULT_ENGINE, searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })) })); // (the Search engine row of General: not the whole of settings:get, which also lists the models and looks for the AI command-line tools)
-ipcMain.handle('import:browsers', () => importer.detectBrowsers());
+ipcMain.handle('import:browsers', () => { noteImportLooked(); return importer.detectBrowsers(); });
 ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
@@ -11897,11 +12008,97 @@ const aiAgents = setupAiAgents({
   // [agent window] each outside MCP session's own window (features/agent-windows.js); its steps and approval cards go to the user's window.
   agentWindows: { windows: agentWindows, activeTabId: (rec) => activeIdOf(rec) },
   showAgentWindow: (rec) => { if (rec && rcAlive(rec) && rec.agent) { if (rec.win.isMinimized()) rec.win.restore(); rec.win.focus(); } }, // the toolbar badge, clicked by the user
+  approvalsChanged: () => missionSoon(), // [mission control] an outside agent's card came or went
   userUi: () => {
     const user = [focusedRec(), curRec].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || null;
     return user ? user.win.webContents : ui();
   },
 });
+
+// ---------- [mission control] lumen://tasks: everything the AI is doing (features/mission-control.js, renderer/mission.html) ----------
+// The page reads what is going on and its buttons go through the actions that already exist: the sidebar's approve
+// (agent.resolveApproval), the Tasks panel's (bgTasks.approve), Stop (stopChat, bgTasks.stop, an outside agent's session Stop),
+// Go to, and a routine's on / off (bgTasks.setEnabled). Only cards that are waiting now can be answered.
+const missionLib = () => require('./features/mission-control'); // (loaded on first use, not at startup)
+let missionChatsDone = []; // sidebar runs finished since Lumen started, newest first (tasks keep their own history)
+const agentSince = new WeakMap(); // an outside agent's window -> when it was first seen working
+const chatTitleOf = (id, text) => { try { return chats().list().find((c) => c.id === id)?.title || chatRunsLib.firstLine(text, 80) || ''; } catch { return chatRunsLib.firstLine(text, 80) || ''; } };
+function missionFinished(run) {
+  missionChatsDone = missionLib().noteFinished(missionChatsDone, { chatId: run.chatId, title: chatTitleOf(run.chatId, run.text), startedAt: run.startedAt, endedAt: Date.now(), status: chatRunsLib.outcome(run), preview: run.error ? run.errorSummary || run.error : chatRunsLib.firstLine(run.reply, 200) });
+  missionGoto.set(run.chatId, { chatId: run.chatId, tabId: run.tabId, homeTab: run.homeTab, rec: run.rec });
+  if (missionGoto.size > missionLib().RECENT_MAX) missionGoto.delete(missionGoto.keys().next().value);
+}
+const missionGoto = new Map(); // a finished chat -> where it ran (Go to on the Recent list)
+// Outside agents working in a window of their own: the window, its session (the MCP connection) and its id for the page.
+function missionAgents() {
+  return agentWindows.windows().map((rec) => {
+    const session = agentWindows.keyOf(rec);
+    if (!agentSince.has(rec)) agentSince.set(rec, Date.now());
+    return { rec, session, id: String(rec.win.id), clientName: session?.clientName || rec.agent?.label || 'Agent', since: agentSince.get(rec), canStop: typeof session?.disconnect === 'function' };
+  });
+}
+function missionState() {
+  const agents = missionAgents();
+  const idOfRec = (rec) => agents.find((a) => a.rec === rec)?.id ?? null;
+  return missionLib().aggregate({
+    // A temporary chat is shown as one, without its words (mission-control.js hides them too). Private windows have no sidebar, so no chat of theirs is here.
+    chats: [...chatRuns.values()].filter((r) => !r.deleted).map((r) => (temporaryChats.has(r.chatId)
+      ? { chatId: r.chatId, temporary: true, running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt, approvals: [...r.pending.values()].map((a) => ({ approvalId: a.approvalId, action: a.action })) }
+      : {
+        chatId: r.chatId, title: chatTitleOf(r.chatId, r.text), running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt,
+        step: r.details?.tools[r.details.tools.length - 1]?.label || '', approvals: [...r.pending.values()],
+      })),
+    tasks: bgTasks.overview().map((x) => (missionFromPhone.has(x.id) ? { ...x, via: 'telegram' } : x)),
+    agents: agents.map(({ rec, session, ...a }) => a),
+    agentCards: aiAgents.agentCards().map((c) => ({ ...c, agentId: idOfRec(c.key) })),
+    chatsDone: missionChatsDone,
+  });
+}
+function missionAct(raw) {
+  const req = missionLib().cleanRequest(raw);
+  if (!req) return { ok: false };
+  if (req.op === 'answer') {
+    // The card as it waits now, and the answers the page offered for it (mission-control.js choicesFor): a card that needs its own
+    // (a file to choose, an app, a content-loss check, a connector's write, a memory note, details too long to show, a temporary chat) has none.
+    const card = req.kind === 'task' ? bgTasks.pendingCard(req.id, req.approvalId) : req.kind === 'chat' ? chatRuns.get(req.id)?.pending.get(req.approvalId) : aiAgents.agentCards().find((c) => c.approvalId === req.approvalId);
+    const temporary = req.kind === 'chat' && temporaryChats.has(req.id);
+    if (!card || !missionLib().choicesFor(req.kind, missionLib().cardText(card), { temporary }).includes(req.choice)) return { ok: false };
+    if (req.kind === 'task') return { ok: bgTasks.approve(req.id, req.approvalId, req.choice) }; // the Tasks panel's own path ('tasks:approve')
+    agent.resolveApproval(req.approvalId, req.choice === 'allow'); // the sidebar's own path ('agent:approve')
+    return { ok: true };
+  }
+  if (req.op === 'toggle') return { ok: Boolean(bgTasks.setEnabled(req.id, req.on)) };
+  const agentRec = req.kind === 'agent' ? missionAgents().find((a) => a.id === req.id) : null;
+  if (req.op === 'stop') {
+    if (req.kind === 'chat') return { ok: stopChat(req.id) };
+    if (req.kind === 'task') return { ok: bgTasks.stop(req.id) };
+    if (!agentRec?.canStop) return { ok: false };
+    agentRec.session.disconnect(); // the same as Stop for an outside app (features/external-apps.js): its connection ends
+    return { ok: true };
+  }
+  // Go to: the chat in its tab with the sidebar open, the task in the Tasks panel, the agent's own window.
+  if (req.kind === 'chat') {
+    const run = chatRuns.get(req.id) || missionGoto.get(req.id) || { chatId: req.id };
+    return { ok: openNotified({ run, kind: run.pending?.size ? 'approval' : 'done' }) };
+  }
+  if (req.kind === 'task') { ui()?.send('tasks:open', { id: req.id }); return { ok: true }; }
+  if (!agentRec) return { ok: false };
+  agentRec.rec.win.isMinimized() && agentRec.rec.win.restore();
+  agentRec.rec.win.focus();
+  return { ok: true };
+}
+ipcMain.handle('mission:state', (event) => (managers.fromPage(event, 'tasks') ? missionState() : null));
+ipcMain.handle('mission:act', (event, req) => (managers.fromPage(event, 'tasks') ? missionAct(req) : { ok: false }));
+ipcMain.on('mission:open', () => managers.open('tasks')); // (UI_ONLY_IPC: the browser UI only)
+let missionTimer = null;
+missionSoon = () => {
+  if (missionTimer) return;
+  missionTimer = setTimeout(() => {
+    missionTimer = null;
+    for (const x of allTabsEverywhere()) if (x.managerPage === 'tasks' && alive(x)) x.view.webContents.send('mission:changed');
+  }, 150);
+};
+if (TEST) global.__mission = { state: () => missionState(), act: (req) => missionAct(req) };
 
 // ---------- updates from GitHub Releases (features/updates.js) ----------
 

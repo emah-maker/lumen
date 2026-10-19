@@ -44,6 +44,66 @@ function macSigning(env = process.env) {
   };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Windows: Authenticode signing with Azure Artifact Signing (formerly Trusted Signing), done by
+// electron-builder itself through win.azureSignOptions (docs/windows-signing.md). It is on only when
+// every value below is set; with none of them the build is the unsigned build it has always been (the
+// untouched Electron Lumen.exe, which scripts/build.js checks by hash). Values are only tested for
+// presence and shape here, and nothing in this file ever prints one.
+//
+//   AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET   the service principal (repository secrets);
+//                                    electron-builder's TrustedSigning PowerShell module reads them from
+//                                    the environment itself (Azure's EnvironmentCredential)
+//   AZURE_SIGNING_ENDPOINT           regional endpoint, https://<region>.codesigning.azure.net
+//   AZURE_SIGNING_ACCOUNT            the Artifact Signing account name
+//   AZURE_SIGNING_PROFILE            the certificate profile name
+//   AZURE_SIGNING_PUBLISHER          the certificate subject (CN) exactly as validated, e.g. "Jane Doe"
+const WIN_CREDENTIALS = ['AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET'];
+const WIN_SETTINGS = ['AZURE_SIGNING_ENDPOINT', 'AZURE_SIGNING_ACCOUNT', 'AZURE_SIGNING_PROFILE', 'AZURE_SIGNING_PUBLISHER'];
+const WIN_ALL = [...WIN_CREDENTIALS, ...WIN_SETTINGS];
+const ENDPOINT = /^https:\/\/[a-z0-9-]+\.codesigning\.azure\.net\/?$/i;
+const RESOURCE_NAME = /^[A-Za-z0-9][A-Za-z0-9-]{1,98}[A-Za-z0-9]$/;
+const val = (env, k) => String((env || {})[k] || '').trim();
+
+function winSigning(env = process.env) {
+  const missing = WIN_ALL.filter((k) => !has(env, k));
+  const invalid = [];
+  if (has(env, 'AZURE_SIGNING_ENDPOINT') && !ENDPOINT.test(val(env, 'AZURE_SIGNING_ENDPOINT'))) invalid.push('AZURE_SIGNING_ENDPOINT');
+  for (const k of ['AZURE_SIGNING_ACCOUNT', 'AZURE_SIGNING_PROFILE']) if (has(env, k) && !RESOURCE_NAME.test(val(env, k))) invalid.push(k);
+  const publisher = val(env, 'AZURE_SIGNING_PUBLISHER');
+  if (publisher && (publisher.length > 200 || [...publisher].some((c) => c.charCodeAt(0) < 32))) invalid.push('AZURE_SIGNING_PUBLISHER');
+  return {
+    enabled: missing.length === 0 && invalid.length === 0,
+    // Some, not all, of the values are set: reported instead of silently building unsigned.
+    partial: missing.length > 0 && missing.length < WIN_ALL.length ? missing : null,
+    invalid: invalid.length ? invalid : null,
+    publisher,
+  };
+}
+
+// electron-builder flags for a signed Windows build, none for the unsigned one. signAndEditExecutable
+// is turned on here (package.json keeps it off so the unsigned Lumen.exe stays byte-identical to
+// Electron's): electron-builder then edits Lumen.exe's icon and version info and signs it, the Setup
+// exe and the uninstaller. forceCodeSigning makes a file that could not be signed fail the build.
+function winBuilderArgs(env = process.env) {
+  const w = winSigning(env);
+  if (!w.enabled) return [];
+  return [
+    '-c.win.signAndEditExecutable=true',
+    '-c.forceCodeSigning=true',
+    `-c.win.azureSignOptions.endpoint=${val(env, 'AZURE_SIGNING_ENDPOINT')}`,
+    `-c.win.azureSignOptions.codeSigningAccountName=${val(env, 'AZURE_SIGNING_ACCOUNT')}`,
+    `-c.win.azureSignOptions.certificateProfileName=${val(env, 'AZURE_SIGNING_PROFILE')}`,
+    `-c.win.azureSignOptions.publisherName=${w.publisher}`,
+  ];
+}
+
+// Castlabs wants Widevine VMP signing after Authenticode on Windows, and electron-builder signs after
+// the afterPack hook, so a signed build defers VMP to the afterSign hook (LUMEN_DEFER_VMP=1).
+function winBuilderEnv(env = process.env) {
+  return winSigning(env).enabled ? { ...env, LUMEN_DEFER_VMP: '1' } : env;
+}
+
 // electron-builder flags for the mode. package.json holds the shared mac settings; this picks the
 // rest. Without a Developer ID it is exactly the old build: ad-hoc identity "-", hardened runtime
 // off (package.json), notarization skipped even if stray APPLE_* variables exist. With one, the
@@ -77,8 +137,17 @@ exports.macSigning = macSigning;
 exports.builderArgs = builderArgs;
 exports.builderEnv = builderEnv;
 exports.notarization = notarization;
+exports.winSigning = winSigning;
+exports.winBuilderArgs = winBuilderArgs;
+exports.winBuilderEnv = winBuilderEnv;
 
-if (require.main === module) {
+if (require.main === module && process.argv.includes('--win')) {
+  const w = winSigning();
+  if (process.argv.includes('--github-output')) console.log(`enabled=${w.enabled}`);
+  else console.log(`Windows signing: ${w.enabled ? 'Azure Artifact Signing' : 'off (unsigned build)'}`);
+  if (w.partial) console.warn(`::warning::Azure signing is only partly set up (missing: ${w.partial.join(', ')}); building unsigned`);
+  if (w.invalid) console.warn(`::warning::${w.invalid.join(', ')} does not look right; building unsigned`);
+} else if (require.main === module) {
   const s = macSigning();
   if (process.argv.includes('--github-output')) {
     console.log([`mode=${s.mode}`, `developer_id=${s.mode === 'developer-id'}`, `notarize=${s.notarize || 'none'}`, `evs=${s.evs}`].join('\n'));

@@ -9,6 +9,8 @@
 //   - no main-process task over 20 ms during the open
 //   - no renderer long task over 50 ms during the open
 require('./_tmp-cleanup');
+// DEADLINE: a step that waits for something that never happens fails the suite with a message instead of holding the e2e lock.
+const DEADLINE = setTimeout(() => { console.log(`FAIL  the suite did not finish in 280 s: it was stuck at "${global.__stage}"`); process.exit(1); }, 280000);
 const { _electron: electron } = require('playwright-core');
 const { seedProfile, measure, tmpProfile, env, root, sleep } = require('./_settings-open-rig');
 
@@ -24,7 +26,8 @@ const LIMITS = { paint: 150, filled: 150, input: 250, main: 20, longtask: 50 };
     for (const when of ['cold', 'warm']) {
       const m = r[when];
       const name = `${section || 'default'} ${when}`;
-      console.log(`      ${name}: paint ${m.paint} filled ${m.filled} input ${m.input} ready ${m.ready} | main max ${m.mainMax} | longtasks ${JSON.stringify(m.longtasks)}`);
+      console.log(`      ${name}: paint ${m.paint} filled ${m.filled} input ${m.input} ready ${m.ready} | main max ${m.mainMax} | longtasks ${JSON.stringify(m.longtasks)} | pooled process: ${m.pool}`);
+      check(`${name}: the open was taken by the pooled Settings process (${m.pool})`, m.pool === 'pooled', 'not pooled: ' + m.pool + ' ' + m.poolWhy);
       check(`${name}: first paint of the visible section under ${LIMITS.paint} ms (${m.paint} ms)`, m.paint !== null && m.paint < LIMITS.paint, m.paint);
       check(`${name}: the section is filled in, with no placeholders, under ${LIMITS.filled} ms (${m.filled} ms)`, m.filled !== null && m.filled < LIMITS.filled && !m.placeholders, `${m.filled} placeholders=${m.placeholders}`);
       check(`${name}: the page answers input under ${LIMITS.input} ms (${m.input} ms)`, m.input !== null && m.input < LIMITS.input, m.input);

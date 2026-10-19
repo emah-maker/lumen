@@ -1,5 +1,5 @@
-// The chat box (the composer's text input) is exactly as tall as its text, in the sidebar and on the lumen://chat page: one line when
-// empty, back to one line after typing five lines and clearing, the right height for a draft restored while the box was hidden or
+// The chat box (the composer's text input) is roomy and exactly as tall as its text beyond that, in the sidebar and on the lumen://chat page:
+// a floor of two to three lines (56-72px) when empty or short, back to the floor after typing five lines and clearing, the right height for a draft restored while the box was hidden or
 // narrow and then shown wide, fitting again after a wide -> narrow -> wide resize, never taller than the cap, and scrolling past it.
 // Hidden window (LUMEN_TEST_BACKGROUND=1), no network. LUMEN_COMPOSER_SHOTS=<dir> saves a screenshot of the tricky states.
 require('./_tmp-cleanup');
@@ -29,7 +29,10 @@ const IN_PAGE = `(async () => {
   out.one = h();
   set('x\\nx'); await frames();
   out.two = h();
-  out.line = Math.round((out.two - out.one) * 10) / 10;
+  set('x\\nx\\nx\\nx'); await frames();
+  out.four = h();
+  set('x\\nx\\nx\\nx\\nx'); await frames();
+  out.line = Math.round((h() - out.four) * 10) / 10;
   set(''); await frames();
   out.emptyAgain = h();
   // five lines typed, then cleared (by an input event, and by a bare value change)
@@ -37,25 +40,25 @@ const IN_PAGE = `(async () => {
   set(''); await frames(); out.afterClear = h();
   set('a\\nb\\nc\\nd\\ne', false); await frames();
   set('', false); await frames(); out.afterBareClear = h();
-  // a two-line draft restored while the composer is hidden and narrow, then shown wide
+  // a four-line draft restored while the composer is hidden and narrow, then shown wide
   narrow(90); composer.style.display = 'none';
-  set('first line of a draft\\nsecond line of a draft'); await frames();
+  set('first line of a draft\\nsecond line of a draft\\nthird\\nfourth'); await frames();
   composer.style.display = ''; wide(); await frames(); await frames();
   out.restored = h();
   set(''); await frames();
   // the same, without an event at all
   narrow(90); composer.style.display = 'none';
-  set('first line of a draft\\nsecond line of a draft', false); await frames();
+  set('first line of a draft\\nsecond line of a draft\\nthird\\nfourth', false); await frames();
   composer.style.display = ''; wide(); await frames(); await frames();
   out.restoredBare = h();
   set(''); await frames();
   // wide -> narrow -> wide
   const para = 'short text wraps when narrow';
   set(para); await frames(); out.paraWide = h();
-  narrow(150); await frames(); await frames(); out.paraNarrow = h();
+  narrow(90); await frames(); await frames(); out.paraNarrow = h();
   wide(); await frames(); await frames(); out.paraWideAgain = h();
   // typed while narrow (it wraps), then widened: the extra rows must go
-  narrow(150); set(para); await frames(); await frames(); out.setNarrow = h();
+  narrow(90); set(para); await frames(); await frames(); out.setNarrow = h();
   wide(); await frames(); await frames(); out.setNarrowThenWide = h();
   set(''); await frames();
   // an empty box (with its placeholder) narrow, and wide again
@@ -93,14 +96,14 @@ const CLEAR = `(() => { const p = document.getElementById('prompt'); p.value = '
 
     const verify = (name, r) => {
       const near = (a, b) => Math.abs(a - b) <= 1.5;
-      check(`${name}: an empty box is one line (as tall as a box with one line in it)`, r && near(r.empty, r.one) && r.two > r.one + 8, JSON.stringify(r));
-      check(`${name}: it is one line again after the text is cleared`, r && near(r.emptyAgain, r.one), JSON.stringify(r));
-      check(`${name}: five lines typed, then cleared, goes back to one line (by event and by a bare value change)`, r && r.five > r.one + 3 * r.line && near(r.afterClear, r.one) && near(r.afterBareClear, r.one), JSON.stringify(r));
-      check(`${name}: a 2-line draft restored while hidden and narrow is 2 lines once shown wide (event or none)`, r && near(r.restored, r.two) && near(r.restoredBare, r.two), JSON.stringify(r));
-      check(`${name}: wide -> narrow -> wide fits again (taller narrow, one line wide)`, r && near(r.paraWide, r.one) && r.paraNarrow > r.paraWide + 8 && near(r.paraWideAgain, r.one) && r.setNarrow > r.one + 8 && near(r.setNarrowThenWide, r.one), JSON.stringify(r));
-      check(`${name}: an empty box stays one line when narrow (a long placeholder does not wrap) and when wide again`, r && near(r.emptyNarrow, r.one) && near(r.emptyWideAgain, r.one), JSON.stringify(r));
-      check(`${name}: a long text stops at the cap (40% of the window, at most 320px) and scrolls`, r && r.max <= 0.4 * r.vh + 1.5 && r.max <= 321 && r.max > r.two && r.scrolls && r.scrolledTo > 0, JSON.stringify(r));
-      check(`${name}: it ends one line tall`, r && near(r.final, r.one), JSON.stringify(r));
+      check(`${name}: an empty box has the roomy floor (56-72px, the same as one short line), and four lines are taller`, r && near(r.empty, r.one) && r.one >= 56 && r.one <= 72 && near(r.two, r.one) && r.four > r.one + 8, JSON.stringify(r));
+      check(`${name}: it is back to the floor after the text is cleared`, r && near(r.emptyAgain, r.one), JSON.stringify(r));
+      check(`${name}: five lines typed, then cleared, goes back to the floor (by event and by a bare value change)`, r && r.five > r.one + 2 * r.line && near(r.afterClear, r.one) && near(r.afterBareClear, r.one), JSON.stringify(r));
+      check(`${name}: a 4-line draft restored while hidden and narrow is 4 lines once shown wide (event or none)`, r && near(r.restored, r.four) && near(r.restoredBare, r.four), JSON.stringify(r));
+      check(`${name}: wide -> narrow -> wide fits again (taller narrow, the floor wide)`, r && near(r.paraWide, r.one) && r.paraNarrow > r.paraWide + 8 && near(r.paraWideAgain, r.one) && r.setNarrow > r.one + 8 && near(r.setNarrowThenWide, r.one), JSON.stringify(r));
+      check(`${name}: an empty box stays at the floor when narrow (a long placeholder does not wrap) and when wide again`, r && near(r.emptyNarrow, r.one) && near(r.emptyWideAgain, r.one), JSON.stringify(r));
+      check(`${name}: a long text stops at the cap (40% of the window) and scrolls`, r && r.max <= 0.4 * r.vh + 1.5 && r.max > r.two && r.scrolls && r.scrolledTo > 0, JSON.stringify(r));
+      check(`${name}: it ends at the floor`, r && near(r.final, r.one), JSON.stringify(r));
     };
     const save = (name, buf) => { if (shots) try { fs.writeFileSync(path.join(shots, `${name}.png`), buf); } catch { /* a look only */ } };
 

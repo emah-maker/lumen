@@ -128,6 +128,10 @@ function create(deps) {
       templates: routines.TEMPLATES, connected: connectedIds(), webhooks: webhookState(),
     };
   }
+  // lumen://tasks (features/mission-control.js): every task's summary, with its run history.
+  function overview() {
+    return state().tasks.map((x) => ({ ...x, runs: find(x.id)?.runs || [], trigger: runtimes.get(x.id)?.trigger || null, history: find(x.id)?.routine?.history || [] })); // (trigger: what started a routine's run now; history: each run's)
+  }
   function broadcast() {
     if (broadcastTimer) return;
     broadcastTimer = setTimeout(() => {
@@ -528,7 +532,7 @@ function create(deps) {
     return {
       background: true, // a task's own one-tab browser: agent.ownNavigationTab must not open the sidebar chat's background tab here
       externalTools: ext,
-      connectors: task.routine ? deps.connectors : undefined, // a routine reads the services the user connected (Gmail, Canvas…): reads go through, anything that changes something asks
+      connectors: task.routine ? deps.connectors : undefined, // a routine reads the services the user connected (Gmail, Canvas…): reads go through; it is offered no writes, and agent.js refuses one
       activeTab: tab,
       tabById: (id) => (id === WORK_TAB ? tab() : null),
       noTabReason: () => 'This background task’s tab is closed.',
@@ -757,7 +761,7 @@ function create(deps) {
         break;
       }
       case 'approval': {
-        rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '' });
+        rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '', ...(e.args && String(e.args).length > 1500 ? { argsCut: true } : {}), ...(e.tainted ? { tainted: true } : {}), ...(e.note ? { note: String(e.note) } : {}), ...(e.noBypass ? { noBypass: true } : {}) }); // (argsCut, tainted, note, noBypass: lumen://tasks shows the card whole or offers Go to only)
         if (!rt.waitingSince) rt.waitingSince = now();
         tell({ type: 'approval', taskId: task.id, approvalId: e.approvalId, card: rt.pending.get(e.approvalId) });
         const was = task.status;
@@ -801,6 +805,9 @@ function create(deps) {
     agent.resolveApproval(approvalId, true);
     return true;
   }
+
+  // A card waiting in a task's run, as the Tasks panel has it (lumen://tasks checks it before answering), or null.
+  const pendingCard = (id, approvalId) => runtimes.get(String(id))?.pending.get(approvalId) || null;
 
   function stop(id) {
     const task = find(id);
@@ -1032,7 +1039,7 @@ function create(deps) {
   }
 
   return {
-    init, shutdown, register, propose, subscribe, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
+    init, shutdown, register, propose, subscribe, menuItems, state, overview, pendingCard, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
     fireRoutine, checkEmail, syncWebhooks, webhookKey, webhookState,
     // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,

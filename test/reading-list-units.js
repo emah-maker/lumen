@@ -58,6 +58,7 @@ const make = (name = 'rl.json', extra = {}) => RL.create({ file: fileOf(name), n
   const capped = make('cap.json', { cap: 3 });
   for (let i = 0; i < 5; i++) capped.add({ url: `https://c.example/${i}` });
   check('over the cap the oldest go', capped.count() === 3 && capped.list().map((e) => e.url.slice(-1)).join('') === '432');
+  await capped.flush(); // (its debounced write must not still be in flight when the next checks list the folder)
 
   // ---- the file
   await s.flush();

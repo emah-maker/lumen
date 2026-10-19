@@ -27,6 +27,8 @@ const OFFERS = [
   { id: 'telegram', key: 'telegramChannel', value: true, kind: 'setup', section: 'telegram' },
   // [dictation] ai/dictation.js: the mic in the chat box (audio goes to the user's own OpenAI or Gemini key, set in Settings)
   { id: 'voice', key: 'dictation', kind: 'setup', section: 'voice-input', ready: 'dictation' },
+  // [acting helpers] ai/acting-helpers.js: helpers that click and type side by side, each in a background tab
+  { id: 'helpers', key: 'actingHelpers', value: true, kind: 'toggle' },
 ];
 
 const byId = (id) => OFFERS.find((o) => o.id === id);

@@ -29,6 +29,8 @@ const WARM_MS = 30 * 60e3; // the card's search is open (or its box was focused,
 const MORE_MS = 8e3; // "more songs" asked and not answered this long: the card stops saying it is loading
 const LIBRARY_START_MS = 60e3; // the library asked of a page that is still starting (not ready): it is read the moment the page is ready, so it may wait this long for that
 const LIBRARY_MS = 14e3; // the library asked and not answered this long (the page's own wait is shorter): it ends as a failure, not "Loading…" for ever
+const ITEM_READ_MS = 40e3; // a playlist's or album's own page asked of the player and not answered this long (the page's own wait is 30 s): it ends as a failure, not "Loading…" for ever
+const ITEM_READY_MS = 250; // a page read asked while the page is still starting looks again this often for its bridge
 const QUEUE_MS = 20e3; // a button pressed (or a search typed) while the page is still starting is sent when its bridge is ready, if that is this soon
 
 // deps: { bridge (the service's bridge module), name ('Apple Music'), signInTitle, player (features/web-player.js), native? (a desktop-app source),
@@ -67,6 +69,7 @@ function createMusicEngine(deps) {
   let wantTab = { name: '', at: 0 }; // the card's open tab: its list is asked again when the song changes
   let tabTimer = null;
 
+  let itemRead = null; // { rid, resolve, timer }: the one playlist or album page being read for the card's Library (the page does one page task at a time)
   const changed = () => { try { deps.onChange?.(); } catch { /* the card keeps what it shows */ } };
   const touch = () => { lastActivity = now(); };
   const caps = bridge.CAPS || {};
@@ -152,7 +155,7 @@ function createMusicEngine(deps) {
     touch();
     player.ensure();
     const wc = player.webContents();
-    if (wc !== page) { page = wc; ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; libraryAskedAt = 0; playerMissingSince = 0; pending = null; pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; }
+    if (wc !== page) { page = wc; endItemRead('page', 'the player page was replaced'); ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; libraryAskedAt = 0; playerMissingSince = 0; pending = null; pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; }
     expireQueue();
     if (!timer) {
       timer = (deps.setInterval || setInterval)(unloadIfIdle, 60e3);
@@ -177,6 +180,7 @@ function createMusicEngine(deps) {
   }
   const playing = () => Boolean(msg && bridge.playbackKind(msg.state) === 'playing' && msg.item);
   function unload() {
+    endItemRead('page', 'the player page was closed');
     ready = false; msg = null; lists.recent = lists.playlists = null; listsAskedAt = 0; libraryAskedAt = 0; results = { rid: 0, term: '', items: [], at: 0, pending: false, why: '', detail: '' }; searchCmd = null; playerMissingSince = 0; pending = null; warmUntil = 0;
     queued = { control: null, search: null };
     pageLists = { queue: blankList(), tracks: blankList() }; lyr = { rid: 0, lines: [], at: 0, pending: false, ok: true, why: '', forTitle: '' }; wantTab = { name: '', at: 0 };
@@ -230,6 +234,12 @@ function createMusicEngine(deps) {
       return;
     }
     if (m.t === 'list') {
+      if (m.kind === 'page') {
+        if (!itemRead || m.rid !== itemRead.rid) return; // an older ask
+        if (!m.ok) console.warn(`${tag} page read failed (${m.why}${m.detail ? `: ${m.detail}` : ''})`);
+        endItemRead('page', '', m.ok ? { ok: true, why: '', detail: '', title: m.title, items: m.items, partial: m.partial === true } : { ok: false, why: m.why, detail: m.detail, title: '', items: [], partial: false });
+        return;
+      }
       if (m.kind === 'queue' || m.kind === 'tracks') {
         const cur = pageLists[m.kind];
         if (m.rid !== cur.rid) return; // an older ask
@@ -514,6 +524,40 @@ function createMusicEngine(deps) {
     return ok;
   }
   function refreshLists() { touch(); askLists(true); }
+  // A playlist's or album's own page read in full from the player (Spotify's bridge, kind 'page'): for what the Web API will not give the card (the songs of a playlist the
+  // account only follows). -> { ok, why, detail, title, items, partial }; never rejects. why when not ok: signedOut, noPlayer, missing, page, timeout (see the bridge).
+  function endItemRead(why, detail, result) {
+    const r = itemRead;
+    if (!r) return;
+    itemRead = null;
+    clearTimeout(r.timer);
+    r.resolve(result || { ok: false, why, detail: detail || '', title: '', items: [], partial: false });
+  }
+  function readItem(kind, id) {
+    touch();
+    if (!bridge.LIST_KINDS?.includes('page') || !['playlist', 'album'].includes(kind) || !bridge.ID_RE.test(String(id))) return Promise.resolve({ ok: false, why: 'page', detail: 'not supported', title: '', items: [], partial: false });
+    wake();
+    endItemRead('page', 'a newer page read replaced this one');
+    const after = deps.setTimeout || setTimeout;
+    return new Promise((resolve) => {
+      const mine = { rid: 0, resolve, timer: null };
+      itemRead = mine;
+      mine.timer = after(() => { if (itemRead === mine) endItemRead(authState() === false ? 'signedOut' : ready ? 'timeout' : 'noPlayer', ready ? 'the page gave no answer' : 'the player page did not start'); }, deps.itemReadMs?.() || ITEM_READ_MS);
+      mine.timer.unref?.();
+      const go = () => {
+        if (itemRead !== mine) return;
+        if (authState() === false) { endItemRead('signedOut', 'not signed in'); return; }
+        if (bridgeUp()) {
+          mine.rid = ++rid;
+          if (!send({ cmd: 'list', kind: 'page', path: `/${kind}/${id}`, rid: mine.rid })) endItemRead('page', 'the player page did not take the command');
+          return;
+        }
+        const w = after(go, ITEM_READY_MS);
+        w.unref?.();
+      };
+      go();
+    });
+  }
 
   // ---- signing in ----
   // The engine's own page in a window of its own: the user signs in on the service's page, as on any site, and the window closes by
@@ -551,11 +595,11 @@ function createMusicEngine(deps) {
 
   return {
     read, control, seek, playItem, playNext: (kind, id) => queueItem('playNext', kind, id), playLater: (kind, id) => queueItem('playLater', kind, id), command,
-    search, searchMore, loadThumbs, warm, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
+    search, searchMore, readItem, loadThumbs, warm, signIn, showPlayer, refreshLists, onMessage, wake, unload, authChanged,
     status: () => ({ ...player.status(), ready, signedIn: authState(), playing: playing() }),
     signedIn: authState,
     isPlaying: playing,
-    destroy() { closeSignIn(); clearInterval(timer); timer = null; player.destroy(); },
+    destroy() { endItemRead('page', 'the engine was destroyed'); closeSignIn(); clearInterval(timer); timer = null; player.destroy(); },
     reload() { player.ensure(); player.reload(); },
     signInOpen: () => Boolean(signInWin && !signInWin.isDestroyed()),
   };

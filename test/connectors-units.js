@@ -22,7 +22,7 @@ async function main() {
   check('the starting set is there: Canvas, Gmail, Calendar, GitHub, Todoist, Notion; Slack is shown as coming soon (its MCP package is deprecated)', ['canvas', 'gmail', 'gcal', 'github', 'todoist', 'notion', 'slack'].every((id) => registry.get(id)) && registry.get('slack').kind === 'soon' && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token', ids.join());
   check('a connector not ready yet is shown as soon and offers no action', registry.CONNECTORS.filter((c) => c.kind === 'soon').every((c) => !Object.keys(c.actions).length) && registry.get('drive').kind === 'soon', '');
   check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.filter((c) => c.kind !== 'soon').every((c) => c.reads.length) && registry.get('todoist').does.length === 1 && Object.values(registry.get('todoist').actions).filter((a) => a.write).length === 1, '');
-  check('write actions are marked, and only add_task is one', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'todoist.add_task', '');
+  check('write actions are marked: Gmail create_draft, GitHub comment and create_issue, Notion create_page and append, Todoist add_task (no Calendar write: an iCal address is read-only)', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'gmail.create_draft,github.comment,github.create_issue,notion.create_page,notion.append,todoist.add_task', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join());
 
   console.log('--- the one tool');
   registry.setConnected([]);
@@ -158,7 +158,7 @@ async function main() {
   check('Todoist: connected as the account’s e-mail', svc.list().connectors.find((c) => c.id === 'todoist').statusText === 'Connected · ada@example.com', '');
   const tasks = await svc.call({ app: 'todoist', action: 'tasks' });
   check('tasks: id, text, due date and priority', /9001\s+Read chapter 4 · due \d{4}-\d{2}-\d{2} · p2/.test(tasks) && /9002\s+Email the TA/.test(tasks), tasks);
-  check('add_task is a write, and the confirm card says exactly what will be added', svc.isWrite({ app: 'todoist', action: 'add_task' }) && !svc.isWrite({ app: 'todoist', action: 'tasks' }) && /Add this task to Todoist:\nBuy a stapler\nDue: tomorrow 9am/.test(svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } }).detail), JSON.stringify(svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } })));
+  check('add_task is a write, and the confirm card says exactly what will be added', svc.isWrite({ app: 'todoist', action: 'add_task' }) && !svc.isWrite({ app: 'todoist', action: 'tasks' }) && /Add this task to Todoist:\nBuy a stapler\nDue: tomorrow 9am/.test((await svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } })).detail), JSON.stringify(await svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } })));
   check('nothing was posted before the write ran', !fakes.seen.some((r) => r.service === 'todoist' && r.method === 'POST'), '');
   const added = await svc.call({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } });
   check('add_task posts the task and says what it made', /Added: \d+\s+Buy a stapler/.test(added) && JSON.parse(fakes.seen.find((r) => r.service === 'todoist' && r.method === 'POST').body).due_string === 'tomorrow 9am', added);
@@ -232,6 +232,23 @@ async function main() {
   check('with everything disconnected the AI has no tool again, and the file holds no connector', !svc.hasAny() && svc.defs().length === 0 && JSON.stringify(JSON.parse(fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8')).connected) === '{}', fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8'));
   check('the page was told about every change', changes.length >= 10, String(changes.length));
   check('a connector that is only coming soon can’t be connected', /isn’t available yet/.test(await fails(() => svc.connect('spotify', {}))), '');
+
+  // A shared sign-in (the GitHub card's) never replaces a token the connector was connected with.
+  let cardInfo = null;
+  const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-shared-'));
+  const sh = service.create({ userData: sharedDir, secrets: fakeSecrets, fetch: trackedFetch, testLoopback: true, endpoints: () => ({ github: fakes.urls.github }), shared: { github: { info: () => cardInfo, signOut: () => {} } } });
+  await sh.connect('github', { secret: TOKENS.github });
+  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
+  sh.syncShared('github');
+  check('shared sign-in: a connector connected with its own token keeps it when the card signs in', !sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && /"secret"/.test(fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8')), fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8'));
+  cardInfo = null;
+  sh.syncShared('github');
+  check('shared sign-in: …and when the card signs out', sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && !sh.usesShared('github'), '');
+  await sh.disconnect('github');
+  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
+  sh.syncShared('github');
+  check('shared sign-in: with no token of its own the connector follows the card’s sign-in', sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected', '');
+  fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 
   await fakes.stop();
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
