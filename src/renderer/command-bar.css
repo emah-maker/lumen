@@ -1,0 +1,28 @@
+/* The command bar (Ctrl+K, command-bar.js): a centred panel over the page, with a click-away layer behind it. */
+
+.cmdbar { position: fixed; inset: 0; z-index: 61; display: flex; justify-content: center; align-items: flex-start; padding-top: min(14vh, 120px); }
+.cmdbar[hidden] { display: none; }
+.cmdbar-scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 0.18); }
+.cmdbar-box {
+  position: relative; display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); max-height: min(540px, calc(100vh - 140px));
+  padding: 8px; border-radius: var(--r-xl); background: var(--surface-raised); color: var(--text);
+  box-shadow: 0 0 0 0.5px var(--border), 0 14px 36px -10px rgb(0 0 0 / calc(1.4 * var(--shadow-k)));
+}
+.cmdbar-box input {
+  flex: none; height: 38px; padding: 0 12px; border: none; border-radius: var(--r-md); background: var(--field);
+  color: var(--text); font: inherit; font-size: 15px; outline: none;
+}
+.cmdbar-box input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
+.cmdbar-results { contain: layout paint style; list-style: none; margin: 6px 0 0; padding: 0; overflow-y: auto; min-height: 0; }
+.cmdbar-section { padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
+.cmdbar-empty { padding: 18px 8px; font-size: 13px; color: var(--muted); }
+.cmdbar-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-sm); font-size: 13px; cursor: default; }
+.cmdbar-item.selected { background: var(--accent-soft); }
+.cmdbar-item.current .cmdbar-title { font-weight: 600; }
+.cmdbar-item[data-group="ask"] { color: var(--accent-text, var(--accent)); }
+.cmdbar-icon { flex: none; width: 16px; height: 16px; border-radius: var(--r-xs); }
+.cmdbar-icon.blank { background: var(--field); }
+.cmdbar-icon.glyph { display: grid; place-items: center; font-size: 13px; line-height: 1; color: var(--muted); }
+.cmdbar-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cmdbar-title, .cmdbar-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cmdbar-sub { font-size: 11px; color: var(--muted); }

@@ -4,7 +4,7 @@ Record the current tab, or a whole screen or one window, to a video file. It is 
 
 ## Start
 
-Open **⋯ → Record** (**File → Record** on a Mac):
+Open **⋯ → Record** (**File → Record** on a Mac), or press Ctrl+K and type "record" (**Record tab**, **Record screen**, **Stop recording**):
 
 - **Record this tab** records the page in the tab you are looking at, including its sound.
 - **Record screen or window…** shows the same menu of screens and windows as sharing your screen. Pick one, or close the menu to cancel.
