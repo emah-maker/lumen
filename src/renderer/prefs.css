@@ -14,7 +14,7 @@
 .pref-lite .composer { backdrop-filter: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-lite .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
 /* Graphics: Light (settings-backend.js [igpu], an integrated GPU by default): the glass is a flat, slightly more opaque tint, no blur behind it. Motion stays. */
-.pref-gfx-light .composer { backdrop-filter: none; background: color-mix(in srgb, var(--surface-raised) 96%, transparent); }
+.pref-gfx-light .composer { backdrop-filter: none; background: var(--surface-raised); }
 .pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
 /* Software drawing (no GPU: hardware acceleration off, safe drawing mode, or Chromium fell back; settings-backend.js [igpu] softwareGfx, on top of Light). Every pixel is
    drawn and composited on the CPU, so: no backdrop blur anywhere, no blurred shadows (a hairline instead), no animation that repaints a large area or runs forever,
