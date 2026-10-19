@@ -1173,6 +1173,11 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .approval-problem { margin: 0 0 10px; font-size: 12px; color: var(--danger); }
 .approval-problem[hidden] { display: none; }
 .approval-args { margin: -4px 0 12px; padding: 8px; max-height: 180px; overflow: auto; border-radius: var(--r-sm); background: var(--hover, rgba(127,127,127,.12)); font: 11px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+/* [connectors] a write's text, editable on its card before Allow */
+.approval-edit-label { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; font-size: 11px; color: var(--muted, inherit); }
+.approval-edit { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: var(--r-sm); background: var(--bg, transparent); color: var(--text, inherit); font: 12px/1.45 inherit; resize: vertical; }
+textarea.approval-edit { font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 260px; }
+.step-link { margin-left: 4px; }
 .approval-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .approval-actions .btn { height: 28px; font-size: 12px; }
 .approval-actions .btn:disabled { opacity: 0.5; }
