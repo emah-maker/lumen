@@ -47,3 +47,12 @@ section { animation: rise var(--t-smooth) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .toast button:hover { background: var(--hover); box-shadow: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
 .more { display: block; margin: 12px auto 0; }
+/* The Reading list page: a site icon before each title, unread ones in bold with a dot, the Unread / All switch. */
+.segmented { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--field); }
+.segmented button { height: 24px; background: none; }
+.segmented button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
+.site-icon { flex: none; width: 16px; height: 16px; align-self: center; border-radius: 3px; }
+.site-icon.letter { display: grid; place-items: center; background: var(--field); color: var(--muted); font-size: 10px; font-weight: 600; }
+.row.unread .title { font-weight: 600; }
+.row.unread a::before { content: ""; flex: none; width: 6px; height: 6px; align-self: center; margin-left: -4px; border-radius: 50%; background: var(--accent); }
+.row.read .title { color: var(--muted); }
