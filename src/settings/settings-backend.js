@@ -98,6 +98,8 @@ const DEFAULTS = {
   httpsOnly: false,
   passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
+  focusSites: ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'], // [focus] the sites blocked while focus mode is on (features/focus.js; test/focus-units.js keeps this the same as its DEFAULT_SITES)
+  focusSchedules: [], // [focus] recurring focus: { id, days, from, to, on } (features/focus.js)
   adblock: true,
   adblockAllow: [],
   permissionDefaults: {}, // permission -> 'ask' | 'block'
@@ -304,6 +306,8 @@ function validate(key, value) {
     case 'translateEngine': return translate.cleanEngine(value);
     case 'translateLocalAuto': return typeof value === 'boolean' ? value : null;
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
+    case 'focusSites': return require('../features/focus').cleanSites(value); // [focus]
+    case 'focusSchedules': return require('../features/focus').cleanSchedules(value);
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
@@ -871,6 +875,7 @@ function create(deps) {
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
+      case 'focusSites': case 'focusSchedules': deps.onFocusChange?.(); break; // [focus]
       case 'telegramChannel': deps.onTelegramChange?.(); break; // [telegram]
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
@@ -900,6 +905,7 @@ function create(deps) {
       return state();
     }
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
+    if ((key === 'focusSites' || key === 'focusSchedules') && deps.focusLocked?.()) throw new Error('Focus mode is on: its sites and schedules can be changed when it ends.'); // [focus] (editing the list is not a way out of a session)
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
