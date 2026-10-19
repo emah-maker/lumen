@@ -1348,6 +1348,19 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   .omnibox { border: 1px solid CanvasText; }
   :focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
 }
+
+.split-divider { position: absolute; top: 0; bottom: 0; z-index: 2; cursor: col-resize; display: flex; align-items: center; justify-content: center; touch-action: none; outline: none; }
+.split-divider::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--hairline); transition: background-color var(--t-fast) ease-out; }
+.split-divider:hover::before, .split-divider.dragging::before, .split-divider:focus-visible::before { background: var(--accent); }
+.split-divider[hidden] { display: none; }
+.split-close { position: relative; width: 12px; height: 28px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; cursor: default; color: var(--muted); background: var(--surface-raised); box-shadow: 0 0 0 0.5px var(--hairline); }
+.split-close svg { width: 8px; height: 8px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.split-close:hover { color: var(--text); background: var(--field); }
+.split-close:focus-visible { outline: 2px solid var(--accent); }
+body.split-dragging { user-select: none; cursor: col-resize; }
+.tab.split-left, .tab.split-right { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
+.tab.split-left:has(+ .tab.split-right) { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.tab.split-left + .tab.split-right { margin-left: -3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
 /* ---- picker.css */
 .picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
@@ -1847,6 +1860,18 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
 .chat-item.has-unread:not(.current):not(:hover):not(:focus-within) { background: color-mix(in srgb, var(--success) 11%, transparent); }
 .chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
 
+.offer-card { margin: 14px 0 0; padding: 10px 12px; border-radius: var(--r-lg); background: var(--field); text-align: left; }
+.offer-title { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.offer-row { display: flex; align-items: center; gap: 10px; }
+.offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.offer-name { font-weight: 500; }
+.offer-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.offer-go { flex: none; padding: 4px 10px; border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
+.offer-go:disabled { opacity: 0.6; }
+.offer-foot { margin-top: 8px; display: flex; gap: 14px; font-size: 12px; }
+.offer-foot .link-btn { color: var(--muted); }
+
 @media (forced-colors: active) {
   .chat-badge, .chat-badge.queued, .chat-badge.unread { color: CanvasText; forced-color-adjust: none; }
   .chat-badge.running, .chat-badge.needs-ok { color: Highlight; forced-color-adjust: none; }
@@ -2220,6 +2245,7 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .msg.assistant:hover .reply-thumb, .reply-thumb:focus-visible, .reply-thumbs.rated .reply-thumb[aria-pressed="true"] { opacity: 1; }
 .reply-thumb:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
 .reply-thumb[aria-pressed="true"] { color: var(--accent); }
+.reply-note.done { opacity: 1; color: var(--accent); }
 .reply-thumb[aria-pressed="true"] svg { fill: currentColor; fill-opacity: 0.18; }
 
 .msg.user.clamped:not(.expanded):not(.editing) { max-height: 11.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
