@@ -13,6 +13,8 @@
 
   --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 14px; --fs-xl: 16px;
 
+  --svg-panel: #fafbfc;
+
   --hit: 28px; --hit-min: 24px;
 
   --paper: #ffffff;
@@ -656,10 +658,10 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 
 .msg.assistant .code-block.svg-ok:not(.show-source) pre { display: none; }
 .msg.assistant .code-block.svg-ok:not(.show-source) .code-wrap { display: none; }
-.msg.assistant .code-block .svg-view { padding: 10px; overflow-x: auto; text-align: center; background: #fafbfc; color-scheme: light; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block .svg-view { padding: 10px; overflow-x: auto; text-align: center; background: var(--svg-panel); color-scheme: light; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .code-block.show-source .svg-view { display: none; }
 .msg.assistant .svg-pic { display: block; max-width: 100%; margin: 0 auto; padding: 0; border: none; background: transparent; cursor: zoom-in; }
-.msg.assistant .svg-pic:focus-visible { outline: 2px solid var(--accent, #5b8def); outline-offset: 2px; }
+.msg.assistant .svg-pic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .msg.assistant .svg-pic img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 
