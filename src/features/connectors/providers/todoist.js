@@ -41,11 +41,13 @@ const actions = {
     if (dueString) body.due_string = dueString;
     if (project) body.project_id = project;
     const t = await call(ctx, '/tasks', { method: 'POST', json: body });
-    return `Added: ${line(t)}`;
+    const id = /^[A-Za-z0-9_-]{1,40}$/.test(String(t?.id || '')) ? String(t.id) : '';
+    return { text: `Added: ${line(t)}`, link: id ? `https://app.todoist.com/app/task/${id}` : '', done: `Added “${flat(t?.content || content, 60)}”` };
   },
 };
 
-// What the confirm card shows before add_task runs.
+// What the confirm card shows before add_task runs: all of it, and the part the user can't edit there.
 const describeWrite = (action, args) => (action === 'add_task' ? `Add this task to Todoist:\n${args.content}${args.due ? `\nDue: ${args.due}` : ''}${args.project_id ? `\nProject id: ${args.project_id}` : ''}` : '');
+const describeWhere = (action, args) => (action === 'add_task' ? `Add a task to Todoist${args.project_id ? ` (project ${args.project_id})` : ''}` : '');
 
-module.exports = { verify, actions, describeWrite };
+module.exports = { verify, actions, describeWrite, describeWhere };
