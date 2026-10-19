@@ -23,6 +23,7 @@ const PAGES = {
   focus: { title: 'Focus mode', file: 'docs/focus.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
+  sync: { title: 'Sync through a folder', file: 'docs/sync.md' },
   notes: { title: 'Notes', file: 'docs/notes.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },
   skills: { title: 'Skills', file: 'docs/skills.md' },
