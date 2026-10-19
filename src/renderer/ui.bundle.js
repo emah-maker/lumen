@@ -8102,12 +8102,14 @@ let selectedTabs = new Set();
 
 
 
+
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch {  } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
 
@@ -8130,6 +8132,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -8703,13 +8706,15 @@ function handOffTabDrag(e) {
 
 
 
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; }
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -8840,6 +8845,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
 
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped);
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
 
@@ -8974,8 +8980,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
 
 
@@ -9321,7 +9329,8 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key];
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
@@ -9461,6 +9470,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return;
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -9523,6 +9533,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return;
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -9771,7 +9782,7 @@ function renderTabsNow(state) {
 
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6;
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
 
 
@@ -10582,7 +10593,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null;
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420));
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0)));
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
@@ -14568,6 +14579,326 @@ $('agent-stop')?.addEventListener('click', () => {
   render();
 })();
 ;
+// ---- side-tabs-core.js
+
+
+(function (root) {
+  const MIN = 160;
+  const MAX = 420;
+  const DEFAULT = 240;
+  const COLLAPSED = 52;
+
+  const clampWidth = (w) => {
+    const n = Math.round(Number(w));
+    return Number.isFinite(n) ? Math.min(MAX, Math.max(MIN, n)) : DEFAULT;
+  };
+
+
+  const fromPrefs = (p) => ({ on: p?.tabLayout === 'side', width: clampWidth(p?.sideTabsWidth ?? DEFAULT), collapsed: p?.sideTabsCollapsed === true });
+
+
+
+
+  function dropBefore(items, x, y, listWidth) {
+    for (const it of items) {
+      const r = it.r;
+      if (y < r.top) return it;
+      if (y > r.bottom) continue;
+      const wide = r.right - r.left > listWidth / 2;
+      if (wide ? y < (r.top + r.bottom) / 2 : x < (r.left + r.right) / 2) return it;
+    }
+    return null;
+  }
+
+
+  const joinGroup = (hit, tabs) => (hit && !hit.outside ? tabs.find((t) => t.id === hit.id)?.groupId || null : null);
+
+
+
+  function homeBefore(items, moving) {
+    const skip = new Set(moving);
+    const last = items.map((it) => skip.has(it.id)).lastIndexOf(true);
+    return items.slice(last + 1).find((it) => !skip.has(it.id)) || null;
+  }
+
+  const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.sideTabsCore = api;
+})(this);
+;
+// ---- side-tabs.js
+
+
+
+
+
+{
+  const core = window.sideTabsCore;
+  const panel = $('side-tabs');
+  const list = $('side-tabs-list');
+  const head = $('side-head');
+  const tabsEl = $('tabs');
+  const strip = $('tabstrip');
+  const newTab = $('new-tab');
+  const collapseBtn = $('side-collapse');
+  const grip = $('side-resize');
+  const TEAR_PX = 48;
+  let cfg = core.fromPrefs(null);
+  let peekTimer = 0;
+  let leaveTimer = 0;
+  let saveTimer = 0;
+
+  const save = (o) => { try { Promise.resolve(window.browser.sideTabs?.(o)).catch(() => {}); } catch {  } };
+
+
+  function place() {
+    document.body.classList.toggle('side-layout', cfg.on);
+    panel.hidden = !cfg.on;
+    tabsEl.classList.toggle('side', cfg.on);
+    tabsEl.setAttribute('aria-orientation', cfg.on ? 'vertical' : 'horizontal');
+    if (cfg.on) {
+      list.append(tabsEl);
+      head.prepend(newTab);
+    } else {
+      strip.insertBefore(tabsEl, strip.firstChild);
+      strip.insertBefore(newTab, tabsEl.nextSibling);
+    }
+    hideHoverCard();
+
+    tabsRendered = false;
+    lastLayoutSig = null;
+    if (lastTabState) renderTabsNow(lastTabState);
+  }
+  function paint() {
+    panel.style.setProperty('--side-w', `${cfg.width}px`);
+    panel.classList.toggle('collapsed', cfg.collapsed);
+    if (!cfg.collapsed) panel.classList.remove('peek');
+    const label = t(cfg.collapsed ? 'tabs.side.expand' : 'tabs.side.collapse');
+    collapseBtn.title = label;
+    collapseBtn.setAttribute('aria-label', label);
+    collapseBtn.setAttribute('aria-pressed', String(cfg.collapsed));
+  }
+  function apply(p) {
+    const was = cfg.on;
+    cfg = core.fromPrefs(p);
+    paint();
+    if (cfg.on !== was) place();
+    if (cfg.on && typeof sidebarWish === 'number') setSidebarWidth(sidebarWish);
+  }
+  const fromPrefs = () => { const p = window.lumenSideTabs; if (p) apply(p); };
+  document.addEventListener('lumen:side-tabs', fromPrefs);
+  fromPrefs();
+
+  collapseBtn.addEventListener('click', () => save({ collapsed: !cfg.collapsed }));
+
+
+  panel.addEventListener('pointerenter', (e) => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(leaveTimer);
+    if (!cfg.collapsed || panel.classList.contains('peek')) return;
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => panel.classList.add('peek'), 180);
+  });
+  panel.addEventListener('pointerleave', () => {
+    clearTimeout(peekTimer);
+    if (drag || !panel.classList.contains('peek')) return;
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => { if (!drag && !panel.matches(':focus-within')) panel.classList.remove('peek'); }, 250);
+  });
+  panel.addEventListener('focusin', (e) => { if (cfg.collapsed && e.target.matches?.(':focus-visible')) { clearTimeout(leaveTimer); panel.classList.add('peek'); } });
+  panel.addEventListener('focusout', (e) => { if (!panel.contains(e.relatedTarget) && !panel.matches(':hover')) panel.classList.remove('peek'); });
+
+
+  const setWidth = (w) => { cfg.width = core.clampWidth(w); panel.style.setProperty('--side-w', `${cfg.width}px`); };
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const w0 = cfg.width;
+    document.body.classList.add('side-resizing');
+    const move = (ev) => setWidth(w0 + ev.clientX - x0);
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('side-resizing');
+      save({ width: cfg.width });
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { setWidth(core.DEFAULT); save({ width: cfg.width }); });
+  grip.addEventListener('keydown', (e) => {
+    const to = { ArrowLeft: cfg.width - 16, ArrowRight: cfg.width + 16, Home: core.MIN, End: core.MAX }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    setWidth(to);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => save({ width: cfg.width }), 300);
+  });
+
+
+  const menuAt = (e) => {
+    if (e.defaultPrevented || e.target.closest?.('.tab, .group-label')) return;
+    e.preventDefault();
+    window.browser.stripMenu?.({ x: e.clientX, y: e.clientY });
+  };
+  for (const el of [panel, tabsEl, newTab]) el.addEventListener('contextmenu', menuAt);
+
+
+  const inWindow = (e) => e.clientX >= -TEAR_PX / 2 && e.clientY >= -TEAR_PX / 2 && e.clientX <= window.innerWidth + TEAR_PX / 2 && e.clientY <= window.innerHeight + TEAR_PX / 2;
+  const out = (e) => e.clientX > panel.getBoundingClientRect().right + TEAR_PX || !inWindow(e);
+  const near = (e) => e.clientX > panel.getBoundingClientRect().right + 8 || e.clientX < 8 || e.clientY > window.innerHeight - 8;
+
+
+
+  function candidates(d) {
+    const skip = new Set(d.moving);
+    const now = lastTabState?.tabs || [];
+    const groups = lastTabState?.groups || [];
+    const found = [];
+    for (const el of tabsEl.querySelectorAll('.tab:not(.tab-ghost), .group-label')) {
+      if (el.matches('.handed, .held, .gathered')) continue;
+      let id;
+      let outside = false;
+      if (el.classList.contains('group-label')) {
+        const g = Number(el.dataset.group);
+        if (d.pinnedDrag || g === d.groupId) continue;
+        id = now.find((x) => x.groupId === g && !skip.has(x.id))?.id;
+        outside = true;
+      } else {
+        id = Number(el.dataset.id);
+        if (el.classList.contains('pinned') !== d.pinnedDrag) continue;
+        const g = now.find((x) => x.id === id)?.groupId;
+        if (g && groups.find((x) => x.id === g)?.collapsed) continue;
+      }
+      if (id != null) found.push({ id, outside, r: el.getBoundingClientRect() });
+    }
+    return found;
+  }
+
+  function showLine(d, items, hit) {
+    const line = d.line || (d.line = Object.assign(document.createElement('div'), { className: 'side-drop-line' }));
+    if (!line.isConnected) document.body.append(line);
+    const lr = list.getBoundingClientRect();
+    const ref = hit || items[items.length - 1];
+    if (!ref) { line.hidden = true; return; }
+    line.hidden = false;
+    const r = ref.r;
+    const tile = d.pinnedDrag && r.right - r.left < lr.width / 2;
+    const after = !hit;
+    const box = tile
+      ? { left: (after ? r.right + 1 : r.left - 1) - 1, top: r.top, width: 2, height: r.bottom - r.top }
+      : { left: lr.left + 6, top: (after ? r.bottom + 1 : r.top - 1) - 1, width: lr.width - 12, height: 2 };
+    Object.assign(line.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+    const join = d.groupId == null && !d.pinnedDrag ? core.joinGroup(hit, lastTabState?.tabs || []) : null;
+    const color = join && (lastTabState?.groups || []).find((x) => x.id === join)?.color;
+    line.style.background = color ? `var(--g-${String(color).replace(/[^a-z]/g, '')})` : '';
+  }
+
+  function follow(d) {
+    d.el.style.transform = `translate(${d.lastX - d.startX}px, ${d.lastY - d.startY + (list.scrollTop - d.scroll0)}px)`;
+    const all = candidates(d);
+    const skip = new Set(d.moving);
+    const items = all.filter((it) => !skip.has(it.id));
+    let hit = core.dropBefore(items, d.lastX, d.lastY, list.clientWidth);
+    if (d.groupId != null) {
+      const tabsNow = lastTabState?.tabs || [];
+      const inside = (it) => it && !it.outside && tabsNow.find((x) => x.id === it.id)?.groupId;
+      const g = inside(hit);
+      if (g) hit = items.slice(items.indexOf(hit) + 1).find((it) => inside(it) !== g) || null;
+    }
+    d.hit = hit;
+    d.targeted = true;
+    showLine(d, items, hit);
+  }
+
+  function stopEdge(d) { d.edge = 0; if (d.edgeTimer) { cancelAnimationFrame(d.edgeTimer); d.edgeTimer = 0; } }
+
+
+  function handOff(e) {
+    const d = drag;
+    stopEdge(d);
+    d.line?.remove();
+    if (d.groupId == null) { handOffTabDrag(e); return; }
+    d.handed = true;
+    d.group = d.members;
+    d.single = (lastTabState?.tabs.length || 0) - d.members.length < 1;
+    d.el.style.transform = '';
+    d.el.classList.remove('tearing');
+    if (d.single) {
+      d.el.classList.remove('dragging');
+      tabsEl.classList.remove('reordering');
+    } else {
+      d.el.classList.add('handed');
+      for (const el of tabsEl.querySelectorAll('.tab')) if (d.members.includes(Number(el.dataset.id))) el.classList.add('handed');
+    }
+    window.browser.dragTabStart(d.id, { x: e.clientX, y: e.clientY, stripX: d.into + 12, pressY: api.tearY(d.el), ids: d.members, group: d.groupId, layout: null });
+  }
+
+  const api = {
+
+    move(e) {
+      const d = drag;
+      if (!d.moved && Math.abs(e.clientX - d.startX) < 5 && Math.abs(e.clientY - d.startY) < 5) return;
+      if (!d.moved) {
+        d.moved = true;
+        hideHoverCard();
+        d.el.classList.add('dragging');
+        tabsEl.classList.add('reordering');
+        d.scroll0 = list.scrollTop;
+        const label = d.groupId != null;
+        d.moving = label ? d.members : selectedTabs.size > 1 && selectedTabs.has(d.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [d.id];
+        d.pinnedDrag = !label && d.el.classList.contains('pinned');
+
+        if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - d.moving.length < 1) { handOff(e); return; }
+      }
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      if (!d.prepped && window.browser.dragTabPrep && near(e)) { d.prepped = true; window.browser.dragTabPrep(d.id); }
+      if (window.browser.dragTabStart && out(e)) { handOff(e); return; }
+      follow(d);
+
+      const lr = list.getBoundingClientRect();
+      d.edge = list.scrollHeight > list.clientHeight + 1 ? (e.clientY < lr.top + 28 ? -1 : e.clientY > lr.bottom - 28 ? 1 : 0) : 0;
+      if (d.edge && !d.edgeTimer) {
+        const tick = () => {
+          if (drag !== d || !d.edge || d.handed) { d.edgeTimer = 0; return; }
+          list.scrollTop += 9 * d.edge;
+          follow(d);
+          d.edgeTimer = requestAnimationFrame(tick);
+        };
+        d.edgeTimer = requestAnimationFrame(tick);
+      }
+    },
+
+    end(d, escaped) {
+      stopEdge(d);
+      d.line?.remove();
+      if (d.handed) return;
+      d.el.style.transform = '';
+      d.el.classList.remove('dragging', 'tearing');
+      tabsEl.classList.remove('reordering');
+      if (!d.moved || escaped || !d.targeted) return;
+      const hit = d.hit;
+      const home = core.homeBefore(candidates(d), d.moving);
+      if ((hit?.id ?? null) === (home?.id ?? null)) return;
+      const tabsNow = lastTabState?.tabs || [];
+      const live = $('tab-live');
+      expectMove();
+      if (d.groupId != null) window.browser.moveTabs?.(d.members, hit?.id ?? null, d.groupId);
+      else if (d.pinnedDrag) window.browser.moveTab?.(d.id, indexBefore(hit?.id ?? null, d.id), true);
+      else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, core.joinGroup(hit, tabsNow));
+      if (live) live.textContent = d.moving.length > 1 ? t('tabs.movedMany', { n: d.moving.length }) : t('tabs.moved', { title: tabsNow.find((x) => x.id === d.id)?.title || '' });
+    },
+
+    tearY(el) { return Math.round(list.getBoundingClientRect().top + 6 + (el.offsetHeight || 30) / 2); },
+  };
+  window.sideTabs = api;
+}
+;
 // ---- ui-prefs.js
 
 {
@@ -14584,6 +14915,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (!p) return;
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
+    if ('tabLayout' in p) { window.lumenSideTabs = { tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed }; document.dispatchEvent(new Event('lumen:side-tabs')); }
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite));
