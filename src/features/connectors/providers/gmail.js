@@ -67,7 +67,8 @@ async function original(ctx, id) {
   const m = await api(ctx, `/users/me/messages/${encodeURIComponent(id)}?format=metadata&${q}`);
   const header = (n) => (m?.payload?.headers || []).find((h) => String(h?.name).toLowerCase() === n)?.value || '';
   const head = GV.normalizeMessage(m);
-  return { threadId: /^[0-9a-f]{6,32}$/i.test(String(m?.threadId || '')) ? String(m.threadId) : '', messageId: header('message-id'), references: header('references'), subject: head?.subject || '', from: head?.from || '' };
+  const fromAddress = (/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/.exec(header('from')) || [''])[0].toLowerCase();
+  return { threadId: /^[0-9a-f]{6,32}$/i.test(String(m?.threadId || '')) ? String(m.threadId) : '', messageId: header('message-id'), references: header('references'), subject: head?.subject || '', from: head?.from || '', fromAddress };
 }
 
 const actions = {
@@ -135,17 +136,71 @@ const actions = {
   },
 };
 
-// The card: before it shows, a draft that can't be made says so (no card for nothing); for a reply, the message it answers.
-async function beforeCard(ctx, action) {
+// Sending (opt-in, features/gmail-send.js): ready only with the full sign-in, drafts allowed (gmail.compose covers send) and the switch on.
+function sendReady(ctx) {
+  draftsReady(ctx);
+  if (!ctx.config.sending || !ctx.google.send) throw new ConnectorError('Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → You and AI → Connectors. Nothing was sent. You can still make a draft.', 'auth');
+}
+const MAYBE_SENT = (GS, email) => `The email may have been sent; check Sent before trying again${email ? ` (${GS.sentLink(email)})` : ''}. Don’t send it again unless the user says it didn’t go.`;
+const SEND_FAILS = 'Nothing was sent.';
+
+actions.send = async function send(ctx, { to, cc, bcc, subject, body, reply_to_message_id: replyTo }) {
+  sendReady(ctx);
+  const GD = require('../../gmail-drafts');
+  const GS = require('../../gmail-send');
+  const orig = replyTo ? await original(ctx, replyTo) : null;
+  if (orig && (!orig.threadId || !GD.replyHeaders(orig.messageId, ''))) throw new ConnectorError('Gmail didn’t give that message’s conversation or Message-ID, so the reply wasn’t sent. A new email (without reply_to_message_id) can still be sent.', 'other');
+  let raw;
+  try {
+    raw = GD.toRaw(GD.buildMessage({ to, cc, bcc, subject, body, inReplyTo: orig?.messageId || '', references: orig?.references || '' }));
+  } catch (err) {
+    if (err instanceof GD.DraftError) throw new ConnectorError(`${err.message} ${SEND_FAILS}`, 'args');
+    throw err;
+  }
+  let email = '';
+  try { email = (await ctx.google.status())?.email || ''; } catch { /* no link */ }
+  ctx.beforeSend?.({ to, subject }); // (the service logs it and counts it against the hour, just before the request)
+  try {
+    await ctx.google.send({ raw, ...(orig ? { threadId: orig.threadId } : {}) });
+  } catch (err) {
+    if (err?.kind === 'scope') throw new ConnectorError(ALLOW_DRAFTS, 'auth');
+    if (err?.kind === 'maybe' && !err.nothingMade) throw new ConnectorError(MAYBE_SENT(GS, email), 'other');
+    if (err?.reconnect) throw ctx.authError();
+    if (err?.nothingMade) throw new ConnectorError(`${flat(String(err?.message || err), 200)} ${SEND_FAILS}`, 'other');
+    throw new ConnectorError(MAYBE_SENT(GS, email), 'other');
+  }
+  return {
+    text: `Sent. ${orig ? 'Reply' : 'Email'} to ${flat([to, cc, bcc].filter(Boolean).join(', '), 300)}: “${flat(subject, 120)}”. It is in the user’s Gmail Sent folder.`,
+    link: GS.sentLink(email),
+    done: `Sent: “${flat(subject, 60)}”`,
+  };
+};
+
+// The card: before it shows, a draft or send that can't happen says so (no card for nothing); for a reply, the message it answers.
+async function beforeCard(ctx, action, args) {
   if (action === 'create_draft') draftsReady(ctx);
+  if (action === 'send') {
+    sendReady(ctx);
+    const GD = require('../../gmail-drafts');
+    try { GD.buildMessage({ to: args.to, cc: args.cc, bcc: args.bcc, subject: args.subject, body: args.body }); } catch (err) { if (err instanceof GD.DraftError) throw new ConnectorError(`${err.message} ${SEND_FAILS}`, 'args'); throw err; }
+  }
 }
 async function cardNames(ctx, action, args) {
-  if (action !== 'create_draft' || !args.reply_to_message_id) return {};
-  const o = await original(ctx, args.reply_to_message_id);
-  return { replySubject: o.subject, replyFrom: o.from };
+  if (action !== 'create_draft' && action !== 'send') return {};
+  const names = {};
+  if (action === 'send') { try { names.from = (await ctx.google.status())?.email || ''; } catch { names.from = ''; } }
+  if (args.reply_to_message_id) {
+    const o = await original(ctx, args.reply_to_message_id);
+    Object.assign(names, { replySubject: o.subject, replyFrom: o.from, replyAddress: o.fromAddress });
+  }
+  return names;
 }
 const NOTHING_SENT = 'This only makes a draft. Nothing is sent.';
 function describeWhere(action, args, names = {}) {
+  if (action === 'send') {
+    const reply = args.reply_to_message_id ? `\nA reply in the conversation ${names.replySubject ? `“${flat(names.replySubject, 120)}”` : `of message ${args.reply_to_message_id}`}.` : '';
+    return `This sends the email now. Nothing is sent until you press Send.${reply}\nFrom: ${names.from || 'your Gmail account'}\nAttachments: none`;
+  }
   if (action !== 'create_draft') return '';
   const where = args.reply_to_message_id
     ? `A reply in your Gmail Drafts, in the conversation ${names.replySubject ? `“${flat(names.replySubject, 120)}”${names.replyFrom ? ` from ${flat(names.replyFrom, 60)}` : ''}` : `of message ${args.reply_to_message_id}`}.`
@@ -153,6 +208,7 @@ function describeWhere(action, args, names = {}) {
   return `${where}\n${NOTHING_SENT}`;
 }
 function describeWrite(action, args, names = {}) {
+  if (action === 'send') return `${describeWhere(action, args, names)}\n\nTo: ${args.to}\nCc: ${args.cc || ''}\nBcc: ${args.bcc || ''}\nSubject: ${args.subject}\n\n${args.body}`;
   if (action !== 'create_draft') return '';
   return `${describeWhere(action, args, names)}\n\nTo: ${args.to}${args.cc ? `\nCc: ${args.cc}` : ''}\nSubject: ${args.subject}\n\n${args.body}`;
 }
