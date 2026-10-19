@@ -296,8 +296,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); }),
   ]);
   const title = cardUi ? await cardUi.evaluate(() => document.querySelector('.approval:not(.resolved) .approval-title')?.textContent || '') : '';
-  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: document.getElementById('toggle-sidebar').classList.contains('approval-pending') }));
-  check('an agent approval card does not open the sidebar: the AI button shows a badge instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
+  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: !document.getElementById('agents-pending').hidden && document.getElementById('agents-pending-count').textContent === '1' })); // (the toolbar's count of agents waiting for an OK)
+  check('an agent approval card does not open the sidebar: the toolbar shows a count of agents waiting instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
   check('...and the card, in its own window, names the agent and the site', /Codex/.test(title) && /127[.]0[.]0[.]1/.test(title), title);
   check('...and no agent window took focus while it waited', !(await app.evaluate(() => global.__focusEvents)).some((id) => id !== 1), JSON.stringify(await app.evaluate(() => global.__focusEvents)));
   paused = false;
