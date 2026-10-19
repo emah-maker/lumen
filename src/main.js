@@ -8485,9 +8485,9 @@ const anyConnected = () => {
 };
 const connectorsFacade = {
   hasAny: () => anyConnected(),
-  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  defs: (opts) => (anyConnected() ? connectorsSvc().defs(opts) : []), // opts.readOnly: a background task or routine (no writes)
   isWrite: (input) => connectorsSvc().isWrite(input),
-  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
   list: () => connectorsSvc().list(),
 };

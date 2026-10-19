@@ -2540,6 +2540,8 @@
   "approval.tool.tainted": "It has read page content in this chat. Check that these details are what you want to send to this server:",
   "approval.tool.details": "This server gets these details:",
   "approval.connector.details": "This happens in your account, once you allow it:",
+  "approval.connector.edit": "You can change the text before you allow it.",
+  "step.connectorOpen": "Open",
   "chat.approvalWaiting": "Waiting for your approval",
   "chat.replyDone": "Reply finished",
   "chat.replyStopped": "Reply stopped",
