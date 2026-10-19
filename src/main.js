@@ -285,6 +285,7 @@ const UI_ONLY_IPC = new Set([
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
+  'notes:act', // [notes] the Notes panel and the "Add to notes" buttons (features/notes-hub.js; the chat page has it too: CHAT_IPC)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
@@ -292,6 +293,7 @@ const UI_ONLY_IPC = new Set([
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
+  'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -698,12 +700,21 @@ const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   showNotes: (opts) => dialogs.showNotes(opts),
 }));
 if (TEST) global.__whatsNew = whatsNew;
-// "Turn this on?" for features that ship off (features/feature-offers.js): once, right after the notes.
+// "New in Lumen: want to turn these on?" card in the empty chat, for features that ship off (features/feature-offers.js).
 const featureOffers = lazy(() => require('./features/feature-offers').createFeatureOffers({
   readSettings, writeSettings, t, test: TEST,
   setSetting: (key, value) => settingsBackend.set(key, value),
-  showMessageBox: (opts) => dialogs.showMessageBox(null, { type: 'question', ...opts }),
+  ready: () => ({ dictation: Boolean(dictationState().provider) }), // voice input already works (a key is set): nothing to offer
 }));
+// The card asks, and answers one click at a time; 'turn-on' of a "set up" feature only opens its Settings section.
+ipcMain.handle('offers:get', () => featureOffers.get());
+ipcMain.handle('offers:act', async (_e, action, arg) => {
+  const offers = featureOffers;
+  if (action === 'shown') { offers.onShown(Array.isArray(arg) ? arg.filter((x) => typeof x === 'string').slice(0, 20) : []); return { ok: true }; }
+  if (action === 'dismiss') return offers.dismiss({ never: arg === 'never' });
+  if (action === 'act' && typeof arg === 'string') return offers.act(arg);
+  return { ok: false };
+});
 if (TEST) global.__featureOffers = featureOffers;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
@@ -4309,6 +4320,7 @@ function tabMenuTemplate(id) {
     ...pinToFilesItem(url), // [files] a file tab: Pin to Files
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+    { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
     { type: 'separator' },
     ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
     { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
@@ -4762,8 +4774,8 @@ function widgetAction(event, url, wc = null) {
 async function cacheFavicon(pageUrl, iconUrls) {
   const host = hostOf(pageUrl);
   if (!host || faviconStore.has(host)) return;
-  // Only sites the new-tab page shows: favorites and frequently visited ones.
-  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host)) return;
+  // Only sites the new-tab page shows (favorites and frequently visited ones) and the sites on the reading list.
+  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host) && !readingListStore?.list().some((e) => hostOf(e.url) === host)) return;
   for (const iconUrl of iconUrls.filter((u) => /^https?:/.test(u))) {
     try {
       const res = await net.fetch(iconUrl);
@@ -4812,6 +4824,30 @@ function bookmarkAllTabs() {
   return folder;
 }
 
+// ---------- Reading list: Save for later (features/reading-list.js; the page is lumen://readinglist) ----------
+// The list is read from <userData>/reading-list.json the first time a page is saved or the list is opened, so a profile that never uses it pays nothing.
+let readingListStore = null;
+function readingList() {
+  if (!readingListStore) {
+    readingListStore = require('./features/reading-list').create({ file: path.join(app.getPath('userData'), 'reading-list.json') });
+    readingListStore.onChange(() => managers.pushReadingList()); // an open Reading list page redraws
+  }
+  return readingListStore;
+}
+app.on('before-quit', () => { try { readingListStore?.flushSync(); } catch { /* nothing pending */ } });
+const readingIcon = (host) => (host ? faviconStore.get(host) || '' : ''); // a data: URL (the page's CSP allows only those), kept for hosts the new-tab page or the list shows
+function saveForLaterUrl(url, title, icons) {
+  const r = isWebUrl(url) ? readingList().add({ url, title }) : { ok: false };
+  toast(t(!r.ok ? 'readingList.cantSave' : r.added ? 'readingList.saved' : 'readingList.savedAgain'));
+  if (r.ok && icons?.length) cacheFavicon(url, icons); // (the list shows a site's icon the way the new-tab page does)
+  return r.ok;
+}
+// Ctrl+Shift+Y, the tab menu, the Bookmarks menu: the page in that tab. (A research tab's own session is not the user's browsing.)
+function saveForLater(tab) {
+  if (!tab || tab.isolated) { toast(t('readingList.cantSave')); return false; }
+  return saveForLaterUrl(tabUrl(tab), tabTitle(tab), tab.favicons);
+}
+
 function bookmarksMenu() {
   const list = bookmarks();
   const wc = activeTab()?.webContents;
@@ -4821,6 +4857,8 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: t('menu.saveForLater'), accelerator: 'CmdOrCtrl+Shift+Y', enabled: isWebUrl(current), click: () => saveForLater(tabs.find((x) => x.id === activeId)) },
+    { label: t('menu.showReadingList'), click: () => managers.open('readinglist') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
@@ -4881,6 +4919,8 @@ const managers = createManagers({
   bookmarks: () => bookmarks(),
   saveBookmarks: (list) => writeSettings({ ...readSettings(), bookmarks: list }),
   bookmarksChanged: () => sendTabs(),
+  readingList: () => readingList(),
+  readingIcon: (host) => readingIcon(host),
   downloads,
   openFolder: () => shell.openPath(settingsBackend.downloadDir()),
 });
@@ -4888,6 +4928,7 @@ managers.setup();
 // When each site last stored cookies: lets Clear browsing data honour a time range for them.
 const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
+if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/reading-list.js
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
@@ -5089,6 +5130,7 @@ function showContextMenu(wc, p) {
       ...link.open, // Open Link in New Window, … in Private Window
       { type: 'separator' },
       ...link.save, // Save Link As…
+      ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveLinkForLater'), click: () => saveForLaterUrl(p.linkURL, p.linkText) }]),
       { label: t('menu.copyLink'), click: () => { clipboard.writeText(p.linkURL); toast(t('menu.linkCopied')); } },
       { type: 'separator' },
     );
@@ -5108,6 +5150,7 @@ function showContextMenu(wc, p) {
       { role: 'copy' },
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
+      { label: t('menu.addToNotes'), click: () => addSelectionToNotes(wc, selection) },
       { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
       ...skillMenuItems(selection),
       { type: 'separator' },
@@ -5123,6 +5166,7 @@ function showContextMenu(wc, p) {
     if (isWebUrl(wc.getURL())) {
       items.push(
         { label: t('menu.savePageAs'), ...shortcutHint('CmdOrCtrl+S'), click: () => pageTools.savePage(wc).catch(() => {}) },
+        ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), click: () => saveForLater(tabByContents(wc)) }]),
         { label: t('menu.print'), ...shortcutHint('CmdOrCtrl+P'), click: () => printTab(wc) },
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
@@ -5171,6 +5215,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') openFindBar();
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
+  else if (mod && input.shift && !input.alt && key === 'y') saveForLater(tabs.find((x) => x.id === activeId)); // Save for later (the reading list: lumen://readinglist)
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
@@ -6334,7 +6379,7 @@ function macMenu() {
         normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') })] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
@@ -7758,7 +7803,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       if (w.isDestroyed()) return;
       featureOffers.prepare(); // before the notes record the version: it tells an update from a fresh install
       whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message))
-        .then(() => featureOffers.present()).catch((err) => console.error('[lumen] feature offers:', err.message));
+        .catch((err) => console.error('[lumen] feature offers:', err.message));
     }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
@@ -8010,7 +8055,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -8335,6 +8380,7 @@ const agent = new Agent({
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
   },
+  notes: { store: () => notesStore(), changed: () => pushNotes() }, // [notes] the notes tool (ai/notes.js)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -8716,6 +8762,7 @@ const macrosFeature = require('./features/macros-runtime').create({
 });
 macrosFeature.register();
 agent.browser.macros = macrosFeature; // the run_macro tool (ai/agent.js)
+agent.browser.readingList = (input, tab, hidden) => require('./features/reading-list').toolText(input, { store: readingList(), tab, hidden }); // the reading_list tool (ai/agent.js)
 if (TEST) global.__macros = macrosFeature;
 
 // ---------- [settings] lumen://settings ----------
@@ -10243,6 +10290,28 @@ function chatPlaceOf(id) {
   const tabsShown = candidates.map((tid, i) => { const f = tabAnywhere(tid); return { id: tid, title: withWindow(f.rec, () => tabTitle(f.t)) || '', home: i === 0, here: isHere(tid, f.rec) }; });
   return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: isHere(tabId, found.rec), place: tabChatsLib.chatPlace({ tabId, here: isHere(tabId, found.rec) }), tabs: tabsShown };
 }
+// ---------- [notes] Quick notes (ai/notes.js; features/notes-hub.js; docs/notes.md) ----------
+// A small notepad kept in <userData>/notes.json: the sidebar's Notes panel, "Add to notes" on a reply or a page selection, and the AI's `notes`
+// tool (agent.js notesTool: read and add only). Nothing leaves the computer unless the user asks the AI about a note.
+let notesStoreRef = null;
+const notesStore = () => (notesStoreRef ||= require('./ai/notes').createNotesStore({ file: path.join(app.getPath('userData'), 'notes.json') }));
+function pushNotes() {
+  for (const rec of winRecs) {
+    const w = rec === curRec ? win : rec.win;
+    if (w && !w.isDestroyed()) w.webContents.send('notes:changed', null);
+  }
+}
+const notesHub = lazy(() => require('./features/notes-hub').create({
+  store: notesStore(),
+  push: pushNotes,
+  imageBytes: (id) => { const r = imageStore().read(id); return r ? { buffer: r.buffer, mime: r.mime } : null; },
+}));
+ipcMain.handle('notes:act', (_e, op, arg) => notesHub.act(String(op ?? ''), arg));
+function addSelectionToNotes(wc, text) {
+  const r = notesHub.act('add-selection', { text, title: wc.getTitle(), url: pdfViewer.pdfUrlOf(wc.getURL()) || wc.getURL() });
+  toast(r.ok ? t('notes.added') : t('notes.addFailed'));
+}
+if (TEST) global.__notesStore = notesStore;
 // ---------- [research] the Research board panel (ai/research-board.js; the AI's research_board tool edits the same board) ----------
 // The board is the open chat's settings.research: saved, restored and deleted with the chat. Every handler first follows the sender's
 // chat (syncToSender) and only touches that board; nothing here reads a page except "Add this page" / "Pin selection", which the user

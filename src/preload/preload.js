@@ -205,6 +205,11 @@ contextBridge.exposeInMainWorld('assistant', {
     undo: (token) => ipcRenderer.invoke('memory:undo', token),
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
+  // Quick notes (renderer/notes.js; features/notes-hub.js): one call for everything the panel and the "Add to notes" buttons do.
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
   // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
   research: {
     get: () => ipcRenderer.invoke('research:get'),
@@ -218,6 +223,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
     onChanged: on('research:changed'),
   },
+  offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
   dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js): which provider, and the recording's text
   // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
   meeting: {

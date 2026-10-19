@@ -17,6 +17,7 @@ const PAGES = {
   downloads: { html: 'downloads.html', js: 'downloads.js', preload: 'src/features/managers-preload.js' },
   history: { html: 'history.html', js: 'history.js', preload: 'src/preload/history-preload.js' },
   bookmarks: { html: 'bookmarks.html', js: 'bookmarks.js', preload: 'src/features/managers-preload.js' },
+  readinglist: { html: 'readinglist.html', js: 'readinglist.js', preload: 'src/features/managers-preload.js' },
   error: { html: 'error.html', js: 'error.js', preload: 'src/preload/error-preload.js' },
   'cert-error': { html: 'cert-error.html', js: 'cert-error.js', preload: 'src/preload/error-preload.js' },
   'https-only': { html: 'https-only.html', js: 'https-only.js', preload: 'src/preload/error-preload.js' },
@@ -43,7 +44,7 @@ for (const m of read('src/renderer/https-only.js').matchAll(/fill\([^,]+, '([^']
 for (const m of read('src/renderer/safe-browsing.js').matchAll(/fill\([^,]+, '([^']+)'/g)) used.add(m[1]);
 for (const key of ['social', 'malware', 'unwanted']) used.add(`safeBrowsing.${key}.title`).add(`safeBrowsing.${key}.summary`);
 for (const key of Object.values(require('../src/renderer/cert-reasons').KEYS).concat('general')) used.add(`certError.reason.${key}`);
-for (const key of ['permission.media.video', 'permission.media.audio', 'dlpage.removed', 'dlpage.undo', 'dlpage.showMore', 'bookmarksPage.undo', 'bookmarksPage.restored']) used.add(key);
+for (const key of ['permission.media.video', 'permission.media.audio', 'dlpage.removed', 'dlpage.undo', 'dlpage.showMore', 'bookmarksPage.undo', 'bookmarksPage.restored', 'readingPage.undo', 'readingPage.restored']) used.add(key);
 const missing = [...used].filter((k) => typeof EN[k] !== 'string');
 check('every key the pages use is in locales/en.json', used.size > 50 && missing.length === 0, missing.join(', '));
 
@@ -63,6 +64,7 @@ const literal = {
   'downloads.js': ['Waiting for your OK', 'No downloads yet', 'Starting…', "'Show in folder'"],
   'history.js': ["'Today'", "'Yesterday'", 'No history yet', 'Remove from history'],
   'bookmarks.js': ['No bookmarks yet', 'Bookmark saved', 'Could not save', "'Cancel'"],
+  'readinglist.js': ['Nothing saved yet', 'Mark all read', "'Remove'", 'all caught up'],
   'error.js': ['This page crashed', 'Something went wrong', "'Reload'"],
   'safe-browsing.js': ['Suspected deceptive', 'may try to', 'harm your computer'],
   'cert-reasons.js': ['Its certificate', 'self-signed'],
@@ -84,7 +86,7 @@ check('main answers pages:strings, only to Lumen\'s own renderer pages', /ipcMai
 check('the error page preload is registered for tab sessions (normal, private, research)', (main.match(/lumen-error-page/g) || []).length === 3);
 check('the error page preload does nothing on other pages (only the error, the three warning pages, the unloaded-tab page and the focus block page)', /location\.protocol === 'file:' && \/\\\/renderer\\\/\(error\|cert-error\|https-only\|safe-browsing\|unloaded\|focus-block\)\\\.html\$\//.test(read('src/preload/error-preload.js')));
 check('the warning pages load interstitial.js (window.fill) after i18n.js', ['cert-error', 'https-only', 'safe-browsing'].every((n) => { const h = read(`src/renderer/${n}.html`); return h.indexOf('i18n.js') < h.indexOf('interstitial.js') && h.indexOf('interstitial.js') < h.indexOf(`${n}.js"`); }));
-check('the Bookmarks and Downloads pages load the Undo note', ['bookmarks', 'downloads'].every((n) => read(`src/renderer/${n}.html`).includes('managers-toast.js')));
+check('the Bookmarks and Downloads pages load the Undo note', ['bookmarks', 'readinglist', 'downloads'].every((n) => read(`src/renderer/${n}.html`).includes('managers-toast.js')));
 
 // ---- a translation reaches the error page's text
 {
