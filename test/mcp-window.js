@@ -118,7 +118,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   let paused = false;
   const approver = (async () => {
     while (approving) {
-      if (!paused) await ui.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {});
+      if (!paused) for (const p of app.windows()) await p.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {}); // (the user's window, and the agents' own: an outside agent's card is in its own window)
       await sleep(120);
     }
   })();
@@ -205,7 +205,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.click('#address'); // the user types in the address bar while the agent keeps calling
   const typingAddress = ui.keyboard.type('address bar text', { delay: 45 });
   r = await A.call('switch_tab', { tab_id: userTabId });
-  check('switch_tab to a user tab id is refused', r.result.isError === true && /No tab with id/.test(A.text(r)), A.text(r));
+  check('switch_tab to a user tab id is refused', r.result.isError === true && /user's own tabs/.test(A.text(r)), A.text(r));
   r = await A.call('close_tab', { tab_id: userTabId });
   check('close_tab of a user tab id is refused', r.result.isError === true, A.text(r));
   check('...and the user\'s tab is still there', (await snapshot()) === before, await snapshot());
@@ -226,6 +226,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const addressNow = await ui.evaluate(() => ({ active: document.activeElement?.id, value: document.getElementById('address').value }));
   check('typing in the address bar was not interrupted (focus and text intact)', addressNow.active === 'address' && addressNow.value === 'address bar text', JSON.stringify(addressNow));
   await ui.evaluate(() => { const a = document.getElementById('address'); a.value = ''; a.blur(); });
+  // (web_search opens a research tab on the user's search engine and fetches DuckDuckGo: no real network in tests, so every request outside this machine is cancelled in the two sessions they use)
+  await app.evaluate(({ session }) => { const local = (u) => { try { const x = new URL(u); return ['file:', 'devtools:', 'data:', 'blob:', 'chrome:', 'chrome-extension:'].includes(x.protocol) || x.hostname === '127.0.0.1' || x.hostname === 'localhost'; } catch { return true; } }; for (const p of ['lumen-research', 'claude-reader']) session.fromPartition(p).webRequest.onBeforeRequest((d, cb) => cb({ cancel: !local(d.url) })); });
   await A.call('web_search', { query: 'lumen test' }).catch(() => null);
   check('the user\'s window gained no tab from the agent\'s calls', (await snapshot()) === before, await snapshot());
 
@@ -250,9 +252,11 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const windowCount = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   const countBefore = await windowCount();
   r = await A.call('navigate', { url: `${base}/dialogs` });
-  check('a page that alerts, confirms and prompts does not hold the agent up', !r.result.isError && /Dialogs|confirm=|PAGE-DIALOGS/.test(A.text(r)), A.text(r));
-  r = await A.call('list_tabs');
-  check('...its confirm was answered no and its prompt cancelled, by themselves', /confirm=false prompt=null/.test(A.text(r)), A.text(r));
+  check('a page that alerts, confirms and prompts does not hold the agent up: the alert is taken by itself and the call comes back', !r.result.isError && /Dialogs|PAGE-DIALOGS|Dialog (open|accepted)/.test(A.text(r)), A.text(r));
+  // A confirm or prompt is never answered by itself (a yes can be a real action): it is held until the agent answers with handle_dialog.
+  let listing = '';
+  for (let i = 0; i < 10 && !/confirm=false prompt=null/.test(listing); i++) { await A.call('handle_dialog', { accept: false }).catch(() => null); await sleep(300); listing = A.text(await A.call('list_tabs')); }
+  check('...its confirm waited for handle_dialog and was answered no, its prompt cancelled', /confirm=false prompt=null/.test(listing), listing);
   await sleep(400);
   check("a popup from the agent's page opened no window", (await windowCount()) === countBefore, `${countBefore} -> ${await windowCount()}`);
   const muted = await app.evaluate(({ webContents }) => webContents.getAllWebContents().filter((w) => /127\.0\.0\.1/.test(w.getURL())).map((w) => [w.getURL().replace(/.*\//, ''), w.isAudioMuted()]));
@@ -281,12 +285,20 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   agents = await agentWins();
   check('a second client gets a window of its own', agents.length === 2 && agents.some((w) => w.agent === 'Codex' && w.tabs.length === 1 && /b1/.test(w.tabs[0].url)), JSON.stringify(agents.map((w) => [w.agent, w.tabs.map((t) => t.url)])));
   // Its approval card is quiet: the sidebar stays closed, the AI button gets a badge, nothing takes focus, and it waits for the user.
+  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default, as in the steps above; this part is about the approval card, so it asks)
   paused = true;
   const pendingClick = B.call('click', { text: 'Press B1' });
-  await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 });
-  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: document.getElementById('toggle-sidebar').classList.contains('approval-pending'), title: document.querySelector('.approval:not(.resolved) .approval-title')?.textContent }));
-  check('an agent approval card does not open the sidebar: the AI button shows a badge instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
-  check('...and it names the agent and the site', /Codex/.test(quiet.title) && /127[.]0[.]0[.]1/.test(quiet.title), quiet.title);
+  // The card is in the agent's own window; the user's window only gets the badge on the AI button (it opens nothing and takes no focus).
+  const codexUi = async () => { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window') && /Codex/.test(document.getElementById('agent-window-chip')?.textContent || '')).catch(() => false)) return p; return null; };
+  let cardUi = null;
+  await Promise.race([
+    waitFor(async () => { cardUi = await codexUi(); return cardUi && (await cardUi.evaluate(() => Boolean(document.querySelector('.approval:not(.resolved)')))); }, 10000),
+    pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); }),
+  ]);
+  const title = cardUi ? await cardUi.evaluate(() => document.querySelector('.approval:not(.resolved) .approval-title')?.textContent || '') : '';
+  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: !document.getElementById('agents-pending').hidden && document.getElementById('agents-pending-count').textContent === '1' })); // (the toolbar's count of agents waiting for an OK)
+  check('an agent approval card does not open the sidebar: the toolbar shows a count of agents waiting instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
+  check('...and the card, in its own window, names the agent and the site', /Codex/.test(title) && /127[.]0[.]0[.]1/.test(title), title);
   check('...and no agent window took focus while it waited', !(await app.evaluate(() => global.__focusEvents)).some((id) => id !== 1), JSON.stringify(await app.evaluate(() => global.__focusEvents)));
   paused = false;
   r = await pendingClick;

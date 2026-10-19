@@ -208,6 +208,7 @@ function buildUnloading(slot) {
   document.addEventListener('visibilitychange', loop);
   window.addEventListener('lumen-pref', () => { if (statusRow.offsetParent) poll(true); });
   poll(true);
+  setTimeout(loop, 1000); // (the observer above starts the loop when the section is drawn; a page that draws no frames (hidden, minimized) still keeps the lists current while it is shown)
 
   const resetResult = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   const reset = h('button', {

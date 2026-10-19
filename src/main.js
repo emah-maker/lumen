@@ -11872,6 +11872,7 @@ ipcMain.handle('cli:logout', async () => {
 });
 
 ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
+ipcMain.handle('settings:search-engines', () => ({ searchEngine: readSettings().searchEngine || DEFAULT_ENGINE, searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })) })); // (the Search engine row of General: not the whole of settings:get, which also lists the models and looks for the AI command-line tools)
 ipcMain.handle('import:browsers', () => importer.detectBrowsers());
 ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {

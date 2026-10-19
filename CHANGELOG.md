@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Test suites that guard the browser are steady again, and Settings' Search engine row loads faster.** Several suites raced the page (cards still sliding, a search before every section was built, a dialog answered twice, a Page unloading list that never refreshed in a page that draws no frames) and now wait for what they measure; the Page unloading lists now also refresh from a timer. On General, Focus mode and Sync (rows far below the first screen) are built a moment after the page shows instead of before it, and the Search engine row asks for just the list of engines instead of the whole AI state.
+
 ## 0.5.58 (2026-10-19)
 
 - **The AI can send Gmail, only with your approval.** A new **Allow sending** switch on the Gmail card (under Allow drafts, off by default) lets the AI send an email. Each one shows on a card with From, To, Cc, Bcc, Subject, the whole text and the attachments, and nothing goes until you press **Send**; Auto-allow and Bypass permissions never skip it, and a recipient the AI took from a page or an email is flagged. If you tell the AI in a chat that it may send (“email jane@x.org that I’ll be late and send it”, or “you can send emails without asking”), it sends in that chat only to the addresses you typed, after a 10 second Undo, and a Stop button takes the permission back. At most 10 sends an hour, never from background tasks or routines, and Settings lists every send. No new Google permission is asked for.
