@@ -92,6 +92,40 @@ check('Recent names the trigger of each run, and none for the clock', s5.recent.
 check('Scheduled says a routine runs on its web link or on new email', s5.scheduled.find((x) => x.id === 'hook').on === 'webhook' && s5.scheduled.find((x) => x.id === 'mail').on === 'email', JSON.stringify(s5.scheduled));
 check('an event routine has no clock time to show', s5.scheduled.find((x) => x.id === 'mail').nextRun === null);
 
+// ---- a card's details: shown whole, else Go to only
+const longArgs = `line one\n  indented two\n${'x'.repeat(1490)}`;
+const s6 = M.aggregate({ now: NOW, chats: [{ chatId: 'c', title: 'Mail', running: true, startedAt: NOW, approvals: [
+  { approvalId: 1, host: 'srv', action: 'tool', title: 'Send it', args: 'to: a@b.c\n\nbody:\n  hello', tainted: true },
+  { approvalId: 2, host: 'srv', action: 'tool', title: 'Long', args: `${longArgs}MORE` },
+  { approvalId: 3, host: 'gmail', action: 'tool', title: 'Claude wants to: send an email', args: 'to: x', tainted: false, noAlways: true, note: 'connector' },
+  { approvalId: 4, host: 'memory', action: 'tool', title: 'Remember this?', args: 'likes tea', tainted: true, noAlways: true, noBypass: true },
+] }] });
+const card = (id) => s6.needsYou.find((n) => n.approvalId === id);
+check('the details are shown whole, line breaks and indentation kept', card(1).detail === 'to: a@b.c\n\nbody:\n  hello' && card(1).cut === false, JSON.stringify(card(1).detail));
+check('a card whose run read page content says so', card(1).tainted === true && card(4).tainted === true && card(3).tainted === false);
+check('a plain card shown whole can be answered here', JSON.stringify(card(1).choices) === '["allow","deny"]');
+check(`details up to ${M.ARGS_MAX} characters are kept; longer ones are cut and get Go to only`, card(2).detail.length === M.ARGS_MAX && card(2).cut === true && card(2).choices.length === 0, `${card(2).detail.length} ${card(2).choices}`);
+check('a connector write (note) gets Go to only', card(3).choices.length === 0 && card(3).guarded === true);
+check('a memory note (noBypass) gets Go to only', card(4).choices.length === 0 && card(4).guarded === true);
+check('a task card already cut by the Tasks panel (argsCut) gets Go to only', M.choicesFor('task', M.cardText({ action: 'tool', args: 'x', argsCut: true })).length === 0);
+check('a query card shows its query', M.cardText({ action: 'open', query: 'cheap flights' }).detail === 'cheap flights');
+
+// ---- temporary chats: named as one, without their words; their cards get Go to only
+const s7 = M.aggregate({ now: NOW, chats: [{ chatId: 'tmp', temporary: true, title: 'secret plans', step: 'Reading secret.com', running: true, startedAt: NOW - MIN, approvals: [{ approvalId: 9, host: 'secret.com', action: 'interact', title: 'Interact with secret.com?', args: 'private words' }] }] });
+const tmpRun = s7.running[0];
+const tmpCard = s7.needsYou[0];
+check('a temporary chat runs with no title or step', tmpRun.temporary === true && tmpRun.title === '' && tmpRun.step === '', JSON.stringify(tmpRun));
+check('its card has no host, title or details, and no answers', tmpCard.temporary === true && tmpCard.who === '' && tmpCard.host === '' && tmpCard.title === '' && tmpCard.detail === '' && tmpCard.choices.length === 0, JSON.stringify(tmpCard));
+check('nothing of its words is anywhere in the page data', !/secret|private/.test(JSON.stringify(s7)));
+check('choicesFor refuses any answer for a temporary chat', M.choicesFor('chat', M.cardText({ action: 'interact', host: 'a.com' }), { temporary: true }).length === 0);
+
+// ---- task cards go through the same gate: only plain ones are answered here
+for (const action of ['upload-pick', 'upload', 'app', 'content-loss', 'file']) {
+  check(`a task's ${action} card gets Go to only`, M.choicesFor('task', M.cardText({ action, host: 'a.com' })).length === 0);
+}
+const s8 = M.aggregate({ now: NOW, tasks: [task({ id: 'u', status: 'waiting-approval', runningSince: NOW, pending: [{ approvalId: 5, host: 'a.com', action: 'upload-pick' }, { approvalId: 6, host: 'a.com', action: 'tool', args: 'x', note: 'connector' }] })] });
+check('in the page data too: a task\'s upload-pick and connector cards have no answers', s8.needsYou.every((n) => n.choices.length === 0), JSON.stringify(s8.needsYou.map((n) => n.choices)));
+
 // ---- the page's requests
 const ok = (r) => M.cleanRequest(r);
 check('answer a chat card', JSON.stringify(ok({ op: 'answer', kind: 'chat', id: 'c1', approvalId: 7, choice: 'allow' })) === '{"op":"answer","kind":"chat","id":"c1","approvalId":7,"choice":"allow"}');

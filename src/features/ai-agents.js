@@ -104,7 +104,7 @@ function setupAiAgents(deps) {
     if (route === 'user') userWc()?.send('mcp:event', event);
     else if (route === 'agent') sendToWindow(rec, event);
     else if (route === 'pending') {
-      if (event.type === 'approval') pendingApprovals.add(event.approvalId, { clientName: event.clientName, key: rec, host: event.host, action: event.action, title: event.title, args: event.args, since: Date.now() }); // (the card's words: lumen://tasks lists it)
+      if (event.type === 'approval') pendingApprovals.add(event.approvalId, { clientName: event.clientName, key: rec, host: event.host, action: event.action, title: event.title, args: event.args, query: event.query, tainted: event.tainted, note: event.note, noBypass: event.noBypass, since: Date.now() }); // (the card's words: lumen://tasks lists it)
       else pendingApprovals.remove(event.approvalId);
       sendToWindow(rec, { ...event, quiet: false }); // (in its own window the card may open the sidebar)
       sendPending();

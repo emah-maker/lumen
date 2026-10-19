@@ -25,22 +25,41 @@ const str = (v, max = 300) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const clip = (text, max = PREVIEW_MAX) => { const t = str(text, max + 1); return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t; };
 
-// What an approval card says, short: its own title, else what it is about.
+// What an approval card says. The details the user is asked to approve (an MCP tool's or a connector's arguments, a memory note)
+// are shown whole, as the Tasks panel shows them: up to ARGS_MAX characters with their line breaks. Cut, or never plain:
+// see choicesFor. `tainted`: the run has read page content, so the details may have come from a page.
+const ARGS_MAX = 1500;
 function cardText(card = {}) {
-  return { host: str(card.host, 200), action: str(card.action || 'interact', 30), title: str(card.title, 300), detail: clip(card.args || card.query || '', 300) };
+  const given = card.args || card.query || '';
+  const raw = typeof given === 'string' ? given : JSON.stringify(given, null, 2) || '';
+  const detail = raw.replace(/\r\n?/g, '\n').trim();
+  return {
+    host: str(card.host, 200), action: str(card.action || 'interact', 30), title: str(card.title, 300),
+    detail: detail.slice(0, ARGS_MAX), cut: detail.length > ARGS_MAX || card.argsCut === true, tainted: card.tainted === true,
+    guarded: Boolean(card.note) || card.noBypass === true, // a connector's write or a memory note: answered only on its own card
+  };
+}
+
+// The answers the page offers for a card, or none (Go to only). A card is answered here only when it is a plain yes or no, its
+// details are shown whole, it is not one that must be answered on its own card (a connector's write, a memory note), and its
+// chat is not a temporary one (whose words the page does not show).
+// `card`: cardText's view of it.
+function choicesFor(kind, card = {}, { temporary = false } = {}) {
+  if (temporary || card.cut || card.guarded || !PLAIN_ACTIONS.has(card.action || 'interact')) return [];
+  const action = card.action || 'interact';
+  if (kind === 'task') return SITE_ACTIONS.has(action) ? ['once', 'site', 'deny'] : ['once', 'deny'];
+  return ['allow', 'deny'];
 }
 
 // What started a routine's run, when it was not the clock: its web link, new email, or a missed time run late. null otherwise.
 const EVENTS = new Set(['webhook', 'email', 'catch-up']);
 const eventTrigger = (trigger) => (EVENTS.has(trigger) ? trigger : null);
 
-function choicesFor(kind, action) {
-  if (kind === 'task') return SITE_ACTIONS.has(action) ? ['once', 'site', 'deny'] : ['once', 'deny'];
-  return PLAIN_ACTIONS.has(action) ? ['allow', 'deny'] : [];
-}
+// A temporary chat on the page: what it is, never its words (its prompt, steps or a card's details).
+const hideCard = (card) => ({ ...card, host: '', title: '', detail: '', tainted: false });
 
 // inputs:
-//   chats      [{ chatId, title, running, queued, startedAt, step, approvals: [{ approvalId, host, action, title, args, since }] }]
+//   chats      [{ chatId, title, temporary, running, queued, startedAt, step, approvals: [{ approvalId, host, action, title, args, tainted, note, noBypass, since }] }]
 //   tasks      background-runner summaries (bg.summarize) with `runs` (their history), a routine's `history` (what started each run)
 //              and `trigger` (what started the run going now) added, and `via: 'telegram'` for a task sent from the phone
 //   agents     [{ id, clientName, since, step }]
@@ -54,14 +73,15 @@ function aggregate({ chats = [], tasks = [], agents = [], agentCards = [], chats
 
   for (const c of chats) {
     if (!c || !c.chatId) continue;
-    const title = clip(c.title, 120);
+    const temporary = c.temporary === true;
+    const title = temporary ? '' : clip(c.title, 120);
     for (const a of c.approvals || []) {
-      const card = cardText(a);
-      needsYou.push({ kind: 'chat', id: c.chatId, approvalId: a.approvalId, who: title, since: num(a.since) || num(c.startedAt), ...card, choices: choicesFor('chat', card.action) });
+      const card = temporary ? hideCard(cardText(a)) : cardText(a);
+      needsYou.push({ kind: 'chat', id: c.chatId, approvalId: a.approvalId, who: title, temporary, since: num(a.since) || num(c.startedAt), ...card, choices: choicesFor('chat', card, { temporary }) });
     }
     if (c.running || c.queued) {
       const startedAt = num(c.startedAt);
-      running.push({ kind: 'chat', id: c.chatId, title, status: c.queued ? 'queued' : (c.approvals || []).length ? 'waiting-approval' : 'running', step: clip(c.step, 140), startedAt, elapsedMs: startedAt ? Math.max(0, now - startedAt) : 0, cost: null, canStop: true });
+      running.push({ kind: 'chat', id: c.chatId, title, temporary, status: c.queued ? 'queued' : (c.approvals || []).length ? 'waiting-approval' : 'running', step: temporary ? '' : clip(c.step, 140), startedAt, elapsedMs: startedAt ? Math.max(0, now - startedAt) : 0, cost: null, canStop: true });
     }
   }
 
@@ -70,7 +90,7 @@ function aggregate({ chats = [], tasks = [], agents = [], agentCards = [], chats
     const title = clip(t.title, 120);
     for (const p of t.pending || []) {
       const card = cardText(p);
-      needsYou.push({ kind: 'task', id: t.id, approvalId: p.approvalId, who: title, routine: Boolean(t.routine), via: t.via || null, since: num(t.waitingSince) || num(t.runningSince), ...card, choices: choicesFor('task', card.action) });
+      needsYou.push({ kind: 'task', id: t.id, approvalId: p.approvalId, who: title, routine: Boolean(t.routine), via: t.via || null, since: num(t.waitingSince) || num(t.runningSince), ...card, choices: choicesFor('task', card) });
     }
     if (t.status === 'running' || t.status === 'waiting-approval' || t.status === 'queued') {
       const startedAt = t.status === 'queued' ? 0 : num(t.runningSince);
@@ -97,7 +117,7 @@ function aggregate({ chats = [], tasks = [], agents = [], agentCards = [], chats
   for (const c of agentCards) {
     if (!c || c.approvalId == null) continue;
     const card = cardText(c);
-    needsYou.push({ kind: 'agent', id: c.agentId ?? null, approvalId: c.approvalId, who: clip(c.clientName, 80), since: num(c.since), ...card, choices: choicesFor('agent', card.action) });
+    needsYou.push({ kind: 'agent', id: c.agentId ?? null, approvalId: c.approvalId, who: clip(c.clientName, 80), since: num(c.since), ...card, choices: choicesFor('agent', card) });
   }
 
   for (const c of chatsDone) {
@@ -143,4 +163,4 @@ function cleanRequest(req) {
   return id ? { op, kind, id } : null;
 }
 
-module.exports = { aggregate, noteFinished, cleanRequest, choicesFor, RECENT_MAX, PLAIN_ACTIONS };
+module.exports = { aggregate, noteFinished, cleanRequest, choicesFor, cardText, RECENT_MAX, PLAIN_ACTIONS, ARGS_MAX };

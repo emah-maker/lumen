@@ -11357,10 +11357,13 @@ function missionState() {
   const agents = missionAgents();
   const idOfRec = (rec) => agents.find((a) => a.rec === rec)?.id ?? null;
   return missionLib().aggregate({
-    chats: [...chatRuns.values()].filter((r) => !r.deleted).map((r) => ({
-      chatId: r.chatId, title: chatTitleOf(r.chatId, r.text), running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt,
-      step: r.details?.tools[r.details.tools.length - 1]?.label || '', approvals: [...r.pending.values()],
-    })),
+    // A temporary chat is shown as one, without its words (mission-control.js hides them too). Private windows have no sidebar, so no chat of theirs is here.
+    chats: [...chatRuns.values()].filter((r) => !r.deleted).map((r) => (temporaryChats.has(r.chatId)
+      ? { chatId: r.chatId, temporary: true, running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt, approvals: [...r.pending.values()].map((a) => ({ approvalId: a.approvalId, action: a.action })) }
+      : {
+        chatId: r.chatId, title: chatTitleOf(r.chatId, r.text), running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt,
+        step: r.details?.tools[r.details.tools.length - 1]?.label || '', approvals: [...r.pending.values()],
+      })),
     tasks: bgTasks.overview().map((x) => (missionFromPhone.has(x.id) ? { ...x, via: 'telegram' } : x)),
     agents: agents.map(({ rec, session, ...a }) => a),
     agentCards: aiAgents.agentCards().map((c) => ({ ...c, agentId: idOfRec(c.key) })),
@@ -11370,11 +11373,13 @@ function missionState() {
 function missionAct(raw) {
   const req = missionLib().cleanRequest(raw);
   if (!req) return { ok: false };
-  const plain = (card) => Boolean(card) && missionLib().PLAIN_ACTIONS.has(card.action || 'interact');
   if (req.op === 'answer') {
-    if (req.kind === 'task') return { ok: bgTasks.approve(req.id, req.approvalId, req.choice) };
-    const card = req.kind === 'chat' ? chatRuns.get(req.id)?.pending.get(req.approvalId) : aiAgents.agentCards().find((c) => c.approvalId === req.approvalId);
-    if (!plain(card)) return { ok: false }; // (a card that needs its own: Go to)
+    // The card as it waits now, and the answers the page offered for it (mission-control.js choicesFor): a card that needs its own
+    // (a file to choose, an app, a content-loss check, a connector's write, a memory note, details too long to show, a temporary chat) has none.
+    const card = req.kind === 'task' ? bgTasks.pendingCard(req.id, req.approvalId) : req.kind === 'chat' ? chatRuns.get(req.id)?.pending.get(req.approvalId) : aiAgents.agentCards().find((c) => c.approvalId === req.approvalId);
+    const temporary = req.kind === 'chat' && temporaryChats.has(req.id);
+    if (!card || !missionLib().choicesFor(req.kind, missionLib().cardText(card), { temporary }).includes(req.choice)) return { ok: false };
+    if (req.kind === 'task') return { ok: bgTasks.approve(req.id, req.approvalId, req.choice) }; // the Tasks panel's own path ('tasks:approve')
     agent.resolveApproval(req.approvalId, req.choice === 'allow'); // the sidebar's own path ('agent:approve')
     return { ok: true };
   }

@@ -32,7 +32,7 @@ const costText = (cost) => (typeof cost === 'string' ? cost : typeof cost === 'n
 function button(item, op, label, extra = {}, primary = false) {
   const b = el('button', { type: 'button', textContent: label, className: primary ? 'primary' : '' });
   b.dataset.key = [op, item.kind, item.id, item.approvalId ?? '', extra.choice || ''].join(':');
-  b.setAttribute('aria-label', t('mission.action.label', { action: label, name: item.title || item.who || '' }));
+  b.setAttribute('aria-label', t('mission.action.label', { action: label, name: nameOf(item) }));
   b.onclick = async () => {
     b.disabled = true;
     let res;
@@ -44,18 +44,24 @@ function button(item, op, label, extra = {}, primary = false) {
   return b;
 }
 
+// A temporary chat is named as one: the page never shows its words.
+const nameOf = (item) => (item.temporary ? t('mission.temporaryChat') : item.who || item.title || ''); // (a card's `who` is its chat or task; its `title` is what it asks)
+
 function needsCard(c) {
+  const who = nameOf(c);
   const label = { allow: t('mission.answer.allow'), deny: t('mission.answer.deny'), once: t('mission.answer.once'), site: t('mission.answer.site') };
   const what = c.title || (c.host ? t('mission.wants', { host: c.host }) : t('mission.wantsOk'));
   const actions = c.choices.map((choice) => button(c, 'answer', label[choice] || choice, { choice }, choice === 'allow' || choice === 'once'));
   actions.push(button(c, 'goto', t('mission.goto')));
   const card = el('div', { className: 'card', role: 'group' },
-    el('span', { className: 'who', textContent: [kindText(c), originText(c), c.who].filter(Boolean).join(' · ') }),
+    el('span', { className: 'who', textContent: [kindText(c), originText(c), who].filter(Boolean).join(' · ') }),
     el('p', { className: 'what', textContent: what }),
-    c.detail ? el('span', { className: 'detail', textContent: c.detail }) : null,
-    c.choices.length ? null : el('span', { className: 'detail', textContent: t('mission.answerThere') }),
+    // The page content warning, then the details whole (as the Tasks panel shows them): what Allow would approve.
+    c.tainted ? el('p', { className: 'tainted', textContent: t('mission.tainted') }) : null,
+    c.detail ? el('pre', { className: 'args', textContent: c.detail, tabIndex: 0 }) : null,
+    c.choices.length ? null : el('span', { className: 'detail', textContent: t(c.cut ? 'mission.answerThereLong' : 'mission.answerThere') }),
     el('div', { className: 'actions' }, ...actions));
-  card.setAttribute('aria-label', `${c.who}: ${what}`);
+  card.setAttribute('aria-label', `${who}: ${what}`);
   return card;
 }
 
@@ -65,7 +71,7 @@ function runningRow(r) {
   return el('div', { className: 'row' },
     el('div', { className: 'main' },
       el('span', { className: 'kind', textContent: kindText(r) }),
-      el('span', { className: 'title', textContent: r.title }),
+      el('span', { className: 'title', textContent: nameOf(r) }),
       el('span', { className: `detail state-${r.status}`, textContent: bits.join(' · ') })),
     el('div', { className: 'actions always' }, ...actions));
 }

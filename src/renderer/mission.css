@@ -11,3 +11,5 @@ section h2 .count { margin-left: 6px; font-weight: 500; }
 .state-waiting-approval { color: var(--accent-text, var(--accent)); }
 .preview { display: block; margin: -4px 10px 6px; color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .empty { margin: 4px 0 0; }
+.card .args { margin: 6px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card .tainted { margin: 6px 0 0; color: var(--danger); font-size: 12px; }
