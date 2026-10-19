@@ -71,6 +71,8 @@ module.exports = [
   { files: ['src/renderer/side-tabs.js'], languageOptions: { globals: { $: 'readonly', t: 'readonly', drag: 'readonly', lastTabState: 'readonly', selectedTabs: 'readonly', hideHoverCard: 'readonly', stripOrder: 'readonly', handOffTabDrag: 'readonly', indexBefore: 'readonly', expectMove: 'readonly', renderTabsNow: 'readonly', setSidebarWidth: 'readonly', sidebarWish: 'readonly', tabsRendered: 'writable', lastLayoutSig: 'writable' } } },
   // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
   { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
+  { files: ['src/renderer/command-bar.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly', lastTabState: 'readonly' } } }, // (app.js's, loaded on first use)
+  { files: ['test/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
     files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],
