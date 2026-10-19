@@ -11,6 +11,25 @@ const os = require('os');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { try { v = await fn(); if (v) return v; } catch { /* not yet */ } await sleep(100); } return v; };
 
+// Runs in the page: a long chat scrolled to the bottom, with the composer as is and with six lines typed. The last message must end above the
+// composer's top edge (the list reserves the composer's live height), and the composer must be opaque (nothing shows through it).
+const LONG_CHAT = `(async () => {
+  const messages = document.getElementById('messages'); const prompt = document.getElementById('prompt'); const composer = document.getElementById('composer');
+  const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // (the chat was drawn by the app itself: real messages sent through the composer, answered by a stand-in client)
+  const lastMsg = () => [...messages.querySelectorAll(':scope > .msg')].pop();
+  const out0 = { greeting: !document.getElementById('empty').hidden, count: messages.querySelectorAll(':scope > .msg').length };
+  const cv = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const alpha = (css) => { cv.clearRect(0, 0, 1, 1); cv.fillStyle = css; cv.fillRect(0, 0, 1, 1); return cv.getImageData(0, 0, 1, 1).data[3]; };
+  const gap = async () => { messages.scrollTop = messages.scrollHeight; await frames(); await frames(); return !lastMsg() ? null : Math.round((composer.getBoundingClientRect().top - lastMsg().getBoundingClientRect().bottom) * 10) / 10; };
+  const out = { ...out0, alpha: alpha(getComputedStyle(composer).backgroundColor), blur: getComputedStyle(composer).backdropFilter };
+  out.gapIdle = await gap();
+  prompt.value = 'a\\nb\\nc\\nd\\ne\\nf'; prompt.dispatchEvent(new Event('input', { bubbles: true })); await frames();
+  out.gapTyped = await gap();
+  prompt.value = ''; prompt.dispatchEvent(new Event('input', { bubbles: true })); await frames();
+  return out;
+})()`;
+
 // Runs in the page: where everything sits.
 const LAYOUT = `(() => {
   const box = (sel) => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, hidden: el.hidden || r.width === 0 }; };
@@ -27,6 +46,26 @@ const LAYOUT = `(() => {
     inside: items.every((x) => x.l >= composer.l - 0.5 && x.r <= composer.r + 0.5), promptAboveBar: prompt.b <= bar.t + 0.5, promptFull: prompt.w >= composer.w - 40,
     headModel: Boolean(document.querySelector('.sidebar-head .model-picker')),
   };
+})()`;
+
+// A stand-in Claude client (no network): every reply is a long paragraph, so a few exchanges fill more than a screen.
+const fakeClient = (app) => app.evaluate(() => {
+  const fake = global.__fakeLong = { n: 0 };
+  global.__agent.getClient = () => ({ beta: { messages: { stream: () => {
+    const text = 'Reply ' + (++fake.n) + '. ' + 'This is a long answer that keeps going so the chat is taller than the window. '.repeat(8);
+    const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 100, output_tokens: 200 } };
+    return { async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }; }, finalMessage: async () => message };
+  } } } });
+});
+const SEND_LONG = `(async () => {
+  const messages = document.getElementById('messages'); const prompt = document.getElementById('prompt'); const send = document.getElementById('send');
+  for (let i = 0; i < 5; i++) {
+    const before = messages.querySelectorAll(':scope > .msg.assistant').length;
+    prompt.value = 'Question ' + i; prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    document.getElementById('composer').requestSubmit();
+    for (let t = 0; t < 100 && (messages.querySelectorAll(':scope > .msg.assistant').length <= before || send.classList.contains('stop')); t++) await new Promise((r) => setTimeout(r, 100));
+  }
+  return messages.querySelectorAll(':scope > .msg').length;
 })()`;
 
 (async () => {
@@ -77,6 +116,13 @@ const LAYOUT = `(() => {
       check(`${name} width: usage and the Bypass badge share one status line above the box`, s.oneLine && s.badgeRight && s.within && s.above, JSON.stringify(s));
       check(`${name} width: the badge reads "Bypass", says the whole thing to a screen reader, and keeps its tooltip`, s.text === 'Bypass' && /Bypass permissions on/.test(s.full) && s.title.length > 20, JSON.stringify(s)); // (the tooltip's words are checked on the real mode change in test/working-on-chip.js)
     }
+
+    // ---- a long chat: the last answer is never under the box, and the box is opaque
+    await fakeClient(app);
+    const sent = await ui.evaluate(SEND_LONG);
+    const lc = await ui.evaluate(LONG_CHAT);
+    check('long chat (sidebar): the composer is opaque, with no blur behind it', lc.alpha === 255 && (lc.blur === 'none' || lc.blur === '') && lc.greeting === false && lc.count >= 10 && sent >= 10, JSON.stringify(lc));
+    check('long chat (sidebar): scrolled to the bottom, the last message ends above the composer, also while six lines are typed', lc.gapIdle !== null && lc.gapIdle >= 0 && lc.gapTyped >= 0, JSON.stringify(lc));
 
     // ---- alignment: one centre line for + / picker / mic / send / chevron, the chevron's icon centred, the picker's caret right after its name
     for (const [name, width] of [['default', 360], ['minimum', 300]]) {
@@ -188,6 +234,9 @@ const LAYOUT = `(() => {
     await sleep(800);
     const page = await inPage(LAYOUT);
     check('chat page: the box has its own roomy row, the toolbar sits under it and nothing overlaps or is cut', Boolean(page) && page.promptAboveBar && page.promptFull && page.prompt.h >= 56 && page.inside && !page.overlap && page.cut === false, JSON.stringify(page));
+    const sentPage = await inPage(SEND_LONG);
+    const lcPage = await inPage(LONG_CHAT);
+    check('long chat (chat page): opaque composer, and the last message ends above it (idle and with six lines typed)', Boolean(lcPage) && lcPage.alpha === 255 && lcPage.greeting === false && lcPage.count >= 10 && sentPage >= 10 && lcPage.gapIdle >= 0 && lcPage.gapTyped >= 0, JSON.stringify(lcPage));
     const rows = await inPage(`[...document.querySelectorAll('#composer-menu [role^="menuitem"]')].map((e) => e.id).join() + '|' + Boolean(document.getElementById('send-more'))`);
     check('chat page: the + menu has Attach files and Plan (no screenshot row there), and no background chevron', rows === 'attach,plan-chip|false', rows);
     await inPage(`document.getElementById('composer-plus').click()`);

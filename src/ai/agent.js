@@ -6,6 +6,7 @@ const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides te
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/perf-budget.js)
 const docTool = lazy(() => require('./document-tool')); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
 const docEdit = lazy(() => require('./doc-edit'));
+const sendLib = lazy(() => require('../features/gmail-send')); // [connectors] Gmail sending's rules (typed permission, undo window, limits); loaded when a send is asked for
 const connectors = lazy(() => require('../features/connectors/registry')); // [connectors] the one `connector` tool for the services the user connected (features/connectors/); loaded on first use
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
@@ -2043,6 +2044,7 @@ class Agent {
   // while the sidebar moved on to another tab's chat) starts on its own conversation and approved sites.
   run(userText, emit, images = [], extra = {}, skill = null) {
     const messages = extra.messages || this.messages;
+    if (!skill) this.recordTyped?.(messages, userText, emit); // [connectors] what the user typed (Gmail sending: only this can say a send is fine)
     const previous = this.runs.get(messages);
     const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts, settling: false };
     const next = (async () => {
@@ -5177,14 +5179,26 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
-      const { title, detail, fixed, fields } = await svc.describeWrite(input, { signal });
-      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null });
-      if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
-      if (answer?.edits) { // the user changed the text on the card: that is what goes
-        const next = connectors.applyEdits(input, answer.edits);
-        if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);
-        input.args = next.input.args;
+      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal });
+      // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
+      // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
+      const sending = Boolean(svc.isSend?.(input));
+      let via = 'card';
+      if (sending) {
+        const verdict = sendLib.typedGrant({ typed: run?.chat?.typed || taskScope.getStore()?.chat?.typed || [], standing: (run?.chat || taskScope.getStore()?.chat)?.sendNoAsk === true, args: input.args, replyAddress: names?.replyAddress || '' });
+        if (verdict.direct) { await this.sendUndoWindow(input, { emit, signal }); via = verdict.mode; }
       }
+      if (via === 'card') {
+        const warn = sending ? sendLib.warnings({ typed: (run?.chat || taskScope.getStore()?.chat)?.typed || [], args: input.args, replyAddress: names?.replyAddress || '', tainted: Boolean(holder?.tainted) }) : '';
+        const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
+        if (!answer) throw new Error(sending ? 'The user cancelled, so the email was NOT sent. Ask them what to do instead.' : `The user did not allow that (${title}). Ask them what to do instead.`);
+        if (answer?.edits) { // the user changed the text on the card: that is what goes
+          const next = connectors.applyEdits(input, answer.edits);
+          if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);
+          input.args = next.input.args;
+        }
+      }
+      if (sending) (this.sendVias ||= new WeakMap()).set(input, via); // call() sends only with this
       (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
     }
     if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
@@ -5196,8 +5210,51 @@ ${prompt}` : prompt), historyImages: [] };
     const emit = this.connectorEmits?.get(input);
     this.connectorEmits?.delete(input);
     const onWritten = emit ? ({ label, link }) => emit({ type: 'tool', name: 'connector_done', label, ...(link ? { link } : {}) }) : null; // a done step: "GitHub · Opened ada/x#7" with Open
-    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten });
+    const sendVia = this.sendVias?.get(input) || '';
+    this.sendVias?.delete(input);
+    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}) });
   }
+
+  // [connectors] Gmail sending. recordTyped keeps what the user typed in this chat (never page, email or tool text: the only text a
+  // "you can send emails without asking" is read from). Such a sentence turns on that chat's "sending without asking" (the chip, with
+  // Stop); a new chat is a new array, so it asks again. Only while Allow sending is on. Skill and routine text isn't typed by the user.
+  recordTyped(messages, text, emit) {
+    try {
+      const t = String(text || '').slice(0, 4000);
+      if (!t.trim() || !this.browser.connectors?.sendingOn?.()) return;
+      (messages.typed ||= []).push(t);
+      if (messages.typed.length > 50) messages.typed.shift();
+      if (!messages.sendNoAsk && sendLib.standingGrant(t)) {
+        messages.sendNoAsk = true;
+        (this.sendGrants ||= new Set()).add(messages);
+        emit?.({ type: 'send_grant', on: true });
+      }
+    } catch { /* the message still goes */ }
+  }
+
+  stopSendGrant() { // the chip's Stop: no chat sends without asking any more
+    for (const m of this.sendGrants || []) m.sendNoAsk = false;
+    this.sendGrants?.clear();
+    if (this.messages) this.messages.sendNoAsk = false;
+  }
+
+  // The 10 seconds between a typed-permission send and the request: "Sending to … — Undo". Undo or Stop ends it with nothing sent.
+  async sendUndoWindow(input, { emit, signal }) {
+    const lib = sendLib;
+    const id = (this.sendSeq = (this.sendSeq || 0) + 1);
+    const a = input.args || {};
+    const to = [a.to, a.cc, a.bcc].filter(Boolean).join(', ').slice(0, 200);
+    const w = lib.hold({ ms: lib.UNDO_MS, timers: this.sendTimers, signal });
+    (this.pendingSends ||= new Map()).set(id, w.undo);
+    try { emit({ type: 'send_pending', id, to, subject: String(a.subject || '').slice(0, 120), ms: lib.UNDO_MS }); } catch { /* the send still waits */ }
+    const result = await w.promise;
+    this.pendingSends.delete(id);
+    try { emit({ type: 'send_pending_done', id, result }); } catch { /* ignore */ }
+    if (result === 'stop') throw new (sdk().APIUserAbortError)();
+    if (result === 'undo') throw new Error('The user pressed Undo, so the email was NOT sent. Tell them it is cancelled.');
+  }
+
+  undoSend(id) { const undo = this.pendingSends?.get(id); if (undo) undo(); return Boolean(undo); }
   // ---- [/connectors]
 
   async runExternal(name, input) {
@@ -5385,7 +5442,7 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null, allowLabel = null, denyLabel = null, warn = null } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
     if (action !== 'upload-pick' && action !== 'app' && !noBypass && this.bypassOn()) { // ('app': which program the AI may use is always the user's to answer, even with Bypass on)
@@ -5402,7 +5459,7 @@ ${out.text}${note}
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
       ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(fields ? { fields } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)
