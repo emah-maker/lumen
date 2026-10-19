@@ -79,7 +79,7 @@ check('page-first: the sheet opens with one line about it', win[0].id === 'pagef
 const menuAccels = new Set([...accels].map(norm));
 // (the second line: another key for an action whose menu item shows its main key, as Reload shows Ctrl+R for F5; Back and Forward show theirs by a hint the scan can't read)
 const noMenu = PF.PAGE_FIRST.filter((e) => !['mod+g', 'mod+shift+g', 'f3', 'shift+f3', 'mod+shift+e'].includes(e.combo)
-  && !['mod+k', 'mod+e', 'alt+d', 'f6', 'f5', 'shift+f5', 'mod+f5', 'mod++', 'mod+shift++', 'mod+shift+_', 'alt+arrowleft', 'alt+arrowright', 'mod+shift+i', 'mod+shift+delete', 'mod+shift+backspace', 'mod+shift+?'].includes(e.combo)
+  && !['mod+e', 'alt+d', 'f6', 'f5', 'shift+f5', 'mod+f5', 'mod++', 'mod+shift++', 'mod+shift+_', 'alt+arrowleft', 'alt+arrowright', 'mod+shift+i', 'mod+shift+delete', 'mod+shift+backspace', 'mod+shift+?'].includes(e.combo)
   && !menuAccels.has(norm(e.combo))).map((e) => e.combo);
 check('page-first: each one has a menu item that shows its accelerator (Find next and the Meeting helper button aside)', noMenu.length === 0, noMenu.join(', '));
 check('page-first: the Meeting helper key is page-first (Ctrl+Shift+E is Centre in Google Docs)', PF.PAGE_FIRST.some((e) => e.combo === 'mod+shift+e'), '');

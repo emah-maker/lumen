@@ -282,7 +282,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
@@ -1622,6 +1622,7 @@ function showAppMenu({ x, y, right }) {
       chunk([
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: reopenLastClosed },
         { label: t('menu.searchTabs'), accelerator: 'CmdOrCtrl+Shift+A', click: openTabSearch },
+        { label: t('menu.commandBar'), accelerator: 'CmdOrCtrl+K', click: openCommandBar },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
         { label: t('menu.findFiles'), accelerator: 'CmdOrCtrl+Shift+F', click: openFilesPicker },
         ...mergeWindowItems(curRec),
@@ -4395,6 +4396,11 @@ function openTabSearch() {
   ui()?.focus();
   ui()?.send('tabsearch:open');
 }
+// The command bar (Ctrl+K, renderer/command-bar.js): one box for tabs, history, bookmarks, Settings sections and commands, and Ask AI.
+function openCommandBar() {
+  ui()?.focus();
+  ui()?.send('cmdbar:open');
+}
 // [files] The quick file picker (renderer/files-picker.js): pinned and recent files, and what is in pinned folders.
 function openFilesPicker() {
   ui()?.focus();
@@ -5352,7 +5358,8 @@ function handleShortcut(event, input) {
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
   else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
   else if (mod && key === 'l') focusAddress();
-  else if (mod && !input.shift && !input.alt && (key === 'k' || key === 'e')) focusAddress(); // Chrome's "search from the address bar"
+  else if (mod && !input.shift && !input.alt && key === 'k') openCommandBar(); // the command bar (a page that uses Ctrl+K itself keeps it: page-first-keys.js)
+  else if (mod && !input.shift && !input.alt && key === 'e') focusAddress(); // Chrome's "search from the address bar"
   else if (mod && key === 'f' && pdfViewer.isViewerUrl(wc?.getURL())) pdfRt.command(wc, 'find'); // the PDF viewer's own find bar searches every page
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') openFindBar();
@@ -6478,6 +6485,7 @@ function macMenu() {
         { label: t('menu.newPrivateWindow'), ...shown('Cmd+Shift+N'), click: () => privateWindows.open() },
         { label: t('menu.reopenTab'), ...shown('Cmd+Shift+T'), click: pv('reopenTab', reopenLastClosed) },
         normal({ label: t('menu.searchTabs'), ...shown('Cmd+Shift+A'), click: openTabSearch }),
+        normal({ label: t('menu.commandBar'), ...shown('Cmd+K'), click: openCommandBar }),
         normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
         normal({ label: t('menu.findFiles'), ...shown('Cmd+Shift+F'), click: openFilesPicker }),
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
@@ -9759,6 +9767,42 @@ ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id)
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
 ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
+// The command bar (Ctrl+K; features/command-bar.js, renderer/command-bar.js): its pages and the commands that need the browser. Loaded on first use.
+const frontTab = () => tabs.find((x) => x.id === activeId);
+const commandBar = lazy(() => require('./features/command-bar').create({
+  history: () => history,
+  bookmarks: () => bookmarks(),
+  isWebUrl,
+  act: {
+    newTab: () => openTab(),
+    newWindow: () => openNewWindow(),
+    newPrivateWindow: () => privateWindows.open(),
+    closeTab: () => { if (activeId) requestCloseTab(activeId); },
+    reopenTab: () => reopenLastClosed(),
+    toggleSidebar: () => toggleSidebarFromKeys(),
+    newChat: () => newSidebarChat(),
+    chatPage: () => toggleChatPage(),
+    pinTab: () => { if (activeId) pinTab(activeId, true); },
+    unpinTab: () => { if (activeId) pinTab(activeId, false); },
+    muteTab: () => { const tab = frontTab(); if (tab) tabTools.setMuted(tab, true); },
+    unmuteTab: () => { const tab = frontTab(); if (tab) tabTools.setMuted(tab, false); },
+    bookmarkTab: () => { const tab = frontTab(); if (tab && !bookmarks().some((b) => b.url === tabUrl(tab))) toggleBookmarkFor(tab); },
+    unbookmarkTab: () => { const tab = frontTab(); if (tab && bookmarks().some((b) => b.url === tabUrl(tab))) toggleBookmarkFor(tab); },
+    find: () => openFindBar(),
+    reload: () => reloadActive({ always: true }),
+    history: () => openHistoryPage(),
+    bookmarks: () => managers.open('bookmarks'),
+    downloads: () => managers.open('downloads'),
+    clearData: () => openSettingsPage('privacy'), // the page where Clear browsing data asks what to clear: the bar never clears anything itself
+    themeLight: () => settingsBackend.set('theme', 'light'),
+    themeDark: () => settingsBackend.set('theme', 'dark'),
+    themeSystem: () => settingsBackend.set('theme', 'system'),
+    settings: (section) => openSettingsPage(section || ''),
+    shortcuts: () => shortcutsHelp.open(),
+  },
+}));
+ipcMain.handle('cmdbar:data', async () => { await historyReady; return commandBar.data(); });
+ipcMain.handle('cmdbar:run', (_e, id) => commandBar.run(id));
 ipcMain.on('group:context-menu', (_e, id, point) => groupMenu(id, point));
 ipcMain.on('group:toggle', (_e, id) => {
   const group = tabGroups.groups.get(id);
