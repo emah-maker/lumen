@@ -164,7 +164,7 @@ function importCsv(text) {
 // ---- the vault: every login in one file, encrypted as a whole ----
 // cipher: { available() -> bool, encrypt(string) -> Buffer, decrypt(Buffer) -> string } (safeStorage in
 // main.js; a stand-in in the tests). Decrypted logins stay in this process's memory once read.
-function createVault({ file, cipher, now = () => Date.now() }) {
+function createVault({ file, cipher, now = () => Date.now(), onChange = null }) {
   let entries = null;
   let broken = null; // why the file couldn't be read: nothing is written over it
 
@@ -196,6 +196,7 @@ function createVault({ file, cipher, now = () => Date.now() }) {
     fs.writeFileSync(tmp, buf, { mode: 0o600 });
     try { fs.renameSync(tmp, file); } catch { fs.writeFileSync(file, buf, { mode: 0o600 }); try { fs.unlinkSync(tmp); } catch {} }
     entries = next;
+    if (onChange) { try { onChange(); } catch { /* a listener (sync) must not break saving */ } }
   }
 
   const summary = (e) => ({ id: e.id, site: e.site, username: e.username, created: e.created, updated: e.updated });
@@ -240,6 +241,7 @@ function createVault({ file, cipher, now = () => Date.now() }) {
       fs.rmSync(`${file}.tmp`, { force: true });
       entries = [];
       broken = null;
+      if (onChange) { try { onChange(); } catch { /* as above */ } }
     },
     exists: () => fs.existsSync(file),
     error: () => broken,
@@ -254,7 +256,7 @@ function createVault({ file, cipher, now = () => Date.now() }) {
 //   client is connected), isSettingsSender(event), now }
 function createPasswords(deps) {
   const now = deps.now || (() => Date.now());
-  const vault = createVault({ file: deps.file, cipher: deps.cipher, now });
+  const vault = createVault({ file: deps.file, cipher: deps.cipher, now, onChange: deps.onChange });
   const states = new WeakMap(); // tab -> { doc, armed, offer, filled: Set of sites }
   const stateFor = (tab) => { let s = states.get(tab); if (!s) { s = { doc: 0, armed: 0, offer: null, filled: new Set() }; states.set(tab, s); } return s; };
   const live = (tab) => (tab?.view?.webContents && !tab.view.webContents.isDestroyed() ? tab.view.webContents : null);

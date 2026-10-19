@@ -378,6 +378,10 @@ function readSettings() {
   return { ...settingsCache };
 }
 
+// [sync] Sync through a folder (features/sync-folder.js, loaded only while it is on): the stores tell it when they changed.
+let syncSvc = null;
+const syncTouch = (...kinds) => { if (syncSvc) for (const k of kinds) syncSvc.touch(k); };
+const syncTouchSettings = (prev, next) => { if (syncSvc) syncSvc.touchSettings(prev, next); }; // (bookmarks, widgets and preferences live in settings.json: only a change to one of those counts)
 let settingsGen = 0; // bumped by every write: an async write that is no longer the latest doesn't land
 // Every change: the cache (what readSettings returns) at once, the file off the main thread (a synchronous write,
 // with its fsync, backup and rename, took ~27 ms of input time for a bookmark star or a widget move).
@@ -388,8 +392,10 @@ let onSettingsWritten = null;
 function dropShownPick() { try { shownPick = null; } catch { /* not declared yet */ } }
 function writeSettings(settings) {
   if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
+  const before = settingsCache;
   settingsCache = { ...settings };
   onSettingsWritten?.(settingsCache);
+  syncTouchSettings(before, settingsCache);
   settingsPending = true;
   const gen = ++settingsGen;
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
@@ -401,8 +407,10 @@ if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache)
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
   if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
+  const before = settingsCache;
   settingsCache = { ...settings };
   onSettingsWritten?.(settingsCache);
+  syncTouchSettings(before, settingsCache);
   settingsPending = false;
   settingsGen++;
   settingsFile.writeJsonAtomic(SETTINGS_FILE(), settings);
@@ -1645,6 +1653,7 @@ const historyList = () => [...history.values()].sort((a, b) => b.last - a.last).
 let historyGen = 0; // bumped by every write: an async write that is no longer the latest (the quit-time sync one is newer) doesn't land
 function saveHistorySoon() {
   historyDirty = true;
+  if (syncSvc) syncSvc.touch('history');
   clearTimeout(historySaveTimer);
   historySaveTimer = setTimeout(() => {
     if (!historyLoaded) { saveHistorySoon(); return; } // (never overwrite the file with a list that is still missing its past)
@@ -5217,6 +5226,7 @@ const chats = () => (chatStore ||= createChatStore({
   available: () => safeStorage.isEncryptionAvailable(),
   legacyFile: CHAT_FILE(),
   onError: (err) => chatSaveFailed(err),
+  onChange: () => { if (syncSvc) syncSvc.touch('chats'); }, // [sync]
 }));
 // A save that failed (a full disk, a locked file, the keychain): said once per session, in the tab strip's toast, with the reason. The chat stays
 // in memory and the next save tries again.
@@ -8187,6 +8197,7 @@ const passwordDeps = () => ({
     decrypt: (buf) => safeStorage.decryptString(buf),
   },
   readSettings, writeSettings, t: (...a) => t(...a), sendTabs: () => sendTabs(),
+  onChange: () => syncTouch('passwords'), // [sync]
   tabOf: (wc) => allTabsEverywhere().find((x) => alive(x) && x.view.webContents === wc) || null,
   facts: (tab) => {
     const url = tab.view.webContents.getURL();
@@ -10654,6 +10665,71 @@ ipcMain.handle('settings:memory-update', (_e, id, text) => { memory().update(Str
 ipcMain.handle('settings:memory-delete', (_e, id) => { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return memoryView(); });
 ipcMain.handle('settings:memory-delete-all', () => { memory().clear(); memoryEdited(); return memoryView(); });
 ipcMain.handle('settings:memory-start-over', () => { memory().reset({ discard: true }); memoryEdited(); return memoryView(); }); // the file can't be read: set aside as memory.json.bad, start empty
+// ---- [sync] Sync through a folder (features/sync-folder.js; docs/sync.md). Settings → General → Sync. Off by default; the module is loaded
+// only when the setting is on (after the window is up) or when the person turns it on. The passphrase is kept on this computer only,
+// encrypted with the keychain; the folder gets only files encrypted with a key made from it.
+function syncService() {
+  if (syncSvc) return syncSvc;
+  const lib = require('./features/sync-folder');
+  const P = lib.providers;
+  const pushSettingsPages = () => { for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('settings:sync-changed'); };
+  syncSvc = lib.createSyncService({
+    userData: app.getPath('userData'),
+    readSettings, writeSettings,
+    cipher: { available: () => safeStorage.isEncryptionAvailable(), encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) },
+    appVersion: app.getVersion(),
+    deviceName: TEST ? 'This computer' : undefined,
+    timing: TEST && process.env.LUMEN_SYNC_TEST_MS ? { local: 200, history: 400, watch: 200, poll: 300, first: 100, periodic: 60000 } : undefined,
+    makeProvider: (kind) => ({
+      bookmarks: () => P.bookmarks({ read: () => readSettings().bookmarks, write: (list) => writeSettings({ ...readSettings(), bookmarks: list }) }),
+      settings: () => P.settings({ read: readSettings, set: (k, v) => settingsBackend.set(k, v), writeDirect: (patch) => writeSettings({ ...readSettings(), ...patch }) }),
+      widgets: () => P.widgets({ read: readSettings, write: (patch) => writeSettings({ ...readSettings(), ...patch }), refresh: () => { try { refreshNewTabs(); } catch { /* not set up yet */ } } }),
+      history: () => P.history({ map: () => history, ready: async () => { await historyReady; return historyLoaded; }, save: saveHistorySoon, bump: () => { historyVersion++; }, isWorthImporting: (u) => importer.isWorthImporting(u) }),
+      chats: () => P.chats({ store: chats(), busy: (id) => id === chatId || chatRuns.has(id) }),
+      passwords: () => P.passwords({ vault: passwords().vault, unavailable: () => passwords().unavailable() || (readSettings().savePasswords === true ? null : 'off') }),
+    }[kind]?.()),
+    onApplied: (kinds) => {
+      try {
+        if (kinds.includes('bookmarks')) { sendTabs(); managers.pushBookmarks(); }
+        if (kinds.includes('history')) historyVersion++;
+        if (kinds.includes('chats')) pushAttention();
+        if (kinds.includes('settings')) { settingsBackend.pushUiPrefs(); refreshNewTabs(); }
+        if (kinds.includes('widgets')) { refreshNewTabs(); for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); }
+      } catch { /* a window is closing */ }
+    },
+    onStatus: pushSettingsPages,
+  });
+  if (TEST) global.__sync = syncSvc;
+  return syncSvc;
+}
+const syncOffState = () => ({ on: false, running: false, path: '', folderName: '', kinds: { bookmarks: true, history: true, chats: true, widgets: true, settings: true }, passwords: false, keychain: safeStorage.isEncryptionAvailable(), hasPassphrase: false, lastSynced: 0, error: null, devices: [], deviceName: require('os').hostname(), damaged: 0, newer: 0, skipped: [], problems: 0 });
+const syncState = () => ({ ...(readSettings().syncFolder?.on ? syncService().status() : syncOffState()), passwordsOn: readSettings().savePasswords === true });
+const syncFail = (err) => ({ ok: false, code: String(err?.code || 'error').slice(0, 40), message: String(err?.message || err).slice(0, 300) });
+ipcMain.handle('settings:sync-state', () => syncState());
+ipcMain.handle('settings:sync-pick', async () => {
+  if (TEST && global.__syncPick !== undefined) return global.__syncPick;
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: t('settings.sync.pickTitle'), properties: ['openDirectory', 'createDirectory'] });
+  return canceled || !filePaths[0] ? null : filePaths[0];
+});
+ipcMain.handle('settings:sync-enable', async (_e, opts) => {
+  try {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (o.passwords === true && readSettings().savePasswords !== true) return { ok: false, code: 'passwords-off', message: 'Saved passwords are off on this computer' };
+    const r = await syncService().enable({ folder: String(o.folder ?? '').slice(0, 1000), passphrase: String(o.passphrase ?? '').slice(0, 1024), kinds: o.kinds && typeof o.kinds === 'object' ? o.kinds : undefined, passwords: o.passwords === true });
+    return { ok: true, created: r.created, state: syncState() };
+  } catch (err) { return syncFail(err); }
+});
+ipcMain.handle('settings:sync-set', async (_e, opts) => {
+  try {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (o.passwords === true && readSettings().savePasswords !== true) return { ok: false, code: 'passwords-off', message: 'Saved passwords are off on this computer' };
+    await syncService().configure({ kinds: o.kinds && typeof o.kinds === 'object' ? o.kinds : undefined, passwords: typeof o.passwords === 'boolean' ? o.passwords : undefined });
+    return { ok: true, state: syncState() };
+  } catch (err) { return syncFail(err); }
+});
+ipcMain.handle('settings:sync-now', async () => { try { await syncService().syncNow(); return { ok: true, state: syncState() }; } catch (err) { return syncFail(err); } });
+ipcMain.handle('settings:sync-off', async () => { try { await syncService().disable(); return { ok: true, state: syncState() }; } catch (err) { return syncFail(err); } });
+
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 // `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
 function chatMarkdown(id, folder = null) {
@@ -11396,6 +11472,7 @@ app.whenReady().then(async () => {
   startup.add('spare new-tab page and warm renderer', () => { makeSpareNewTab(); warmSoon(400); }, { priority: 1 }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page
   startup.add('performance mode', () => perfMode.start(), { priority: 2 }); // power events, and whether the GPU really draws
   startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
+  startup.add('folder sync', () => { if (readSettings().syncFolder?.on) syncService().start(); }, { priority: 6 }); // [sync] off by default: nothing is loaded unless the person turned it on
   startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
   startup.add('GPU check', () => { setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); }, { priority: 2 }); // the GPU process has reported by then
   firstTabLoaded.then(() => startup.release());
