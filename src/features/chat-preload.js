@@ -102,6 +102,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
     helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
+    stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers]
     routines: { preview: (text) => ipcRenderer.invoke('chat:routine-preview', { text }), create: (spec) => ipcRenderer.invoke('chat:routine-create', spec) }, // [routines] "Schedule this" (renderer/chat-routines.js)
     dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),

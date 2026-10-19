@@ -17,6 +17,8 @@ const OFFERS = [
   { key: 'aiDeviceAccess', value: true, title: 'settings.ai.deviceAccess', detail: 'settings.ai.deviceAccessDesc', where: 'Settings > AI' },
   // [memory] ai/memory.js: the sidebar AI keeps short notes about you between chats
   { key: 'aiMemory', value: true, title: 'settings.ai.memory', detail: 'settings.ai.memoryDesc', where: 'Settings > AI and agents > Memory' },
+  // [acting helpers] ai/acting-helpers.js: helpers that click and type side by side, each in a background tab
+  { key: 'actingHelpers', value: true, title: 'settings.ai.actingHelpers', detail: 'settings.ai.actingHelpersDesc', where: 'Settings > AI and agents' },
 ];
 
 // What to do at startup: { show: [offer], seen: [key] } (seen: what to record now, before anything is shown, so a

@@ -48,6 +48,8 @@ const btwLib = require('./btw'); // /btw: a side question answered beside the ru
 const agentsQuiet = require('../features/agents-quiet');
 const screenIntent = require('./screen-intent');
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
+let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
+const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
 const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const memoryLib = require('./memory'); // [memory] saved memory across chats: the system prompt's block and the memory tool
 const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
@@ -536,6 +538,18 @@ const DELEGATE_TOOL = {
   },
   eager_input_streaming: true,
 };
+// [acting helpers] parallel_tasks (ai/acting-helpers.js) is for the sidebar's API chats only, like delegate, and only while Settings > AI and agents >
+// "Let helpers act in tabs" (actingHelpers, off by default) is on. Not listed to MCP clients or the CLI engines (they have their own subagents).
+const PARALLEL_TASKS_TOOL = {
+  name: 'parallel_tasks',
+  description: 'Run 1-3 independent browser jobs at once, each by a helper in its own background tab (navigate, click, type, fill forms; never buys, sends or submits). tasks:[{task,url?}], each self-contained. Returns each report.',
+  input_schema: {
+    type: 'object',
+    properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, url: { type: 'string' } }, required: ['task'] } } },
+    required: ['tasks'],
+  },
+  eager_input_streaming: true,
+};
 // [desktop apps] desktop operates other programs on this Windows PC (src/desktop/, docs/desktop-apps.md). One dispatcher tool keeps the tool prompt small. Offered to the
 // sidebar's API chats only while Settings > AI > "Let the AI use other apps on this computer" is on, or once the conversation asks for an app (requestFor / otherTurn),
 // so the default request costs nothing. Not listed to MCP clients or the CLI engines.
@@ -583,6 +597,7 @@ const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
+const OTHER_PARALLEL = slimTool(PARALLEL_TASKS_TOOL); // [acting helpers]
 const OTHER_MEMORY = slimTool(MEMORY_TOOL); // [memory]
 // What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
@@ -590,6 +605,14 @@ const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelpe
   delete properties.as_user;
   return { name: t.name, description: t.description, input_schema: { ...t.input_schema, properties } };
 });
+// What an acting helper is shown (acting-helpers.js ACT_TOOLS): its tab's tools, read_page in compact mode only, screenshot of its own tab only.
+let actDefs = null;
+const actHelperToolDefs = () => (actDefs ||= TOOLS.filter((t) => actingHelpers().isActTool(t.name)).map((t) => {
+  const properties = { ...t.input_schema.properties };
+  if (t.name === 'screenshot') delete properties.tab_id;
+  if (t.name === 'read_page') for (const key of ['mode', 'extract', 'selector', 'elements', 'structured', 'text_offset']) delete properties[key];
+  return { name: t.name, description: t.name === 'read_page' ? 'Read your tab as a compact outline: [id] per element to click or type into. since_last: only what changed.' : t.description, input_schema: { ...t.input_schema, properties } };
+}));
 const BASIC_SEARCH_TOOLS = [...TOOLS, { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }];
 
 // Which model wrote each assistant turn (a WeakMap, so nothing extra is serialized into requests).
@@ -948,7 +971,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, memory = false } = {}) { // delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app)
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, memory = false, acting = false } = {}) { // acting: [acting helpers] parallel_tasks is offered; // delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app)
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -963,7 +986,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], memory ? [MEMORY_TOOL] : [])), // [memory]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], memory ? [MEMORY_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -981,6 +1004,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
 const TOOL_SCHEMAS = Object.fromEntries(TOOLS.map((t) => [t.name, t.input_schema]));
 TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for non-Claude models
 TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
+TOOL_SCHEMAS.parallel_tasks = PARALLEL_TASKS_TOOL.input_schema; // [acting helpers]
 TOOL_SCHEMAS.desktop = DESKTOP_TOOL.input_schema;
 TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
 TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
@@ -1021,7 +1045,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'memory']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'memory', 'parallel_tasks']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1618,6 +1642,8 @@ class Agent {
     this.uploads = null; // [uploads] features/upload-files.js createUploadStore, set by main.js: the files the user attached to chats
     this.pendingUploads = new Map(); // [uploads] approval id -> the "Choose file…" card waiting for the user's pick
     this.fetchImpl = undefined; // fetch for a provider's picture address (default: Electron's net stack, no cookies)
+    this.helperStops = new Map(); // [acting helpers] a helper card's key -> its AbortController (its Stop button: stopHelper)
+    this.helperSeq = 0;
   }
 
   // Is the open chat's reply running? (A chat the user left mid-run may still be running: busyCount.)
@@ -1670,7 +1696,7 @@ class Agent {
 
   // The tabs every sidebar run (the open chat's and any left running) works in right now.
   runTabIds() {
-    return [...this.scopes].filter((s) => s.chat && s.tabId != null).map((s) => s.tabId);
+    return [...this.scopes].filter((s) => (s.chat || s.actingHelper) && s.tabId != null).map((s) => s.tabId); // [acting helpers] a helper's tab is in use too
   }
 
   // The scope of the tool call running now (main.js reads the run's window from it).
@@ -3667,7 +3693,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), memory: this.memoryOffered(messages) });
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), memory: this.memoryOffered(messages), acting: this.actingHelpersOn() });
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3720,7 +3746,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [memory]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.actingHelpersOn() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [memory] [acting helpers]
       signal,
       emit,
       noTools,
@@ -3949,6 +3975,26 @@ ${prompt}` : prompt), historyImages: [] };
     return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages, tools, signal, emit: () => {}, noTools });
   }
 
+  // A helper's model turn (delegate, parallel_tasks): `used.model` first, and the chat's own model (`own`) for this and the other
+  // helpers if the cheaper one is not on this key (or was refused). The tokens count in the chat's usage and the app's usage log.
+  helperTurn({ chat, emit, signal, own, used }) {
+    return async (args) => {
+      const model = used.model;
+      let message;
+      try {
+        message = await this.helperCall(model, args);
+      } catch (err) {
+        if (model === own || signal.aborted || args.signal?.aborted || !(err?.status === 404 || err?.status === 400 || err?.status === 403 || /model/i.test(String(err?.message)))) throw err;
+        used.model = own;
+        message = await this.helperCall(own, args);
+      }
+      const counted = used.model;
+      if (chat && message?.usage) recordUsage(chat, { model: counted, usage: message.usage }, emit); // [usage] in the chat's totals
+      if (message?.usage) this.reportApi(providers.splitModel(counted).provider, { model: counted, usage: message.usage }, emit); // ...and the app's usage log
+      return message;
+    };
+  }
+
   // ---- [btw] /btw (ai/btw.js): a side question answered at once, beside whatever the chat is doing. It reads a snapshot of the chat
   // (never changes it: no message, no step, no loop-guard count), has no tools, and streams its answer to `onText`; the tokens join the
   // chat's usage totals. Not part of run(): it never aborts, waits for or queues behind the chat's task.
@@ -4078,21 +4124,7 @@ ${prompt}` : prompt), historyImages: [] };
     const own = chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
     const cheap = subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
     const used = { model: cheap };
-    const turn = async (args) => {
-      const model = used.model;
-      let message;
-      try {
-        message = await this.helperCall(model, args);
-      } catch (err) { // the cheaper model is not on this key (or was refused): the chat's own model, for this and the other helpers
-        if (model === own || signal.aborted || args.signal?.aborted || !(err?.status === 404 || err?.status === 400 || err?.status === 403 || /model/i.test(String(err?.message)))) throw err;
-        used.model = own;
-        message = await this.helperCall(own, args);
-      }
-      const counted = used.model;
-      if (chat && message?.usage) recordUsage(chat, { model: counted, usage: message.usage }, emit); // [usage] in the chat's totals
-      if (message?.usage) this.reportApi(providers.splitModel(counted).provider, { model: counted, usage: message.usage }, emit); // ...and the app's usage log
-      return message;
-    };
+    const turn = this.helperTurn({ chat, emit, signal, own, used });
     const taint = gate?.run ? Boolean(taintHolder(gate.run)?.tainted) : false;
     const helpers = new Map(); // helper number -> { run: its own taint holder }
     let read = false;
@@ -4133,6 +4165,107 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/subagents]
 
+  // ---- [acting helpers] parallel_tasks (ai/acting-helpers.js): 1-3 helpers that act side by side, each a small model loop on the
+  // helpers' model (Settings > AI > Model for helpers) in a background tab of its own, opened as the AI's tab (the sparkle; closed by
+  // "When the AI finishes"). That tab is a normal tab of the run's window, the user's own session, as open_tab's tabs are. A helper gets
+  // its tab's tools only (acting-helpers.js ACT_TOOLS). Every call goes through ensureAllowed like the chat's own: the chat's approved
+  // sites carry over (and a site approved on a helper's card counts for the chat), every other site asks on the chat's usual card,
+  // marked "Helper n:", and Ask / Auto-allow / Bypass answer exactly as for the chat. Each helper's taint starts from the chat's and is
+  // its own after that. Stopping the chat stops every helper; each helper's card has its own Stop (stopHelper). Their reports come back
+  // as untrusted page content, and the chat counts as having read page content after.
+  actingHelpersOn() {
+    try { return Boolean(this.browser.actingHelpers?.()); } catch { return false; }
+  }
+
+  // A helper card's Stop button (main.js agent:helper-stop). True when a running helper was stopped.
+  stopHelper(key) {
+    const ctl = this.helperStops.get(String(key));
+    if (!ctl) return false;
+    ctl.abort();
+    return true;
+  }
+
+  async parallelTasks(input) {
+    const scope = taskScope.getStore();
+    const gate = scope?.gate;
+    if (!scope?.chat || !gate) throw new Error('parallel_tasks belongs to a sidebar chat; it is not available here.');
+    if (!this.actingHelpersOn()) throw new Error('Acting helpers are off (Settings → AI and agents → "Let helpers act in tabs"). Do the steps yourself, one at a time.');
+    if (typeof this.browser.openTab !== 'function' || this.browser.background === true) throw new Error('Acting helpers need tabs, and this run has none of its own. Do the steps yourself.');
+    const emit = gate.emit || (() => {});
+    const signal = gate.signal || scope.signal || new AbortController().signal;
+    const chat = scope.chat;
+    const { tasks, dropped } = actingHelpers().cleanTasks(input);
+    const own = chat.settings?.model || this.getOptions().model || DEFAULT_MODEL;
+    const used = { model: subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto') };
+    const turn = this.helperTurn({ chat, emit, signal, own, used });
+    const hosts = gate.hosts || scope.hosts || this.approvedHosts;
+    const who = gate.who || 'Claude';
+    const chatTaint = Boolean(taintHolder(gate.run)?.tainted);
+    const call = ++this.helperSeq;
+    const states = new Map();
+    const card = (n, patch = {}) => {
+      const st = states.get(n);
+      Object.assign(st, patch);
+      try { emit({ type: 'helper_card', key: st.key, n, task: st.task.slice(0, 160), status: st.status, step: st.step, tabId: st.tabId }); } catch { /* a closed view: the helper carries on */ }
+    };
+    tasks.forEach((t, i) => {
+      const n = i + 1;
+      const ctl = new AbortController();
+      const onStop = () => ctl.abort();
+      if (signal.aborted) ctl.abort(); else signal.addEventListener('abort', onStop, { once: true }); // stopping the chat stops every helper
+      const key = `${call}:${n}`;
+      this.helperStops.set(key, ctl);
+      t.signal = ctl.signal;
+      states.set(n, { key, task: t.task, status: 'starting', step: '', tabId: null, scope: null, ctl, release: () => { signal.removeEventListener('abort', onStop); this.helperStops.delete(key); } });
+    });
+    // The helper's own tab, opened on its first tool call: behind the user's tab, marked as the AI's (the run's), in the run's window.
+    const tabFor = (st, n) => {
+      if (st.scope) return st.scope;
+      const tab = taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.openTab(undefined, { ai: true, show: false }));
+      if (!tab || tab.id == null) throw new Error('Could not open a tab for this helper.');
+      st.scope = { ...scope, chat: null, helper: true, actingHelper: n, tabId: tab.id, gate: null, hosts, tainted: chatTaint, appOnly: false, idsFresh: false, fullPage: false, aboutPage: false, skill: null };
+      this.scopes.add(st.scope); // tab sleeping leaves it alone (usingTab), and a close keeps it while the helper works (runTabIds)
+      card(n, { tabId: tab.id });
+      return st.scope;
+    };
+    const exec = async (name, raw, { helper: n, signal: helperSignal }) => {
+      const st = states.get(n);
+      const args = actingHelpers().prepareInput(name, raw);
+      const problem = validateInput(name, args);
+      if (problem) throw new Error(`INVALID_INPUT: ${problem}`);
+      const hs = tabFor(st, n);
+      hs.signal = helperSignal;
+      const helperEmit = (e) => { const out = actingHelpers().labelEvent(e, n); if (out) emit(out); };
+      return taskScope.run(hs, async () => {
+        card(n, { status: 'working', step: await this.describeStep(name, args) });
+        try {
+          await this.ensureAllowed(name, helperEmit, helperSignal, { input: args, who, hosts, run: hs });
+          return await this.execute(name, args);
+        } catch (err) {
+          if (toolError(err) === TAB_CLOSED) st.ctl.abort(); // the user closed the helper's tab: that helper stops
+          throw err;
+        }
+      });
+    };
+    const onEvent = (e) => {
+      const st = states.get(e.n);
+      if (!st) return;
+      if (e.type === 'start') card(e.n, { status: 'working' });
+      else if (e.type === 'done') { card(e.n, { status: e.status, step: '' }); st.release(); if (st.scope) this.scopes.delete(st.scope); }
+    };
+    const limits = this.browser.subagentLimits?.() || {};
+    let results;
+    try {
+      results = await actingHelpers().runAll({ tasks, turn, exec, signal, tools: actHelperToolDefs(), maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent });
+    } finally {
+      for (const st of states.values()) { st.release(); if (st.scope) this.scopes.delete(st.scope); }
+      if ([...states.values()].some((st) => st.scope)) this.markTainted(gate.run); // what the helpers saw on their pages is now in this chat
+    }
+    if (signal.aborted) throw new (sdk().APIUserAbortError)();
+    return actingHelpers().formatResults(results.map((r) => ({ ...r, tabId: states.get(r.n)?.tabId ?? null })), { dropped, model: used.model === own ? '' : authorName(used.model) });
+  }
+  // ---- [/acting helpers]
+
   // Human-readable step text for the sidebar, e.g. Clicking “Sign in” button.
   async describeStep(name, input) {
     try {
@@ -4159,6 +4292,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_pdf') return 'Reading the PDF';
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
+      if (name === 'parallel_tasks') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, actingHelpers().MAX_TASKS) : 0} browser jobs to helpers`; // [acting helpers]
       if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
       if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
@@ -6463,6 +6597,7 @@ ${same}
         return this.browser.macros.runForAI(input, this);
       }
       case 'delegate': return this.delegate(input); // [subagents]
+      case 'parallel_tasks': return this.parallelTasks(input); // [acting helpers]
       case 'desktop': return this.desktopTool(input); // [desktop apps]
       case 'wait': {
         const until = Date.now() + Math.min(Math.max(input.seconds, 1), 10) * 1000;
