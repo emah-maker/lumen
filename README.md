@@ -137,6 +137,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 - **Downloads panel** (the toolbar's download button): progress with speed and time left, pause, resume, cancel, retry, show in folder, remove. Drag a finished file out of the panel into Finder, Explorer, mail or chat. The list is kept across restarts.
 - **Ad blocker** built into the browser, not an extension. It uses uBlock Origin–compatible lists (Ghostery engine). Toggle it, or allow ads on one site, from **⋯ → Ad blocker**. Hidden-element rules are applied in a way pages can't read, and uBlock's scripts disarm known anti-adblock checks. Blocked requests are cancelled, so a determined site can still notice that its ad request failed. Captcha checks (hCaptcha, reCAPTCHA, Turnstile, Arkose and others) and sign-in pages are never filtered, so forms behind them keep working.
 - **Chrome extensions** from the Chrome Web Store: open **⋯ → Extensions → Get extensions…** and click *Add to Lumen*. Extension buttons appear in the toolbar. The ad blocker takes over Electron's request hooks, so extensions that block requests through the old `chrome.webRequest` API (Manifest V2) can't block. Manifest V3 extensions work; content blockers that rely on static declarativeNetRequest rulesets are refused at install.
+- **Reading list (Save for later):** `Ctrl+Shift+Y`, a tab's or a page's right-click menu, or a link's **Save link for later** sets a page aside; ⋯ → Bookmarks → **Show reading list** (`lumen://readinglist`) lists them with site icon, title, site and date, unread in bold, with **Unread / All**, search, **Mark as read**, **Remove** (with Undo) and **Mark all read**. Opening a page from the list marks it read. It is kept on your computer (`reading-list.json` in your profile), only the address, title and dates; nothing is sent anywhere, and it is off in private windows. In the sidebar chat, "save this for later" and "what's on my reading list?" work.
 - **Search engine:** Google, DuckDuckGo, Bing, Brave Search, Ecosia or Startpage (Settings, or ⋯ → Search engine).
 - **Import:** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera or Firefox (Settings, or ⋯ → Import bookmarks and history). Passwords and cookies are never read.
 - **Permissions:** sites must ask before using your camera, microphone, location, or notifications. Click the lock next to the address for the site's page info: its connection, Ask / Allow / Block for each permission, its cookies (with **Clear Cookies and Site Data…** for that site), and its remembered zoom. **Settings → Privacy and security → Site data** lists every site that keeps cookies, with **Remove** for each.
@@ -167,6 +168,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 | Find in page | `Ctrl+F` |
 | Zoom | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Bookmark this page | `Ctrl+D` |
+| Save this page for later (the reading list) | `Ctrl+Shift+Y` |
 | History | `Ctrl+H` (macOS: `Cmd+Y`) |
 | Settings | `Ctrl+,` |
 | Clear browsing data | `Ctrl+Shift+Delete` (macOS: `Shift+Cmd+Backspace`) |
