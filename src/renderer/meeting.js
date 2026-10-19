@@ -23,7 +23,6 @@
   };
 
   let activeTab = 'qa'; // 'qa' | 'context' | 'transcript' | 'summary'
-  let recognition = null;
 
   const h = (tag, props = {}, ...kids) => {
     const node = Object.assign(document.createElement(tag), props);
@@ -186,50 +185,70 @@
   }
   stealthBtn.onclick = toggleStealth;
 
-  // Live listener toggle (Audio Capture & Speech Recognition)
-  function initSpeechRecognition() {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) return null;
-    const rec = new SpeechRec();
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.lang = 'en-US';
-    rec.onresult = (evt) => {
-      for (let i = evt.resultIndex; i < evt.results.length; ++i) {
-        if (evt.results[i].isFinal) {
-          const text = evt.results[i][0].transcript.trim();
-          if (text) {
-            api.sendTranscript(text, 'Participant');
-          }
-        }
+  // Live listener. Chromium's speech recognition can't work in Electron (it needs Google's own key), so Listen records the
+  // microphone in 20-second pieces and turns each into text with the chat box's voice input (Settings → AI and agents → Voice input,
+  // renderer/dictation.js, ai/dictation.js): the same provider and key, the audio sent once and never saved.
+  const PIECE_MS = 20000;
+  let listening = null; // { stream, recorder, timer, status }
+
+  function recordPiece(l) {
+    if (listening !== l) return;
+    const chunks = [];
+    const mime = ['audio/webm;codecs=opus', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const recorder = new MediaRecorder(l.stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    l.recorder = recorder;
+    recorder.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+    recorder.onstop = async () => {
+      recordPiece(l); // the next piece starts at once (the gap is a few milliseconds)
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      chunks.length = 0;
+      if (blob.size < 2000) return; // (silence compresses to almost nothing)
+      try {
+        const bytes = l.status.format === 'wav' ? await window.lumenDictation.toWav(blob) : new Uint8Array(await blob.arrayBuffer());
+        const res = await window.assistant.dictation.transcribe(bytes, l.status.format);
+        if (res?.error) { if (promptStatus) promptStatus.textContent = res.error; return; }
+        if (res?.text) api.sendTranscript(res.text, 'Participant');
+      } catch (err) {
+        console.warn('[meeting] transcription failed:', err?.message || err);
       }
     };
-    rec.onerror = (err) => {
-      console.warn('[meeting] speech recognition error:', err.error);
-    };
-    rec.onend = () => {
-      if (state.live) {
-        try { rec.start(); } catch {}
-      }
-    };
-    return rec;
+    recorder.start();
+    l.timer = setTimeout(() => { try { if (recorder.state !== 'inactive') recorder.stop(); } catch { /* stopped */ } }, PIECE_MS);
+  }
+
+  async function startListening() {
+    const status = await window.assistant.dictation?.status().catch(() => null);
+    if (!status?.provider) return status?.message || 'Voice input is not available.';
+    if (status.format === 'wav' && !window.lumenDictation?.toWav) return 'Voice input is not available.';
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    } catch (err) {
+      return `The microphone could not be used (${err?.name || 'error'}).`;
+    }
+    listening = { stream, recorder: null, timer: 0, status };
+    recordPiece(listening);
+    return '';
+  }
+
+  function stopListening() {
+    const l = listening;
+    listening = null; // (the piece being recorded is still sent: its onstop finds listening changed and starts no new one)
+    if (!l) return;
+    clearTimeout(l.timer);
+    try { if (l.recorder && l.recorder.state !== 'inactive') l.recorder.stop(); } catch { /* stopped */ }
+    l.stream.getTracks().forEach((track) => track.stop());
   }
 
   async function toggleLive() {
     const next = !state.live;
     if (next) {
-      if (!recognition) recognition = initSpeechRecognition();
-      try {
-        if (recognition) recognition.start();
-      } catch (err) {
-        console.warn('[meeting] could not start speech recognition:', err.message);
-      }
+      const problem = await startListening();
+      if (problem) { if (promptStatus) promptStatus.textContent = problem; return; }
       const res = await api.startLive();
-      if (res?.ok) state.live = true;
+      if (res?.ok) state.live = true; else stopListening();
     } else {
-      try {
-        if (recognition) recognition.stop();
-      } catch {}
+      stopListening();
       const res = await api.stopLive();
       if (res?.ok) state.live = false;
     }

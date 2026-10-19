@@ -70,6 +70,7 @@ const CHAT_IPC = new Set([
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', // the "/" menu (features/skills.js)
   'chat:routine-preview', 'chat:routine-create', // "Schedule this" on the page: read a schedule phrase, save a routine (registerRoutines below)
+  'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (main.js; ai/dictation.js)
 ]);
 
 // The tab an AI run started from the chat page works in: the one the user looked at most recently

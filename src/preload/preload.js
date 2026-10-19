@@ -212,6 +212,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
     onChanged: on('research:changed'),
   },
+  dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js): which provider, and the recording's text
   // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
   meeting: {
     getState: () => ipcRenderer.invoke('meeting:state'),

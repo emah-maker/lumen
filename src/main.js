@@ -287,6 +287,7 @@ const UI_ONLY_IPC = new Set([
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -1033,6 +1034,14 @@ const deviceChooser = require('./features/device-chooser').createDeviceChooser({
   ordinary: (wc) => !(spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) || agentContents.has(wc) || dialogs.isOwnView(wc) || manners.isAiTab(tabByContents(wc))),
 });
 
+// [dictation] The sidebar's window and the chat page may record audio for voice input (ai/dictation.js ownPageMic).
+function ownPageMic(wc, permission, details) {
+  if (permission !== 'media') return false;
+  const own = (url) => isUiUrl(url) || chatPage.isChatUrl(url);
+  const isOwnView = uiContents.has(wc) ? isUiUrl(wc.getURL()) : Boolean(chatPageRt?.everyChatTab().some((t) => t.view.webContents === wc));
+  return require('./ai/dictation').ownPageMic({ permission, mediaTypes: details?.mediaTypes, requestingUrl: details?.requestingUrl, pageUrl: wc.getURL(), isMainFrame: details?.isMainFrame, isOwnView, isOwnPage: own });
+}
+
 function setupPermissions() {
   const ses = session.defaultSession;
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
@@ -1042,6 +1051,7 @@ function setupPermissions() {
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
     // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
     if (musicReact.allowsDisplay(wc, permission, details)) return callbackAsked(true); // [look] the new-tab page's analyser may listen to the PC's sound (loopback), nothing else
+    if (ownPageMic(wc, permission, details)) return callbackAsked(true); // [dictation] the chat box's voice input in Lumen's own sidebar and chat page; web pages still ask
     const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
     if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
@@ -1075,6 +1085,7 @@ function setupPermissions() {
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
     musicReact.allowsDisplay(wc, permission, details) ? true : // [look] Music-reactive home screen (the new-tab page, the PC's sound only)
+    wc && ownPageMic(wc, permission, { mediaTypes: [details?.mediaType], requestingUrl: details?.requestingUrl, isMainFrame: details?.isMainFrame }) ? true : // [dictation] Lumen's own chat boxes (audio only)
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
     spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
@@ -8488,6 +8499,31 @@ const meetingHelper = lazy(() => require('./features/meeting').createMeetingHelp
   broadcast: (ch, p) => ui()?.send(ch, p),
 }));
 if (TEST) global.__meetingHelper = meetingHelper;
+
+// [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). The recording arrives once, goes to the
+// provider chosen in Settings with the user's key (the page never sees the key), and the buffer is cleared afterwards;
+// nothing is written to disk. The sidebar and the chat page may ask (UI_ONLY_IPC, chat-page.js CHAT_IPC).
+const dictationLib = require('./ai/dictation');
+function dictationState() {
+  const s = readSettings();
+  const choice = dictationLib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
+  if (!choice.provider) { const m = dictationLib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
+  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, autoSend: s.dictationAutoSend === true };
+}
+ipcMain.handle('dictation:status', () => dictationState());
+ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
+  const state = dictationState();
+  if (!state.provider) return { error: state.message, settings: true };
+  if (!(bytes instanceof Uint8Array)) return { error: t('dictation.error.empty') };
+  if (format !== state.format) return { error: t('dictation.error.changed') }; // the setting changed while recording
+  const audio = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  try {
+    const res = await dictationLib.transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
+    return res.error ? { error: t(res.error.key, res.error.params), settings: res.error.key === 'dictation.error.key' } : { text: res.text, autoSend: state.autoSend };
+  } finally {
+    audio.fill(0); // (the only copy in this process)
+  }
+});
 
 ipcMain.handle('meeting:state', () => meetingHelper.getState());
 ipcMain.handle('meeting:context-get', () => meetingHelper.loadContext());

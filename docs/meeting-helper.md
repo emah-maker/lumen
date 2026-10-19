@@ -34,7 +34,7 @@ When you share your screen in Google Meet, Zoom, Microsoft Teams, or Slack, clic
 
 ## Live audio listener
 
-Click **Listen** to activate the live audio listener. The listener transcribes speech into text in real time and streams it into the **Transcript** tab. Recent utterances are automatically supplied as context to subsequent prompts so the assistant understands the conversational flow.
+Click **Listen** to activate the live audio listener. It records the microphone in 20-second pieces and turns each into text with Lumen's voice input (Settings → AI and agents → **Voice input**: your OpenAI or Gemini key), then adds it to the **Transcript** tab. Chromium's built-in speech recognition can't work in Lumen, so without one of those keys Listen says which key to add. Each piece goes to that provider only and is never saved; the microphone hears your side of the room, so use speakers (not headphones) if the other side should be heard too. Recent utterances are automatically supplied as context to subsequent prompts so the assistant understands the conversational flow.
 
 ## Post-meeting summaries and chat saving
 
