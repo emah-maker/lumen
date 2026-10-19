@@ -3420,8 +3420,7 @@
   "newtab.images.unreadable": "{name} could not be read.",
   "newtab.images.limit": "Up to {max} images: {n} left out.",
   "newtab.images.pick": "Add images to your question",
-  "newtab.images.pickFilter": "Images"
-,
+  "newtab.images.pickFilter": "Images",
   "approval.app.once": "Allow for this chat",
   "approval.app.always": "Always allow this app",
   "approval.app.always.title": "Add this app to Settings → AI → Apps the AI can use. You can remove it there.",
