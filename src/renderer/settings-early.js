@@ -5,7 +5,6 @@
 (() => {
   const start = performance.now();
   const TTL = 1500;
-  const REMEMBER = 'lumen.settings.category'; // (the key settings.js keeps the last page in: see REMEMBER there)
   let live = true;
   const early = new Map();
   const stop = () => { live = false; early.clear(); };
@@ -37,12 +36,7 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines()); // (asked first and small: General's Search engine row needs only this, so the page does not wait for the larger ai.get behind it)
-    // The AI state is the largest answer (about 20 ms of the browser's main thread) and only the AI pages, Tabs and Advanced read it: a page that opens on
-    // General, Appearance, Home, Privacy or Updates (by link, or as the last page shown) does not ask for it, so nothing waits behind it and the main thread stays free.
-    const hash = location.hash.slice(1);
-    let last = ''; try { last = localStorage.getItem(REMEMBER) || ''; } catch { /* no storage */ }
-    const NO_AI = new Set(['general', 'appearance', 'home', 'privacy', 'updates', 'default-browser', 'startup', 'languages', 'language', 'engine', 'search', 'downloads', 'files', 'focus', 'accessibility', 'theme', 'newtab', 'new-tab', 'about', 'cookies', 'security', 'passwords', 'permissions', 'extensions']);
-    if (!NO_AI.has(hash || last || 'general')) prefetch('ai.get', () => S.ai.get());
+    prefetch('ai.get', () => S.ai.get());
     S.ai.onModelsUpdated?.(stop); // the model changed elsewhere (the sidebar) in this first moment: the answer fetched at load is stale, and the page's own refresh must read afresh
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
