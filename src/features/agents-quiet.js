@@ -30,6 +30,7 @@ function createPendingApprovals() {
     dropKey(key) { for (const [id, v] of [...waiting]) if (v.key === key) waiting.delete(id); return waiting.size; },
     count: () => waiting.size,
     ids: () => [...waiting.keys()],
+    list: () => [...waiting].map(([approvalId, v]) => ({ approvalId, ...v })), // (lumen://tasks: features/mission-control.js)
     keyOf: () => [...waiting.values()][0]?.key ?? null, // the window the badge takes the user to
   };
 }

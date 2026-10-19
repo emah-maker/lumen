@@ -53,4 +53,53 @@ function parseKeys(input) {
   return { seq: parts.join(''), chords: parts, shown: chords.join(' ') };
 }
 
-module.exports = { parseKeys, escapeText, KeysError, MAX_KEYS };
+// ---- macOS: the same "ctrl+s" style, sent through System Events (mac-helper.jxa) as key codes or characters plus modifiers. Cmd is the Mac's
+// shortcut key, so it is allowed here; what is refused is what leaves the app or reaches macOS itself.
+const MAC_CODES = {
+  enter: 36, return: 36, tab: 48, esc: 53, escape: 53, space: 49, backspace: 51, bs: 51, delete: 117, del: 117, forwarddelete: 117,
+  up: 126, down: 125, left: 123, right: 124, home: 115, end: 119, pageup: 116, pgup: 116, pagedown: 121, pgdn: 121,
+  f1: 122, f2: 120, f3: 99, f4: 118, f5: 96, f6: 97, f7: 98, f8: 100, f9: 101, f10: 109, f11: 103, f12: 111,
+};
+const MAC_MODS = { cmd: 'command', command: 'command', meta: 'command', ctrl: 'control', control: 'control', shift: 'shift', alt: 'option', option: 'option', opt: 'option' };
+
+function macChord(text) {
+  const parts = String(text).split('+').map((p) => p.trim().toLowerCase()).filter(Boolean);
+  if (!parts.length) throw new KeysError(`Not a key: "${text}"`);
+  const key = parts.pop();
+  const mods = new Set();
+  for (const m of parts) {
+    if (m === 'win' || m === 'windows' || m === 'super') throw new KeysError('There is no Windows key on a Mac: use cmd.');
+    if (m === 'fn' || m === 'globe') throw new KeysError('The fn (globe) key is not sent: it reaches macOS itself, not the app.');
+    if (!MAC_MODS[m]) throw new KeysError(`Not a modifier: "${m}" (use cmd, ctrl, shift or option)`);
+    mods.add(MAC_MODS[m]);
+  }
+  const has = (m) => mods.has(m);
+  if (/^f([1-9]|1[0-2])$/.test(key)) { // function keys: on their own only; with Cmd, Ctrl or Option (or Shift) they reach macOS's own shortcuts
+    if (mods.size) throw new KeysError('A function key is sent only on its own, without Cmd, Ctrl, Option or Shift (those combinations reach macOS itself).');
+    if (key === 'f3' || key === 'f11') throw new KeysError(`${key.toUpperCase()} opens Mission Control or shows the desktop, so it is not sent.`);
+  }
+  const out = { mods: [...mods].sort() };
+  if (MAC_CODES[key] !== undefined) out.code = MAC_CODES[key];
+  else if (key.length === 1) out.key = key;
+  else throw new KeysError(`Not a key: "${key}"`);
+  if (has('command') && has('control') && key === 'q') throw new KeysError('Ctrl+Cmd+Q locks the screen, so it is not sent.');
+  if (has('command') && has('shift') && key === 'q') throw new KeysError('Shift+Cmd+Q logs out, so it is not sent.');
+  if (has('command') && key === 'q') throw new KeysError('Cmd+Q quits the app, so it is not sent. Use the app\'s own Save or Close first.');
+  if (has('command') && has('option') && (key === 'esc' || key === 'escape')) throw new KeysError('Option+Cmd+Esc opens Force Quit, so it is not sent.');
+  if (has('command') && (key === 'tab' || key === '`')) throw new KeysError('Cmd+Tab switches to another app, so it is not sent. Use focus_app.');
+  if ((has('command') || has('control')) && key === 'space') throw new KeysError('Cmd+Space and Ctrl+Space open Spotlight or switch the input source, so they are not sent. Use open_app.');
+  if (has('control') && !has('command') && ['up', 'down', 'left', 'right'].includes(key)) throw new KeysError('Ctrl+arrow switches Spaces or opens Mission Control, so it is not sent.');
+  if (has('command') && has('option') && (key === 'd' || key === 'power')) throw new KeysError('That shortcut changes macOS itself, so it is not sent.');
+  return out;
+}
+
+// "cmd+s", "cmd+a cmd+c", "Enter" -> { chords: [{ key | code, mods }], shown }. Throws KeysError with a sentence for the AI.
+function parseKeysMac(input) {
+  const text = String(input ?? '').trim();
+  if (!text) throw new KeysError('No keys given. Examples: "cmd+s", "Enter", "cmd+a cmd+c".');
+  const chords = text.split(/\s+/);
+  if (chords.length > MAX_KEYS) throw new KeysError(`At most ${MAX_KEYS} keys at once.`);
+  return { chords: chords.map(macChord), shown: chords.join(' ') };
+}
+
+module.exports = { parseKeys, parseKeysMac, escapeText, KeysError, MAX_KEYS, MAC_CODES };

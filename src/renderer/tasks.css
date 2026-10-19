@@ -96,14 +96,6 @@
 .task-toast.approval, .task-toast.failed { box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--warning), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
 .task-toast .icon-btn { width: 24px; height: 24px; }
 
-/* The composer's background button sits left of Send. */
-.send-bg {
-  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: var(--field); color: var(--muted);
-}
-.send-bg svg { width: 14px; height: 14px; stroke-width: 1.75; }
-.send-bg:not(:disabled):hover { color: var(--text); background: var(--hover); }
-.send-bg:disabled { opacity: 0.4; }
 
 /* Progress, "needs you" and results. */
 .tasks-btn.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--bg); }
