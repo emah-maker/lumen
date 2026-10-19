@@ -2124,6 +2124,7 @@ function buildUnloading(slot) {
   document.addEventListener('visibilitychange', loop);
   window.addEventListener('lumen-pref', () => { if (statusRow.offsetParent) poll(true); });
   poll(true);
+  setTimeout(loop, 1000);
 
   const resetResult = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   const reset = h('button', {
