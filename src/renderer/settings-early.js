@@ -35,6 +35,7 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     prefetch('ai.get', () => S.ai.get());
+    S.ai.onModelsUpdated?.(stop); // the model changed elsewhere (the sidebar) in this first moment: the answer fetched at load is stale, and the page's own refresh must read afresh
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();

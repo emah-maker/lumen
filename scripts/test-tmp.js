@@ -28,10 +28,11 @@ function removeTestProfiles(since) {
 }
 
 // { env, done }: spread env into the suite's child env; call done() after it exits.
-function suiteTmp(name) {
+// sweep: false when suites run side by side (test-units.js --jobs): sweeping the real temp folder could remove a neighbour's folders.
+function suiteTmp(name, { sweep = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `lt-${name.replace(/[^a-z0-9]/gi, '').slice(0, 10)}-`));
   const started = Date.now();
-  return { env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir }, done() { removeDir(dir); removeTestProfiles(started); } };
+  return { env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir }, done() { removeDir(dir); if (sweep) removeTestProfiles(started); } };
 }
 
 module.exports = { suiteTmp, removeTestProfiles, TEST_PROFILE };

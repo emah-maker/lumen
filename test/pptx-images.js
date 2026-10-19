@@ -323,6 +323,43 @@ const LONG_TASK_MS = 100;
         const note2 = okId ? await run(okId, "document.getElementById('notes').textContent") : 'no viewer';
         check('when every EMF and WMF draws there is no banner', okId && !/EMF|WMF|cannot show/.test(note2), note2);
 
+        // EMF+ (GDI+ records only: EMFJS draws nothing from it): on Windows the OS draws it in a hidden PowerShell (features/emf-gdi.js)
+        if (process.platform === 'win32') {
+          const plusFile = path.join(docs, 'emfplus.pptx');
+          fs.writeFileSync(plusFile, F.deck({ slides: [
+            { shapes: F.pic({ rid: 'p', box: { x: 100, y: 100, w: 400, h: 200 } }), rels: [I('p', 'plus.emf')] },
+            { shapes: F.pic({ rid: 'p', box: { x: 100, y: 100, w: 400, h: 200, flipH: true } }) + F.pic({ id: 11, rid: 'c', box: { x: 600, y: 100, w: 100, h: 100 } }), rels: [I('p', 'plus.emf'), I('c', 'classic.emf')] },
+          ], media: { 'plus.emf': F.emfPlus(), 'classic.emf': F.emf({ w: 300, h: 150, left: F.GREEN, right: F.YELLOW }) } }));
+          const cacheDir = path.join(profile, 'slides-picture-cache');
+          const listed = () => (fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')) : []);
+          const before = listed();
+          const t0 = Date.now();
+          const plus = await openDeck(plusFile);
+          check('a deck with EMF+ pictures opens', Boolean(plus) && (await ready(plus)) === 'true', plus);
+          if (plus) {
+            r = await show(plus, 0);
+            c = await colors(plus, r, [[200, 200], [400, 200], [300, 90]]);
+            const firstMs = Date.now() - t0;
+            check(`EMF+ (Windows draws it, ${firstMs} ms from opening to the picture): red on the left, blue on the right`, is(c[0], F.RED) && is(c[1], F.BLUE) && is(c[2], [255, 255, 255]), c.map(named).join(' '));
+            check('EMF+: it is an <img>, with no placeholder and no "cannot show" banner', (await run(plus, "document.querySelectorAll('.slide')[0].querySelectorAll('img').length")) === 1 && (await run(plus, "document.querySelectorAll('.slide')[0].querySelectorAll('.pic.missing').length")) === 0 && !/EMF|WMF|cannot show/.test(await run(plus, "document.getElementById('notes').textContent")));
+            check('EMF+: the page did not need its own EMFJS renderer for it', (await run(plus, "!document.querySelector('script[src*=\"slides-vector\"]')")) === true);
+            r = await show(plus, 1);
+            c = await colors(plus, r, [[200, 200], [400, 200], [625, 150], [675, 150]]);
+            check('EMF+ flipped, and a classic EMF beside it, both drawn by Windows', is(c[0], F.BLUE) && is(c[1], F.RED) && is(c[2], F.GREEN) && is(c[3], F.YELLOW), c.map(named).join(' '));
+            const cached = fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')) : [];
+            const stamp = cached.map((n) => fs.statSync(path.join(cacheDir, n)).mtimeMs).join(',');
+            check('the two converted pictures are cached in the profile, by content', cached.filter((n) => !before.includes(n)).length === 2, cached.join(' '));
+            const plusFile2 = path.join(docs, 'emfplus-again.pptx'); fs.copyFileSync(plusFile, plusFile2);
+            const t1 = Date.now();
+            const again = await openDeck(plusFile2);
+            r = again ? await show(again, 0) : null;
+            c = r ? await colors(again, r, [[200, 200], [400, 200]]) : [];
+            const secondMs = Date.now() - t1;
+            console.log(`INFO  EMF+ deck: first open to picture ${firstMs} ms, second open (cache) ${secondMs} ms`);
+            check('second open: the same picture, from the cache (no new files, none rewritten)', is(c[0], F.RED) && is(c[1], F.BLUE) && fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')).map((n) => fs.statSync(path.join(cacheDir, n)).mtimeMs).join(',') === stamp, c.map(named).join(' '));
+          }
+        }
+
         // fuzz: truncated and garbage bytes never throw and never hang
         const fuzz = await run(vec, `(async () => {
           const out = { threw: 0, drew: 0, n: 0, ms: 0 };

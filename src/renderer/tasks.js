@@ -31,6 +31,7 @@
   const btn = (text, onclick, cls = 'btn') => h('button', { type: 'button', className: cls, textContent: text, onclick });
   const iconBtn = (svg, label, onclick, cls = 'icon-btn') => { const b = h('button', { type: 'button', className: cls, title: label, onclick }); b.setAttribute('aria-label', label); b.innerHTML = svg; return b; };
   const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  const FULL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>';
   const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
 
   const clock = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -168,7 +169,9 @@
 
   function head(title, left) {
     const close = iconBtn(CLOSE, T('tasks.close'), () => closePanel(true), 'icon-btn task-close');
-    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), close);
+    // "Open full view": lumen://tasks, every chat, task, routine and agent at work on one page (renderer/mission.html).
+    const full = left ? null : iconBtn(FULL, T('mission.openFull'), () => { closePanel(false); api.openFull?.(); }, 'icon-btn task-full');
+    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), full, close);
   }
 
   function renderList() {
@@ -539,7 +542,7 @@
   setInterval(() => { if (!panel.hidden && !panel.querySelector('.task-edit') && state.tasks.some((t) => t.status === 'running')) render(); }, 20000);
   api.onState((s) => { state = s; applyState(); if (!panel.hidden) render(); });
   api.onToast(toast);
-  api.onOpen(({ id } = {}) => openPanel(id || null));
+  api.onOpen((p = {}) => (p.routine && window.lumenRoutines ? window.lumenRoutines.fromMain(p) : openPanel(p.id || null))); // (the home card and Settings can ask for the routine editor)
   api.onPropose((spec) => openCreate(spec || {}));
   // What renderer/routines.js builds the Routines view with (same page, loaded after this file).
   window.lumenTasks = {

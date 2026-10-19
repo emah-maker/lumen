@@ -72,6 +72,7 @@ const MK = lazy(() => require('./markets-view'));
 const TVW = lazy(() => require('./tradingview-view'));
 const CW = lazy(() => require('./custom-widget'));
 const LW = lazy(() => require('./local-widgets'));
+const RC = lazy(() => require('./routines-card')); // the Routines card's data (shaped from the runner's view: deps.routines)
 const AS = lazy(() => require('./aistatus-view')); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
 const CS = lazy(() => require('./calendar-sources')); // the Calendar card's sources: one or several, merged
 const WCFG = lazy(() => require('./widget-config')); // the home page's own editor: what it may see, and its form laid over what is saved
@@ -160,8 +161,9 @@ async function engineAct(am, name, action, x, cached) {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
+  routines: () => ({}),
   files: () => ({}),
-  applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app }),
+  applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app, react: w.react === true }),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -180,6 +182,7 @@ const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
 const ERROR_CLICK_MS = 1e3; // ...except a card showing an error: Try again works at once (a double click is one request)
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
+const PICTURE_RATE = { window: 60e3, max: 400 }; // ...and the small cover pictures of the Spotify cards (the Home tab alone is up to a hundred) come from Spotify's picture hosts: a budget of their own, so they never use up the API's
 const SEARCH_RATE = { window: 60e3, max: 90 }; // ...and a search the user typed (and the pictures of its rows) has a budget of its own: polling can't make it wait
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
@@ -571,21 +574,21 @@ const CONNECTORS = {
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
-      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
+      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors), react: c.react === true } : null; // (react: the card reacts to the music, off unless asked: renderer/newtab-music-react.js)
     },
     async resolve(input, x) {
       const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
       // Status (the engine's now-playing card) and Web player: nothing to check here (the user signs in on Spotify's own site).
       const mode = ['status', 'web', 'api'].includes(input.mode) ? input.mode : clientId ? 'api' : 'status'; // (a form always says; without one, an own Client ID means the API card, as before, else the engine's)
-      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
-      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
+      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
+      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card shows open.spotify.com. Sign in there once.' };
       if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
       if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
       try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
-      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
     summary: (c) => (c.mode === 'web' ? 'Spotify web player' : c.mode === 'status' ? `Plays inside Lumen${c.art ? '' : ' · no album art'}` : `Now playing${c.art ? '' : ' · no album art'}`),
@@ -596,7 +599,11 @@ const CONNECTORS = {
         const d = await x.spotifyEngine.read();
         const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
         const lib = SAC.directLibrary(x.ui(c.id)); // (the Web API's library, when the account is connected and it answered; else the page's own)
-        const merged = shown || lib ? { ...d, ...(lib || {}), ...(shown || {}) } : d;
+        const homeOn = apiConnected(c, x);
+        // The Home tab: the Web API's shelves when the account is connected; else the tab says Spotify has to be connected (its button starts the sign-in).
+        const home = { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true }, ...(homeOn ? {} : { home: { shelves: {}, connect: true } }) };
+        const lib2 = homeOn ? SAC.lib2Fields(x.ui(c.id), x.libText()) : null; // (the Library of the card: the Web API's, when the account is connected)
+        const merged = shown || lib || home || lib2 ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}), ...(lib2 || {}) } : d;
         return c.art === false ? { ...merged, art: '' } : merged;
       }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
@@ -610,7 +617,7 @@ const CONNECTORS = {
       let art = '';
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
       // The bigger sizes (the heart, the queue, the library, devices, the album playing): features/spotify-api-card.js. A failure there never costs the card its now-playing.
-      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.image }, data).catch(() => ({}));
+      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.thumb, searchImage: x.searchThumb, homeText: x.homeText(), libText: x.libText() }, data).catch(() => ({}));
       return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
@@ -633,7 +640,7 @@ const CONNECTORS = {
       }
       const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
       const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
-      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.image, searchCall: searchIt, searchImage: x.searchImage, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.thumb, searchCall: searchIt, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), homeText: x.homeText(), libText: x.libText(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}, SAC.homeFields(x.ui(c.id)) || {}, SAC.lib2Fields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
       if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
       const bigger = await SAC.act(callIt, action, sctx);
       if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
@@ -1057,6 +1064,20 @@ const CONNECTORS = {
     present: (c, d, ctx) => ctx.aiStatus(),
   },
 
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last, from the runner's view
+  // (deps.routines). No account, never online; present() asks on every read, routinesChanged() tells the page when it moved, and
+  // the card's buttons (do=routine-new, do=routine-open&id=) are handled in act() below: they open the sidebar, nothing is saved.
+  routines: {
+    label: 'Routines',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows what your routines run next and what they did last. It updates by itself and never goes online.' }; },
+    title: () => 'Routines',
+    summary: () => 'What your routines run next and their latest results',
+    async fetch() { return {}; },
+    present: (c, d, ctx) => ctx.routines(),
+  },
+
   // Apple Music. Two modes, like Spotify's. 'status' (the default) is a now-playing card driven by the Apple Music engine
   // (features/apple-music-engine.js): Apple's own MusicKit JS in a hidden music.apple.com view, so the music plays inside Lumen
   // and the card can show what is playing, seek, list recent plays and playlists and search. It needs no key here (the page's
@@ -1067,10 +1088,10 @@ const CONNECTORS = {
     label: 'Apple Music',
     ttl: (d) => (d && d.mode === 'web' ? 365 * 24 * 3600e3 : 4e3),
     minRefresh: 100, // the engine tells main when something changes (deps.appleMusic.onChange), which asks for a fresh look at once
-    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors) }),
+    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors), react: c.react === true }),
     async resolve(input) {
       const cfg = AMV.cleanConfig(input);
-      return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card plays Apple Music inside Lumen and shows what is playing.' };
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors), react: input.react === true }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card plays Apple Music inside Lumen and shows what is playing.' };
     },
     title: () => 'Apple Music',
     summary: (c) => (c.mode === 'web' ? 'Apple Music web player' : `Now playing${c.art ? '' : ' · no album art'}`),
@@ -1310,7 +1331,7 @@ async function statusLibrary(c, x, cached, action) {
   const ui = x.ui(c.id);
   const have = ui.library;
   if (have && SAC.directLibrary(ui) && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
-  const sctx = { ui, now: x.now, image: x.image, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
+  const sctx = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
   await SAC.loadTab((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), 'library', sctx, cached).catch(() => {});
   const got = SAC.directLibrary(ui);
   if (!got) return false;
@@ -1321,7 +1342,7 @@ async function statusSearch(c, action, x, cached) {
   if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
   if (!apiConnected(c, x)) { if (action.do === 'esearch') SAC.clearSearch(x.ui(c.id)); return false; } // (not connected: the page searches, and no older Web API rows are left over it)
   const ui = x.ui(c.id);
-  const sctx = { ui, now: x.now, image: x.image, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchImage };
+  const sctx = { ui, now: x.now, image: x.thumb, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchThumb };
   if (action.do === 'esearch') {
     const term = typeof action.text === 'string' ? action.text.trim() : '';
     if (!term) { SAC.clearSearch(ui); return false; } // (the engine clears its own)
@@ -1332,9 +1353,30 @@ async function statusSearch(c, action, x, cached) {
     Object.assign(cached, SAC.directResults(ui));
     return { local: true };
   }
-  if (action.do === 'ethumb' && ui.search?.api) {
+  if (action.do === 'elib' || action.do === 'edetail' || action.do === 'eplay') { // the Library (Web API, when connected): lists, opened lists, a row played in its list on Lumen's own player
+    if (!apiConnected(c, x)) return { local: true };
+    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), pageRead: x.spotifyEngine?.readItem ? (kind, id) => x.spotifyEngine.readItem(kind, id) : undefined, onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
+    const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, lx);
+    Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {});
+    return done;
+  }
+  if (action.do === 'ehome') {
+    if (!SAC.HOME_SHELVES.includes(action.arg)) return false;
+    if (!apiConnected(c, x)) return { local: true }; // (nothing to read it with: the tab offers to connect)
+    const sh = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, onPart: () => { Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {}); x.pushUpdate?.(); } };
+    await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, sh).catch(() => {});
+    Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {});
+    return { local: true };
+  }
+  if (action.do === 'playlater' && action.kind === 'song') {
+    // "Add to queue" with the account connected: the Web API does it and its answer is the truth (the card says "Added" only when Spotify did). When it can't (no scope, no
+    // active device, offline) the hidden player's own page queues it, as before.
+    try { const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, { ui, cached, now: x.now }); if (done) return done; } catch { /* the page queues it */ }
+    return false;
+  }
+  if (action.do === 'ethumb' && (ui.search?.api || SAC.directLibrary(ui))) {
     await SAC.loadThumbs(ui, action.ids, sctx);
-    Object.assign(cached, SAC.directResults(ui));
+    Object.assign(cached, SAC.directLibrary(ui) || {}, SAC.directResults(ui) || {});
     return { local: true };
   }
   if (action.do === 'emore' && ui.search?.api) { // the next ten songs of the search shown (Spotify's development mode answers ten a request)
@@ -1352,11 +1394,14 @@ function warmSpotify(c, x) {
 
 // One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
 // a 429 already backs every request off (request() below) and reads as a calm message.
+// Spotify's answers can be big: GET /me/albums sends every saved album with its whole track list (50 albums are well over 1 MB), and a playlist's items
+// are full track objects. Cut at 256 KB the JSON was invalid and the list silently empty, so the cap is high and a cut answer is a failure (see ask() in spotify-api-card.js).
+const SPOTIFY_MAX_BYTES = 6e6;
 async function spotifyCall(x, cfg, method, path, body, budget) {
   const go = async (force) => {
     const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
     return (budget === 'search' && x.rawSearch ? x.rawSearch : x.raw)(`${x.endpoint('spotify')}${path}`, {
-      method, max: 262144, body: body ? JSON.stringify(body) : undefined,
+      method, max: SPOTIFY_MAX_BYTES, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     });
   };
@@ -1468,7 +1513,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, react: i.react === true, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1560,6 +1605,7 @@ function applyRects(widgets, items) {
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
+  const recentPictures = [];
   const recentSearch = []; // the same for the user's own searches (SEARCH_RATE)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
@@ -1594,7 +1640,7 @@ function createWidgets(deps) {
     const value = await fn();
     if (born !== epoch) return value;
     memoCache.set(key, { at: now(), value });
-    if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
+    if (memoCache.size > 400) memoCache.delete(memoCache.keys().next().value); // (the small pictures of a Home tab are most of them)
     return value;
   }
   const lastGood = new Map(); // key -> the last answer that worked (a calendar that is down for a while)
@@ -1603,6 +1649,12 @@ function createWidgets(deps) {
   // ---- network helpers handed to connectors (x) ----
   function spend(budget) {
     const t = now();
+    if (budget === 'pictures') { // (not the API: neither its 429 pause nor its budget)
+      while (recentPictures.length && t - recentPictures[0] > PICTURE_RATE.window) recentPictures.shift();
+      if (recentPictures.length >= (Number(deps.pictureRateMax?.()) || PICTURE_RATE.max)) throw new Error('Too many pictures right now. Try again in a minute.');
+      recentPictures.push(t);
+      return;
+    }
     if (t < backoffUntil) throw Object.assign(new Error('The service asked Lumen to slow down. It will try again shortly.'), { waitMs: backoffUntil - t }); // (one 429 pauses every card: they wait it out together instead of retrying)
     const bucket = budget === 'search' ? recentSearch : recent;
     const win = budget === 'search' ? SEARCH_RATE.window : RATE.window;
@@ -1721,11 +1773,26 @@ function createWidgets(deps) {
       googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
       appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
       spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      libText: () => Object.fromEntries(Object.entries(SAC.LIB_STRINGS).map(([k, en]) => [k, tt(`spotify.library.${k}`, en)])), // (the Library's words, from locales/)
+      homeText: () => Object.fromEntries(Object.entries(SAC.HOME_STRINGS).map(([k, en]) => [k, tt(`spotify.home.${k}`, en)])), // (the Home tab's words, from locales/)
       libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
       pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
       ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
       rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)
+      // A row's picture (queue, search, library): a small JPEG made by deps.resizeThumb (128 px: rows draw it 28 px wide, Home tiles 112), as a data: URL the card accepts
+      // (under 12000 characters). Without a resizer the original is used when it is small enough. `budget`: 'search' for pictures of rows the user is looking at.
+      thumb: (url) => memo(`thumb:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/jpeg, image/png;q=0.9' }, budget: 'pictures' });
+        if (!res.ok || res.truncated) throw new Error('That picture can’t be shown.');
+        let small = null;
+        try { if (deps.resizeThumb) small = deps.resizeThumb(res.bytes); } catch { /* the picture as it is, if it is small enough */ }
+        const data = SV.dataUrl(small || res.bytes, SV.MAX_ART_BYTES);
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
+      searchThumb: (url) => x.thumb(url),
       // The same picture as image(), for a result row the user is looking at (the search budget).
       searchImage: (url) => memo(`img:${url}`, 3600e3, async () => {
         if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
@@ -1883,6 +1950,28 @@ function createWidgets(deps) {
   }
   // user: a person pressed Refresh or Try again. That is always a real fetch: no minimum interval, no cached answer, no rate-limit
   // pause that hides it (the failure is shown instead), and it joins a refresh already running (the button spins until it ends).
+  // Play / Pause on a music card: the card shows the intended state at once, and keeps it until the source says the same (Spotify's API answers is_playing with the old value for a
+  // second or two after a pause, and the hidden player's page can send a state it read just before the click). An answer that disagrees is not shown (it is one that was read
+  // before the press, or one that has not caught up); the player is asked again shortly. If it still disagrees after MUSIC_CONFIRM_MS the press did not work: the card goes back
+  // to what the source says, with a short note.
+  const MUSIC_CONFIRM_MS = 3000;
+  function holdIntent(w, entry, data, startedAt) {
+    const i = entry.intent;
+    if (!i) return data;
+    const playing = data && (data.state === 'playing' || data.state === 'paused');
+    if (!playing || data.kind === 'ad') { entry.intent = null; return data; } // (nothing playing any more, or an ad: nothing to hold)
+    if (data.state === i.state) { entry.intent = null; return data; } // confirmed
+    if (now() < i.until) { // not yet: show what was pressed, ask again soon
+      setTimer(() => { if (cache.get(w.id) === entry && entry.intent === i) refresh(w, { after: true }).catch(() => {}); }, 700);
+      return { ...data, state: i.state, progressMs: i.progressMs ?? data.progressMs, at: i.at };
+    }
+    entry.intent = null; // the source never agreed: the press did not work
+    const text = tt(i.state === 'paused' ? 'widgets.musicPauseFailed' : 'widgets.musicPlayFailed', i.state === 'paused' ? 'It didn’t pause. Try again.' : 'It didn’t start playing. Try again.');
+    entry.notice = { text, until: now() + 8000 };
+    setTimer(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+    void startedAt;
+    return { ...data, notice: text };
+  }
   function refresh(w, { force = false, retry = false, user = false, after = false } = {}) {
     if (user) force = true;
     if (after) { // after a write (an added task): a run that began before the write has the old list, so wait for it and ask again
@@ -1916,9 +2005,11 @@ function createWidgets(deps) {
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
     let capTimer;
     const capped = (p) => Promise.race([p, new Promise((_, no) => { capTimer = setTimer(() => no(Object.assign(new Error('Couldn’t reach the service in time. Try again.'), { transient: true })), FETCH_CAP_MS); })]);
+    const startedAt = now();
     entry.pending = (entry.netFail || (user && entry.error) ? freshNetwork() : Promise.resolve())
       .then(() => capped(Promise.resolve().then(() => c.fetch(w, helpers(c.secret)))))
       .then((data) => {
+        data = holdIntent(w, entry, data, startedAt);
         entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
         entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
         entry.netFail = entry.retrying;
@@ -1943,13 +2034,13 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()), routines: () => RC.shape(deps.routines ? deps.routines() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', react: w.react === true, layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -2274,13 +2365,14 @@ function createWidgets(deps) {
     return {
       url: SV.authorizeUrl(x.endpoint('spotifyAccounts'), { clientId, challenge: p.challenge, state: p.state }),
       state: p.state,
+      builtin: SV.clientIdSource({ user: clientIdInput, env: typeof process !== 'undefined' ? process.env?.LUMEN_SPOTIFY_CLIENT_ID : '' }) === 'builtin', // (Lumen's own app: limited to 25 listed accounts)
       async exchange(code) {
         if (typeof code !== 'string' || !/^[\w.~-]{1,2000}$/.test(code)) throw new Error('Spotify sent something unexpected.');
         const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
           method: 'POST', max: 65536, body: SV.tokenForm('code', { clientId, code, verifier: p.verifier }),
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         });
-        if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
+        if (!res.ok) throw Object.assign(new Error(SV.tokenError(res.status, res.body)), { allowlist: SV.isAllowlistError(res.status, res.body) });
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
         Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
@@ -2290,6 +2382,27 @@ function createWidgets(deps) {
         return true;
       },
     };
+  }
+  // The Spotify card's Reconnect / Connect button: the sign-in starts at once (main.js passes its flow as `signIn(clientId)`), whatever the card's mode. The card says it is
+  // waiting, and what went wrong if it did not work (Lumen's own app only lets 25 listed accounts in: then it offers the user's own app).
+  async function spotifyReconnect(id, signIn) {
+    const w = list().find((x) => x.id === id && x.type === 'spotify');
+    if (!w) return false;
+    const x = helpers('spotify');
+    const show = (ui, signInState) => {
+      ui.signIn = signInState;
+      const e = cache.get(id);
+      if (e && e.data) e.data = { ...e.data, ...(SAC.homeFields(ui, x.homeText()) || {}) };
+      deps.onUpdate?.();
+    };
+    show(x.ui(id), { state: 'waiting', message: tt('spotify.home.waiting', 'Waiting for Spotify in the tab that just opened…') });
+    let r;
+    try { r = await signIn(w.clientId || ''); } catch (err) { r = { ok: false, message: String(err?.message || err) }; }
+    const ui = x.ui(id); // (a sign-in that worked reset the card's state: a fresh one)
+    if (r.ok) { show(ui, null); const e = cache.get(id); if (e) e.at = 0; refresh(list().find((q) => q.id === id) || w, { force: true }).catch(() => {}); return true; }
+    if (r.cancelled) { show(ui, null); return false; }
+    show(ui, { state: r.allowlist ? 'allowlist' : 'failed', message: String(r.message || '').slice(0, 300) });
+    return false;
   }
   // Who is signed in, for Settings' status line (kept in memory, never stored). '' when unknown.
   async function spotifyName(x, clientId) {
@@ -2489,8 +2602,12 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|elib|edetail|eplay|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
+    if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
+      action.routine = params.get('id');
+      if (typeof action.routine !== 'string' || !RC.ROUTINE_ID_RE.test(action.routine)) return { invalid: true };
+    }
     if (action.do === 'reschedule') { // a task's new day, from the card's small menu
       action.arg = params.get('arg');
       if (!['today', 'tomorrow', 'nextweek', 'none'].includes(action.arg)) return { invalid: true };
@@ -2554,6 +2671,30 @@ function createWidgets(deps) {
       action.arg = params.get('arg');
       if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
       if (params.get('force') === '1') action.force = true; // (Try again: the tab is read again, not served from the last few seconds)
+    }
+    if (action.do === 'elib') { // the Library's lists (arg: init | playlists | albums | artists; more: the next page)
+      action.arg = params.get('arg');
+      if (!['init', 'playlists', 'albums', 'artists'].includes(action.arg)) return { invalid: true };
+      if (params.get('more') === '1') action.more = true;
+      if (params.get('force') === '1') action.force = true;
+    }
+    if (action.do === 'edetail' || action.do === 'eplay') { // a list of the Library opened in the card (its songs, a page at a time), or played (pos: from that entry; with: which song)
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!['playlist', 'album', 'liked', 'artist'].includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return { invalid: true };
+      if (action.do === 'edetail') { if (params.get('more') === '1') action.more = true; if (params.get('force') === '1') action.force = true; }
+      else {
+        if (params.has('pos')) { action.pos = Number(params.get('pos')); if (!Number.isInteger(action.pos) || action.pos < 0 || action.pos > 99999) return { invalid: true }; }
+        action.with = params.get('with');
+        if (action.with !== null && !AMB.ID_RE.test(action.with)) return { invalid: true };
+        if (action.with === null) delete action.with;
+        if (params.get('shuffle') === '1') action.shuffle = true;
+      }
+    }
+    if (action.do === 'ehome') { // a Home shelf the card scrolled to (arg: which)
+      action.arg = params.get('arg');
+      if (!SAC.HOME_SHELVES.includes(action.arg)) return { invalid: true };
+      if (params.get('force') === '1') action.force = true;
     }
     if (action.do === 'eopen' || action.do === 'pplay' || action.do === 'pin' || action.do === 'unpin') { // a playlist or album (kind, arg: its id): open its songs in the card, play it (pos: from that entry; with: which song; shuffle=1), pin it as a tab or unpin it
       action.kind = params.get('kind');
@@ -2731,6 +2872,11 @@ function createWidgets(deps) {
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
+    if (action.do === 'routine-new' || action.do === 'routine-open') { // the Routines card: open the sidebar's editor or a routine's result; the widget itself is not touched
+      if (w.type !== 'routines' || !deps.routineAct) return false;
+      const done = deps.routineAct(action.do === 'routine-new' ? { act: 'new' } : { act: 'open', id: action.routine });
+      return done?.ok !== false;
+    }
     if (action.do === 'refresh') return refresh(w, { force: true, user: action.arg !== 'auto' }); // arg=auto: the page's own timer (a card that went stale, a timer that ended)
     if (action.do === 'tdsource') { // the Todoist card's Today / Upcoming / Inbox switch: the card keeps showing the old list until the new one arrives
       const todo = w.type === 'todoist' ? TV.applyView(w.todo, action.arg) : null;
@@ -2765,9 +2911,13 @@ function createWidgets(deps) {
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
+    entry.notice = null; // (a note from the last press — "Added to the queue." — is not what this press did)
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
+      if ((w.type === 'spotify' || w.type === 'applemusic') && (action.do === 'play' || action.do === 'pause') && (entry.data.state === 'playing' || entry.data.state === 'paused') && entry.data.state === (action.do === 'play' ? 'playing' : 'paused')) {
+        entry.intent = { state: entry.data.state, at: now(), until: now() + MUSIC_CONFIRM_MS, progressMs: entry.data.progressMs }; // (see holdIntent)
+      }
       if (done.keep) { deps.onUpdate?.(); return true; } // nothing to fetch again (a Muse answer costs money)
       forget('tasks:');
       forget('done:');
@@ -2789,6 +2939,9 @@ function createWidgets(deps) {
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
       entry.data = { ...entry.data, notice: entry.error };
+      // What went wrong stays on the card for a few seconds, as a note does, instead of vanishing with the next look at the player (which replaced the data and the message with it).
+      entry.notice = { text: entry.error, until: now() + 8000 };
+      setTimeout(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
       if (err?.transient === true) { entry.tries = 0; scheduleRetry(w, entry); } // a passing failure: the list is read again in a moment, which also clears the note
       deps.onUpdate?.();
       return false;
@@ -2842,6 +2995,21 @@ function createWidgets(deps) {
   }
   const aiStatusSoon = () => { if (aiTimer) return; aiTimer = setTimeout(() => { aiTimer = null; try { aiStatusChanged(); } catch (err) { console.error('[lumen] AI status:', err.message); } }, 300); aiTimer.unref?.(); };
 
+  // The Routines card shows the runner's live view (next runs, latest results, approvals waiting), so main.js says when a routine
+  // may have moved (routinesSoon: several changes in a row become one look). Like the AI status card, the page is only refreshed
+  // when the shaped data differs from what it was last given.
+  let routinesLast = '';
+  let routinesTimer = null;
+  function routinesChanged() {
+    if (!deps.routines || !list().some((w) => w.type === 'routines')) return false;
+    const now = JSON.stringify(RC.shape(deps.routines(), Date.now()));
+    if (now === routinesLast) return false;
+    routinesLast = now;
+    deps.onUpdate?.();
+    return true;
+  }
+  const routinesSoon = () => { if (routinesTimer) return; routinesTimer = setTimeout(() => { routinesTimer = null; try { routinesChanged(); } catch (err) { console.error('[lumen] Routines card:', err.message); } }, 300); routinesTimer.unref?.(); };
+
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
   // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
@@ -2851,7 +3019,7 @@ function createWidgets(deps) {
     return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, engineChanged, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

@@ -157,7 +157,7 @@ const path = require('path');
   }, [await tabIdOf('/l1'), await (async () => { const id = await tabIdOf('/l2'); await clickTab(id); await sleep(300); return id; })()]);
   const ltA = lt.find((t) => t.url.endsWith('/l1'));
   const ltB = lt.find((t) => t.url.endsWith('/l2'));
-  check('list_tabs in a task shows the task\'s tab as active and the one in front as in_front', ltA?.active === true && ltB?.active === false && ltB?.in_front === true, JSON.stringify(lt));
+  check('list_tabs in a task shows the task\'s tab as active and the one in front as in_front', ltA?.active === true && ltB && !('active' in ltB) && ltB.in_front === true, JSON.stringify(lt));
 
   // Element ids read in one tab are refused in the tab the task moved to (they'd hit another element).
   const refs = await app.evaluate(async (_e, ids) => {

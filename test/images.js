@@ -117,7 +117,8 @@ function clipboardImage(app, size, color) {
 
   // 6b. The attach button: visible, named, with its limit in the tooltip, keyboard operable.
   const attachBtn = ui.locator('#attach');
-  check('attach button is in the composer', (await attachBtn.count()) === 1 && await attachBtn.isVisible(), 'missing');
+  await ui.click('#composer-plus'); // (attach is a row of the + menu)
+  check('attach button is in the composer\'s + menu', (await attachBtn.count()) === 1 && await attachBtn.isVisible(), 'missing');
   check('attach button has an accessible name and a tooltip stating the limit', (await attachBtn.getAttribute('aria-label')) === 'Attach files' && /up to 10/.test((await attachBtn.getAttribute('title')) || ''), await attachBtn.getAttribute('title'));
   await attachBtn.focus();
   const chooser = ui.waitForEvent('filechooser', { timeout: 4000 }).catch(() => null);

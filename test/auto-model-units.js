@@ -136,5 +136,13 @@ check('the picker row: Auto first-class, a label that follows the last choice', 
   return base.id === 'auto' && base.name === 'Auto' && base.group === '' && used.name === 'Auto · Haiku' && /quick lookup/.test(used.detail);
 })());
 
+check('the picker row: Auto is only ever "Auto"; the last choice is a labelled lastUsed, and the row explains itself', (() => {
+  const base = A.pickerEntry({ describe: 'Auto picks the best connected model for each message' });
+  const used = A.pickerEntry({ last: { label: 'Auto · Grok 4.7 Build', reason: 'Auto: Grok 4.7 Build for code' } });
+  const rows = A.withProviderAutos([{ id: 'openai:a', provider: 'OpenAI', group: 'OpenAI' }, { id: 'openai:b', provider: 'OpenAI', group: 'OpenAI' }], { pick: 'openai:auto', last: { label: 'Auto · OpenAI · GPT-5.6', reason: 'x', scope: 'openai' } });
+  const own = rows.find((r) => r.id === 'openai:auto');
+  return base.label === 'Auto' && !base.lastUsed && /best connected model/.test(base.detail) && used.label === 'Auto' && used.lastUsed === 'Grok 4.7 Build' && own.lastUsed === 'GPT-5.6' && own.label === 'Auto · OpenAI';
+})());
+
 if (failures) { console.log(`\n${failures} auto-model check(s) failed`); process.exit(1); }
 console.log('\nAll auto-model checks passed');

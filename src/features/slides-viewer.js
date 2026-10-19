@@ -20,6 +20,8 @@ const pptx = require('./pptx');
 
 const VIEWER_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'slides.html')).href;
 
+// The viewer keeps the slide being read in its own #fragment (replaceState), which is not a different page.
+const sameViewerUrl = (a, b) => String(a || '').split('#')[0] === String(b || '').split('#')[0];
 const bareOf = (url) => String(url || '').split(/[?#]/)[0];
 const isViewerUrl = (url) => typeof url === 'string' && bareOf(url).toLowerCase() === VIEWER_URL.toLowerCase();
 const isLocalPptx = (url) => { try { const u = new URL(url); return u.protocol === 'file:' && pptx.isPptxName(u.pathname); } catch { return false; } };
@@ -72,19 +74,57 @@ async function loadSlideTexts(deckUrl) {
   return deck.slides.map((s) => [s.text || '', s.notes ? `Notes: ${s.notes}` : ''].filter(Boolean).join('\n\n'));
 }
 
-function create() {
+// The points the largest use of each picture part is shown at, from the slides' shapes (the pictures are drawn at twice that).
+function pictureSizes(deck) {
+  const sizes = new Map();
+  const note = (part, w, h) => { if (typeof part === 'string' && part) sizes.set(part, Math.max(sizes.get(part) || 0, (Number(w) || 0) / pptx.EMU_PER_PT, (Number(h) || 0) / pptx.EMU_PER_PT)); };
+  for (const slide of deck.slides || []) {
+    for (const s of slide.shapes || []) if (s && s.image) note(s.image, s.w, s.h);
+    if (slide.background && slide.background.image) note(slide.background.image, deck.width, deck.height);
+  }
+  return sizes;
+}
+
+// { part: data:image/png URL } for the deck's EMF and WMF pictures that Windows could draw (see emf-gdi.js); {} elsewhere or on any failure.
+async function metafilePngs(deck, { cacheDir, platform = process.platform, stats } = {}) {
+  const out = {};
+  if (platform !== 'win32' || !deck || !deck.media) return out;
+  const sizes = pictureSizes(deck);
+  const alias = deck.mediaAlias || {};
+  const pictures = [];
+  for (const [part, value] of Object.entries(deck.media)) {
+    const m = typeof value === 'string' ? /^data:image\/x-(?:emf|wmf);base64,/.exec(value) : null;
+    if (!m) continue;
+    let points = sizes.get(part) || 0;
+    for (const [from, to] of Object.entries(alias)) if (to === part) points = Math.max(points, sizes.get(from) || 0);
+    pictures.push({ id: part, bytes: Buffer.from(value.slice(m[0].length), 'base64'), points });
+  }
+  if (!pictures.length) return out;
+  const pngs = await require('./emf-gdi').convertMetafiles(pictures, { cacheDir, platform, stats });
+  for (const [part, png] of pngs) out[part] = 'data:image/png;base64,' + png.toString('base64');
+  return out;
+}
+
+function create({ cacheDir } = {}) {
   async function render(wc, url) {
     const deckUrl = deckUrlOf(url);
     const data = deckUrl ? await loadDeck(deckUrl) : { name: 'Presentation', error: 'Only PowerPoint files (.pptx) on this computer can be shown here.' };
-    if (wc.isDestroyed() || wc.getURL() !== url) return;
+    if (wc.isDestroyed() || !sameViewerUrl(wc.getURL(), url)) return;
     // The deck's structure goes first (small), then the pictures one slice at a time, in the order the slides use them, with a turn of the
     // event loop between: 100 pictures are 10+ MB, and one call with all of them held the main process for 20 to 50 ms (stringify and send).
     const { media, ...structure } = data;
-    const pictures = media ? Object.entries(media).filter(([, v]) => typeof v === 'string') : [];
-    const alive = () => !wc.isDestroyed() && wc.getURL() === url;
+    let pictures = media ? Object.entries(media).filter(([, v]) => typeof v === 'string') : [];
+    // EMF and WMF go through Windows' own renderer (GDI+, in a hidden child process) while the slides and the other pictures are sent; each one the
+    // page would otherwise draw itself (EMFJS) is sent after the rest, as a PNG when Windows drew it, as it is when not.
+    const vector = ([, v]) => /^data:image\/x-(emf|wmf);/.test(v);
+    const gdi = pictures.some(vector) ? metafilePngs(data, { cacheDir }).catch(() => ({})) : null;
+    if (gdi) pictures = [...pictures.filter((e) => !vector(e)), ...pictures.filter(vector)];
+    const alive = () => !wc.isDestroyed() && sameViewerUrl(wc.getURL(), url);
     const call = (code) => wc.executeJavaScript(code).catch(() => {});
     await call(`window.lumenSlides && window.lumenSlides(${JSON.stringify({ ...structure, mediaKeys: pictures.map(([k]) => k) })})`);
-    for (const [key, value] of pictures) {
+    let pngs = null;
+    for (let [key, value] of pictures) {
+      if (gdi && vector([key, value])) { pngs = pngs || await gdi; if (!alive()) return; if (pngs[key]) value = pngs[key]; }
       for (let at = 0; at < value.length; at += MEDIA_SLICE) {
         if (!alive()) return;
         await call(`window.lumenSlidesMedia && window.lumenSlidesMedia(${JSON.stringify(key)}, ${at}, ${value.length}, ${JSON.stringify(value.slice(at, at + MEDIA_SLICE))})`);
@@ -112,4 +152,4 @@ function create() {
   return { attach, openInPlace, present };
 }
 
-module.exports = { create, VIEWER_URL, isViewerUrl, deckUrlOf, viewerUrl, displayUrl, isLocalPptx, shouldOpenInPlace, shouldOpenFinished, loadDeck, loadSlideTexts, nameOf };
+module.exports = { create, metafilePngs, pictureSizes, VIEWER_URL, isViewerUrl, deckUrlOf, viewerUrl, displayUrl, isLocalPptx, shouldOpenInPlace, shouldOpenFinished, loadDeck, loadSlideTexts, nameOf };

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; media-src 'none'" />
+  <title>Lumen recorder</title>
+  <style>
+    html, body { margin: 0; background: transparent; overflow: hidden; font: 13px/1 "Segoe UI", system-ui, sans-serif; -webkit-user-select: none; user-select: none; }
+    #bar { box-sizing: border-box; display: flex; align-items: center; gap: 8px; height: 36px; margin: 4px; padding: 0 6px 0 14px; border-radius: 18px; color: #fff; background: rgba(28, 28, 32, .94); box-shadow: 0 2px 10px rgba(0, 0, 0, .35); }
+    #dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; flex: none; animation: pulse 1.4s ease-in-out infinite; }
+    .paused #dot { background: #fbbf24; animation: none; }
+    .saved #dot { animation: none; background: #4ade80; }
+    .error #dot { animation: none; background: #fbbf24; }
+    #time { font-variant-numeric: tabular-nums; min-width: 38px; }
+    #text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    button { font: inherit; color: #fff; border: 0; border-radius: 14px; padding: 6px 12px; cursor: pointer; background: rgba(255, 255, 255, .16); white-space: nowrap; }
+    button:hover { background: rgba(255, 255, 255, .28); }
+    button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+    #stop { background: #dc2626; }
+    #stop:hover { background: #ef4444; }
+    [hidden] { display: none !important; }
+    @keyframes pulse { 50% { opacity: .35; } }
+    @media (prefers-reduced-motion: reduce) { #dot { animation: none; } }
+  </style>
+</head>
+<body>
+  <div id="bar" role="status" aria-live="polite">
+    <span id="dot"></span>
+    <span id="time">0:00</span>
+    <span id="text"></span>
+    <button id="pause" type="button"></button>
+    <button id="stop" type="button"></button>
+    <button id="show" type="button" hidden></button>
+    <button id="close" type="button" hidden></button>
+  </div>
+  <script src="recorder.js"></script>
+</body>
+</html>

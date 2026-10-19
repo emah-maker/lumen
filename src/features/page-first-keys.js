@@ -16,14 +16,16 @@
 // frame the preload does not reach, an error page) keeps the old behaviour: the key is Lumen's at once.
 //
 // PAGE_FIRST below is the whole list. Everything else that Lumen binds stays browser-first and no page can override it (BROWSER_ONLY).
-const { shortcutMod } = require('../browser/shortcut-mod');
+const { shortcutMod, shortcutKey } = require('../browser/shortcut-mod');
 
-// Combos are 'mod+shift+key': mod is Ctrl (Cmd on macOS), no combo here has Alt. `not`: the platform where the key is the browser's.
+// Combos are 'mod+shift+key' (Alt only on its own: Alt+Left, Alt+D; Ctrl+Alt is AltGr, a typed character, never a shortcut). mod is Ctrl
+// (Cmd on macOS). `not` / `only`: the platform where the key is the browser's / the only one that has it.
 const PAGE_FIRST = [
   { combo: 'mod+s', does: 'Save page' },
   { combo: 'mod+shift+s', does: 'Screenshot' },
   { combo: 'mod+o', does: 'Open file' },
   { combo: 'mod+shift+o', does: 'Bookmarks' },
+  { combo: 'mod+shift+y', does: 'Save for later' },
   { combo: 'mod+p', does: 'Print' },
   { combo: 'mod+shift+p', does: 'Print with the system dialog' },
   { combo: 'mod+f', does: 'Find in page' },
@@ -42,35 +44,63 @@ const PAGE_FIRST = [
   { combo: 'mod+shift+f', does: 'Open a recent file' },
   { combo: 'mod+shift+l', does: 'Chat as a page' },
   { combo: 'mod+shift+e', does: 'Meeting helper' },
+  { combo: 'mod+shift+x', does: 'AI activity (lumen://tasks)' },
   { combo: 'mod+,', does: 'Settings' },
+  // Address bar, reload, zoom, history and developer tools: Chrome gives the page these first too (a page that calls preventDefault on
+  // Ctrl+L, Ctrl+R or Alt+Left keeps it). Only the tab and window keys in BROWSER_ONLY are reserved.
+  { combo: 'mod+l', does: 'Address bar' },
+  { combo: 'mod+k', does: 'Command bar' },
+  { combo: 'mod+e', does: 'Search from the address bar' },
+  { combo: 'alt+d', does: 'Address bar', not: 'darwin' },
+  { combo: 'f6', does: 'Address bar' },
+  { combo: 'mod+r', does: 'Reload' },
+  { combo: 'mod+shift+r', does: 'Reload, past the cache' },
+  { combo: 'f5', does: 'Reload' },
+  { combo: 'shift+f5', does: 'Reload, past the cache' },
+  { combo: 'mod+f5', does: 'Reload, past the cache' },
+  { combo: 'mod+=', does: 'Zoom in' },
+  { combo: 'mod++', does: 'Zoom in' },
+  { combo: 'mod+shift++', does: 'Zoom in' },
+  { combo: 'mod+shift+_', does: 'Zoom out' },
+  { combo: 'mod+-', does: 'Zoom out' },
+  { combo: 'mod+0', does: 'Actual size' },
+  { combo: 'alt+arrowleft', does: 'Back' },
+  { combo: 'alt+arrowright', does: 'Forward' },
+  { combo: 'mod+[', does: 'Back', only: 'darwin' },
+  { combo: 'mod+]', does: 'Forward', only: 'darwin' },
+  { combo: 'f12', does: 'Developer tools' },
+  { combo: 'mod+shift+i', does: 'Developer tools', not: 'darwin' },
+  { combo: 'mod+shift+delete', does: 'Clear browsing data' },
+  { combo: 'mod+shift+backspace', does: 'Clear browsing data' },
+  { combo: 'mod+shift+m', does: 'Merge all windows' },
+  { combo: 'mod+shift+/', does: 'Keyboard shortcuts' },
+  { combo: 'mod+shift+?', does: 'Keyboard shortcuts' },
 ];
 
-// Browser-first, never overridable by a page: tabs, windows, the address bar, reload, zoom, history, developer tools, quit.
+// Reserved, as in Chrome: the browser takes these before the page sees them and no page can block them. Tabs, windows, full screen.
+// main.js's tab before-input-event handles them at once (handleShortcut), without asking the page. (Alt+F4 is the OS's.)
 const BROWSER_ONLY = [
   'mod+t', 'mod+shift+t', 'mod+w', 'mod+shift+w', 'mod+n', 'mod+shift+n', 'mod+q',
   'mod+tab', 'mod+shift+tab', 'mod+pageup', 'mod+pagedown', 'mod+shift+pageup', 'mod+shift+pagedown',
   'mod+1', 'mod+2', 'mod+3', 'mod+4', 'mod+5', 'mod+6', 'mod+7', 'mod+8', 'mod+9',
-  'mod+l', 'f6',
-  'f11', 'f12', 'mod+shift+i',
-  'mod+r', 'mod+shift+r', 'f5', 'shift+f5', 'mod+f5',
-  'mod+=', 'mod++', 'mod+-', 'mod+0',
-  'mod+shift+delete', 'mod+shift+backspace', 'mod+shift+m', 'mod+shift+/', 'mod+shift+?',
-  // (with Alt, never page-first: Alt+D, Alt+Left, Alt+Right; Ctrl+F4 closes the tab)
+  'f11', 'mod+f4',
 ];
 
-// 'mod+shift+s' for a key press (Electron's before-input-event `input`), or '' when it has Alt (none of ours do).
+// 'mod+shift+s' for a key press (Electron's before-input-event `input`). Ctrl+Alt (AltGr, how some layouts type @ { }  ...) is no shortcut: ''.
 function comboOf(input, platform = process.platform) {
-  if (!input || input.alt) return '';
-  const key = String(input.key || '').toLowerCase();
+  if (!input) return '';
+  const mod = shortcutMod(input, platform);
+  if (input.alt && (mod || input.control || input.meta)) return '';
+  const key = shortcutKey(input);
   if (!key) return '';
-  return [shortcutMod(input, platform) && 'mod', input.shift && 'shift', key].filter(Boolean).join('+');
+  return [mod && 'mod', input.alt && 'alt', input.shift && 'shift', key].filter(Boolean).join('+');
 }
 
 // The PAGE_FIRST entry a key press is, or null.
 function classify(input, platform = process.platform) {
   if (!input || input.type !== 'keyDown') return null;
   const combo = comboOf(input, platform);
-  return PAGE_FIRST.find((e) => e.combo === combo && e.not !== platform) || null;
+  return PAGE_FIRST.find((e) => e.combo === combo && e.not !== platform && (!e.only || e.only === platform)) || null;
 }
 
 const MAX_AGE_MS = 3000; // a queued press older than this was never reported (a hung page, a navigation): dropped

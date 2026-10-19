@@ -18,6 +18,10 @@
 
 /* ---- the activity card: Browser, Terminal, Files */
 .act-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; color: var(--text); animation: rise var(--t-smooth) var(--spring-smooth); }
+/* The whole card is as wide as its preview (the picture's shown width, set as --act-w by step-ui.js capSize, plus the card's padding and border), left-aligned
+   like the preview; a narrow sidebar shrinks it. What is inside never pushes it wider: long names are cut with an ellipsis. */
+.act-card[data-surface="browser"], .act-card[data-surface="app"] { max-width: calc(var(--act-w, 340px) + 26px); min-width: 0; box-sizing: border-box; }
+.act-card > * { min-width: 0; }
 .act-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .act-icon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
 .act-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -47,6 +51,18 @@
 .act-status[data-state="approval"] .act-dot { background: var(--accent); }
 .act-status[data-state="completed"] .act-dot { background: var(--success, var(--accent)); }
 /* The tabs this turn opened or used: chips in the order first touched, each marked open or closed. */
+/* One card for the whole turn: the preview of the surface being acted on (the tab, a program's window, a picture), the assistant's live line. */
+.act-card:not([data-surface="browser"]) > .act-shot { display: none; }
+.act-shot2 { width: 100%; max-width: 340px; align-self: flex-start; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; }
+.act-shot2[hidden], .act-card[data-surface="browser"] > .act-shot2 { display: none; }
+.act-thumb2 { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.act-say { max-width: 340px; color: var(--muted); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.act-say[hidden] { display: none; }
+.act-resume, .act-stop { flex: 0 0 auto; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.act-resume[hidden], .act-stop[hidden] { display: none; }
+.act-resume:hover, .act-stop:hover { background: var(--accent-soft); }
+.act-list .step[data-surf-label]::before { content: attr(data-surf-label); display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent-text); font-size: 10px; line-height: 15px; vertical-align: 1px; }
+.step-note { font-size: 11px; color: var(--muted); opacity: .9; }
 .act-tabs { max-width: 340px; font-size: 12px; color: var(--muted); }
 .act-tabs[hidden] { display: none; }
 .act-tabs-head { cursor: pointer; padding: 2px 0; list-style-position: inside; }

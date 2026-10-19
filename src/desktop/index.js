@@ -1,4 +1,4 @@
-// [desktop apps] The AI operating other programs on this computer (Windows UI Automation). Settings > AI > "Let the AI use other apps on
+// [desktop apps] The AI operating other programs on this computer (Windows UI Automation, or System Events on macOS: platforms.js). Settings > AI > "Let the AI use other apps on
 // this computer". One tool, desktop(action, args), whose actions are in policy.stepLabel: list_apps, focus_app, read_app, click, type,
 // press_keys, screenshot_app, open_app. docs/desktop-apps.md has the whole model; in short:
 //   - the master switch (aiDesktopControl, off by default) and a card per app (Once = this chat, Always = Settings list, No);
@@ -11,7 +11,8 @@
 
 const policy = require('./policy');
 const treeLib = require('./tree');
-const keysLib = require('./keys');
+const liveLib = require('./live');
+const platforms = require('./platforms');
 
 const THUMB_MS = 1500;
 const POLL_MS = 200;
@@ -27,21 +28,24 @@ const LIST_CACHE_MS = 600;
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const unwrap = (text, app) => `<untrusted_page_content source="app: ${defang(String(app || 'app')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
 const sourceKey = (w) => `${w.app}|${w.pid}|${w.start || 0}|${w.hpid || 0}`; // one running program: its path, pid and start time
-const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0 }); // what the helper re-checks before it touches a window
+const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0, title: String(w.title ?? '') }); // what the helper re-checks before it touches a window (macOS: the title tells two windows at the same place apart)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (win) => `w${win.hwnd}`;
 
 // deps: client { call, stop, destroy }, settings { master(), terminals(), allowed(), allow(app, name), setMaster(on) }, banner, winapi, shortcut { register(accel, fn), unregister(accel) },
-// stopRun(), icon(exe) -> Promise<dataUrl>, lumen { pid, exe }, platform, now, hooks (tests: observed events)
+// stopRun(), icon(exe) -> Promise<dataUrl>, lumen { pid, exe }, platform, now, hooks (tests: observed events),
+// macOS: access { accessibility(), screen() } (permission checks that never prompt), resize(buffer, w, q), openSettings(url)
 function createDesktop(deps = {}) {
   const platform = deps.platform || process.platform;
+  const backend = platforms.backendFor(platform);
   const now = deps.now || Date.now;
-  const lumen = deps.lumen || { pid: process.pid, exe: process.execPath };
+  const lumen = deps.lumen || { pid: process.pid, exe: backend ? backend.lumenExe(process.execPath) : process.execPath };
   const S = deps.settings;
   let client = deps.client || null;
-  const getClient = () => (client ||= require('./client').createClient());
-  let api = deps.winapi || null; // koffi calls: loaded the first time a session starts
-  const getApi = () => { if (!api) { const l = require('./winapi').load(); api = l.ok ? l : { ok: false }; } return api.ok ? api : null; };
+  const getClient = () => (client ||= backend.client({ access: deps.access, resize: deps.resize }));
+  let api = deps.winapi || null; // the checks behind Esc and "you took over" (winapi.js / mac-probe.js): loaded the first time a session starts
+  const getApi = () => { if (!api) { const l = backend.probe(); api = l.ok ? l : { ok: false }; } return api.ok ? api : null; };
+  const permissionShown = new WeakSet(); // runs that were already shown the "open System Settings" card
 
   let list = { at: 0, apps: [] };
   let session = null; // { id, signal, emit, target, cardId, ... }
@@ -132,8 +136,8 @@ function createDesktop(deps = {}) {
     if (S.master()) return;
     const answer = await ctx.ask({
       title: 'Let the AI use other apps on this computer?',
-      detail: 'This turns on Settings > AI > "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, such as Word or File Explorer. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.',
-      args: 'Windows only. Nothing leaves this computer except what is sent to the AI in this chat.',
+      detail: `This turns on Settings > AI > "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, ${backend.examples}. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.`,
+      args: backend.switchNote,
       noAlways: true, allowLabel: 'Turn on',
     });
     if (!answer) throw new Error(policy.OFF_TEXT);
@@ -143,13 +147,15 @@ function createDesktop(deps = {}) {
   // ---- the session: banner, card, thumbnail, takeover, stop
   function startSession(ctx) {
     const w = getApi();
-    if (!w) throw new Error('The check that lets you stop the AI (Esc held, taking over) could not start on this computer, so the AI will not use other apps. Restart Lumen, or tell the Lumen team if it keeps happening.');
+    try { w?.start?.(); } catch { /* failed() says so below */ }
+    if (!w || w.failed?.()) { try { w?.stop?.(); } catch { /* gone */ } throw new Error('The check that lets you stop the AI (Esc held, taking over) could not start on this computer, so the AI will not use other apps. Restart Lumen, or tell the Lumen team if it keeps happening.'); }
     stats.sessions++;
     session = {
       id: ++seq, signal: ctx.signal, emit: ctx.emit, target: null, card: null, label: '', paused: false, stopped: false, busy: false, busyUntil: 0,
       lastCursor: w?.cursor?.() || null, escSince: 0, timers: [], thumbBusy: false, thumbSig: '', resume: [], once: ctx.once, lastCall: now(),
     };
     const s = session;
+    if (deps.live) startLive(s);
     s.timers.push(setInterval(() => poll(s), POLL_MS), setInterval(() => thumb(s), THUMB_MS), setInterval(() => { if (now() - s.lastCall > IDLE_END_MS) endSession(s, 'completed'); }, 5000));
     for (const t of s.timers) t.unref?.();
     try { deps.shortcut?.register('Ctrl+Alt+Esc', () => stop('shortcut')); } catch { /* taken by another program: Esc held and the banner still work */ }
@@ -171,7 +177,11 @@ function createDesktop(deps = {}) {
     const s = session;
     s.lastCall = now();
     s.label = label;
+    const moved = !s.target || s.target.hwnd !== win.hwnd || s.target.pid !== win.pid;
     s.target = { hwnd: win.hwnd, pid: win.pid, hpid: win.hpid || 0, start: win.start || 0, app: win.app, name: win.name, title: win.title, exe: win.exe };
+    s.win = win; // (everything the policy looks at; the live picture asks it again with the window's current title)
+    if (moved) s.approvedTitle = null;
+    s.live?.kick({ fresh: moved });
     if (!s.card || s.card.app !== win.app) {
       if (s.card) cardEvent(s, 'completed');
       const id = `desk-${s.id}-${win.app}`;
@@ -186,13 +196,16 @@ function createDesktop(deps = {}) {
     return s;
   }
 
-  function endSession(s, status = 'completed') {
+  function endSession(s, status = 'completed', extra = {}) {
     if (!s || session !== s) return;
     if (status === 'stopped') { try { client?.abort?.('Stopped by the user.'); } catch { /* gone */ } }
     for (const t of s.timers) clearInterval(t);
+    s.live?.stop();
+    try { api?.stop?.(); } catch { /* gone */ }
+    if (extra.blocked && s.card) s.card.thumb = null; // a window that turned into something blocked: its picture is not kept, the card shows the placeholder
     try { deps.shortcut?.unregister('Ctrl+Alt+Esc'); } catch { /* gone */ }
     try { deps.banner?.hide(); } catch { /* gone */ }
-    if (s.card) cardEvent(s, status);
+    if (s.card) cardEvent(s, status, extra.blocked ? { blocked: true } : {});
     s.stopped = status === 'stopped';
     for (const r of s.resume.splice(0)) r(false);
     session = null;
@@ -234,6 +247,7 @@ function createDesktop(deps = {}) {
   function poll(s) {
     const w = getApi();
     if (!w || session !== s || s.stopped) return;
+    if (w.failed?.()) { stop('checks'); return; } // (macOS: the checks stopped running, so Esc would not work: the AI stops)
     try {
       if (w.escapeDown()) {
         if (!s.escSince) s.escSince = now();
@@ -252,15 +266,36 @@ function createDesktop(deps = {}) {
     } catch { /* a failed check never stops the run */ }
   }
 
-  // The card's live picture: asked of the helper (async: the main process only handles the small answer), skipped while a call is running.
+  // The card's live picture (live.js): the helper makes the frames; this only supplies the checks and shows what comes back.
+  function startLive(s) {
+    const L = deps.live;
+    const winNow = () => ({ ...(s.win || s.target || {}), title: s.approvedTitle ?? s.target?.title ?? '' });
+    s.live = liveLib.createLive({
+      now, setTimeout: L.setTimeout, clearTimeout: L.clearTimeout, visible: () => L.visible?.() !== false, light: () => Boolean(L.light?.()), dpr: () => L.dpr?.() || 1,
+      canRun: () => session === s && !s.stopped && !s.paused && !s.busy && now() >= s.busyUntil && Boolean(s.target && s.card),
+      target: () => (s.target ? targetOf(s.target) : null),
+      allowed: () => { if (!s.target) return false; const d = policy.decide(winNow(), policyOpts({ once: s.once })); return d.status === 'allow'; },
+      judge: (title) => policy.decide({ ...winNow(), title }, policyOpts({ once: s.once })).status === 'allow',
+      approved: () => s.approvedTitle ?? null,
+      approve: (title) => { s.approvedTitle = title; if (s.target) s.target.title = title; },
+      frame: (args) => getClient().call('frame', args, { timeoutMs: 4000 }),
+      onFrame: (image, info) => { if (session !== s || s.stopped || !s.card) return; s.card.thumb = `data:image/jpeg;base64,${image}`; s.thumbSig = ''; cardEvent(s, s.paused ? 'paused' : 'working', { frame: true }); deps.hooks?.onFrame?.(info); }, // (frame: only the picture changed; the run's other bookkeeping and the card's text are left alone)
+      onEnd: (reason) => { if (session !== s || reason === 'failed') return; endSession(s, 'stopped', reason === 'gone' ? {} : { blocked: true }); },
+    });
+    s.live.start();
+  }
+
+  // The card's picture, one shot (the first one, and the one when live is off): asked of the helper (async: the main process only handles the small answer), skipped while a call is running.
   async function thumb(s) {
     if (session !== s || s.stopped || s.thumbBusy || s.busy || !s.target || !s.card) return;
+    if (s.live?.active()) return; // (the live picture keeps it fresh; this one stays for when live is off or gave up)
+    if (s.card.thumb && deps.live?.visible?.() === false) return; // the card is off screen: no capture
     s.thumbBusy = true;
     try {
       const fresh = (await apps(true)).find((w) => w.hwnd === s.target.hwnd);
       const dec = fresh ? policy.decide(fresh, policyOpts({ once: s.once })) : null;
       if (session !== s) return;
-      if (!fresh || fresh.pid !== s.target.pid || (fresh.start || 0) !== (s.target.start || 0) || !dec || dec.status === 'blocked' || dec.status === 'off') { endSession(s, 'stopped'); return; } // it changed into something else (or something blocked): no more pictures
+      if (!fresh || fresh.pid !== s.target.pid || (fresh.start || 0) !== (s.target.start || 0) || !dec || dec.status === 'blocked' || dec.status === 'off') { endSession(s, 'stopped', { blocked: true }); return; } // it changed into something else (or something blocked): no more pictures
       s.target.title = fresh.title;
       const r = await getClient().call('shot', { ...targetOf(fresh), w: 420, q: 55 }, { timeoutMs: 6000 });
       if (session !== s || !r.image) return;
@@ -286,7 +321,7 @@ function createDesktop(deps = {}) {
     try { return await fn(); } catch (err) {
       if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
       throw err;
-    } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s && !s.card?.thumb) setImmediate(() => thumb(s)); }
+    } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s) { if (s.live?.active()) s.live.kick(); else if (!s.card?.thumb) setImmediate(() => thumb(s)); } }
   }
 
   // ---- the actions
@@ -353,7 +388,7 @@ function createDesktop(deps = {}) {
 
   async function pressKeys(args, ctx) {
     let parsed;
-    try { parsed = keysLib.parseKeys(args.keys); } catch (err) { throw new Error(err.message); }
+    try { parsed = backend.parseKeys(args.keys); } catch (err) { throw new Error(err.message); }
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
@@ -380,10 +415,10 @@ function createDesktop(deps = {}) {
     if (!S.master()) await offerSwitch(ctx);
     const r = await getClient().call('resolve', { name });
     const found = (r.found || []).slice().sort((a, b) => Number(b.exact) - Number(a.exact) || a.name.length - b.name.length)[0];
-    if (!found) throw new Error(`No app called "${name}" was found in the Start menu. Tell the user, or ask for the exact name.`);
+    if (!found) throw new Error(backend.notFound(name));
     const target = policy.exeKey(found.exe);
-    if (!target.endsWith('.exe')) throw new Error(`${found.name} is a Windows (Store) app, whose program cannot be checked before it starts, so the AI does not start it. The user can open it, and the AI can then use it.`);
-    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name };
+    if (!backend.launchable(target)) throw new Error(backend.notLaunchable(found.name));
+    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name, bundle: found.bundle || '' }; // (macOS: the bundle id from its Info.plist, so a renamed blocked app is still blocked)
     const before = new Set((await apps(true)).map((w) => w.hwnd));
     await authorize(probe, ctx, { acting: true, what: `open ${found.name}` }); // blocked programs are refused before anything starts; the rest ask
     await getClient().call('launch', { key: found.key }, { timeoutMs: 15000 });
@@ -408,21 +443,45 @@ function createDesktop(deps = {}) {
 
   // The tool. input: { action, args }. ctx: { ask({ title, detail, args, noAlways, allowLabel }) -> true | 'always' | false, emit, signal, once: Set }
   async function run(input, ctx) {
-    if (platform !== 'win32') throw new Error(policy.NOT_WINDOWS);
+    if (!backend) throw new Error(policy.NOT_SUPPORTED);
     stats.calls++;
     const action = String(input?.action ?? '');
     const args = input?.args && typeof input.args === 'object' && !Array.isArray(input.args) ? input.args : {};
-    switch (action) {
-      case 'list_apps': return listApps(ctx);
-      case 'focus_app': return focusApp(args, ctx);
-      case 'read_app': return readApp(args, ctx);
-      case 'click': return click(args, ctx);
-      case 'type': return type(args, ctx);
-      case 'press_keys': return pressKeys(args, ctx);
-      case 'screenshot_app': return screenshot(args, ctx);
-      case 'open_app': return openApp(args, ctx);
-      default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app or open_app.`);
+    try {
+      switch (action) {
+        case 'list_apps': return await listApps(ctx);
+        case 'focus_app': return await focusApp(args, ctx);
+        case 'read_app': return await readApp(args, ctx);
+        case 'click': return await click(args, ctx);
+        case 'type': return await type(args, ctx);
+        case 'press_keys': return await pressKeys(args, ctx);
+        case 'screenshot_app': return await screenshot(args, ctx);
+        case 'open_app': return await openApp(args, ctx);
+        default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app or open_app.`);
+      }
+    } catch (err) {
+      if (err?.permission && err.settingsUrl) await offerPermission(err, ctx);
+      throw err;
     }
+  }
+
+  // macOS: a permission Lumen does not have yet (Accessibility, Screen Recording, Automation). Lumen never grants it: a card says what is
+  // missing, with a button that opens that System Settings pane. Once per run; the AI is told the same in the error.
+  async function offerPermission(err, ctx) {
+    const key = ctx?.signal || ctx;
+    if (!key || permissionShown.has(key) || !ctx?.ask) return;
+    permissionShown.add(key);
+    const pane = { accessibility: 'Accessibility', screen: 'Screen & System Audio Recording', automation: 'Automation' }[err.permission] || 'Privacy & Security';
+    let open;
+    try {
+      open = await ctx.ask({
+        title: `Lumen needs the macOS ${pane} permission`,
+        detail: `${err.permission === 'screen' ? 'To take a picture of another app\'s window' : 'To read and operate other apps'}, macOS has to allow Lumen in System Settings > Privacy & Security > ${pane}. Lumen cannot turn this on itself. Turn on Lumen there${err.permission === 'screen' ? ', then quit and reopen Lumen' : ''}, and ask again.`,
+        args: `System Settings > Privacy & Security > ${pane}`,
+        noAlways: true, allowLabel: 'Open System Settings',
+      });
+    } catch { open = false; }
+    if (open) { try { await deps.openSettings?.(err.settingsUrl); } catch { /* the user can open it by hand */ } }
   }
 
   // The run ended (agent.js): the banner goes and the card says Completed.
@@ -446,6 +505,8 @@ function createDesktop(deps = {}) {
     // tests
     _poll: () => session && poll(session),
     _thumb: () => (session ? thumb(session) : null),
+    liveStats: () => session?.live?.stats() || null,
+    _live: () => session?.live || null, // (tests)
   };
 }
 

@@ -203,7 +203,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -231,14 +231,14 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
-  accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
+  accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -320,9 +320,9 @@ async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (m.lastUsed) o.dataset.lastUsed = m.lastUsed; if (m.auto) o.dataset.auto = '1'; if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
-    row('Model', 'The model the assistant in the sidebar uses.', h('select', {
+    row('Model', tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
       id: 'ai-model',
       'aria-label': 'Model',
       onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
@@ -341,6 +341,11 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
+  // One chevron on the button's centre line, a real element (the sidebar's picker draws its own).
+  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chevron.setAttribute('class', 'picker-chevron'); chevron.setAttribute('viewBox', '0 0 10 6'); chevron.setAttribute('aria-hidden', 'true'); chevron.setAttribute('focusable', 'false');
+  chevron.innerHTML = '<path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  settingsPicker.button.append(chevron);
   // Nothing connected: say so and put the way in right here (the keys and sign-ins page), not somewhere below.
   const noModels = h('p', { class: 'note empty-model', id: 'ai-model-empty' }, h('span', { text: tr('settings.ai.noModels', 'No AI connected yet.') }), h('button', { type: 'button', class: 'primary', id: 'ai-model-connect', text: tr('settings.ai.connect', 'Connect an AI'), onclick: () => { location.hash = '#ai-keys-page'; } }));
   modelPicker.parentElement.append(noModels);
@@ -412,6 +417,8 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [memory] Saved memory across chats (ai/memory.js; docs/memory.md): the switch, past-chat search, and the entries with Edit / Delete.
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
   // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
@@ -428,18 +435,25 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
   );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append( // [dictation] the chat box's mic (ai/dictation.js)
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')), // [plan mode]
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
+    toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')), // [desktop apps]
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
@@ -723,6 +737,7 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -767,7 +782,6 @@ async function buildAi(card) {
 function buildImport(card) {
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -832,7 +846,11 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
   // Expert: Chromium's forced dark mode for pages.
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
@@ -875,6 +893,72 @@ function buildEffectOptions() {
   );
   render();
   return box;
+}
+// [look] Music-reactive home screen: the switch, and one line under it when the effect is limited, and why (the same rules as
+// features/music-react.js modeOf): Reduce motion and Performance mode turn it off; Visual effects: Light (chosen, or Automatic on an integrated GPU) and
+// software drawing give the glow only. The line is also shown while the switch is off, so turning it on never looks broken.
+function musicReactiveRow() {
+  const row = toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'Moves the new-tab page’s background with the music: soft dots drift, burst on the beat, swirl with the mids and twinkle with the highs. It reacts to the sound your PC is playing (any program, the Spotify desktop app included) and only while the new tab is on screen. Lumen reads how loud the bass, mids and highs are; nothing is recorded or sent, and the microphone is never used. Windows only. Simplified with Visual effects: Light; off with Reduce motion or Performance mode.'));
+  const note = h('span', { class: 'note', id: 'music-reactive-note', hidden: true });
+  const link = h('button', { type: 'button', class: 'linkish', id: 'music-reactive-link', hidden: true, text: tr('settings.musicReactive.linkLight', 'Change Visual effects'), onclick: () => { location.hash = '#visual-effects'; } });
+  const preview = h('button', { type: 'button', id: 'music-reactive-preview', text: tr('settings.musicReactive.preview', 'Preview') });
+  const stage = h('canvas', { class: 'mr-preview', id: 'music-reactive-stage', hidden: true, 'aria-hidden': 'true' });
+  let off = false; let light = false;
+  const show = () => {
+    const g = st.graphics; const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.software) || (Boolean(g?.drawing) && mode !== 'full');
+    light = mode === 'light' || (mode === 'auto' && Boolean(g?.integrated)) || soft;
+    off = Boolean(st.prefs?.reduceMotion || st.performance?.active);
+    let text = '';
+    if (st.prefs?.reduceMotion) text = tr('settings.musicReactive.offMotion', 'Off because Reduce motion is on.');
+    else if (st.performance?.active) text = tr('settings.musicReactive.offPerformance', 'Off because Performance mode is on.');
+    else if (st.platform && st.platform !== 'win32') text = tr('settings.musicReactive.platform', 'Windows only for now: it listens to the sound the PC is playing.');
+    else if (soft) text = tr('settings.musicReactive.lightSoftware', 'Simplified (fewer dots, slower) because Lumen is drawing in software.');
+    else if (light) text = mode === 'light' ? tr('settings.musicReactive.lightChosen', 'Simplified (fewer dots, slower) because Visual effects is set to Light.') : tr('settings.musicReactive.lightAuto', 'Simplified (fewer dots, slower) because Visual effects is on Automatic, which uses Light on this computer.');
+    note.textContent = text; note.hidden = !text;
+    link.hidden = !(text && light && !off && !(st.platform && st.platform !== 'win32'));
+    preview.disabled = off;
+    if (off && !stage.hidden) stopPreview();
+  };
+  // Preview: the same dots and the same limits, driven by a made-up beat for ten seconds (no music, no capture), so the effect can be seen without
+  // playing anything. It is the page's own drawing code, loaded here only when the button is pressed.
+  let run = null;
+  const scripts = {};
+  const loadScript = (src) => (scripts[src] ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s); }));
+  function stopPreview() {
+    if (run) { cancelAnimationFrame(run.raf); run = null; }
+    stage.hidden = true; preview.textContent = tr('settings.musicReactive.preview', 'Preview');
+  }
+  async function startPreview() {
+    if (off) return;
+    await loadScript('../features/music-react.js'); await loadScript('music-field-canvas.js');
+    stage.hidden = false; preview.textContent = tr('settings.musicReactive.previewStop', 'Stop preview');
+    const mode = light ? 'reduced' : 'full';
+    const w = Math.max(200, Math.round(stage.getBoundingClientRect().width)); const hgt = 140;
+    const painter = window.MusicFieldCanvas.create({ canvas: stage, mode, accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0a84ff', tone: 'plain' });
+    painter.resize(w, hgt, devicePixelRatio || 1, { cx: -1e5, w: 1 });
+    const mapper = window.MusicReact.createMapper(); const beats = window.MusicReact.beatDetector();
+    const step = mode === 'reduced' ? window.MusicReact.REDUCED_MS : 33;
+    let last = 0; const t0 = performance.now();
+    run = { raf: 0 };
+    const frame = (now) => {
+      if (!run) return;
+      run.raf = requestAnimationFrame(frame);
+      const t = now - t0;
+      if (t > 10000) { stopPreview(); return; }
+      if (now - last < step) return;
+      const dt = last ? Math.min(0.1, (now - last) / 1000) : 0.033; last = now;
+      const b = window.MusicReact.demoFrame(t);
+      painter.draw(t, mapper.step({ ...b, beat: beats.push(t, b.bass) }, t), dt);
+    };
+    run.raf = requestAnimationFrame(frame);
+  }
+  preview.addEventListener('click', () => { if (run) stopPreview(); else startPreview().catch(() => stopPreview()); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && run) stopPreview(); });
+  show();
+  window.addEventListener('lumen-pref', (e) => { if (['reduceMotion', 'performanceMode', 'graphicsMode'].includes(e.detail.key)) setTimeout(show, 0); });
+  row.querySelector('.text').append(note, link, h('div', { class: 'mr-preview-row' }, preview), stage);
+  return row;
 }
 function buildLook(card) {
   // Accent: one swatch per colour (each drawn in the shade it will really have, light or dark), "Match wallpaper", and any colour.
@@ -1074,6 +1158,7 @@ async function buildHome(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
+    musicReactiveRow(),
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
@@ -1104,6 +1189,7 @@ const WIDGET_ICONS = {
   countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
   timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
   files: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5a1.2 1.2 0 0 1 1.2-1.2h3L7.6 5h5.2A1.2 1.2 0 0 1 14 6.2v6.1a1.2 1.2 0 0 1-1.2 1.2H3.2A1.2 1.2 0 0 1 2 12.3z"/></svg>',
+  routines: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8.5" r="5.2"/><path d="M8 5.6v3.2l2 1.2M6 1.8h4"/></svg>',
   aistatus: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.3"/><circle cx="4" cy="11.5" r="1.3"/><path d="M7.5 4.5h6M7.5 11.5h6"/></svg>',
   custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
   tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
@@ -1379,6 +1465,7 @@ async function buildWidgets(card) {
       const sp = () => ws.spotify || {};
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Your own Spotify app’s Client ID' });
       inputs.art = tog('widget-spotify-art', 'Album art', same ? same.art !== false : true);
+      inputs.react = tog('widget-spotify-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
       // 'status' plays Spotify inside Lumen (a hidden page) and shows a now-playing card; 'web' shows Spotify's own site in the card; 'api' is the
       // now-playing card driven by Spotify's API with your own app (a widget saved before modes existed stays 'api').
       inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['status', 'Plays in Lumen'], ['web', 'Web player'], ['api', 'Now playing (API)']], same ? same.mode || 'api' : 'status');
@@ -1432,12 +1519,12 @@ async function buildWidgets(card) {
         section('Account', [loginRow]),
         section('Can’t sign in? Use your own Spotify app', [steps]));
       const showBox = section('Show', [inputs.art]);
-      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them.' });
+      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them. Log in with Spotify below as well to get the Home tab, faster search and your library.' });
       const webNote = h('p', { class: 'wf-foot wf-mode-web', text: 'The card shows open.spotify.com. Sign in there once; Lumen never sees your Spotify password or token.' });
-      const syncMode = () => { apiBox.hidden = inputs.mode.value !== 'api'; webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
+      const syncMode = () => { apiBox.hidden = inputs.mode.value === 'web'; /* (Plays in Lumen needs the account too, for Home, search and your library) */ webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
       inputs.mode.addEventListener('change', syncMode);
       syncMode();
-      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox);
+      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox, section('Music', [inputs.react]));
     }
     // ---- gmail: your Google sign-in in Lumen (default), or your own Google Cloud client (Advanced) ----
     function gmailFields(same) {
@@ -1851,6 +1938,7 @@ async function buildWidgets(card) {
       } else if (type === 'applemusic') {
         inputs.mode = segment('widget-applemusic-mode', 'How Apple Music is shown', [['status', 'Status card'], ['web', 'Web player']], same?.mode === 'web' ? 'web' : 'status');
         inputs.art = tog('widget-applemusic-art', 'Album art', same ? same.art !== false : true);
+        inputs.react = tog('widget-applemusic-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
         inputs.app = tog('widget-applemusic-app', 'Also show the Apple Music app', same ? same.app !== false : true, 'When nothing is playing inside Lumen but the Apple Music app on this computer is (iTunes on Windows too), show it, with its own buttons. On a Mac, macOS asks once to let Lumen control Music.');
         const modeRow = block('How to show Apple Music', 'Status card: Apple Music plays inside Lumen, and the card shows what is playing with play, pause, next, previous and seek, your recent plays and playlists, and a search. You sign in on Apple’s site once. Web player: Apple’s own site in the card.', inputs.mode);
         const statusNote = h('p', { class: 'wf-foot', text: 'Apple Music plays in a hidden page inside Lumen (Apple’s own MusicKit), in your normal Lumen session, so the music keeps playing when you leave the new-tab page. Search works without signing in (30-second previews); sign in for your library and full songs. Lumen never sees your Apple ID or password.' });
@@ -1858,9 +1946,11 @@ async function buildWidgets(card) {
         const syncMode = () => { statusNote.hidden = showBox.hidden = inputs.mode.value !== 'status'; };
         inputs.mode.addEventListener('change', syncMode);
         syncMode();
-        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox);
+        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox, section('Music', [inputs.react]));
       } else if (type === 'files') {
         fields.replaceChildren(section(tr('settings.files.group', 'Files'), [h('div', { class: 'row' }, h('span', { class: 'note', text: tr('widgets.files.desc', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.') }))]));
+      } else if (type === 'routines') {
+        fields.replaceChildren(section('Routines', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows what your routines run next and what they did last. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
@@ -1979,8 +2069,8 @@ async function buildWidgets(card) {
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
       }
-      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
-      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app) };
+      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art), react: val(inputs.react) };
+      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app), react: val(inputs.react) };
       if (type === 'gmail') {
         const own = inputs.mode.value === 'oauth';
         return { ...base, mode: own ? 'oauth' : 'google', account: Number(inputs.account.value) || 0, clientId: own ? inputs.clientId.value : '', clientSecret: own ? inputs.clientSecret.value : '', count: Number(inputs.count.value), snippets: val(inputs.snippets) };
@@ -2474,6 +2564,51 @@ async function buildPasswords(card) {
   renderLogins();
 }
 
+// [memory] Settings → AI and agents → Memory. The entries live in memory.json in the profile (encrypted); this page lists them, edits
+// and deletes them. The AI adds them only in chats, from what you tell it.
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+  // [memory] Shown only while the file can't be read: it is renamed memory.json.bad (kept) and memory starts empty.
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open)); // (read again when opened: the AI may have saved something since)
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
+}
+
 // Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
 // command is shown, and runs only on the click.
 function buildAntigravity(slot, refreshModels) {
@@ -2509,6 +2644,57 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+// [telegram] AI and agents > Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+      // A paired chat is unpaired first: a new pairing never replaces it on its own.
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+    // While a code is shown, look again every 2 s so "Paired with …" appears as soon as the phone sends it.
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
 }
 
 // [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
@@ -2555,7 +2741,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -3265,6 +3451,7 @@ async function init() {
   }
   // Sub-pages that are whole builders of their own.
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
+  mount('ai-agents', 'routines', tr('settings.routines.title', 'Routines'), tr('settings.routines.desc', 'Requests the AI repeats on a schedule.'), 'routine routines schedule scheduled repeat quiet hours templates run history');
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
   mount('ai-more', 'macros', tr('settings.section.macros', 'Macros'), 'Saved step lists you run from the menu, a shortcut or the chat.', 'automation record replay steps shortcut script');
   mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
@@ -3273,7 +3460,7 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -3281,11 +3468,11 @@ async function init() {
   // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
   // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
     search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
-  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'usage', 'extensions-page', 'internals']);
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals']);
   const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
   const started = new Map(); // builder id -> promise
   const finished = new Set();

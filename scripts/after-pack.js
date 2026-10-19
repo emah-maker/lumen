@@ -56,6 +56,10 @@ function vmpSign(appOutDir) {
   return true;
 }
 
+// A signed Windows build (scripts/signing.js, LUMEN_DEFER_VMP=1) signs Lumen.exe after this hook, and
+// castlabs wants VMP after Authenticode there, so scripts/after-sign.js does the VMP signing instead.
+const deferVmp = (env) => String((env || {}).LUMEN_DEFER_VMP || '').trim() === '1';
+
 // koffi (FFI) only calls Windows' webauthn.dll (features/webauthn-windows.js), so a Mac build drops it and its
 // native binaries here, before codesign. Not with build.mac.files: electron-builder turns the top-level
 // build.files into a file set of its own, so ANY platform-level `files` becomes a second matcher that skips both
@@ -94,7 +98,9 @@ exports.default = async (context) => {
   const { appOutDir, electronPlatformName } = context;
   fs.rmSync(path.join(appOutDir, 'resources', 'default_app.asar'), { force: true });
   pruneWindowsOnlyModules(appOutDir, electronPlatformName);
-  const signed = (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
+  const deferred = electronPlatformName === 'win32' && deferVmp(process.env);
+  if (deferred) console.log('Deferring Widevine VMP signing until Lumen.exe is Authenticode-signed (scripts/after-sign.js).');
+  const signed = !deferred && (electronPlatformName === 'win32' || electronPlatformName === 'darwin') && vmpSign(appOutDir);
   const config = fuses(electronPlatformName);
   // castlabs refuses to VMP-sign a binary whose fuses were changed, and a change after signing
   // breaks the signature, so a signed macOS build keeps stock fuses (DRM over hardening).
@@ -103,3 +109,5 @@ exports.default = async (context) => {
 };
 exports.fuses = fuses;
 exports.pruneWindowsOnlyModules = pruneWindowsOnlyModules;
+exports.vmpSign = vmpSign;
+exports.deferVmp = deferVmp;

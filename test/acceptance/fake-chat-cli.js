@@ -71,6 +71,7 @@ async function answer(prompt) {
   const recorded = !/NOREC/.test(all.length ? prompt.slice(all[all.length - 1].index) : prompt);
   if (role === 'claude' && session && recorded) fs.appendFileSync(memory, `${[...new Set([...handed, marker])].join('\n')}\n`);
   log({ ev: 'msg', marker, prompt, model: current, known: [...new Set([...sessionKnown, ...handed])], resumedMissing: Boolean(resume && !sessionKnown.length) });
+  const fullPrompt = prompt; // (the hidden browser_state block and the attached page come before the marker)
   prompt = all.length ? prompt.slice(all[all.length - 1].index) : prompt;
   out({ type: 'system', subtype: 'init', session_id: session, model: 'fake-model', mcp_servers: [{ name: 'lumen', status: 'connected' }] });
   const hold = /HOLD-([A-Za-z0-9]+)/.exec(prompt)?.[1];
@@ -114,6 +115,19 @@ async function answer(prompt) {
     log({ ev: 'interrupt', marker });
     out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: '', session_id: session, total_cost_usd: 0, usage: {} });
     return;
+  }
+  // DIAGRAMS: the model follows Lumen's diagram instruction (ai/image-router.js DIAGRAM_NOTE): one inline svg per numbered problem found in the
+  // attached page, or, finding none, asks once and names what it looked at.
+  if (role === 'claude' && fullPrompt.includes('ONE inline ```svg block')) {
+    const page = /<untrusted_page_content[\s\S]*?<\/untrusted_page_content>/.exec(fullPrompt)?.[0] || '';
+    const items = [...page.matchAll(/^\s*(\d+)[.)]\s+(.+)$/gm)];
+    const fence = '`'.repeat(3);
+    const one = (n) => [
+      `Problem ${n}`, `${fence}svg`,
+      `<svg viewBox="0 0 400 240"><defs><marker id="a${n}" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0 0L6 3L0 6z"/></marker></defs><path d="M40 120H360" stroke="black"/><line x1="200" y1="120" x2="200" y2="40" stroke="red" marker-end="url(#a${n})"/><text x="208" y="60">W (${n})</text><text x="10" y="20">Problem ${n}</text></svg>`,
+      fence, '1. Draw the body alone. 2. Add each force. 3. Sum forces and moments.',
+    ].join('\n');
+    text = items.length ? `${marker}\n${items.map((m) => one(m[1])).join('\n\n')}` : `I looked at the current tab, your attachments and this chat and found no problems to draw. Paste them. ${marker}`;
   }
   if (role === 'claude' && /HANDOFFTEXT/.test(prompt)) text = "I couldn't open the document. Please paste the full text of your report here and I'll summarize it.";
   if (role === 'claude' && /SENDFILE/.test(prompt)) {
