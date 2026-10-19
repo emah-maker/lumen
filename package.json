@@ -23,7 +23,7 @@
   },
   "license": "GPL-3.0-or-later",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.132.1",
+    "@anthropic-ai/sdk": "^0.135.0",
     "@ghostery/adblocker-electron": "^2.20.1",
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
