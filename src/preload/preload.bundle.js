@@ -685,6 +685,7 @@ contextBridge.exposeInMainWorld('assistant', {
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),
     onPropose: on('tasks:propose'),
+    openFull: () => ipcRenderer.send('mission:open'),
   },
   onEvent: on('agent:event'),
 

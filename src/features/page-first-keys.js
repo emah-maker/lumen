@@ -44,6 +44,7 @@ const PAGE_FIRST = [
   { combo: 'mod+shift+f', does: 'Open a recent file' },
   { combo: 'mod+shift+l', does: 'Chat as a page' },
   { combo: 'mod+shift+e', does: 'Meeting helper' },
+  { combo: 'mod+shift+x', does: 'AI activity (lumen://tasks)' },
   { combo: 'mod+,', does: 'Settings' },
   // Address bar, reload, zoom, history and developer tools: Chrome gives the page these first too (a page that calls preventDefault on
   // Ctrl+L, Ctrl+R or Alt+Left keeps it). Only the tab and window keys in BROWSER_ONLY are reserved.

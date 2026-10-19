@@ -1,4 +1,4 @@
-// [desktop apps] The AI operating other programs on this computer (Windows UI Automation). Settings > AI > "Let the AI use other apps on
+// [desktop apps] The AI operating other programs on this computer (Windows UI Automation, or System Events on macOS: platforms.js). Settings > AI > "Let the AI use other apps on
 // this computer". One tool, desktop(action, args), whose actions are in policy.stepLabel: list_apps, focus_app, read_app, click, type,
 // press_keys, screenshot_app, open_app. docs/desktop-apps.md has the whole model; in short:
 //   - the master switch (aiDesktopControl, off by default) and a card per app (Once = this chat, Always = Settings list, No);
@@ -11,8 +11,8 @@
 
 const policy = require('./policy');
 const treeLib = require('./tree');
-const keysLib = require('./keys');
 const liveLib = require('./live');
+const platforms = require('./platforms');
 
 const THUMB_MS = 1500;
 const POLL_MS = 200;
@@ -28,21 +28,24 @@ const LIST_CACHE_MS = 600;
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const unwrap = (text, app) => `<untrusted_page_content source="app: ${defang(String(app || 'app')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
 const sourceKey = (w) => `${w.app}|${w.pid}|${w.start || 0}|${w.hpid || 0}`; // one running program: its path, pid and start time
-const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0 }); // what the helper re-checks before it touches a window
+const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0, title: String(w.title ?? '') }); // what the helper re-checks before it touches a window (macOS: the title tells two windows at the same place apart)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (win) => `w${win.hwnd}`;
 
 // deps: client { call, stop, destroy }, settings { master(), terminals(), allowed(), allow(app, name), setMaster(on) }, banner, winapi, shortcut { register(accel, fn), unregister(accel) },
-// stopRun(), icon(exe) -> Promise<dataUrl>, lumen { pid, exe }, platform, now, hooks (tests: observed events)
+// stopRun(), icon(exe) -> Promise<dataUrl>, lumen { pid, exe }, platform, now, hooks (tests: observed events),
+// macOS: access { accessibility(), screen() } (permission checks that never prompt), resize(buffer, w, q), openSettings(url)
 function createDesktop(deps = {}) {
   const platform = deps.platform || process.platform;
+  const backend = platforms.backendFor(platform);
   const now = deps.now || Date.now;
-  const lumen = deps.lumen || { pid: process.pid, exe: process.execPath };
+  const lumen = deps.lumen || { pid: process.pid, exe: backend ? backend.lumenExe(process.execPath) : process.execPath };
   const S = deps.settings;
   let client = deps.client || null;
-  const getClient = () => (client ||= require('./client').createClient());
-  let api = deps.winapi || null; // koffi calls: loaded the first time a session starts
-  const getApi = () => { if (!api) { const l = require('./winapi').load(); api = l.ok ? l : { ok: false }; } return api.ok ? api : null; };
+  const getClient = () => (client ||= backend.client({ access: deps.access, resize: deps.resize }));
+  let api = deps.winapi || null; // the checks behind Esc and "you took over" (winapi.js / mac-probe.js): loaded the first time a session starts
+  const getApi = () => { if (!api) { const l = backend.probe(); api = l.ok ? l : { ok: false }; } return api.ok ? api : null; };
+  const permissionShown = new WeakSet(); // runs that were already shown the "open System Settings" card
 
   let list = { at: 0, apps: [] };
   let session = null; // { id, signal, emit, target, cardId, ... }
@@ -133,8 +136,8 @@ function createDesktop(deps = {}) {
     if (S.master()) return;
     const answer = await ctx.ask({
       title: 'Let the AI use other apps on this computer?',
-      detail: 'This turns on Settings > AI > "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, such as Word or File Explorer. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.',
-      args: 'Windows only. Nothing leaves this computer except what is sent to the AI in this chat.',
+      detail: `This turns on Settings > AI > "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, ${backend.examples}. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.`,
+      args: backend.switchNote,
       noAlways: true, allowLabel: 'Turn on',
     });
     if (!answer) throw new Error(policy.OFF_TEXT);
@@ -144,7 +147,8 @@ function createDesktop(deps = {}) {
   // ---- the session: banner, card, thumbnail, takeover, stop
   function startSession(ctx) {
     const w = getApi();
-    if (!w) throw new Error('The check that lets you stop the AI (Esc held, taking over) could not start on this computer, so the AI will not use other apps. Restart Lumen, or tell the Lumen team if it keeps happening.');
+    try { w?.start?.(); } catch { /* failed() says so below */ }
+    if (!w || w.failed?.()) { try { w?.stop?.(); } catch { /* gone */ } throw new Error('The check that lets you stop the AI (Esc held, taking over) could not start on this computer, so the AI will not use other apps. Restart Lumen, or tell the Lumen team if it keeps happening.'); }
     stats.sessions++;
     session = {
       id: ++seq, signal: ctx.signal, emit: ctx.emit, target: null, card: null, label: '', paused: false, stopped: false, busy: false, busyUntil: 0,
@@ -197,6 +201,7 @@ function createDesktop(deps = {}) {
     if (status === 'stopped') { try { client?.abort?.('Stopped by the user.'); } catch { /* gone */ } }
     for (const t of s.timers) clearInterval(t);
     s.live?.stop();
+    try { api?.stop?.(); } catch { /* gone */ }
     if (extra.blocked && s.card) s.card.thumb = null; // a window that turned into something blocked: its picture is not kept, the card shows the placeholder
     try { deps.shortcut?.unregister('Ctrl+Alt+Esc'); } catch { /* gone */ }
     try { deps.banner?.hide(); } catch { /* gone */ }
@@ -242,6 +247,7 @@ function createDesktop(deps = {}) {
   function poll(s) {
     const w = getApi();
     if (!w || session !== s || s.stopped) return;
+    if (w.failed?.()) { stop('checks'); return; } // (macOS: the checks stopped running, so Esc would not work: the AI stops)
     try {
       if (w.escapeDown()) {
         if (!s.escSince) s.escSince = now();
@@ -382,7 +388,7 @@ function createDesktop(deps = {}) {
 
   async function pressKeys(args, ctx) {
     let parsed;
-    try { parsed = keysLib.parseKeys(args.keys); } catch (err) { throw new Error(err.message); }
+    try { parsed = backend.parseKeys(args.keys); } catch (err) { throw new Error(err.message); }
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
@@ -409,10 +415,10 @@ function createDesktop(deps = {}) {
     if (!S.master()) await offerSwitch(ctx);
     const r = await getClient().call('resolve', { name });
     const found = (r.found || []).slice().sort((a, b) => Number(b.exact) - Number(a.exact) || a.name.length - b.name.length)[0];
-    if (!found) throw new Error(`No app called "${name}" was found in the Start menu. Tell the user, or ask for the exact name.`);
+    if (!found) throw new Error(backend.notFound(name));
     const target = policy.exeKey(found.exe);
-    if (!target.endsWith('.exe')) throw new Error(`${found.name} is a Windows (Store) app, whose program cannot be checked before it starts, so the AI does not start it. The user can open it, and the AI can then use it.`);
-    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name };
+    if (!backend.launchable(target)) throw new Error(backend.notLaunchable(found.name));
+    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name, bundle: found.bundle || '' }; // (macOS: the bundle id from its Info.plist, so a renamed blocked app is still blocked)
     const before = new Set((await apps(true)).map((w) => w.hwnd));
     await authorize(probe, ctx, { acting: true, what: `open ${found.name}` }); // blocked programs are refused before anything starts; the rest ask
     await getClient().call('launch', { key: found.key }, { timeoutMs: 15000 });
@@ -437,21 +443,45 @@ function createDesktop(deps = {}) {
 
   // The tool. input: { action, args }. ctx: { ask({ title, detail, args, noAlways, allowLabel }) -> true | 'always' | false, emit, signal, once: Set }
   async function run(input, ctx) {
-    if (platform !== 'win32') throw new Error(policy.NOT_WINDOWS);
+    if (!backend) throw new Error(policy.NOT_SUPPORTED);
     stats.calls++;
     const action = String(input?.action ?? '');
     const args = input?.args && typeof input.args === 'object' && !Array.isArray(input.args) ? input.args : {};
-    switch (action) {
-      case 'list_apps': return listApps(ctx);
-      case 'focus_app': return focusApp(args, ctx);
-      case 'read_app': return readApp(args, ctx);
-      case 'click': return click(args, ctx);
-      case 'type': return type(args, ctx);
-      case 'press_keys': return pressKeys(args, ctx);
-      case 'screenshot_app': return screenshot(args, ctx);
-      case 'open_app': return openApp(args, ctx);
-      default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app or open_app.`);
+    try {
+      switch (action) {
+        case 'list_apps': return await listApps(ctx);
+        case 'focus_app': return await focusApp(args, ctx);
+        case 'read_app': return await readApp(args, ctx);
+        case 'click': return await click(args, ctx);
+        case 'type': return await type(args, ctx);
+        case 'press_keys': return await pressKeys(args, ctx);
+        case 'screenshot_app': return await screenshot(args, ctx);
+        case 'open_app': return await openApp(args, ctx);
+        default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app or open_app.`);
+      }
+    } catch (err) {
+      if (err?.permission && err.settingsUrl) await offerPermission(err, ctx);
+      throw err;
     }
+  }
+
+  // macOS: a permission Lumen does not have yet (Accessibility, Screen Recording, Automation). Lumen never grants it: a card says what is
+  // missing, with a button that opens that System Settings pane. Once per run; the AI is told the same in the error.
+  async function offerPermission(err, ctx) {
+    const key = ctx?.signal || ctx;
+    if (!key || permissionShown.has(key) || !ctx?.ask) return;
+    permissionShown.add(key);
+    const pane = { accessibility: 'Accessibility', screen: 'Screen & System Audio Recording', automation: 'Automation' }[err.permission] || 'Privacy & Security';
+    let open;
+    try {
+      open = await ctx.ask({
+        title: `Lumen needs the macOS ${pane} permission`,
+        detail: `${err.permission === 'screen' ? 'To take a picture of another app\'s window' : 'To read and operate other apps'}, macOS has to allow Lumen in System Settings > Privacy & Security > ${pane}. Lumen cannot turn this on itself. Turn on Lumen there${err.permission === 'screen' ? ', then quit and reopen Lumen' : ''}, and ask again.`,
+        args: `System Settings > Privacy & Security > ${pane}`,
+        noAlways: true, allowLabel: 'Open System Settings',
+      });
+    } catch { open = false; }
+    if (open) { try { await deps.openSettings?.(err.settingsUrl); } catch { /* the user can open it by hand */ } }
   }
 
   // The run ended (agent.js): the banner goes and the card says Completed.
