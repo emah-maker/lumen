@@ -26,7 +26,7 @@ Find the table with read_page, then give it as CSV with a header row.
 
 ### Use my Claude Code skills
 
-Settings → Skills → **Use my Claude Code skills** (off by default) lists the skills in `~/.claude/skills/<name>/SKILL.md` as read-only `/` commands. Claude Code's `$ARGUMENTS` becomes what you type after the command. Lumen reads each `SKILL.md` and nothing else in the folder. To change these skills, edit them in Claude Code. A skill whose name a Lumen skill or chat command already uses is left out, and Settings says so. Settings also lists any `SKILL.md` that could not be read, with the reason.
+Settings → Skills → **Use my Claude Code skills** (off by default) lists the skills in `~/.claude/skills/<name>/SKILL.md` as read-only `/` commands. Claude Code's `$ARGUMENTS` becomes what you type after the command. Lumen reads each `SKILL.md` and nothing else in the folder. A skill folder (or its `SKILL.md`) that is a symlink, into a repository for example, is followed and read the same way. A link that points nowhere is listed with the reason. To change these skills, edit them in Claude Code. A skill whose name a Lumen skill or chat command already uses is left out, and Settings says so. Settings also lists any `SKILL.md` that could not be read, with the reason.
 
 ## The AI using skills on its own
 

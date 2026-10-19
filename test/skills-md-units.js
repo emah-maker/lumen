@@ -105,6 +105,26 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-skills-md-'));
     const s = Skills.claudeCodeSkill(list.find((x) => x.ok));
     check('claude code: read-only, its own id, $ARGUMENTS becomes {{input}}', s.readOnly && s.id === 'claude-code:commit-msg' && s.source === 'claude-code' && /for \{\{input\}\}\./.test(s.prompt), J(s));
     check('claude code: no ~/.claude/skills is an empty list', MD.listClaudeCodeSkills(path.join(tmp, 'nobody')).length === 0);
+    // Symlinked skill folders (a common setup: ~/.claude/skills/x -> a repository): followed, read the same way.
+    const linkHome = path.join(tmp, 'link-home');
+    const linkDir = path.join(linkHome, '.claude', 'skills');
+    const repo = path.join(tmp, 'repo', 'skills');
+    fs.mkdirSync(path.join(repo, 'from-repo', 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'from-repo', 'SKILL.md'), '---\nname: from-repo\ndescription: A skill kept in a repository.\n---\nDo the repo thing.');
+    fs.writeFileSync(path.join(repo, 'from-repo', 'scripts', 'x.sh'), 'echo pwned');
+    fs.mkdirSync(path.join(repo, 'md-only'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'md-only', 'REAL.md'), '---\nname: md-link\ndescription: Its SKILL.md is a link.\n---\nLinked body.');
+    fs.writeFileSync(path.join(repo, 'a-file.txt'), 'not a folder');
+    fs.mkdirSync(path.join(linkDir, 'md-link'), { recursive: true });
+    fs.symlinkSync(path.join(repo, 'from-repo'), path.join(linkDir, 'from-repo'));
+    fs.symlinkSync(path.join(repo, 'md-only', 'REAL.md'), path.join(linkDir, 'md-link', 'SKILL.md'));
+    fs.symlinkSync(path.join(tmp, 'nowhere'), path.join(linkDir, 'dangling'));
+    fs.symlinkSync(path.join(repo, 'a-file.txt'), path.join(linkDir, 'not-a-folder'));
+    const linked = MD.listClaudeCodeSkills(linkHome);
+    const by = (f) => linked.find((x) => x.folder === f);
+    check('claude code: a symlinked skill folder is followed and read (SKILL.md only)', by('from-repo')?.ok && by('from-repo').skill.prompt === 'Do the repo thing.' && !/pwned/.test(J(linked)), J(linked));
+    check('claude code: a SKILL.md that is itself a link is read too', by('md-link')?.ok && by('md-link').skill.name === 'md-link', J(by('md-link')));
+    check('claude code: a link pointing nowhere, or at a file, is listed with the reason', /points nowhere/.test(by('dangling')?.error || '') && /not a folder/.test(by('not-a-folder')?.error || ''), J(linked));
   }
 
   // ---- the system prompt's list (progressive disclosure)
@@ -178,6 +198,14 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-skills-md-'));
     check('export: <folder>/<name>/SKILL.md, readable back', exp.ok && MD.fromSkillMd(written).skill.name === 'export-csv', J(exp));
     const again = await invoke('skills:export-md', imported.id);
     check('export: an existing SKILL.md is never overwritten', !again.ok && /already a SKILL\.md/.test(again.error), J(again));
+    const out2 = path.join(tmp, 'out2');
+    fs.mkdirSync(path.join(out2, 'export-csv'), { recursive: true });
+    const target = path.join(tmp, 'elsewhere', 'victim.md');
+    fs.mkdirSync(path.dirname(target), { recursive: true }); // (so a plain write would have created it)
+    fs.symlinkSync(target, path.join(out2, 'export-csv', 'SKILL.md')); // a link that points nowhere (yet)
+    openPick = { canceled: false, filePaths: [out2] };
+    const viaLink = await invoke('skills:export-md', imported.id);
+    check('export: a dangling symlink named SKILL.md is not written through', !viaLink.ok && /already a SKILL\.md/.test(viaLink.error) && !fs.existsSync(target), J(viaLink));
 
     // learning: save offer -> the /create-skill path (the editor opens; nothing saved)
     const before = feature.store.list().length;

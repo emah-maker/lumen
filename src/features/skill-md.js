@@ -212,19 +212,29 @@ function readSkillFolder(target, { fsMod = fs } = {}) {
 }
 
 // Claude Code's personal skills: <home>/.claude/skills/<name>/SKILL.md, read-only. -> [{ ok, skill, folder } | { ok: false, folder, error }]
+// A skill folder (or its SKILL.md) is often a symlink into a repository: it is followed (realpath) and read the same way,
+// SKILL.md only; a link that points nowhere, or at something that is not a folder, is listed with the reason.
 function listClaudeCodeSkills(home, { fsMod = fs, max = 50, maxPrompt = 20000 } = {}) {
   const root = path.join(home, '.claude', 'skills');
   let entries;
   try { entries = fsMod.readdirSync(root, { withFileTypes: true }); } catch { return []; }
   const out = [];
-  for (const e of entries.filter((x) => x.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)).slice(0, max)) {
-    const file = path.join(root, e.name, 'SKILL.md');
+  for (const e of entries.filter((x) => x.isDirectory() || x.isSymbolicLink()).sort((a, b) => a.name.localeCompare(b.name)).slice(0, max)) {
+    let dir = path.join(root, e.name);
+    if (e.isSymbolicLink()) {
+      try {
+        dir = fsMod.realpathSync(dir);
+        if (!fsMod.statSync(dir).isDirectory()) { out.push({ ok: false, folder: e.name, error: 'It is a link to something that is not a folder.' }); continue; }
+      } catch { out.push({ ok: false, folder: e.name, error: 'It is a link that points nowhere.' }); continue; }
+    }
     let text;
     try {
-      const st = fsMod.lstatSync(file);
-      if (!st.isFile() || st.size > MAX_SKILL_MD_BYTES) continue;
+      const file = fsMod.realpathSync(path.join(dir, 'SKILL.md')); // (SKILL.md itself may be a link too)
+      const st = fsMod.statSync(file);
+      if (!st.isFile()) continue;
+      if (st.size > MAX_SKILL_MD_BYTES) { out.push({ ok: false, folder: e.name, error: `SKILL.md is larger than ${MAX_SKILL_MD_BYTES / 1024} KB.` }); continue; }
       text = fsMod.readFileSync(file, 'utf8');
-    } catch { continue; }
+    } catch { continue; } // no SKILL.md: not a skill folder
     const r = fromSkillMd(text, { folder: e.name, maxPrompt });
     out.push(r.ok ? { ok: true, folder: e.name, skill: r.skill } : { ok: false, folder: e.name, error: r.error });
   }

@@ -669,9 +669,12 @@ function create(deps) {
       if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
       const dir = path.join(filePaths[0], skill.name);
       const file = path.join(dir, 'SKILL.md');
-      if (fs.existsSync(file)) return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(file, skillMd.toSkillMd(skill), 'utf8');
+      // 'wx': created here or not at all, so an existing file, or a symlink there (even one pointing nowhere), is never written through.
+      try { await fs.promises.writeFile(file, skillMd.toSkillMd(skill), { encoding: 'utf8', flag: 'wx' }); } catch (err) {
+        if (err?.code === 'EEXIST') return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
+        throw err;
+      }
       return { ok: true, filePath: file };
     });
     // Settings' read-only list of Claude Code skills (also the ones that could not be read, with the reason).
