@@ -46,7 +46,6 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.waitForSelector('.tab');
   await ui.waitForTimeout(500);
   await ui.evaluate(() => window.assistant.setMcpEnabled(true));
-  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default; this suite is about the approval cards, so it asks)
   await app.evaluate(({ app: electronApp }) => {
     global.__focusEvents = [];
     electronApp.on('browser-window-focus', (_e, w) => global.__focusEvents.push(w.id));
@@ -286,6 +285,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   agents = await agentWins();
   check('a second client gets a window of its own', agents.length === 2 && agents.some((w) => w.agent === 'Codex' && w.tabs.length === 1 && /b1/.test(w.tabs[0].url)), JSON.stringify(agents.map((w) => [w.agent, w.tabs.map((t) => t.url)])));
   // Its approval card is quiet: the sidebar stays closed, the AI button gets a badge, nothing takes focus, and it waits for the user.
+  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default, as in the steps above; this part is about the approval card, so it asks)
   paused = true;
   const pendingClick = B.call('click', { text: 'Press B1' });
   await Promise.race([ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }), pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); })]);

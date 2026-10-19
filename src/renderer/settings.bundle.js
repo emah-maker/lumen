@@ -7,6 +7,7 @@
 (() => {
   const start = performance.now();
   const TTL = 1500;
+  const REMEMBER = 'lumen.settings.category';
   let live = true;
   const early = new Map();
   const stop = () => { live = false; early.clear(); };
@@ -38,7 +39,12 @@
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
     if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines());
-    prefetch('ai.get', () => S.ai.get());
+
+
+    const hash = location.hash.slice(1);
+    let last = ''; try { last = localStorage.getItem(REMEMBER) || ''; } catch {  }
+    const NO_AI = new Set(['general', 'appearance', 'home', 'privacy', 'updates', 'default-browser', 'startup', 'languages', 'language', 'engine', 'search', 'downloads', 'files', 'focus', 'accessibility', 'theme', 'newtab', 'new-tab', 'about', 'cookies', 'security', 'passwords', 'permissions', 'extensions']);
+    if (!NO_AI.has(hash || last || 'general')) prefetch('ai.get', () => S.ai.get());
     S.ai.onModelsUpdated?.(stop);
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Settings opens a little faster, and the test suites that guard it are steady again.** General no longer waits for Focus mode and Sync (rows far below the first screen) before the page shows: they fill in a moment later. The Search engine row asks for just the list of engines instead of the whole AI state. Several tests that raced the page (cards still sliding, a search before every section was built, a dialog answered twice) now wait for what they measure.
+
 ## 0.5.56 (2026-10-19)
 
 - **Outside AI agents (MCP) no longer make Lumen stutter when several start together.** Opening an agent's window used to hold the browser up for about 12 ms in one go (making the window, showing it, loading its page and its blank first tab), and a full-size page capture meant for the sidebar's first open ran for every agent window as well. Each step now runs on its own and waits for a moment when no screenshot is landing, agent windows skip that capture, and the first web request no longer loads its machinery in the middle of the calls, so with six agents at once the longest pause is about 12 ms instead of 20 or more.
