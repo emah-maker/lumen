@@ -233,9 +233,7 @@ module.exports = async function appleMusicStatusUnits(check) {
     check('apple status: the card asks the engine whether to include the desktop app (default yes)', fake.last && fake.last.app === true, JSON.stringify(fake.last));
     await sleep(400);
     const reads = fake.reads;
-    w.engineChanged();
-    // At once, or a moment later: a look that came right after another one (the playhead timer's own refresh) is repeated after 110 ms, so wait for that, not for a fixed 20 ms that a busy machine or the timer's phase can miss.
-    for (let i = 0; i < 50 && fake.reads <= reads; i++) await sleep(10);
+    await w.engineChanged(); // (resolves once the card has looked again: no wall-clock wait to lose under load)
     check('apple status: when the app changes, the status card is fetched again at once', fake.reads > reads, `${reads} -> ${fake.reads}`);
     await w.save({ type: 'applemusic', art: false }, id);
     await w.refresh(w.list()[0], { force: true });

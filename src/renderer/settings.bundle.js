@@ -5,7 +5,6 @@
 
 
 (() => {
-  if (/^Win/.test(navigator.platform)) document.documentElement.classList.add('win');
   const start = performance.now();
   const TTL = 1500;
   let live = true;
@@ -40,10 +39,6 @@
   if (S.ai) {
     if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines());
     prefetch('ai.get', () => S.ai.get());
-    if (/^#(ai|you-and-ai|hands-off|ask-before-acting|ai-keys|keys|antigravity|connect-agents|mcp-servers|providers)/.test(location.hash)) {
-      prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
-      prefetch('ai.automationInfo', () => S.ai.automationInfo());
-    }
     S.ai.onModelsUpdated?.(stop);
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
@@ -2625,6 +2620,16 @@ function buildConnectors() {
       } });
       buttons.push(allow);
     }
+
+    if (c.sending) {
+      const on = c.sending === 'on';
+      const sw = h('button', { id: `conn-${c.id}-sending`, class: on ? '' : 'primary', text: on ? 'Turn off sending' : 'Allow sending', 'aria-pressed': on ? 'true' : 'false', 'aria-label': on ? `Turn off ${c.name} sending` : `Allow ${c.name} sending`, onclick: async () => {
+        if (!on && !confirm('Let the AI send email from your Gmail? It still shows you each email and waits for you to press Send, unless you tell it in a chat that it may send without asking. It sends at most 10 an hour, never from background tasks or routines, and every send is listed here.')) return;
+        sw.disabled = true;
+        try { render(await C.setSending(c.id, !on)); flash(note, on ? 'Sending turned off.' : 'Sending allowed. The AI asks you before each send.', 'ok'); } catch (err) { sw.disabled = false; flash(note, clean(err), 'error'); }
+      } });
+      buttons.push(sw);
+    }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
         if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
@@ -2636,8 +2641,24 @@ function buildConnectors() {
       h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
       h('p', { class: 'conn-summary', text: c.summary }),
       c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
+      c.sending === 'on' ? h('p', { class: 'note conn-sending', text: 'Sending allowed: each email shows on a card and goes only when you press Send. If you say in a chat that it may send without asking, that chat sends to the addresses you typed, after a 10 second Undo. Bypass permissions never skips the card.' }) : null,
+      c.sending === 'on' ? sendLogView(c) : null,
       showing ? form(c, render) : (c.status !== 'soon' ? h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)) : null),
       showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
+  }
+
+
+  function sendLogView(c) {
+    const body = h('div', { class: 'conn-send-log' });
+    const d = h('details', { class: 'conn-details', id: `conn-${c.id}-sendlog` }, h('summary', { text: 'Sent by the AI' }), body);
+    d.addEventListener('toggle', async () => {
+      if (!d.open) return;
+      try {
+        const rows = await C.sendLog();
+        body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
+      } catch (err) { body.replaceChildren(h('p', { class: 'note', text: clean(err) })); }
+    });
+    return d;
   }
 
   let last = null;
@@ -4125,10 +4146,6 @@ const later = (fn) => {
   laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
   return turn.then(fn);
 };
-
-let aiShownResolve = () => {};
-const aiShown = new Promise((resolve) => { aiShownResolve = resolve; });
-const laterOnAi = (fn) => aiShown.then(() => later(fn));
 let isBuilt = () => true;
 let neededBuilds = () => [];
 let buildOne = () => Promise.resolve();
@@ -4535,7 +4552,7 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  laterOnAi(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
+  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
 
   const mcp = await S.ai.mcpInfo();
@@ -4566,7 +4583,7 @@ async function buildAi(card) {
     const ccState = snip.id === 'claude' ? status() : null;
     const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      laterOnAi(() => S.ai.claudeCodeStatus()).then((s) => {
+      later(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
@@ -4599,7 +4616,7 @@ async function buildAi(card) {
       cxActions.replaceChildren(...buttons);
     }
     function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
-    if (cxState) laterOnAi(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
+    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
       h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
       cxState ? h('div', { class: 'item' }, cxState) : null,
@@ -6563,7 +6580,7 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  laterOnAi(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
+  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
@@ -7134,11 +7151,8 @@ function applyPageClasses() {
 let view = { cat: DEFAULT_CATEGORY, sub: null };
 const query = () => $('search').value.trim().toLowerCase();
 const REMEMBER = 'lumen.settings.category';
-
-let rememberedRead; let rememberedId = null;
-const remembered = () => { if (!rememberedRead) { rememberedRead = true; try { const id = localStorage.getItem(REMEMBER); rememberedId = categories.has(id) ? id : null; } catch { rememberedId = null; } } return rememberedId; };
-let rememberTimer = 0;
-const remember = (id) => { rememberedId = id; clearTimeout(rememberTimer); rememberTimer = setTimeout(() => { try { localStorage.setItem(REMEMBER, id); } catch {} }, 800); };
+const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
+const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
 let searchedBefore = false;
 function show() {
@@ -7147,7 +7161,6 @@ function show() {
   const searching = words.length > 0;
   const wasSearching = searchedBefore;
   searchedBefore = searching;
-  if (searching || view.cat === 'ai') aiShownResolve();
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
@@ -7270,16 +7283,14 @@ function guessView() {
   const sub = slots.get(id);
   if (sub?.isSub) return { cat: sub.cat, sub: id };
   if (categories.has(id)) return { cat: id, sub: null };
-  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus };
   return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
 }
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
-  performance.mark('route:start');
   const r = resolveRoute();
-  performance.mark('route:resolved');
-  const need = neededBuilds(view, !firstRouteDone).filter((sid) => !isBuilt(sid));
+  const need = neededBuilds(view, r.focus).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -7310,10 +7321,6 @@ function foldBelowTheFirstScreen() {
     if (rows >= FOLD_ROWS) { g.classList.add('later'); later.push(g); } else rows += g.querySelectorAll('.row').length;
   }
   return later;
-}
-const navIcons = [];
-function fillNavIcons() {
-  for (const [icon, id] of navIcons.splice(0)) icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[id]}</svg>`;
 }
 function revealFolded() {
   if (!foldedGroups.length) return;
@@ -7363,7 +7370,7 @@ async function init() {
   for (const def of CATEGORIES) {
     def.title = tr(`settings.section.${def.id}`, def.title);
     const icon = h('span', { class: `ic ic-${def.id}`, 'aria-hidden': 'true' });
-    navIcons.push([icon, def.id]);
+    icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[def.id]}</svg>`;
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
     if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
@@ -7410,13 +7417,12 @@ async function init() {
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
 
-  const FIRST_SCREEN = { general: ['import', 'startup', 'search'] };
-  const SLOT_OWNER = { 'default-browser': 'import', import: 'import', startup: 'startup', search: 'search', languages: 'languages', downloads: 'downloads' };
-  neededBuilds = (v, first = false) => {
-    if (first && !v.sub && FIRST_SCREEN[v.cat] && (!location.hash.slice(1) || location.hash.slice(1) === v.cat)) return FIRST_SCREEN[v.cat];
+
+  const LATE = new Set(['focus', 'sync']);
+  neededBuilds = (v, want) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
-    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat) && (!LATE.has(sid) || want === sid));
   };
 
 
@@ -7440,7 +7446,7 @@ async function init() {
     for (const [sid, slot] of slots) {
       if (slot.tidied) continue;
       const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
-      const done = owner ? finished.has(owner) || !buildFn.has(owner) : SLOT_OWNER[sid] ? finished.has(SLOT_OWNER[sid]) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
       if (done) { slot.tidied = true; tidy(slot); }
     }
   };
@@ -7474,11 +7480,12 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub;
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, true).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, wanted.focus).map(buildOne));
   performance.mark('settings:ai-built');
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true);
+  document.fonts?.ready.then(fitDescs).catch(() => {});
   $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); });
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
 
@@ -7501,12 +7508,9 @@ async function init() {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     document.body.dataset.shown = '1';
     revealFolded();
-    fillNavIcons();
-    document.fonts?.ready.then(fitDescs).catch(() => {});
     paintedResolve();
     performance.mark('settings:visible');
-    for (const sid of neededBuilds(view)) buildOne(sid);
-    setTimeout(buildAll, 250);
+    buildAll();
   }));
 }
 

@@ -3079,12 +3079,15 @@ function createWidgets(deps) {
   }
 
   // An engine (or the desktop Apple Music app) changed what it is playing, as main.js heard: the status cards look again at once.
+  // Resolves once every status card has looked again (callers need not wait; tests do).
   function engineChanged() {
+    const looks = [];
     for (const w of list()) {
       if (!((w.type === 'applemusic' && w.mode !== 'web') || (w.type === 'spotify' && w.mode === 'status'))) continue;
       // A change that comes right after another look is not dropped: it is looked at again a moment later.
-      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 110); }, () => {});
+      looks.push(refresh(w, { force: true }).then((ran) => (ran ? true : new Promise((done) => { setTimeout(() => refresh(w, { force: true }).then(done, () => done(false)), 110); })), () => false));
     }
+    return Promise.all(looks);
   }
 
   // The AI status card shows live facts (chats working, tabs the AI opened, a limit that ended), so main.js says when
@@ -3136,16 +3139,26 @@ function createWidgets(deps) {
   }
   // One draft: POST /users/me/drafts with { message: { raw, threadId? } }, with the token, and nothing else. The path is checked by
   // features/gmail-drafts.js composePath (no send, ever). A token without gmail.compose is told "Allow drafts first" (kind 'scope').
+  // One send (opt-in, features/gmail-send.js): the same request shape as a draft, to the messages.send address and nothing else. The
+  // connector reaches it only after the Allow sending switch, the approval card or the user's typed permission (service.js, agent.js).
+  async function gmailSend(body) {
+    const GS = require('./gmail-send');
+    return gmailPost(GS.sendPath(GS.SEND_PATH), body, 'email');
+  }
   async function gmailCompose(body) {
     const GD = require('./gmail-drafts');
     const path = GD.composePath(GD.DRAFTS_PATH);
+    return gmailPost(path, body, 'draft');
+  }
+  async function gmailPost(path, body, noun) {
+    const made = noun === 'draft' ? 'made' : 'sent';
     if (!gmailAuthState().compose) throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
     const x = helpers('gmail');
     const session = sessionFor('gmail');
     // Errors that certainly made nothing carry nothingMade: true (not sent, or Google's 400, 401, 403 or 429). Every other failure after
     // the request went out may have made the draft (kind 'maybe').
     const certain = (err) => Object.assign(err, { nothingMade: true });
-    const maybe = () => new OA.OAuthError('The draft may have been made; check Drafts before trying again.', { kind: 'maybe' });
+    const maybe = () => new OA.OAuthError(`The ${noun} may have been ${made}; check ${noun === 'draft' ? 'Drafts' : 'Sent'} before trying again.`, { kind: 'maybe' });
     for (let attempt = 0; ; attempt++) {
       let access;
       try { access = await session.access({ force: attempt > 0 }); } catch (err) { throw certain(err); } // (no token: nothing was sent)
@@ -3156,7 +3169,7 @@ function createWidgets(deps) {
         // dropped after sending, an unreadable answer) may have made the draft, and says so (kind 'maybe').
         res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search', retry: false }); // (one the user allowed: the search budget, not the cards' polling one)
       } catch (err) {
-        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw certain(new OA.OAuthError(`Couldn’t reach Gmail, so no draft was made. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' }));
+        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw certain(new OA.OAuthError(`Couldn’t reach Gmail, so no ${noun} was ${made}. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' }));
         throw maybe();
       }
       // (A 401 is Google's answer that the token was refused: nothing was made, so the one try with a new token is safe.)
@@ -3172,12 +3185,12 @@ function createWidgets(deps) {
         if (c?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...c, scope: String(c.scope || '').split(/\s+/).filter((sc) => sc !== GV.COMPOSE_SCOPE).join(' ') }));
         throw certain(new OA.OAuthError('Allow drafts first.', { kind: 'scope' }));
       }
-      if (res.status === 400) throw certain(new Error(`Gmail didn’t accept the draft (${str(reason, 60) || 'bad request'}).`));
+      if (res.status === 400) throw certain(new Error(`Gmail didn’t accept the ${noun} (${str(reason, 60) || 'bad request'}).`));
       const e = GV.apiError(res.status, res.body);
       throw certain(new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' }));
     }
   }
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose, gmailSend };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

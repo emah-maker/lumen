@@ -92,6 +92,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onSync: on('chat:sync'),
     onTarget: on('chat:target'),
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+    sendUndo: (id) => ipcRenderer.send('agent:send-undo', id), // Gmail send: Undo within the 10 seconds
+    sendStop: () => ipcRenderer.send('agent:send-stop'), // Gmail send: Stop "sending without asking in this chat"
     desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps]
     hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [activity cards] the card's "Hide tabs the AI opened" (no argument: read it)
     tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') }, // [tab chips] a tab the chat names, as a chip

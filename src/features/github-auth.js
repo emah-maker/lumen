@@ -131,7 +131,7 @@ function findGh({ env = process.env, platform = process.platform, fs = require('
       try { ok = fs.statSync(file).isFile(); } catch { /* not here */ }
       if (!ok) continue;
       if (/\.(cmd|bat)$/i.test(file)) {
-        if (!/^[A-Za-z0-9 _.:\\/()-]+$/.test(file)) continue;
+        if (!/^[A-Za-z0-9 _.:\\/()~-]+$/.test(file)) continue; // (cmd.exe runs it: none of & | < > ^ % ! or quotes; ~ is a Windows short folder name such as RUNNER~1)
         return { file: env.ComSpec || 'cmd.exe', pre: ['/d', '/c', file], shown: file };
       }
       return { file, pre: [], shown: file };
