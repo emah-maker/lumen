@@ -4282,7 +4282,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 
@@ -4309,10 +4309,11 @@ async function askInNewChat(text, files = []) {
 }
 
 
-function ask(text, images = [], tabs = null, screen) {
+
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry;
@@ -4337,7 +4338,8 @@ function ask(text, images = [], tabs = null, screen) {
 
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null;
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined;
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 
@@ -4647,6 +4649,7 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
@@ -4745,6 +4748,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
 
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
 
 
@@ -4897,6 +4902,16 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'plan': {
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.();
       announce(event.title || t('chat.approvalWaiting'));
@@ -4904,6 +4919,24 @@ window.assistant.onEvent((event) => {
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'memory': {
+      const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
+      if (!key || !window.assistant.memory) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note', textContent: t(key, { text: event.text || '' }) }));
+      const action = (label, done, run) => {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: label });
+        button.onclick = async () => {
+          for (const b of note.querySelectorAll('button')) b.disabled = true;
+          const ok = await run().catch(() => false);
+          for (const b of note.querySelectorAll('button')) b.remove();
+          note.append(` ${ok ? done : t('memory.changedSince')}`);
+        };
+        note.append(' ', button);
+      };
+      if (event.token) action(t('memory.undo'), t('memory.undone'), () => window.assistant.memory.undo(event.token));
+      if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
 
@@ -5754,6 +5787,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) {
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -5911,6 +5949,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null;
+  window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
@@ -6146,6 +6185,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false);
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
@@ -7230,6 +7270,264 @@ function startChat() {
       return li;
     };
   };
+})();
+;
+// ---- dictation.js
+
+
+
+
+
+
+
+
+
+
+
+(() => {
+  const api = window.assistant?.dictation;
+  const byId = (id) => document.getElementById(id);
+  const box = byId('prompt');
+  const form = byId('composer');
+  const attach = byId('attach');
+  if (!api || !box || !form || !attach || typeof MediaRecorder !== 'function') return;
+  const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
+  const HOLD_MS = 400;
+  const MAC = /^Mac/.test(navigator.platform || '');
+
+  const mic = Object.assign(document.createElement('button'), { type: 'button', className: 'mic-btn', id: 'mic-btn' });
+  mic.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>';
+  attach.after(mic);
+  const bar = Object.assign(document.createElement('div'), { className: 'dictation-bar', hidden: true });
+  bar.setAttribute('role', 'status');
+  bar.innerHTML = '<span class="dictation-dot" aria-hidden="true"></span><span class="dictation-meter" aria-hidden="true"><i></i></span><span class="dictation-time"></span><span class="dictation-hint"></span>';
+  box.before(bar);
+  const meter = bar.querySelector('.dictation-meter i');
+  const timeEl = bar.querySelector('.dictation-time');
+  const hintEl = bar.querySelector('.dictation-hint');
+
+  let state = 'idle';
+  let session = null;
+  let pressAt = 0;
+
+  const label = () => ({
+    idle: tr('dictation.start', { key: MAC ? '⇧⌘Space' : 'Ctrl+Shift+Space' }),
+    starting: tr('dictation.starting'),
+    recording: tr('dictation.stop'),
+    sending: tr('dictation.sending'),
+  })[state];
+  function render() {
+    mic.dataset.state = state;
+    mic.title = label();
+    mic.setAttribute('aria-label', label());
+    mic.setAttribute('aria-pressed', String(state === 'recording'));
+    mic.setAttribute('aria-busy', String(state === 'sending' || state === 'starting'));
+    bar.hidden = state !== 'recording' && state !== 'sending';
+    bar.dataset.state = state;
+    hintEl.textContent = state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint');
+  }
+  render();
+
+  const clock = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+  function note(text, settings) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    if (settings) {
+      const link = Object.assign(document.createElement('button'), { type: 'button', className: 'link-btn', textContent: tr('dictation.openSettings') });
+      link.onclick = () => window.lumenPrefs?.openSettingsPage('you-and-ai');
+      line.append(' ', link);
+    }
+    window.showAttachNote([line]);
+  }
+
+
+  function release() {
+    const s = session;
+    session = null;
+    if (!s) return;
+    cancelAnimationFrame(s.raf);
+    clearInterval(s.timer);
+    try { s.stream?.getTracks().forEach((track) => track.stop()); } catch {  }
+    try { s.ctx?.close(); } catch {  }
+    s.chunks = [];
+  }
+
+  async function start() {
+    if (state !== 'idle') return;
+    state = 'starting';
+    render();
+    const status = await api.status().catch(() => null);
+    if (state !== 'starting') return;
+    if (!status?.provider) {
+      state = 'idle';
+      render();
+      note(status?.message || tr('dictation.error.other', { provider: '', status: '?' }), true);
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    } catch (err) {
+      state = 'idle';
+      render();
+      note(tr(err?.name === 'NotFoundError' ? 'dictation.noMic' : 'dictation.micBlocked'));
+      return;
+    }
+    if (state !== 'starting') { stream.getTracks().forEach((track) => track.stop()); return; }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    const s = { stream, recorder, chunks: [], ctx: null, raf: 0, timer: 0, startedAt: performance.now(), status, cancelled: false };
+    session = s;
+    recorder.ondataavailable = (e) => { if (e.data?.size) s.chunks.push(e.data); };
+    recorder.onstop = () => finish(s);
+    recorder.start(1000);
+
+    try {
+      s.ctx = new AudioContext();
+      const analyser = s.ctx.createAnalyser();
+      analyser.fftSize = 512;
+      s.ctx.createMediaStreamSource(stream).connect(analyser);
+      const data = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const v of data) sum += ((v - 128) / 128) ** 2;
+        meter.style.transform = `scaleX(${Math.min(1, Math.sqrt(sum / data.length) * 4).toFixed(3)})`;
+        s.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch {  }
+    const max = (status.maxSeconds || 120) * 1000;
+    const showTime = () => {
+      const ms = performance.now() - s.startedAt;
+      timeEl.textContent = `${clock(ms)} / ${clock(max)}`;
+      if (ms >= max) stop();
+    };
+    showTime();
+    s.timer = setInterval(showTime, 250);
+    state = 'recording';
+    render();
+  }
+
+  function stop() {
+    if (state === 'starting') { cancel(); return; }
+    if (state !== 'recording' || !session) return;
+    state = 'sending';
+    render();
+    clearInterval(session.timer);
+    cancelAnimationFrame(session.raf);
+    try { session.recorder.stop(); } catch { finish(session); }
+  }
+
+  function cancel() {
+    if (state === 'idle') return;
+    if (session) {
+      session.cancelled = true;
+      try { if (session.recorder.state !== 'inactive') session.recorder.stop(); } catch {  }
+    }
+    release();
+    state = 'idle';
+    render();
+  }
+
+  async function finish(s) {
+    if (s.cancelled) return;
+    const blob = new Blob(s.chunks, { type: s.recorder.mimeType || 'audio/webm' });
+    s.stream.getTracks().forEach((track) => track.stop());
+    const format = s.status.format;
+    let result;
+    try {
+      const bytes = format === 'wav' ? await toWav(blob) : new Uint8Array(await blob.arrayBuffer());
+
+      result = bytes.byteLength > (s.status.maxBytes || 8 * 1024 * 1024) ? { error: tr('dictation.error.tooLong') } : await api.transcribe(bytes, format);
+    } catch (err) {
+      result = { error: tr('dictation.error.audioLocal', { detail: String(err?.message || err).slice(0, 80) }) };
+    }
+    if (s.cancelled || session !== s) return;
+    release();
+    state = 'idle';
+    render();
+    if (result?.error) { note(result.error, Boolean(result.settings)); return; }
+    const text = String(result?.text || '').trim();
+    if (!text) { note(tr('dictation.nothingHeard')); return; }
+    insert(text);
+    if (result.autoSend) window.sendComposer();
+    else box.focus();
+  }
+
+
+  function insert(text) {
+    const startAt = box.selectionStart ?? box.value.length;
+    const endAt = box.selectionEnd ?? startAt;
+    const before = box.value.slice(0, startAt);
+    const after = box.value.slice(endAt);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const trail = after && !/^\s/.test(after) ? ' ' : '';
+    box.setRangeText(lead + text + trail, startAt, endAt, 'end');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+
+  async function toWav(blob) {
+    const RATE = 16000;
+    const ctx = new AudioContext();
+    let decoded;
+    try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); } finally { ctx.close(); }
+    const offline = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * RATE)), RATE);
+    const src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offline.destination);
+    src.start();
+    const samples = (await offline.startRendering()).getChannelData(0);
+    const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
+    const text = (at, str) => { for (let i = 0; i < str.length; i++) out.setUint8(at + i, str.charCodeAt(i)); };
+    text(0, 'RIFF'); out.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
+    out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, RATE, true);
+    out.setUint32(28, RATE * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); text(36, 'data'); out.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 0x7fff, true);
+    return new Uint8Array(out.buffer);
+  }
+
+  window.lumenDictation = { toWav };
+
+
+  mic.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    if (state === 'idle') { pressAt = performance.now(); start(); } else if (state === 'recording' || state === 'starting') { pressAt = 0; stop(); }
+  });
+  const letGo = () => { if (pressAt && performance.now() - pressAt >= HOLD_MS && (state === 'recording' || state === 'starting')) stop(); pressAt = 0; };
+  mic.addEventListener('pointerup', letGo);
+  mic.addEventListener('pointercancel', letGo);
+  mic.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    pressAt = 0;
+    if (state === 'idle') start(); else stop();
+  });
+
+  const isShortcut = (e) => e.code === 'Space' && e.shiftKey && (MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
+  box.addEventListener('keydown', (e) => {
+    if (!isShortcut(e)) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    if (state === 'idle') { pressAt = performance.now(); start(); } else { pressAt = 0; stop(); }
+  });
+  document.addEventListener('keyup', (e) => { if (e.code === 'Space' && pressAt) letGo(); }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || state === 'idle') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    cancel();
+    box.focus();
+  }, true);
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); });
+  new MutationObserver(() => { if (document.body.classList.contains('sidebar-hidden')) cancel(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('pagehide', cancel);
 })();
 ;
 // ---- snapshot-arrival.js
@@ -12701,6 +12999,28 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
 
+
+  window.showSkillOffer = function showSkillOffer(append, offer) {
+    if (!offer?.token || typeof append !== 'function') return;
+    const update = offer.kind === 'update';
+    if (!update && offer.kind !== 'save') return;
+    const box = append(Object.assign(document.createElement('div'), { className: 'run-undo skill-offer', role: 'status' }));
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: update ? tr('skills.offer.update', 'Update the skill “{title}” with what changed?', { title: offer.skill?.title || offer.skill?.name || '' }) : tr('skills.offer.save', 'Save how I did this as a skill?') });
+    const yes = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: update ? tr('skills.offer.updateButton', 'Show the change') : tr('skills.offer.saveButton', 'Draft a skill') });
+    const no = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('skills.offer.no', 'No thanks') });
+    yes.addEventListener('click', async () => {
+      yes.disabled = true;
+      no.disabled = true;
+      text.textContent = tr('skills.create.working', 'Asking the model for a skill…');
+      const call = update ? api.offerUpdate : api.offerSave;
+      const r = call ? await call(offer.token).catch((err) => ({ ok: false, error: String(err?.message || err) })) : null;
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: r?.ok ? (update ? tr('skills.offer.updateOpened', 'The change is open in Settings → Skills. Nothing changes until you accept it.') : tr('skills.create.opened', 'The editor is open in Settings. Review it and save.')) : (r?.error || tr('skills.failed', 'That skill could not run.')) }));
+    });
+    no.addEventListener('click', () => box.remove());
+    box.append(text, ' ', yes, ' ', no);
+  };
+
+
   const decode = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
   const REQUEST = /^<skill_request name="([^"]*)" title="([^"]*)" input="([^"]*)">\n([\s\S]*?)\n?<\/skill_request>\s*$/;
   function decorate(bubble) {
@@ -13342,6 +13662,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
+
 (() => {
   const slash = window.slashCommands;
   const newChat = document.getElementById('new-chat');
@@ -13557,6 +13878,33 @@ $('agent-stop')?.addEventListener('click', () => {
     },
   });
   slash.register({
+    name: 'memory',
+    label: tr('slash.memory', 'Memory'),
+    description: tr('slash.memory.description', 'What the AI has saved about you between chats.'),
+    takesInput: false,
+    async run() {
+      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI and agents.') };
+      const view = await window.assistant.memory.list().catch(() => null);
+      const box = Object.assign(document.createElement('div'), { className: 'notice slash-help memory-list' });
+      const entries = view?.entries || [];
+      box.append(Object.assign(document.createElement('strong'), { textContent: tr('slash.memory.title', 'Memory') }), ' ');
+      if (!view?.on) box.append(tr('slash.memory.off', 'Memory is off: the AI doesn’t save or read anything between chats.'));
+      else if (!entries.length) box.append(tr('slash.memory.empty', 'Nothing saved yet. Tell the AI “remember that …”.'));
+      if (entries.length) {
+        const list = document.createElement('ul');
+        for (const e of entries.slice(0, 50)) list.append(Object.assign(document.createElement('li'), { textContent: e.text }));
+        box.append(list);
+        if (entries.length > 50) box.append(tr('slash.memory.more', '…and {n} more.', { n: entries.length - 50 }), ' ');
+        if (!view.on) box.append(tr('slash.memory.offKept', 'These are kept but not used while Memory is off.'), ' ');
+      }
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.memory.open', 'Manage memory') });
+      open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
+      box.append(' ', open);
+      note(box);
+      return { ok: true };
+    },
+  });
+  slash.register({
     name: 'model',
     label: tr('slash.model', 'Change the model'),
     description: tr('slash.model.description', 'Open the model menu. /model sonnet searches it.'),
@@ -13586,6 +13934,297 @@ $('agent-stop')?.addEventListener('click', () => {
       return { ok: true };
     },
   });
+})();
+;
+// ---- ../ai/plan-mode.js
+
+
+
+
+
+
+
+{
+
+
+
+
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
+  const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
+  const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
+
+
+  function planToolError(name, input = {}) {
+    if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
+    return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
+  }
+
+
+  function planSite(raw) {
+    const text = String(raw ?? '').trim().toLowerCase();
+    if (!text || text.length > 255 || /\s/.test(text)) return '';
+    let url;
+    try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`); } catch { return ''; }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return '';
+    const host = url.host.replace(/\.(?=:|$)/, '');
+    if (!host || host.includes('*')) return '';
+    if (!/^(localhost|\[[0-9a-f:]+\]|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$/.test(host)) return '';
+    return host;
+  }
+
+  const stepText = (s) => (typeof s === 'string' ? s : s && typeof s === 'object' && typeof s.text === 'string' ? s.text : '');
+
+
+
+  function validatePlan(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'The plan must be an object with title, steps, sites and risky_steps.' };
+    const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, LIMITS.title) || 'Plan';
+    if (!Array.isArray(input.steps)) return { error: 'steps must be a list of short sentences, one per step.' };
+    const steps = input.steps.map((s) => stepText(s).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!steps.length) return { error: 'The plan needs at least one step.' };
+    if (steps.length > LIMITS.steps) return { error: `A plan has at most ${LIMITS.steps} steps; group the small ones.` };
+    const sites = [];
+    for (const [i, raw] of (Array.isArray(input.sites) ? input.sites : []).entries()) {
+      const host = planSite(raw);
+      if (!host) return { error: `sites[${i}] ("${String(raw).slice(0, 80)}") is not a site name. Use host names such as "www.example.com".` };
+      if (!sites.includes(host)) sites.push(host);
+    }
+    if (sites.length > LIMITS.sites) return { error: `A plan names at most ${LIMITS.sites} sites.` };
+    const risky = [];
+    for (const raw of Array.isArray(input.risky_steps) ? input.risky_steps : []) {
+      const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+      if (!Number.isInteger(n) || n < 1 || n > steps.length) return { error: `risky_steps holds step numbers from 1 to ${steps.length}; ${JSON.stringify(raw)} is not one.` };
+      if (!risky.includes(n)) risky.push(n);
+    }
+    risky.sort((a, b) => a - b);
+    return { plan: { title, steps: steps.map((s) => s.slice(0, LIMITS.step)), sites, risky_steps: risky } };
+  }
+
+
+  function approvedHosts(plan) {
+    const checked = validatePlan(plan);
+    return checked.plan ? checked.plan.sites : [];
+  }
+
+
+
+
+  const interactKey = (host) => `interact:${host}`;
+  const approvedKeys = (plan) => approvedHosts(plan).map(interactKey);
+
+
+  function approvedText(plan, words = {}) {
+    const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
+    const lines = [w.head, '', plan.title, ...plan.steps.map((s, i) => `${i + 1}. ${s}${plan.risky_steps.includes(i + 1) ? ' (risky)' : ''}`)];
+    if (plan.sites.length) lines.push('', `${w.sites} ${plan.sites.join(', ')}`);
+    if (plan.risky_steps.length) lines.push(`${w.risky} ${plan.risky_steps.join(', ')}`);
+    return lines.join('\n');
+  }
+
+
+  function planCommand(text) {
+    const m = /^\/plan(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+    return m ? { task: (m[1] || '').trim() } : null;
+  }
+
+
+  const PLAN_NOTE = 'Plan mode is on for this message. Do not act yet: only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search) to learn what the task needs. Tools that click, type, navigate, open tabs, upload or run scripts are refused. Then call propose_plan once: a short title, numbered steps in plain words, every site the plan will act on (host names), and the numbers of risky steps (anything that buys, pays, sends, posts, submits, deletes or signs up). After propose_plan, stop: reply with one short sentence at most. The user runs, edits or rejects the plan.\n';
+
+  const PLAN_TOOL = {
+    name: 'propose_plan',
+    description: 'Plan mode only: show the user your plan for the task as a card they can run, edit or send back. Call it once, after reading what you need, then stop.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What the plan does, in a few words.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'The steps in order, one short sentence each (at most 20).' },
+        sites: { type: 'array', items: { type: 'string' }, description: 'Host names of every site the plan will click, type or navigate on, e.g. "www.example.com" (at most 10). Running the plan allows exactly these.' },
+        risky_steps: { type: 'array', items: { type: 'integer' }, description: 'Numbers (from 1) of steps that buy, pay, send, post, submit, delete or sign up.' },
+      },
+      required: ['title', 'steps', 'sites'],
+    },
+  };
+
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, interactKey, approvedKeys, approvedText, planCommand };
+  if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
+  else globalThis.planMode = planApi;
+}
+;
+// ---- plan-mode.js
+
+
+
+
+
+
+
+
+(() => {
+  const rules = window.planMode;
+  const composer = document.getElementById('composer');
+  const promptEl = document.getElementById('prompt');
+  if (!rules || !composer || !promptEl) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+  const CLI = /^(claudecode|grokbuild|antigravity|codex):/;
+  const modelSelect = document.getElementById('model');
+  const onCli = () => CLI.test(String(modelSelect?.value || ''));
+
+  let on = false;
+  const byChat = new Map();
+  const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
+
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
+  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+
+  function render() {
+    const cli = onCli();
+    chip.disabled = cli;
+    chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
+      : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
+        : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
+    chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    composer.classList.toggle('planning', on && !cli);
+  }
+  function setOn(value) { on = Boolean(value); remember(); render(); }
+  chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  modelSelect?.addEventListener('change', render);
+  promptEl.addEventListener('focus', render);
+
+
+  function chatShown(view, sameChat) {
+    if (sameChat) { remember(); return; }
+    const id = view?.id || null;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    render();
+  }
+
+
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), className ? { className } : {}, text !== undefined ? { textContent: text } : {});
+
+  function card(plan) {
+    const checked = rules.validatePlan(plan);
+    if (!checked.plan) return null;
+    const p = checked.plan;
+    const box = el('div', 'msg assistant plan-card');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', tr('plan.card.label', 'Proposed plan: {title}', { title: p.title }));
+    const head = el('div', 'plan-head');
+    head.append(el('span', 'plan-kicker', tr('plan.card.kicker', 'Plan')), el('span', 'plan-title', p.title));
+    const list = el('ol', 'plan-steps');
+    p.steps.forEach((text, i) => {
+      const li = el('li');
+      if (p.risky_steps.includes(i + 1)) li.dataset.risky = '1';
+      const span = el('span', 'plan-step-text', text);
+      li.append(span);
+      if (li.dataset.risky) li.append(el('span', 'plan-risky', tr('plan.card.risky', 'Risky')));
+      list.append(li);
+    });
+    const sites = el('div', 'plan-sites');
+    const siteList = el('span', 'plan-site-list');
+    const drawSites = (hosts) => {
+      siteList.replaceChildren();
+      for (const host of hosts) {
+        const chipEl = el('span', 'plan-site');
+        chipEl.dataset.host = host;
+        chipEl.append(el('span', '', host));
+        const x = el('button', 'plan-site-x', '×');
+        x.type = 'button';
+        x.title = tr('plan.card.removeSite', 'Leave {site} out', { site: host });
+        x.setAttribute('aria-label', x.title);
+        x.onclick = () => { chipEl.remove(); if (!siteList.children.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none'))); };
+        chipEl.append(x);
+        siteList.append(chipEl);
+      }
+      if (!hosts.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none')));
+    };
+    drawSites(p.sites);
+    sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan lets the AI click and type on these sites in this chat. Opening or sending to a site after reading a page still asks, and so does anything that buys, sends, posts or submits.'));
+    const problem = el('div', 'plan-problem');
+    problem.setAttribute('role', 'alert');
+    problem.hidden = true;
+    const actions = el('div', 'plan-actions');
+    const run = el('button', 'btn primary plan-run', tr('plan.card.run', 'Run plan'));
+    const edit = el('button', 'btn plan-edit', tr('plan.card.edit', 'Edit'));
+    const keep = el('button', 'btn plan-keep', tr('plan.card.keep', 'Keep planning'));
+    for (const b of [run, edit, keep]) b.type = 'button';
+    actions.append(run, edit, keep);
+    box.append(head, list, sites, note, problem, actions);
+
+    let editing = false;
+    edit.onclick = () => {
+      editing = !editing;
+      box.classList.toggle('editing', editing);
+      for (const span of list.querySelectorAll('.plan-step-text')) {
+        if (editing) { span.contentEditable = 'plaintext-only'; span.setAttribute('role', 'textbox'); span.setAttribute('aria-label', tr('plan.card.stepLabel', 'Step')); } else { span.removeAttribute('contenteditable'); span.removeAttribute('role'); }
+      }
+      edit.textContent = editing ? tr('plan.card.doneEditing', 'Done editing') : tr('plan.card.edit', 'Edit');
+      if (editing) list.querySelector('.plan-step-text')?.focus();
+    };
+
+    const current = () => {
+      const steps = [];
+      const risky = [];
+      for (const li of list.children) {
+        const text = li.querySelector('.plan-step-text')?.textContent.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        steps.push(text);
+        if (li.dataset.risky) risky.push(steps.length);
+      }
+      return { title: p.title, steps, sites: [...siteList.querySelectorAll('.plan-site')].map((s) => s.dataset.host), risky_steps: risky };
+    };
+    run.onclick = () => {
+      const got = rules.validatePlan(current());
+      if (!got.plan) { problem.textContent = got.error; problem.hidden = false; return; }
+      problem.hidden = true;
+      setOn(false);
+      box.classList.add('used');
+      for (const b of [run, edit, keep]) b.disabled = true;
+      for (const span of list.querySelectorAll('[contenteditable]')) span.removeAttribute('contenteditable');
+      for (const x of box.querySelectorAll('.plan-site-x')) x.remove();
+      const text = rules.approvedText(got.plan, { head: tr('plan.approved.head', 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.'), sites: tr('plan.approved.sites', 'Sites:'), risky: tr('plan.approved.risky', 'Ask me before these steps as usual:') });
+      window.ask(text, [], null, undefined, { approvedPlan: got.plan });
+    };
+    keep.onclick = () => {
+      setOn(true);
+      promptEl.focus();
+    };
+    return box;
+  }
+
+
+  window.slashCommands?.register({
+    name: 'plan',
+    label: tr('slash.plan', 'Plan first'),
+    description: tr('slash.plan.description', 'The AI only reads, then shows a plan you can run, edit or send back: /plan book a table for two on Friday'),
+    hint: tr('slash.plan.hint', 'The task to plan, then press Enter'),
+    takesInput: true,
+    run({ input }) {
+      if (onCli()) return { ok: false, message: tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.') };
+      if (!input) { setOn(true); return { ok: true }; }
+      window.ask(input, [], null, undefined, { plan: true });
+      return { ok: true };
+    },
+  });
+
+  window.planModeUI = {
+    forSend: () => on && !onCli(),
+    card,
+    chatShown,
+    setOn,
+    isOn: () => on,
+  };
+
+  window.addEventListener('lumen:plan-default', () => { if (!shownChatId && !document.querySelector('#messages .msg')) { on = window.lumenPlanModeDefault === true; render(); } });
+  on = window.lumenPlanModeDefault === true;
+  render();
 })();
 ;
 // ---- ui-prefs.js
@@ -13621,6 +14260,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode }));
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false }));
+    if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };

@@ -2310,6 +2310,9 @@ function buildConnectors() {
 
 
 
+
+
+
 const SKILL_VARIABLES = [
   ['content', 'the selected text, else the page'],
   ['page', 'the page: title, address and text'],
@@ -2346,13 +2349,14 @@ async function buildSkills(card) {
     list.replaceChildren(...shown.map((s) => {
       const edit = h('button', { text: say('edit', 'Edit'), 'aria-label': say('editNamed', 'Edit {title}', { title: s.title }), onclick: () => openEditor(s) });
       const dup = h('button', { text: say('duplicate', 'Duplicate'), 'aria-label': say('duplicateNamed', 'Duplicate {title}', { title: s.title }), onclick: () => openEditor({ ...s, id: undefined, name: `${s.name}-copy`.slice(0, 32), title: `${s.title} copy`.slice(0, 60), source: 'user' }) });
+      const exportMd = h('button', { text: say('exportMd', 'Export SKILL.md…'), title: say('exportMdTitle', 'Save this skill as a SKILL.md folder for Claude Code and other agents'), 'aria-label': say('exportMdNamed', 'Export {title} as SKILL.md', { title: s.title }), onclick: async () => { const r = await K.exportMd(s.id).catch((err) => ({ ok: false, error: errText(err) })); if (r.ok) flash(note, say('exportedMd', 'Saved {path}', { path: r.filePath }), 'ok'); else if (!r.canceled) flash(note, r.error, 'err'); } });
       const reset = s.source === 'builtin' ? h('button', { text: say('reset', 'Reset'), title: say('resetOne', 'Put this built-in skill back to its original text'), onclick: async () => { const r = await K.reset(s.id); skills = r.skills; render(); flash(note, say('resetDone', 'Reset.'), 'ok'); } }) : null;
       const del = h('button', { class: 'danger', text: say('delete', 'Delete'), 'aria-label': say('deleteNamed', 'Delete {title}', { title: s.title }), onclick: async () => { if (!confirm(say('confirmDelete', 'Delete the skill “{title}”?', { title: s.title }))) return; skills = (await K.remove(s.id)).skills; render(); } });
       const line = h('div', { class: 'skill-row', 'data-skill': s.name },
         h('div', { class: 'skill-text' },
-          h('span', { class: 'skill-title' }, s.icon ? `${s.icon} ` : '', s.title, h('span', { class: 'skill-slash', text: ` /${s.name}` }), s.source !== 'user' ? h('span', { class: 'skill-source', text: s.source === 'builtin' ? say('builtin', 'built-in') : say('imported', 'imported') }) : null),
+          h('span', { class: 'skill-title' }, s.icon ? `${s.icon} ` : '', s.title, h('span', { class: 'skill-slash', text: ` /${s.name}` }), s.source !== 'user' ? h('span', { class: 'skill-source', text: s.source === 'builtin' ? say('builtin', 'built-in') : say('imported', 'imported') }) : null, s.autoUse ? h('span', { class: 'skill-source', text: say('autoUseBadge', 'AI can use') }) : null),
           s.description ? h('span', { class: 'note', text: s.description }) : null),
-        h('div', { class: 'skill-actions' }, edit, dup, reset, del));
+        h('div', { class: 'skill-actions' }, edit, dup, exportMd, reset, del));
       return line;
     }));
     if (!shown.length) list.append(h('p', { class: 'note skills-empty', text: skills.length ? say('none', 'No skill matches.') : say('empty', 'No skills yet.') }));
@@ -2360,7 +2364,7 @@ async function buildSkills(card) {
 
 
   function openEditor(s) {
-    const draft = { id: s?.id, name: s?.name || '', title: s?.title || '', description: s?.description || '', prompt: s?.prompt || '', inputs: s?.inputs || [], inputRequired: Boolean(s?.inputRequired), mode: s?.mode || 'no-tools', model: s?.model || '', icon: s?.icon || '' };
+    const draft = { id: s?.id, name: s?.name || '', title: s?.title || '', description: s?.description || '', prompt: s?.prompt || '', inputs: s?.inputs || [], inputRequired: Boolean(s?.inputRequired), mode: s?.mode || 'no-tools', model: s?.model || '', icon: s?.icon || '', autoUse: Boolean(s?.autoUse) };
     const field = (id, label, control) => h('label', { class: 'skills-field', for: id }, h('span', { class: 'skills-label', text: label }), control);
     const name = h('input', { type: 'text', id: 'skill-name', value: draft.name, maxlength: 32, spellcheck: 'false', autocomplete: 'off', placeholder: 'summarize' });
     const title = h('input', { type: 'text', id: 'skill-title', value: draft.title, maxlength: 60, placeholder: 'Summarize' });
@@ -2378,6 +2382,7 @@ async function buildSkills(card) {
       if (model.value !== draft.model && draft.model) { model.append(h('option', { value: draft.model, text: draft.model })); model.value = draft.model; }
     }).catch(() => {});
     const required = h('input', { type: 'checkbox', id: 'skill-required', checked: draft.inputRequired });
+    const autoUse = h('input', { type: 'checkbox', id: 'skill-auto-use', checked: draft.autoUse });
     const contexts = ['page', 'selection', 'tabs', 'clipboard'].map((c) => {
       const box = h('input', { type: 'checkbox', 'data-context': c, id: `skill-ctx-${c}`, checked: draft.inputs.includes(c) });
       const names = { page: say('ctx.page', 'Page text'), selection: say('ctx.selection', 'Selected text'), tabs: say('ctx.tabs', 'Picked tabs (@)'), clipboard: say('ctx.clipboard', 'Clipboard') };
@@ -2391,7 +2396,7 @@ async function buildSkills(card) {
     const formNote = h('span', { class: 'note', id: 'skill-error', role: 'alert' });
 
     const read = () => ({
-      ...draft, name: name.value, title: title.value, description: description.value, prompt: prompt.value, mode: mode.value, model: model.value, inputRequired: required.checked,
+      ...draft, name: name.value, title: title.value, description: description.value, prompt: prompt.value, mode: mode.value, model: model.value, inputRequired: required.checked, autoUse: autoUse.checked,
       inputs: contexts.map((l) => l.firstChild).filter((b) => b.checked).map((b) => b.dataset.context),
     });
     let timer = null;
@@ -2427,6 +2432,8 @@ async function buildSkills(card) {
       cheat,
       h('div', { class: 'skills-field' }, h('span', { class: 'skills-label', text: say('context', 'Also include') }), h('div', { class: 'skills-checks' }, contexts,
         h('label', { class: 'skills-check' }, required, say('inputRequired', 'It needs text after the command')))),
+      h('div', { class: 'skills-field' }, h('label', { class: 'skills-check' }, autoUse, say('autoUse', 'AI can use this on its own')),
+        h('span', { class: 'note', text: say('autoUseNote', 'The AI sees its name and description in every chat and loads it when your request matches, without a /command. It still asks before acting on a site.') })),
       h('div', { class: 'skills-two' }, field('skill-mode', say('mode', 'What it may do'), mode), field('skill-model', say('model', 'Model (optional)'), model)),
       h('div', { class: 'skills-field' }, h('span', { class: 'skills-label', text: say('preview', 'Preview, with sample values') }), previewBox),
       h('div', { class: 'item' }, saveBtn, h('button', { text: say('cancel', 'Cancel'), onclick: close }), formNote));
@@ -2448,6 +2455,7 @@ async function buildSkills(card) {
         h('label', { class: 'skills-check' }, box, h('strong', { text: c.skill.title }), h('span', { class: 'skill-slash', text: ` /${c.skill.name}` }), c.renamedFrom ? h('span', { class: 'note', text: ` ${say('renamed', '(renamed: /{name} is taken)', { name: c.renamedFrom })}` }) : null),
         c.skill.description ? h('p', { class: 'note', text: c.skill.description }) : null,
         h('p', { class: 'note', text: say('reviewMode', 'May do: {mode}. Reads: {inputs}.', { mode: modeText(c.skill.mode), inputs: c.skill.inputs.join(', ') || say('nothing', 'nothing from the page') }) }),
+        c.ignoredCount ? h('p', { class: 'note skills-ignored', text: say('ignoredFiles', 'Left out of the folder ({n} files{scripts}): {names}. Lumen skills are instructions only; nothing in a skill folder is ever run.', { n: c.ignoredCount, scripts: c.scripts ? say('ignoredScripts', ', {n} of them scripts', { n: c.scripts }) : '', names: c.ignored.slice(0, 8).join(', ') + (c.ignoredCount > 8 ? ', …' : '') }) }) : null,
         h('pre', { class: 'code skills-review-prompt', tabindex: 0, text: c.skill.prompt }));
     });
     const rejects = result.rejected.map((r) => h('p', { class: 'err skills-rejected', text: say('rejected', 'Not imported: {name} {reason}', { name: r.name ? `“${r.name}”:` : `#${r.index + 1}:`, reason: r.reason }) }));
@@ -2463,6 +2471,7 @@ async function buildSkills(card) {
     dlg.append(
       h('h3', { id: 'skills-review-title', text: say('reviewTitle', 'Review before importing') }),
       h('p', { class: 'note', text: say('reviewNote', 'These skills come from a file. Read each prompt: it is sent to your AI when you run the skill. Nothing runs until you use it.') }),
+      h('p', { class: 'note', text: say('reviewAutoUse', 'Imported skills start with “AI can use this on its own” off. Turn it on in the editor if you want it.') }),
       ...boxes, ...rejects,
       h('div', { class: 'item' }, importBtn, h('button', { text: say('cancel', 'Cancel'), onclick: () => dlg.close() })));
     dlg.addEventListener('close', () => dlg.remove());
@@ -2474,14 +2483,60 @@ async function buildSkills(card) {
   const toolbar = h('div', { class: 'item skills-toolbar' },
     h('button', { class: 'primary', id: 'skill-new', text: say('newSkill', 'New skill'), onclick: () => openEditor(null) }),
     h('button', { id: 'skills-import', text: say('import', 'Import…'), onclick: async () => { const r = await K.importPick().catch((err) => ({ ok: false, error: errText(err) })); if (!r.canceled) review(r); } }),
+    h('button', { id: 'skills-import-md', text: say('importMd', 'Import SKILL.md…'), title: say('importMdTitle', 'Pick a skill folder (Claude Code, Agent Skills) or its SKILL.md'), onclick: async () => { const r = await K.importMdPick().catch((err) => ({ ok: false, error: errText(err) })); if (!r.canceled) review(r); } }),
     h('button', { id: 'skills-export', text: say('export', 'Export all…'), onclick: async () => { const r = await K.exportAll().catch((err) => ({ ok: false, error: errText(err) })); if (r.ok) flash(note, say('exported', 'Exported {n} skills.', { n: r.count }), 'ok'); else if (!r.canceled) flash(note, r.error, 'err'); } }),
     h('button', { id: 'skills-reset', text: say('resetAll', 'Reset built-ins'), title: say('resetAllTitle', 'Put every built-in skill back to its original text, and bring back any you deleted. Your own skills are not touched.'), onclick: async () => { if (!confirm(say('confirmReset', 'Reset the built-in skills to their original text? Skills you made are not touched.'))) return; const r = await K.reset(); skills = r.skills; render(); flash(note, r.skipped.length ? say('resetSkipped', 'Reset {n}. Left alone because you made a skill with the same name: {names}.', { n: r.reset, names: r.skipped.join(', ') }) : say('resetAllDone', 'Reset {n} built-in skills.', { n: r.reset }), 'ok'); } }),
     note);
 
   const intro = row(say('introTitle', 'Skills'), say('intro', 'Saved prompts. Type / in the chat (or right-click selected text on a page → Run skill) to use one. A skill only sends a message: it cannot change what Lumen may do, and it still asks before acting on a site.'));
   intro.dataset.search += ' skills slash command prompt reusable summarize translate';
-  card.append(intro, h('div', { class: 'skills-section' }, toolbar, h('div', { class: 'skills-search' }, search), list, editor));
+
+  const ccBox = h('div', { class: 'skills-list skills-cc', id: 'skills-cc' });
+  async function renderClaudeCode() {
+    const r = await K.claudeCode().catch(() => ({ on: false, skills: [] }));
+    if (!r.on) { ccBox.replaceChildren(); ccBox.hidden = true; return; }
+    ccBox.hidden = false;
+    const rows = r.skills.map((c) => (c.error
+      ? h('div', { class: 'skill-row' }, h('div', { class: 'skill-text' }, h('span', { class: 'skill-title', text: c.folder }), h('span', { class: 'note err', text: c.error })))
+      : h('div', { class: 'skill-row', 'data-skill': c.name }, h('div', { class: 'skill-text' },
+        h('span', { class: 'skill-title' }, c.title, h('span', { class: 'skill-slash', text: ` /${c.name}` }), h('span', { class: 'skill-source', text: say('claudeCode', 'Claude Code, read-only') })),
+        h('span', { class: 'note', text: c.hidden ? say('ccHidden', 'Not used: a Lumen skill or command already has this name.') : c.description })))));
+    ccBox.replaceChildren(h('p', { class: 'note', text: say('ccFolder', 'From {folder}. Edit them in Claude Code.', { folder: r.folder }) }), ...(rows.length ? rows : [h('p', { class: 'note', text: say('ccNone', 'No skills found there.') })]));
+  }
+  const switches = h('div', { class: 'skills-switches' },
+    toggle('skillsAutoUse', say('autoUseSetting', 'Let the AI use skills on its own'), say('autoUseSettingDesc', 'Skills marked “AI can use this on its own” are listed (name and one line) in each new chat, and the AI loads one when your request matches. Off: skills run only when you type their /command. Applies from the next new chat.'), undefined, { fallback: true }),
+    toggle('skillsFromClaudeCode', say('fromClaudeCode', 'Use my Claude Code skills'), say('fromClaudeCodeDesc', 'Also offer the skills in ~/.claude/skills as /commands, and to the AI on its own. Read-only: Lumen reads only each SKILL.md and never runs the scripts beside it.'), () => renderClaudeCode()),
+    toggle('skillsSuggest', say('suggest', 'Offer to save and improve skills'), say('suggestDesc', 'After a task that took many steps, a card under the reply offers “Save how I did this as a skill?”. After you correct a skill’s result, it offers to update the skill and shows the change first. Nothing is saved without your click.')),
+    row(say('scriptsTitle', 'Instructions only'), say('scriptsNote', 'A Lumen skill is text for the AI. Scripts and other files in a skill folder are left out when you import it and are never run.')));
+
+
+  function showUpdate(u) {
+    if (!u || typeof u !== 'object' || !Array.isArray(u.diff)) return;
+    const dlg = h('dialog', { class: 'skills-review skills-update', id: 'skills-update', 'aria-labelledby': 'skills-update-title' });
+    const lines = u.diff.map((d) => h('div', { class: `diff-line diff-${d.op === '+' ? 'add' : d.op === '-' ? 'del' : 'same'}`, text: `${d.op} ${d.text}` }));
+    const accept = h('button', {
+      class: 'primary', id: 'skills-update-accept', text: say('updateAccept', 'Accept the change'),
+      onclick: async () => {
+        const r = await K.applyUpdate(u.token).catch((err) => ({ ok: false, error: errText(err) }));
+        dlg.close();
+        if (r.ok) { skills = r.skills; render(); flash(note, say('updated', 'Updated /{name}.', { name: u.name }), 'ok'); } else flash(note, r.error, 'err');
+      },
+    });
+    dlg.append(
+      h('h3', { id: 'skills-update-title', text: say('updateTitle', 'Update /{name}?', { name: u.name }) }),
+      u.summary ? h('p', { class: 'note', text: u.summary }) : null,
+      h('pre', { class: 'code skills-diff', tabindex: 0 }, lines),
+      h('div', { class: 'item' }, accept, h('button', { text: say('updateKeep', 'Keep it as it is'), onclick: () => dlg.close() })));
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.append(dlg);
+    dlg.showModal();
+  }
+
+  card.append(intro, switches, h('div', { class: 'skills-section' }, toolbar, h('div', { class: 'skills-search' }, search), list, editor, ccBox));
   render();
+  renderClaudeCode();
+  window.lumenSettings.skills.onUpdate(showUpdate);
+  window.lumenSettings.skills.takeUpdate().then(showUpdate).catch(() => {});
 
   window.lumenSettings.skills.onChanged((next) => { if (Array.isArray(next)) { skills = next; render(); } });
 
@@ -3635,7 +3690,7 @@ const CATEGORY_ICONS = {
 
 
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -3822,6 +3877,8 @@ async function buildAi(card) {
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
 
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
+
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
   showProjectsDir();
@@ -3837,9 +3894,15 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
   );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append(
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')),
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
@@ -4132,6 +4195,7 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps());
 
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -5957,6 +6021,51 @@ async function buildPasswords(card) {
 
 
 
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open));
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
+}
+
+
+
 function buildAntigravity(slot, refreshModels) {
   const agyNote = status('ai-agy-status');
   const agyCommand = h('pre', { class: 'mono code', id: 'ai-agy-command', text: '' });
@@ -5990,6 +6099,57 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
 }
 
 

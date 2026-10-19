@@ -567,7 +567,7 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen), // screen: 'on' | 'off' (the camera button), else the words decide
+  ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts), // screen: 'on' | 'off' (the camera button), else the words decide; opts: [plan mode] { plan } or { approvedPlan }
   dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id), // the screenshot chip's x
   // Files attached to a message (renderer/chat-core.js): kept by main until it is sent, named to the AI by ref only; and the
   // "Choose file…" card's picker. See features/upload-files.js.
@@ -623,6 +623,12 @@ contextBridge.exposeInMainWorld('assistant', {
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
+  // [memory] Saved memory (ai/memory.js): the chat's "Remembered" row (Undo / Forget) and /memory.
+  memory: {
+    list: () => ipcRenderer.invoke('memory:list'),
+    undo: (token) => ipcRenderer.invoke('memory:undo', token),
+    forget: (id) => ipcRenderer.invoke('memory:forget', id),
+  },
   // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
   research: {
     get: () => ipcRenderer.invoke('research:get'),
@@ -636,6 +642,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
     onChanged: on('research:changed'),
   },
+  dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js): which provider, and the recording's text
   // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
   meeting: {
     getState: () => ipcRenderer.invoke('meeting:state'),
@@ -736,6 +743,8 @@ contextBridge.exposeInMainWorld('skillsApi', {
   context: (options) => ipcRenderer.invoke('skills:context', options),
   prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
   draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token), // the cards under a reply (Settings → Skills → "Offer to save and improve skills")
+  offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
   onChanged: on('skills:changed'),
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });
