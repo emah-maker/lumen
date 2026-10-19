@@ -2028,10 +2028,12 @@ permBadge.className = 'bypass-badge';
 permBadge.id = 'bypass-badge';
 permBadge.hidden = true;
 permBadge.title = t('composer.bypass.title');
-permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text"></span></span>';
-permBadge.querySelector('.bb-text').textContent = t('composer.bypass');
+permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text" aria-hidden="true"></span><span class="bb-full"></span></span>';
+permBadge.querySelector('.bb-text').textContent = t('composer.bypass.short'); // compact on screen; the full words are read aloud
+permBadge.querySelector('.bb-full').textContent = t('composer.bypass');
 permBadge.addEventListener('click', () => cycleMode()); // [mode cycle] the same click as the header's button (Settings: right-click the button, or the Settings row of its menu)
-$('hands-off')?.after(permBadge);
+if ($('composer-status')) $('composer-status').append(permBadge); // the quiet status line above the box (usage on the left, this on the right)
+else $('hands-off')?.after(permBadge);
 
 function disarmPerm() {
   if (permArmed) clearTimeout(permArmed.timer);

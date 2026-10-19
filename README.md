@@ -58,7 +58,7 @@ When the AI names a tab (in its answer, in a step such as switching to or closin
 `Ctrl+J` opens it (and moves the keyboard to its message box). On a web page it slides in over a picture of the page; on the new-tab page, and with Reduce motion or Performance mode on, it opens in one step like Chrome's side panel, so the new-tab page's cards and widgets never move. The AI reads the page and operates the browser.
 
 - **Low-level actions:** click, type, keys and shortcuts, scroll, hover, click at a point on a screenshot, tabs, back/forward/reload.
-- **Uploading files:** attach files to a message (the paperclip, drag and drop or paste take any file, up to 10 of up to 100 MB) and ask "upload my resume to this job form" or "attach this PDF to the assignment": `upload_file` puts the file in the page's file field, a hidden input behind a button or a drop zone included, and leaves the form for you to submit. See [Asking before it acts](#asking-before-it-acts) and [Uploading files for you](docs/uploading-files.md).
+- **Uploading files:** attach files to a message (the + menu → Attach files, drag and drop or paste take any file, up to 10 of up to 100 MB) and ask "upload my resume to this job form" or "attach this PDF to the assignment": `upload_file` puts the file in the page's file field, a hidden input behind a button or a drop zone included, and leaves the form for you to submit. See [Asking before it acts](#asking-before-it-acts) and [Uploading files for you](docs/uploading-files.md).
 - **High-level actions:**
   - click by visible text
   - `fill_form` fills a whole form by field labels
