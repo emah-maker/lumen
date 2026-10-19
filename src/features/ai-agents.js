@@ -581,9 +581,18 @@ function setupAiAgents(deps) {
       // them: a window made for each popped up "randomly" and loaded the app for nothing. The window is made by the session's
       // first call that needs a tab (mcpCallTool), which pays ~1 s once.
       identify: (hello) => (hello.client === undefined ? null : externalApps.identify(hello)), // [external apps] an app that names itself must prove its token
-      onInitialize: (session, info) => externalApps.admit(session, info),
+      onInitialize: (session, info) => { warmNetFetch(); return externalApps.admit(session, info); },
       onClose: (session) => { if (!session.engine) { externalApps.detach(session); deps.agentWindows?.windows.release(session); } }, // its window closes after a grace period
     });
+  }
+
+  // The first net.fetch of a run loads Electron's fetch machinery (http2, tls ...): ~20 ms of the main process in one go. A session's connecting is
+  // a quiet moment to pay it (once); otherwise it fell on the first favicon the app fetched, in the middle of agents' calls (a data: address: nothing goes out).
+  let netFetchWarm = false;
+  function warmNetFetch() {
+    if (netFetchWarm) return;
+    netFetchWarm = true;
+    setImmediate(() => { try { require('electron').net.fetch('data:,').catch(() => {}); } catch { /* no net module (tests outside Electron) */ } });
   }
 
   // The command an agent should run: Lumen's own executable in Node mode on mcp.js (clean stdio,

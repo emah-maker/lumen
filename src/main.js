@@ -2925,7 +2925,12 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
     const absent = sessionFiles.loadTarget(url, ERROR_URL, fs.existsSync); // a file that is not there (moved, deleted): the page that says so, not a blank viewer
     const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : emlViewer.isLocalEml(url) ? emlViewer.viewerUrl(url) : url;
-    wc.loadURL(first).catch(() => {});
+    if (tab.rec?.agent && first === 'about:blank') {
+      // [agent window] The blank first tab loads in a turn of its own (~4 ms of the main process, stacked on the tab's other work it was a 10 ms stall); unless the agent has already sent it somewhere.
+      let moved = false;
+      wc.once('did-start-navigation', () => { moved = true; });
+      agentStep(() => { if (!moved) wc.loadURL(first).catch(() => {}); }, wc);
+    } else wc.loadURL(first).catch(() => {});
   }
   return wc;
 }
@@ -7838,6 +7843,10 @@ const GUESS_TOOLBAR_HEIGHT = 82; // the tab strip and toolbar: where a first tab
 const tabsGate = new Promise((resolve) => { openTabsGate = () => { tabsGateOpen = true; resolve(); }; });
 // `agent` ({ label }): the window of an outside agent's session (openAgentWindow below): shown without taking focus, one blank tab,
 // never saved with the session.
+// [agent window] The steps of making an agent's window (5-6 ms of the main process each) run one to a turn of their own, and not while a screenshot is being
+// taken (its result lands as a ~9 ms task: the two stacked into 15 ms stalls that other sessions' calls waited behind, test/mcp-perf.js).
+const agentQuiet = () => require('./features/tab-capture').whenCaptureIdle().then(() => new Promise((resolve) => setImmediate(resolve)));
+const agentStep = (fn, owner) => { agentQuiet().then(() => { if (!owner.isDestroyed()) fn(); }).catch(() => {}); };
 function createWindow({ size = null, position = null, adopt = null, restore = null, hidden = false, prepared = false, boundsFrom = null, agent: agentOf = null } = {}) {
   if (TEST_BACKGROUND) app.dock?.hide();
   const firstWindow = winRecs.size === 0;
@@ -7872,8 +7881,11 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   uiContents.add(w.webContents);
   // Invisible and click-through, but shown (so it paints and screenshots work); macOS keeps part of
   // any window on screen, so moving it away is not enough.
-  if (TEST_BACKGROUND) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); }
-  else if (agentOf) showBehind(w); // [agent window] on screen (so it paints) but never in front of what the user is doing
+  const showWindow = () => {
+    if (TEST_BACKGROUND) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); }
+    else if (agentOf) showBehind(w); // [agent window] on screen (so it paints) but never in front of what the user is doing
+  };
+  if (!agentOf) showWindow(); // (an agent's window is shown, and its UI loaded, in turns of their own: see the end)
   if (agentOf) w.on('page-title-updated', (e) => e.preventDefault()); // (its title says whose window it is)
   // The taskbar button's icon: Lumen.exe's own is Electron's (see features/instance.js appIcon).
   if (process.platform === 'win32' && app.isPackaged && instance.isInstalledExe()) {
@@ -7989,7 +8001,10 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', () => ui()?.send('window-focus', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
-  w.loadFile(UI_HTML);
+  // [agent window] Making the window (~5 ms), showing it (~2-5 ms) and starting its UI's load (~3 ms) are each a turn of their own: in one they
+  // were a 12 ms stall of the main process, which other sessions' calls were then waiting behind (test/mcp-perf.js).
+  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); }, w); }, w);
+  else w.loadFile(UI_HTML);
   // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
   // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
   // on screen). Its view stays hidden until the UI has said where pages go (content-bounds), and the UI is brought up
@@ -8000,7 +8015,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   let tabsOpened = false;
   if (!adopt && !prepared) {
     const committed = new Promise((resolve) => { w.webContents.once('did-navigate', resolve); w.webContents.once('did-finish-load', resolve); });
-    Promise.all([tabsGate, committed]).then(() => { if (rcAlive(rec)) withWindow(rec, openFirstTabs); });
+    Promise.all([tabsGate, committed]).then(() => { if (!rec.agent) { if (rcAlive(rec)) withWindow(rec, openFirstTabs); } else agentStep(() => { if (rcAlive(rec)) withWindow(rec, openFirstTabs); }, w); });
   }
   w.webContents.once('did-finish-load', () => {
     uiLoaded = true;
@@ -8129,6 +8144,7 @@ async function openAgentWindow(label) {
     const at = tabDragMath.placeOnWorkArea({ ...cascadedWindowPoint(src.win), width: fit.width, height: fit.height }, area);
     Object.assign(opts, { size: { width: at.width, height: at.height }, position: { x: at.x, y: at.y }, boundsFrom: src });
   }
+  await agentQuiet();
   const rec = createWindow(opts);
   if (previous && previous !== rec && winRecs.has(previous)) enterWindow(previous); // creating a window makes it current: the user's stays
   const until = Date.now() + 20000;
@@ -9642,7 +9658,8 @@ ipcMain.handle('view:freeze', async (_e, cssSize) => {
   }
 });
 // Capture once at startup so the first real snapshot doesn't pay the pipeline's warm-up cost.
-ipcMain.handle('view:warm', async () => {
+ipcMain.handle('view:warm', async (e) => {
+  if (recOfSender(e.sender)?.agent) return false; // [agent window] its UI asks too, but nobody opens its sidebar from a warm capture: a full-size capture, resize and JPEG encode (~15 ms of main) per window, on the user's main process while other sessions' calls wait
   if (graphicsMode.software()) return false; // [software mode] no capture to warm up
   const wc = activeTab()?.webContents;
   if (!wc) return false;
