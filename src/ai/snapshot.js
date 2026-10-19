@@ -392,7 +392,7 @@ const NEW_TOOLS = [
 // Description overrides. The short descriptions (which already name the options added here) now live in
 // agent.js's TOOLS, so there is one copy of each; read_pdf's is shared with features/pdf-text.js.
 const pdfText = require('../features/pdf-text');
-const { captureTab } = require('../features/tab-capture');
+const { captureTab, captureJpeg } = require('../features/tab-capture');
 const TRIMMED = {
   read_pdf: pdfText.READ_PDF_DESCRIPTION,
 };
@@ -564,6 +564,18 @@ ${diff}`;
 async function screenshot(agent, wc, input, h) {
   const maxWidth = Math.min(Math.max(Number(input.max_width) || 720, 320), 1600);
   const quality = Math.min(Math.max(Number(input.quality) || 60, 30), 90);
+  if (!input.region) {
+    const shot = await captureJpeg(wc, { maxWidth, quality });
+    if (shot) {
+      const size = { width: shot.width, height: shot.height };
+      const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+      agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
+      return [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: shot.data } },
+        { type: 'text', text: `Screenshot of ${wc.getURL()}, ${size.width}x${size.height} px. Use these coordinates with click_at.` },
+      ];
+    }
+  }
   let image;
   if (input.region) {
     const z = wc.getZoomFactor();
