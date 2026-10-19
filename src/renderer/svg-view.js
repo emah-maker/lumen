@@ -288,6 +288,16 @@
         a.remove();
       } catch { save.textContent = tr('chat.copyFailed', 'Failed'); setTimeout(() => { save.textContent = tr('chat.svgSavePng', 'PNG'); }, 1400); }
     });
+    if (window.assistant?.notes && !box.closest('.nt-body')) { // "Add to notes": the diagram alone (in a note it is already there)
+      const note = el('button', { type: 'button', className: 'code-copy svg-note', textContent: tr('notes.addShort', 'Notes') });
+      note.title = tr('notes.add', 'Add to notes');
+      note.addEventListener('click', async () => {
+        const r = await Promise.resolve().then(() => window.assistant.notes.act('add-svg', { svg: text.trim() })).catch(() => null);
+        note.textContent = tr(r?.ok ? 'notes.addedShort' : 'notes.addFailed', r?.ok ? 'Added' : 'Failed');
+        setTimeout(() => { note.textContent = tr('notes.addShort', 'Notes'); }, 1600);
+      });
+      head?.insertBefore(note, head.querySelector('.code-copy'));
+    }
     head?.insertBefore(save, head.querySelector('.code-copy'));
     head?.insertBefore(toggle, save);
     return true;
