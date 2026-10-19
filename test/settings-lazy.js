@@ -48,7 +48,7 @@ const SAMPLER = `(() => {
     const waitIn = async (id, code, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if ((await run(id, code)) === true) return true; await sleep(40); } return false; };
     const closeSettings = async (id) => {
       await app.evaluate((_e, i) => global.__closeTabInteractive(i), id);
-      for (let i = 0; i < 100 && (await app.evaluate(() => global.__settings.tabs().length)) > 0; i++) await sleep(50);
+      for (let i = 0; i < 100 && (await app.evaluate(() => global.__settings.tabs().filter((t) => t.settings).length)) > 0; i++) await sleep(50); // (the Settings tabs: the browser's own first tab is always there, so waiting for none at all cost 5 s a link)
     };
 
     // ---- every link, opened fresh
