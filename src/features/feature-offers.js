@@ -15,6 +15,8 @@
 const OFFERS = [
   // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   { key: 'aiDeviceAccess', value: true, title: 'settings.ai.deviceAccess', detail: 'settings.ai.deviceAccessDesc', where: 'Settings > AI' },
+  // [memory] ai/memory.js: the sidebar AI keeps short notes about you between chats
+  { key: 'aiMemory', value: true, title: 'settings.ai.memory', detail: 'settings.ai.memoryDesc', where: 'Settings > AI and agents > Memory' },
 ];
 
 // What to do at startup: { show: [offer], seen: [key] } (seen: what to record now, before anything is shown, so a
