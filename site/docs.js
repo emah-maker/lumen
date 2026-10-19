@@ -10,6 +10,7 @@ const PAGES = {
   readme: { title: 'User guide', file: 'README.md' },
   architecture: { title: 'Architecture', file: 'docs/architecture.md' },
   'auto-model': { title: 'Auto model', file: 'docs/auto-model.md' },
+  'local-models': { title: 'Local models', file: 'docs/local-models.md' },
   'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
   'external-apps': { title: 'Let other apps use Lumen', file: 'docs/external-apps.md' },
   connectors: { title: 'Connectors', file: 'docs/connectors.md' },
