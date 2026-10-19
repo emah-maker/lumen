@@ -348,6 +348,13 @@ function build(w, card, o) {
   // A tab's data is asked for when the tab is shown (the card is large enough for tabs, and the tab is the open one), not again for a few seconds.
   function askTab(name, byUser) {
     if (name.startsWith('pin')) { const p = pinOf(name); if (p && (view.tier === 'large' || view.tier === 'xl')) askList(p, byUser === true); return; }
+    if (name === 'library' && view.d && view.d.libV2 && view.tier !== 'small' && view.tier !== 'medium') { // (the Library of the Web API: its lists are read a page at a time by renderer/newtab-music-library.js)
+      const t = Date.now();
+      if (t - (ui.asked.library || 0) < ASK_AGAIN_MS) return;
+      ui.asked.library = t;
+      act('elib', { arg: 'init' });
+      return;
+    }
     if (name === 'home') return; // (its shelves are asked for as they scroll into view: renderer/newtab-music-home.js)
     if (name === 'search') { if (view.tier !== 'small' && view.tier !== 'medium') view.warmSearch?.(); return; } // (the Search tab is shown: the hidden player starts now)
     if (!name || (name === 'devices' && o.engine !== 'spotify-api')) return;
@@ -471,8 +478,21 @@ function build(w, card, o) {
     homeScript.onerror = () => { homeScript = null; };
     document.head.append(homeScript);
   }
+  // The Library tab of a card with the Web API (libV2): Liked Songs, every playlist, filter chips, a list opened in the card. Its code is a file of its own, loaded the first time.
+  let libraryScript = null;
+  function drawLibraryV2() {
+    if (window.MusicLibrary) { window.MusicLibrary.draw({ panel: tab.library.p, d: view.d, ui, act, el, thumbOk }); return; }
+    if (!tab.library.p.firstChild) fill(tab.library.p, 'loading', (box) => note(box, (view.d && view.d.libText && view.d.libText.loading) || 'Loading…'));
+    if (libraryScript) return;
+    libraryScript = document.createElement('script');
+    libraryScript.src = 'newtab-music-library.js';
+    libraryScript.onload = () => { if (root.isConnected) drawLibraryV2(); };
+    libraryScript.onerror = () => { libraryScript = null; };
+    document.head.append(libraryScript);
+  }
   function drawLibrary() {
     const d = view.d;
+    if (d.libV2 === true) { drawLibraryV2(); return; }
     const recent = rowsOf(d.recent); const lists = rowsOf(d.playlists); const liked = rowsOf(d.likedSongs); const albums = rowsOf(d.albums); const artists = rowsOf(d.artists);
     const any = recent.length || lists.length || liked.length || albums.length || artists.length;
     const out = d.signedIn === false || (d.libraryOk === false && d.libraryWhy === 'signedOut'); // (the page's own Log in button is showing: signed out, whatever the cookie says)
@@ -537,7 +557,7 @@ function build(w, card, o) {
     return b;
   }
   function reconnectNote(box) {
-    note(box, 'Sign in again to show your library. Spotify needs you to allow Lumen to read it once more.', { button: 'Sign in again', onClick: () => act('configure') });
+    note(box, 'Sign in again to show your library. Spotify needs you to allow Lumen to read it once more.', { button: 'Sign in again', onClick: () => act('reconnect') });
   }
   function drawDevices() {
     const d = view.d; const list = (Array.isArray(d.devices) ? d.devices : []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string');
@@ -756,7 +776,7 @@ function build(w, card, o) {
         r.append(el('span', 'w-note', 'Reconnect Spotify to use likes and your library here.'));
         const b = el('button', 'w-btn', 'Reconnect');
         b.type = 'button';
-        b.addEventListener('click', () => act('configure'));
+        b.addEventListener('click', () => act('reconnect'));
         r.append(b);
         box.append(r);
       }

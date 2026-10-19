@@ -544,8 +544,51 @@
   }
 
   function render(source) {
-    const { text, maths } = liftMath(String(source ?? ''));
+    const { text, maths } = liftMath(liftRawSvg(String(source ?? '')));
     return dropMath(renderText(text, maths), maths);
+  }
+
+
+
+
+  const svgScan = (line, depth) => {
+    const tok = /<svg\s+[\w:-]+\s*=|<\/svg\s*>/gi;
+    let open = -1;
+    let close = -1;
+    let m;
+    while ((m = tok.exec(line))) {
+      if (m[0][1] === '/') { if (depth > 0 && --depth === 0) { close = m.index + m[0].length; break; } continue; }
+      if (depth > 0) { depth++; continue; }
+      const before = line.slice(0, m.index);
+      if ((before.split('`').length - 1) % 2 === 0 && (!before.trim() || /<\/svg\s*>/i.test(line.slice(m.index)))) { depth = 1; open = m.index; }
+    }
+    return { depth, open, close };
+  };
+  function liftRawSvg(source) {
+    if (!/<svg\s/i.test(source)) return source;
+    const out = [];
+    let fenced = false;
+    let depth = 0;
+    for (const line of source.split('\n')) {
+      if (depth === 0 && /^```/.test(line)) { fenced = !fenced; out.push(line); continue; }
+      if (fenced) { out.push(line); continue; }
+      let rest = line;
+      for (;;) {
+        const r = svgScan(rest, depth);
+        if (depth === 0) {
+          if (r.open === -1) { out.push(rest); break; }
+          const before = rest.slice(0, r.open);
+          if (before.trim()) out.push(before);
+          out.push('```svg', r.close === -1 ? rest.slice(r.open) : rest.slice(r.open, r.close));
+        } else out.push(r.close === -1 ? rest : rest.slice(0, r.close));
+        depth = r.depth;
+        if (r.close === -1) break;
+        out.push('```');
+        rest = rest.slice(r.close);
+        if (!rest.trim()) break;
+      }
+    }
+    return out.join('\n');
   }
 
   const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
@@ -732,23 +775,25 @@
     let dollars = st ? st.dollars : 0;
     let brackets = st ? st.brackets : 0;
     let envs = st ? st.envs : 0;
+    let svg = st ? st.svg || 0 : 0;
     let stable = st ? st.stable : 0;
     let pos = st ? st.pos : 0;
     while (pos < source.length) {
       const end = source.indexOf('\n', pos);
       if (end === -1) break;
       const line = source.slice(pos, end);
-      if (/^```/.test(line)) fenced = !fenced;
+      if (svg === 0 && /^```/.test(line)) fenced = !fenced;
       else if (!fenced) {
+        if (/<\/?svg/i.test(line)) for (let rest = line; ;) { const r = svgScan(rest, svg); svg = r.depth; if (r.close === -1) break; rest = rest.slice(r.close); }
         const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
         if (/^\s*\$\$|\$\$\s*$/.test(plain)) dollars += (plain.match(/\$\$/g) || []).length;
         if (/^\s*\\\[|\\\]\s*$/.test(plain)) brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length;
         envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
-        if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
+        if (line.trim() === '' && pos > 0 && svg === 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
       }
       pos = end + 1;
     }
-    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, stable, head: source.slice(0, 64) });
+    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, svg, stable, head: source.slice(0, 64) });
     return stable;
   }
 
@@ -760,7 +805,7 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();
 ;
 // ---- usage-bars.js
@@ -1971,6 +2016,8 @@ explain describe list find give compare difference summarize summary write rewri
 
 
 
+
+
 (() => {
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
   const MAX_SOURCE = 20000;
@@ -2085,6 +2132,31 @@ explain describe list find give compare difference summarize summary write rewri
   }
 
 
+  const SVG_BLOCK = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype[^>]*>\s*)?<svg[\s>]/i;
+  let svgLoading = null;
+  function loadSvgView() {
+    if (window.svgView) return Promise.resolve(window.svgView);
+    if (svgLoading) return svgLoading;
+    svgLoading = new Promise((resolve, reject) => {
+      if (typeof document === 'undefined' || !here) { reject(new Error('no page')); return; }
+      const js = Object.assign(document.createElement('script'), { src: new URL('svg-view.js', here).href, async: true });
+      js.onload = () => (window.svgView ? resolve(window.svgView) : reject(new Error('svg-view missing')));
+      js.onerror = () => reject(new Error('svg-view did not load'));
+      document.head.append(js);
+    }).catch((e) => { svgLoading = null; throw e; });
+    return svgLoading;
+  }
+
+  function svgPicture(box, pre) {
+    const lang = pre.dataset.lang || '';
+    const text = pre.querySelector('code')?.textContent ?? '';
+    if (lang !== 'svg' && !(['', 'xml', 'html'].includes(lang) && SVG_BLOCK.test(text))) return;
+    if (!/<\/svg\s*>\s*$/i.test(text) || text.length > 200 * 1024) return;
+    if (window.svgView) { window.svgView.decorate(box, pre); return; }
+    loadSvgView().then((v) => { if (box.isConnected) v.decorate(box, pre); }).catch(() => {});
+  }
+
+
   const wrapped = () => { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } };
   const remember = (on) => { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch {  } };
   function wrapButton(box, head) {
@@ -2107,6 +2179,7 @@ explain describe list find give compare difference summarize summary write rewri
     const head = box.querySelector('.code-head');
     if (head && pre.dataset.lang !== 'mermaid') wrapButton(box, head);
     if (pre.dataset.lang === 'mermaid' && finished) diagram(box, pre, pre.querySelector('code')?.textContent ?? '');
+    else svgPicture(box, pre);
   }
 
 
@@ -2177,6 +2250,10 @@ explain describe list find give compare difference summarize summary write rewri
     const r = await Promise.resolve().then(() => api().save(pic.id)).catch(() => null);
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
+  }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
   }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
@@ -2311,7 +2388,7 @@ explain describe list find give compare difference summarize summary write rewri
       open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
 
 
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
@@ -2352,7 +2429,7 @@ explain describe list find give compare difference summarize summary write rewri
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable };
+  window.genImages = { figure, decorate, load, zoomable, enlarge };
 })();
 ;
 // ---- chat-canvas.js
@@ -4209,7 +4286,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 
@@ -4236,10 +4313,11 @@ async function askInNewChat(text, files = []) {
 }
 
 
-function ask(text, images = [], tabs = null, screen) {
+
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry;
@@ -4264,7 +4342,8 @@ function ask(text, images = [], tabs = null, screen) {
 
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null;
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined;
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 
@@ -4467,7 +4546,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
 
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4574,8 +4653,10 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
@@ -4672,6 +4753,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
 
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
 
 
@@ -4763,6 +4846,7 @@ window.assistant.onEvent((event) => {
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
+      if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') }));
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); }
       if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
@@ -4824,13 +4908,44 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'helper_card':
+      showHelperCard(event);
+      break;
+    case 'plan': {
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.();
-      announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel });
+      announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'memory': {
+      const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
+      if (!key || !window.assistant.memory) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note', textContent: t(key, { text: event.text || '' }) }));
+      const action = (label, done, run) => {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: label });
+        button.onclick = async () => {
+          for (const b of note.querySelectorAll('button')) b.disabled = true;
+          const ok = await run().catch(() => false);
+          for (const b of note.querySelectorAll('button')) b.remove();
+          note.append(` ${ok ? done : t('memory.changedSince')}`);
+        };
+        note.append(' ', button);
+      };
+      if (event.token) action(t('memory.undo'), t('memory.undone'), () => window.assistant.memory.undo(event.token));
+      if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
 
@@ -5130,6 +5245,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source);
 }
 
 
@@ -5300,10 +5416,63 @@ const approvals = new Map();
 
 
 
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
+function showApproval(approvalId, host, opts = {}) {
+  showApprovalCard(approvalId, host, opts);
+  if (opts.helper) markHelperApproval(approvalId, opts.helper);
+}
+
+
+function markHelperApproval(approvalId, n) {
+  const card = approvals.get(approvalId)?.card;
+  const title = card?.querySelector('.approval-title');
+  if (!title) return;
+  const tag = t('approval.helper', { n });
+  title.textContent = `${tag} ${title.textContent}`;
+  card.setAttribute('aria-label', `${tag} ${card.getAttribute('aria-label') || title.textContent}`);
+  card.dataset.helper = String(n);
+}
+
+
+
+
+const helperCards = new Map();
+function showHelperCard(e) {
+  let card = helperCards.get(e.key);
+  if (!card || !card.isConnected) {
+    card = Object.assign(document.createElement('div'), { className: 'helper-card' });
+    card.setAttribute('role', 'group');
+    const head = Object.assign(document.createElement('div'), { className: 'helper-card-head' });
+    const name = Object.assign(document.createElement('span'), { className: 'helper-card-name', textContent: t('helper.name', { n: e.n }) });
+    const state = Object.assign(document.createElement('span'), { className: 'helper-card-state' });
+    head.append(name, state);
+    const task = Object.assign(document.createElement('p'), { className: 'helper-card-task', textContent: e.task || '' });
+    const step = Object.assign(document.createElement('p'), { className: 'helper-card-step' });
+    const actions = Object.assign(document.createElement('div'), { className: 'helper-card-actions' });
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'helper-card-tab', textContent: t('helper.tab'), hidden: true });
+    chip.title = t('helper.tabTitle');
+    chip.onclick = () => { const id = Number(card.dataset.tab); if (Number.isInteger(id)) window.browser?.switchTab?.(id); };
+    if (!window.browser?.switchTab) chip.disabled = true;
+    const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'btn helper-card-stop', textContent: t('helper.stop') });
+    stop.onclick = () => { stop.disabled = true; window.assistant.stopHelper?.(e.key); };
+    actions.append(chip, stop);
+    card.append(head, task, step, actions);
+    appendToTurn(card);
+    helperCards.set(e.key, card);
+  }
+  const ended = ['done', 'timeout', 'failed', 'stopped'].includes(e.status);
+  const label = t(`helper.status.${ended ? e.status : 'working'}`);
+  card.querySelector('.helper-card-state').textContent = label;
+  card.querySelector('.helper-card-step').textContent = ended ? '' : e.step || '';
+  card.setAttribute('aria-label', `${t('helper.name', { n: e.n })}: ${label}`);
+  card.classList.toggle('ended', ended);
+  if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.querySelector('.helper-card-tab').hidden = false; }
+  if (ended) card.querySelector('.helper-card-stop').hidden = true;
+}
+
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways });
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle });
@@ -5408,12 +5577,15 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 
 
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
+
+
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '', fields = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || t('approval.tool.use', { host }));
+  const editing = note === 'connector' && Array.isArray(fields?.list) && fields.list.length > 0;
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
@@ -5422,9 +5594,18 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
-        : note === 'connector' ? t('approval.connector.details') : t('approval.tool.details'),
+        : note === 'connector' ? `${t('approval.connector.details')}${editing ? ` ${t('approval.connector.edit')}` : ''}` : t('approval.tool.details'),
   });
-  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
+  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: editing ? String(fields.fixed || '') : args || '{}' });
+  const boxes = editing ? fields.list.filter((f) => f && typeof f.key === 'string').map((f) => {
+    const box = Object.assign(document.createElement(f.multiline ? 'textarea' : 'input'), { className: 'approval-edit', value: String(f.value ?? ''), maxLength: Number(f.max) || 200, spellcheck: true });
+    if (f.multiline) box.rows = Math.min(12, Math.max(3, String(f.value ?? '').split('\n').length + 1)); else box.type = 'text';
+    box.dataset.key = f.key;
+    box.setAttribute('aria-label', String(f.label || f.key));
+    const label = Object.assign(document.createElement('label'), { className: 'approval-edit-label' });
+    label.append(Object.assign(document.createElement('span'), { textContent: String(f.label || f.key) }), box);
+    return { key: f.key, box, label };
+  }) : [];
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
@@ -5437,14 +5618,16 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     window.assistant.approve?.(approvalId, ok);
   };
   deny.onclick = () => answer(false);
-  allow.onclick = () => answer(true);
+  allow.onclick = note === 'connector'
+    ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])) } : true); }
+    : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); }
   });
   actions.append(...[deny, always, allow].filter(Boolean));
-  card.append(title, detail, pre, actions);
+  card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
   append(card, { force: true });
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();
@@ -5681,6 +5864,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) {
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -5838,6 +6026,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null;
+  window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
@@ -5984,6 +6173,13 @@ sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  if (typed && attachments.length === 0 && pastes.length === 0 && window.focusPhrase?.parseStart(typed) && window.focusUi) {
+    prompt.value = '';
+    renderAttachments();
+    autosize();
+    await window.focusUi.tryStart(typed);
+    return;
+  }
   const text = window.chatDrafts.withPastes(typed, pastes);
   const hadPastes = pastes.length > 0;
   const images = attachments;
@@ -6073,6 +6269,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false);
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
@@ -6098,6 +6295,7 @@ function startChat() {
     copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>',
     check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
     up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
+    note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
     down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
   };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -6221,6 +6419,24 @@ function startChat() {
       if (time) { time.classList.add('msg-hover'); strip.append(time); }
     }
     if (!strip.querySelector('.reply-thumbs') && bubble.querySelector('.reply-copy')) strip.append(thumbs(bubble, info.feedback));
+    const note = strip.querySelector('.reply-note');
+    if (note && note !== strip.lastElementChild) strip.append(note);
+  }
+
+
+  function noteButton(bubble, source) {
+    if (!bubble || !window.assistant?.notes || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-note')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+    const b = button('reply-thumb reply-note', t('notes.add'), ICONS.note, async () => {
+      const r = await window.assistant.notes.act('add', { text: String(source) }).catch(() => null);
+      b.title = t(r?.ok ? 'notes.added' : 'notes.addFailed');
+      b.setAttribute('aria-label', b.title);
+      b.classList.toggle('done', Boolean(r?.ok));
+      b.innerHTML = r?.ok ? ICONS.check : ICONS.note;
+      setTimeout(() => { b.title = t('notes.add'); b.setAttribute('aria-label', b.title); b.classList.remove('done'); b.innerHTML = ICONS.note; }, 2200);
+    });
+    strip.append(b);
   }
   function thumbs(bubble, current = null) {
     const box = el('span', { className: 'reply-thumbs' });
@@ -6293,7 +6509,7 @@ function startChat() {
     copy.click();
   });
 
-  window.chatActions = { userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+  window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();
 ;
 // ---- tabs-ask-core.js
@@ -7159,6 +7375,336 @@ function startChat() {
   };
 })();
 ;
+// ---- dictation.js
+
+
+
+
+
+
+
+
+
+
+
+(() => {
+  const api = window.assistant?.dictation;
+  const byId = (id) => document.getElementById(id);
+  const box = byId('prompt');
+  const form = byId('composer');
+  const attach = byId('attach');
+  if (!api || !box || !form || !attach || typeof MediaRecorder !== 'function') return;
+  const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
+  const HOLD_MS = 400;
+  const MAC = /^Mac/.test(navigator.platform || '');
+
+  const mic = Object.assign(document.createElement('button'), { type: 'button', className: 'mic-btn', id: 'mic-btn' });
+  mic.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>';
+  attach.after(mic);
+  const bar = Object.assign(document.createElement('div'), { className: 'dictation-bar', hidden: true });
+  bar.setAttribute('role', 'status');
+  bar.innerHTML = '<span class="dictation-dot" aria-hidden="true"></span><span class="dictation-meter" aria-hidden="true"><i></i></span><span class="dictation-time"></span><span class="dictation-hint"></span>';
+  box.before(bar);
+  const meter = bar.querySelector('.dictation-meter i');
+  const timeEl = bar.querySelector('.dictation-time');
+  const hintEl = bar.querySelector('.dictation-hint');
+
+  let state = 'idle';
+  let session = null;
+  let pressAt = 0;
+
+  const label = () => ({
+    idle: tr('dictation.start', { key: MAC ? '⇧⌘Space' : 'Ctrl+Shift+Space' }),
+    starting: tr('dictation.starting'),
+    recording: tr('dictation.stop'),
+    sending: tr('dictation.sending'),
+  })[state];
+  function render() {
+    mic.dataset.state = state;
+    mic.title = label();
+    mic.setAttribute('aria-label', label());
+    mic.setAttribute('aria-pressed', String(state === 'recording'));
+    mic.setAttribute('aria-busy', String(state === 'sending' || state === 'starting'));
+    bar.hidden = state !== 'recording' && state !== 'sending';
+    bar.dataset.state = state;
+    hintEl.textContent = state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint');
+  }
+  render();
+
+  const clock = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+
+  function note(text, settings) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    if (settings) {
+      const link = Object.assign(document.createElement('button'), { type: 'button', className: 'link-btn', textContent: tr('dictation.openSettings') });
+      link.onclick = () => window.lumenPrefs?.openSettingsPage('you-and-ai');
+      line.append(' ', link);
+    }
+    window.showAttachNote([line]);
+  }
+
+
+  function release() {
+    const s = session;
+    session = null;
+    if (!s) return;
+    cancelAnimationFrame(s.raf);
+    clearInterval(s.timer);
+    try { s.stream?.getTracks().forEach((track) => track.stop()); } catch {  }
+    try { s.ctx?.close(); } catch {  }
+    s.chunks = [];
+  }
+
+  async function start() {
+    if (state !== 'idle') return;
+    state = 'starting';
+    render();
+    const status = await api.status().catch(() => null);
+    if (state !== 'starting') return;
+    if (!status?.provider) {
+      state = 'idle';
+      render();
+      note(status?.message || tr('dictation.error.other', { provider: '', status: '?' }), true);
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+    } catch (err) {
+      state = 'idle';
+      render();
+      note(tr(err?.name === 'NotFoundError' ? 'dictation.noMic' : 'dictation.micBlocked'));
+      return;
+    }
+    if (state !== 'starting') { stream.getTracks().forEach((track) => track.stop()); return; }
+    const mime = ['audio/webm;codecs=opus', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+    const s = { stream, recorder, chunks: [], ctx: null, raf: 0, timer: 0, startedAt: performance.now(), status, cancelled: false };
+    session = s;
+    recorder.ondataavailable = (e) => { if (e.data?.size) s.chunks.push(e.data); };
+    recorder.onstop = () => finish(s);
+    recorder.start(1000);
+
+    try {
+      s.ctx = new AudioContext();
+      const analyser = s.ctx.createAnalyser();
+      analyser.fftSize = 512;
+      s.ctx.createMediaStreamSource(stream).connect(analyser);
+      const data = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const v of data) sum += ((v - 128) / 128) ** 2;
+        meter.style.transform = `scaleX(${Math.min(1, Math.sqrt(sum / data.length) * 4).toFixed(3)})`;
+        s.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch {  }
+    const max = (status.maxSeconds || 120) * 1000;
+    const showTime = () => {
+      const ms = performance.now() - s.startedAt;
+      timeEl.textContent = `${clock(ms)} / ${clock(max)}`;
+      if (ms >= max) stop();
+    };
+    showTime();
+    s.timer = setInterval(showTime, 250);
+    state = 'recording';
+    render();
+  }
+
+  function stop() {
+    if (state === 'starting') { cancel(); return; }
+    if (state !== 'recording' || !session) return;
+    state = 'sending';
+    render();
+    clearInterval(session.timer);
+    cancelAnimationFrame(session.raf);
+    try { session.recorder.stop(); } catch { finish(session); }
+  }
+
+  function cancel() {
+    if (state === 'idle') return;
+    if (session) {
+      session.cancelled = true;
+      try { if (session.recorder.state !== 'inactive') session.recorder.stop(); } catch {  }
+    }
+    release();
+    state = 'idle';
+    render();
+  }
+
+  async function finish(s) {
+    if (s.cancelled) return;
+    const blob = new Blob(s.chunks, { type: s.recorder.mimeType || 'audio/webm' });
+    s.stream.getTracks().forEach((track) => track.stop());
+    const format = s.status.format;
+    let result;
+    try {
+      const bytes = format === 'wav' ? await toWav(blob) : new Uint8Array(await blob.arrayBuffer());
+
+      result = bytes.byteLength > (s.status.maxBytes || 8 * 1024 * 1024) ? { error: tr('dictation.error.tooLong') } : await api.transcribe(bytes, format);
+    } catch (err) {
+      result = { error: tr('dictation.error.audioLocal', { detail: String(err?.message || err).slice(0, 80) }) };
+    }
+    if (s.cancelled || session !== s) return;
+    release();
+    state = 'idle';
+    render();
+    if (result?.error) { note(result.error, Boolean(result.settings)); return; }
+    const text = String(result?.text || '').trim();
+    if (!text) { note(tr('dictation.nothingHeard')); return; }
+    insert(text);
+    if (result.autoSend) window.sendComposer();
+    else box.focus();
+  }
+
+
+  function insert(text) {
+    const startAt = box.selectionStart ?? box.value.length;
+    const endAt = box.selectionEnd ?? startAt;
+    const before = box.value.slice(0, startAt);
+    const after = box.value.slice(endAt);
+    const lead = before && !/\s$/.test(before) ? ' ' : '';
+    const trail = after && !/^\s/.test(after) ? ' ' : '';
+    box.setRangeText(lead + text + trail, startAt, endAt, 'end');
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+
+  async function toWav(blob) {
+    const RATE = 16000;
+    const ctx = new AudioContext();
+    let decoded;
+    try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); } finally { ctx.close(); }
+    const offline = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * RATE)), RATE);
+    const src = offline.createBufferSource();
+    src.buffer = decoded;
+    src.connect(offline.destination);
+    src.start();
+    const samples = (await offline.startRendering()).getChannelData(0);
+    const out = new DataView(new ArrayBuffer(44 + samples.length * 2));
+    const text = (at, str) => { for (let i = 0; i < str.length; i++) out.setUint8(at + i, str.charCodeAt(i)); };
+    text(0, 'RIFF'); out.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE'); text(12, 'fmt ');
+    out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, RATE, true);
+    out.setUint32(28, RATE * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); text(36, 'data'); out.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 0x7fff, true);
+    return new Uint8Array(out.buffer);
+  }
+
+  window.lumenDictation = { toWav };
+
+
+  mic.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    if (state === 'idle') { pressAt = performance.now(); start(); } else if (state === 'recording' || state === 'starting') { pressAt = 0; stop(); }
+  });
+  const letGo = () => { if (pressAt && performance.now() - pressAt >= HOLD_MS && (state === 'recording' || state === 'starting')) stop(); pressAt = 0; };
+  mic.addEventListener('pointerup', letGo);
+  mic.addEventListener('pointercancel', letGo);
+  mic.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    pressAt = 0;
+    if (state === 'idle') start(); else stop();
+  });
+
+  const isShortcut = (e) => e.code === 'Space' && e.shiftKey && (MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey;
+  box.addEventListener('keydown', (e) => {
+    if (!isShortcut(e)) return;
+    e.preventDefault();
+    if (e.repeat) return;
+    if (state === 'idle') { pressAt = performance.now(); start(); } else { pressAt = 0; stop(); }
+  });
+  document.addEventListener('keyup', (e) => { if (e.code === 'Space' && pressAt) letGo(); }, true);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || state === 'idle') return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    cancel();
+    box.focus();
+  }, true);
+
+  document.addEventListener('visibilitychange', () => { if (document.hidden) cancel(); });
+  new MutationObserver(() => { if (document.body.classList.contains('sidebar-hidden')) cancel(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('pagehide', cancel);
+})();
+;
+// ---- offer-card.js
+
+
+
+
+
+(() => {
+  const api = window.assistant?.offers;
+  const empty = document.getElementById('empty');
+  if (!api || !empty) return;
+  const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
+  let card = null;
+
+  const remove = () => { card?.remove(); card = null; };
+  const button = (text, cls, onclick) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text, onclick });
+  const act = (action, arg) => api.act(action, arg).catch(() => ({ ok: false }));
+
+  function row(item) {
+    const li = document.createElement('li');
+    li.className = 'offer-row';
+    li.dataset.offer = item.id;
+    const text = document.createElement('span');
+    text.className = 'offer-text';
+    const name = Object.assign(document.createElement('span'), { className: 'offer-name', textContent: tr(`offers.${item.id}`) });
+    const desc = Object.assign(document.createElement('span'), { className: 'offer-desc', textContent: tr(`offers.${item.id}.desc`) });
+    text.append(name, desc);
+    const setup = item.kind === 'setup';
+    const go = button(tr(setup ? 'offers.setUp' : 'offers.turnOn'), 'offer-go', async () => {
+      go.disabled = true;
+      const r = await act('act', item.id);
+      if (!r.ok) { go.disabled = false; return; }
+      if (r.section) window.lumenPrefs?.openSettingsPage(r.section);
+      li.remove();
+      if (!card?.querySelector('.offer-row')) remove();
+    });
+    go.setAttribute('aria-label', `${go.textContent}: ${name.textContent}`);
+    li.append(text, go);
+    return li;
+  }
+
+  async function show() {
+    if (card) return;
+    let list = null;
+    try { list = await api.get(); } catch {  }
+    if (!list?.items?.length || card || document.getElementById('welcome')?.hidden === false) return;
+    card = document.createElement('section');
+    card.className = 'offer-card';
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', tr('offers.title'));
+    const title = Object.assign(document.createElement('h3'), { className: 'offer-title', textContent: tr('offers.title') });
+    const ul = document.createElement('ul');
+    ul.className = 'offer-list';
+    for (const item of list.items) ul.append(row(item));
+    const foot = document.createElement('div');
+    foot.className = 'offer-foot';
+    foot.append(
+      button(tr('offers.notNow'), 'link-btn offer-later', async () => { remove(); await act('dismiss'); }),
+      button(tr('offers.never'), 'link-btn offer-never', async () => { remove(); await act('dismiss', 'never'); }));
+    card.append(title, ul, foot);
+    (empty.querySelector('.chips') || empty).before(card);
+
+    const ids = list.items.map((i) => i.id);
+    const seenOnce = () => { if (card && card.offsetParent !== null && !document.hidden) { io.disconnect(); act('shown', ids); } };
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) seenOnce(); });
+    io.observe(card);
+  }
+
+
+  setTimeout(show, 600);
+  window.addEventListener('focus', () => { if (!card) setTimeout(show, 100); });
+})();
+;
 // ---- snapshot-arrival.js
 
 
@@ -7254,6 +7800,79 @@ function startChat() {
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.tabSelection = api;
 })(typeof window !== 'undefined' ? window : globalThis);
+;
+// ---- split.js
+
+
+
+(() => {
+  const viewport = document.getElementById('viewport');
+  if (!viewport || !window.browser?.onSplit) return;
+  const tr = (key, fallback) => (typeof window.t === 'function' ? window.t(key) : fallback);
+  const bar = document.createElement('div');
+  bar.id = 'split-divider';
+  bar.className = 'split-divider';
+  bar.hidden = true;
+  bar.tabIndex = 0;
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.setAttribute('aria-label', tr('split.divider', 'Resize split view. Drag, or use the arrow keys.'));
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'split-close';
+  close.title = tr('split.close', 'Close split view');
+  close.setAttribute('aria-label', tr('split.close', 'Close split view'));
+  close.innerHTML = '<svg viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 1.5l5 5M6.5 1.5l-5 5"/></svg>';
+  bar.append(close);
+  viewport.append(bar);
+
+  let ratio = 0.5;
+  let gap = 12;
+  let pending = null;
+  const send = (r) => {
+    ratio = r;
+    pending = r;
+    if (pending !== null && !send.raf) send.raf = requestAnimationFrame(() => { send.raf = 0; window.browser.setSplitRatio(pending); pending = null; });
+  };
+  const fromPointer = (e) => {
+    const box = viewport.getBoundingClientRect();
+    return (e.clientX - box.left - gap / 2) / Math.max(1, box.width - gap);
+  };
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('.split-close')) return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('dragging');
+    document.body.classList.add('split-dragging');
+  });
+  bar.addEventListener('pointermove', (e) => { if (bar.hasPointerCapture(e.pointerId)) send(fromPointer(e)); });
+  const end = (e) => {
+    if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+    bar.classList.remove('dragging');
+    document.body.classList.remove('split-dragging');
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', end);
+  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('.split-close')) send(0.5); });
+  bar.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); send(ratio - step); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); send(ratio + step); }
+    else if (e.key === 'Home') { e.preventDefault(); send(0.5); }
+  });
+  close.addEventListener('click', () => window.browser.closeSplit());
+
+  window.browser.onSplit((msg) => {
+    bar.hidden = !msg;
+    document.body.classList.toggle('split-view', Boolean(msg));
+    if (!msg) return;
+    ratio = msg.ratio;
+    gap = msg.width;
+    bar.style.left = `${msg.x}px`;
+    bar.style.width = `${msg.width}px`;
+    bar.setAttribute('aria-valuenow', String(Math.round(msg.ratio * 100)));
+  });
+})();
 ;
 // ---- omnibox-draft.js
 
@@ -7439,6 +8058,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
@@ -7554,12 +8174,14 @@ let selectedTabs = new Set();
 
 
 
+
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch {  } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
 
@@ -7582,6 +8204,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -8155,13 +8778,15 @@ function handOffTabDrag(e) {
 
 
 
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; }
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -8292,6 +8917,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
 
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped);
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
 
@@ -8426,8 +9052,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
 
 
@@ -8581,11 +9209,13 @@ function updateTabEl(el, tab, group, activeId) {
 
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
-  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
+  el.classList.toggle('split-left', tab.split === 'left');
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -8771,7 +9401,8 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key];
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
@@ -8911,6 +9542,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return;
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -8973,6 +9605,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return;
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -9110,7 +9743,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -9221,7 +9854,7 @@ function renderTabsNow(state) {
 
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6;
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
 
 
@@ -10032,7 +10665,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null;
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420));
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0)));
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
@@ -10218,6 +10851,25 @@ window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && windo
 setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
 
 
+
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
+
+
 window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
   showSidebar(true);
   try {
@@ -10288,6 +10940,7 @@ window.browser.onDownloads?.((list) => {
     : latest.state === 'completed' ? t('downloads.done') : ['cancelled', 'interrupted'].includes(latest.state) ? t(`downloads.${latest.state}`) : latest.state;
   downloadsBtn.title = `${latest.name} — ${status}`;
 });
+for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
@@ -11230,7 +11883,7 @@ $('agent-stop')?.addEventListener('click', () => {
   setInterval(() => { if (!panel.hidden && !panel.querySelector('.task-edit') && state.tasks.some((t) => t.status === 'running')) render(); }, 20000);
   api.onState((s) => { state = s; applyState(); if (!panel.hidden) render(); });
   api.onToast(toast);
-  api.onOpen(({ id } = {}) => openPanel(id || null));
+  api.onOpen((p = {}) => (p.routine && window.lumenRoutines ? window.lumenRoutines.fromMain(p) : openPanel(p.id || null)));
   api.onPropose((spec) => openCreate(spec || {}));
 
   window.lumenTasks = {
@@ -11451,6 +12104,26 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   window.researchUi = { decorate, refresh };
   refresh();
+})();
+;
+// ---- notes-loader.js
+
+
+(() => {
+  const api = window.assistant?.notes;
+  const button = document.getElementById('notes-btn');
+  if (!api || !button) return;
+  let loading = null;
+  const load = () => loading || (loading = new Promise((resolve, reject) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'notes.css' });
+    document.head.appendChild(css);
+    const script = Object.assign(document.createElement('script'), { src: 'notes.js' });
+    script.onload = resolve;
+    script.onerror = () => { loading = null; script.remove(); css.remove(); reject(new Error('notes.js did not load')); };
+    document.body.appendChild(script);
+  }));
+
+  button.onclick = () => load().catch(() => {});
 })();
 ;
 // ---- meeting-loader.js
@@ -12628,6 +13301,28 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 
 
+
+  window.showSkillOffer = function showSkillOffer(append, offer) {
+    if (!offer?.token || typeof append !== 'function') return;
+    const update = offer.kind === 'update';
+    if (!update && offer.kind !== 'save') return;
+    const box = append(Object.assign(document.createElement('div'), { className: 'run-undo skill-offer', role: 'status' }));
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: update ? tr('skills.offer.update', 'Update the skill “{title}” with what changed?', { title: offer.skill?.title || offer.skill?.name || '' }) : tr('skills.offer.save', 'Save how I did this as a skill?') });
+    const yes = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: update ? tr('skills.offer.updateButton', 'Show the change') : tr('skills.offer.saveButton', 'Draft a skill') });
+    const no = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('skills.offer.no', 'No thanks') });
+    yes.addEventListener('click', async () => {
+      yes.disabled = true;
+      no.disabled = true;
+      text.textContent = tr('skills.create.working', 'Asking the model for a skill…');
+      const call = update ? api.offerUpdate : api.offerSave;
+      const r = call ? await call(offer.token).catch((err) => ({ ok: false, error: String(err?.message || err) })) : null;
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: r?.ok ? (update ? tr('skills.offer.updateOpened', 'The change is open in Settings → Skills. Nothing changes until you accept it.') : tr('skills.create.opened', 'The editor is open in Settings. Review it and save.')) : (r?.error || tr('skills.failed', 'That skill could not run.')) }));
+    });
+    no.addEventListener('click', () => box.remove());
+    box.append(text, ' ', yes, ' ', no);
+  };
+
+
   const decode = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
   const REQUEST = /^<skill_request name="([^"]*)" title="([^"]*)" input="([^"]*)">\n([\s\S]*?)\n?<\/skill_request>\s*$/;
   function decorate(bubble) {
@@ -12801,6 +13496,155 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 })();
 ;
+// ---- routine-phrase.js
+
+
+
+(function (root) {
+  const DAY = '(?:sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)[a-z]*';
+  const UNIT = '(?:day|days|weekday|weekdays|work\\s*day|morning|mornings|afternoon|evening|evenings|night|week|hour|hours)';
+  const GATE = [
+    /^(?:daily|weekly|hourly|weekdays)\b/i,
+    /^on\s+weekdays\b/i,
+    new RegExp(`^(?:every|each)\\s+${UNIT}\\b`, 'i'),
+    /^every\s+\d{1,2}\s+hours?\b/i,
+    new RegExp(`^(?:every|each)\\s+${DAY}\\b`, 'i'),
+  ];
+
+  function looksScheduled(text) {
+    const s = String(text || '').trimStart();
+    if (s.length < 5 || s.length > 4000 || !/\s\S/.test(s)) return false;
+    const head = s.slice(0, 80);
+    return GATE.some((re) => re.test(head));
+  }
+
+  const api = { looksScheduled };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.routinePhrase = api;
+})(this);
+;
+// ---- focus-phrase.js
+
+
+
+(function (root) {
+  const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, 'half an': 0.5, half: 0.5 };
+  const AMOUNT = '(\\d+(?:[.,]\\d+)?|half an|half|an|a|one|two|three|four|five|six)';
+  const UNIT = '(hours?|hrs?|h|minutes?|mins?|m)';
+  const LENGTH = new RegExp(`^${AMOUNT}\\s*${UNIT}\\b\\.?$`, 'i');
+  const START = new RegExp(`^(?:please\\s+)?(?:(?:start|begin|turn\\s+on|enable|enter|activate|set)\\s+)?(?:a\\s+|an\\s+|my\\s+)?focus(?:\\s+(?:mode|session|time))?(?:\\s+on)?(?:\\s+for)?\\s+(.+?)[.!]?(?:\\s+please)?$`, 'i');
+
+
+  function parseLength(text) {
+    const m = LENGTH.exec(String(text || '').trim().replace(/\s+/g, ' '));
+    if (!m) return null;
+    const raw = m[1].toLowerCase();
+    const n = raw in WORDS ? WORDS[raw] : Number(raw.replace(',', '.'));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const minutes = Math.round(/^h/i.test(m[2]) ? n * 60 : n);
+    return minutes >= 1 && minutes <= 720 ? minutes : null;
+  }
+
+  function parseStart(text) {
+    const s = String(text || '').trim();
+    if (s.length < 7 || s.length > 80) return null;
+    const m = START.exec(s);
+    return m ? parseLength(m[1]) : null;
+  }
+
+  const api = { parseLength, parseStart };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.focusPhrase = api;
+})(this);
+;
+// ---- focus.js
+
+
+(() => {
+  const api = window.assistant?.focus;
+  const button = document.getElementById('focus-btn');
+  const label = document.getElementById('focus-time');
+  if (!api || !button) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+
+  let state = null;
+  let ticker = 0;
+  const clock = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`;
+  };
+  function draw() {
+    const on = Boolean(state?.active);
+    const left = on ? Math.max(0, state.until - Date.now()) : 0;
+    button.classList.toggle('on', on);
+    label.hidden = !on;
+    label.textContent = on ? clock(left) : '';
+    const name = on ? tr('focus.button.on', 'Focus mode: {time} left', { time: clock(left) }) : tr('focus.button', 'Focus mode');
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    if (on && left === 0) api.state().then(apply).catch(() => {});
+  }
+  function apply(next) {
+    state = next;
+    if (state?.active && !ticker) ticker = setInterval(draw, 1000);
+    else if (!state?.active && ticker) { clearInterval(ticker); ticker = 0; }
+    draw();
+  }
+  button.addEventListener('click', () => {
+    const r = button.getBoundingClientRect();
+    api.menu({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+  });
+  api.onState(apply);
+  api.state().then(apply).catch(() => {});
+
+  const notice = (text) => {
+    if (typeof window.append !== 'function') return;
+    window.append(Object.assign(document.createElement('div'), { className: 'notice', textContent: text }));
+  };
+  const endsAt = (until) => new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  async function start(minutes) {
+    try {
+      const s = await api.start(minutes);
+      apply(s);
+      return { ok: true, state: s };
+    } catch (err) {
+      return { ok: false, message: String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') };
+    }
+  }
+
+
+  window.slashCommands?.register({
+    name: 'focus',
+    label: tr('focus.slash', 'Start focus mode'),
+    description: tr('focus.slash.description', 'Block distracting sites for a while. Tab: say how long.'),
+    hint: tr('focus.slash.hint', 'How long, like 90 minutes or 2 hours (Enter alone: 45 minutes)'),
+    takesInput: false,
+    async run({ input }) {
+      const minutes = String(input || '').trim() ? window.focusPhrase?.parseLength(input) : 45;
+      if (!minutes) return { ok: false, message: tr('focus.slash.bad', 'Say how long, like 90 minutes or 2 hours.') };
+      const r = await start(minutes);
+      if (r.ok) notice(tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }));
+      return r;
+    },
+  });
+
+
+  window.focusUi = {
+    async tryStart(text) {
+      const minutes = window.focusPhrase?.parseStart(text);
+      if (!minutes) return false;
+      const r = await start(minutes);
+      notice(r.ok ? tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }) : r.message);
+      return true;
+    },
+  };
+})();
+;
 // ---- routines.js
 
 
@@ -12822,12 +13666,17 @@ $('agent-stop')?.addEventListener('click', () => {
   const timeText = (hhmm) => { const [hh, mm] = String(hhmm || '08:00').split(':').map(Number); return new Date(2026, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const routinesOf = (state) => state.tasks.filter((t) => t.schedule?.type === 'routine');
 
+  const TRIGGERS = ['schedule', 'webhook', 'email'];
+  const triggerOf = (s) => (s && ['webhook', 'email'].includes(s.repeat) ? s.repeat : 'schedule');
 
   function scheduleText(s) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -12859,17 +13708,48 @@ $('agent-stop')?.addEventListener('click', () => {
         return h('li', { className: 'routine-item' }, toggle, row, run);
       })));
     } else out.push(h('p', { className: 'chat-list-empty', textContent: T('routines.empty') }));
+    out.push(quietBlock(state));
     out.push(h('section', { className: 'routine-templates', 'aria-label': T('routines.templates') }, h('h3', { textContent: T('routines.templates') }),
-      TEMPLATES.map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; })));
+      h('ul', { className: 'routine-template-list' }, templates().filter((tp) => !tp.page).map((tp) => templateCard(tp, items, state))),
+      h('div', { className: 'routine-template-more' }, templates().filter((tp) => tp.page).map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; }))));
     return out;
   }
 
 
-  const TEMPLATES = [
-    { key: 'news', schedule: { repeat: 'weekdays', time: '08:00' } },
-    { key: 'changes', schedule: { repeat: 'daily', time: '09:00' }, page: true },
-    { key: 'weekly', schedule: { repeat: 'weekly', days: [1], time: '09:00' }, page: true },
-  ];
+
+  const templates = () => core.state().templates || [];
+  async function addTemplate(tp) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const res = await api.saveRoutine({ title: name, prompt: T(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, confirmed: true });
+    core.announce(res.ok ? T('routines.template.added', { name }) : res.error);
+    await core.refresh();
+  }
+  function templateCard(tp, items, state) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const have = items.some((x) => x.routine?.template === tp.key);
+    const app = tp.connector ? T(`routines.connector.${tp.connector}`) : '';
+    const add = btn(have ? T('routines.template.have') : T('routines.template.add'), () => addTemplate(tp), 'btn routine-template-add');
+    add.disabled = have || !state.settings.enabled;
+    add.setAttribute('aria-label', `${add.textContent}: ${name}`);
+    return h('li', { className: 'routine-template-card' },
+      h('span', { className: 'task-text' }, h('span', { className: 'task-title', textContent: name }),
+        h('span', { className: 'task-meta', textContent: `${T(`routines.template.${tp.key}.description`)} ${scheduleText({ type: 'routine', ...tp.schedule })}` }),
+        tp.connector ? h('span', { className: `task-meta routine-template-conn${(state.connected || []).includes(tp.connector) ? ' ready' : ''}`, textContent: (state.connected || []).includes(tp.connector) ? T('routines.template.ready', { app }) : T('routines.template.needs', { app }) }) : null),
+      add);
+  }
+
+
+  function quietBlock(state) {
+    const q = state.settings.quiet || { on: false, from: '22:00', to: '07:00' };
+    const set = (patch) => api.settings({ quiet: { ...q, ...patch } }).then(core.refresh);
+    const on = h('input', { type: 'checkbox', checked: q.on, onchange: (e) => set({ on: e.target.checked }) });
+    const time = (value, key, label) => { const i = h('input', { type: 'time', value, required: true, onchange: (e) => { if (e.target.value) set({ [key]: e.target.value }); } }); i.setAttribute('aria-label', label); return i; };
+    return h('details', { className: 'routine-quiet', open: q.on },
+      h('summary', { textContent: T('routines.quiet.title') }),
+      h('label', { className: 'task-check' }, on, T('routines.quiet.on')),
+      h('div', { className: 'routine-quiet-times' }, h('span', { textContent: T('routines.quiet.from') }), time(q.from, 'from', T('routines.quiet.from')), h('span', { textContent: T('routines.quiet.to') }), time(q.to, 'to', T('routines.quiet.to'))),
+      h('p', { className: 'task-meta', textContent: T('routines.quiet.desc') }));
+  }
 
 
   function history(task) {
@@ -12880,14 +13760,14 @@ $('agent-stop')?.addEventListener('click', () => {
       const when = [clock(r.startedAt || r.endedAt), T(`routines.history.status.${r.status}`), T(`routines.trigger.${r.trigger}`),
         r.trigger === 'catch-up' && r.scheduledFor ? T('routines.history.dueAt', { time: clock(r.scheduledFor) }) : ''].filter(Boolean).join(' · ');
       const details = h('details', { className: 'routine-run', open: i === 0 && r.status !== 'done' },
-        h('summary', {}, h('span', { className: `task-dot ${r.status === 'skipped' ? 'stopped' : r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
+        h('summary', {}, h('span', { className: `task-dot ${{ skipped: 'stopped', nothing: 'done' }[r.status] || r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
       if (r.error) details.append(h('p', { className: r.status === 'skipped' ? 'task-meta' : 'task-error', textContent: r.error }));
       if (r.result) {
         const body = h('div', { className: 'msg assistant task-result routine-result' });
         body.innerHTML = window.renderMarkdown(r.result);
         body.addEventListener('click', (e) => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); window.browser.newTab(a.href); } });
         details.append(body);
-      } else if (!r.error) details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
+      } else if (!r.error && r.status !== 'nothing') details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
       return h('li', {}, details);
     })));
     return out;
@@ -12895,7 +13775,8 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
   let card = null;
-  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false } = {}) {
+
+  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false, shownKey = null } = {}) {
     const state = core.state();
     if (!state.settings.enabled) { core.openPanel(null, { tab: 'routines' }); return; }
     card?.remove();
@@ -12924,17 +13805,23 @@ $('agent-stop')?.addEventListener('click', () => {
     const start = h('input', { type: 'text', spellcheck: false, value: task?.routine?.startUrl || '', placeholder: 'https://' });
     const sites = h('input', { type: 'text', spellcheck: false, value: task ? task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', ') : pv.sites.join(', ') });
     let sitesTouched = Boolean(task);
+    let templateKey = '';
     sites.addEventListener('input', () => { sitesTouched = true; });
     const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === (task?.model || pv.model), disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });
+    const quiet = h('input', { type: 'checkbox', className: 'routine-quiet-check', checked: Boolean(task?.routine?.quietUnlessNeeded) });
     const syncMcp = () => { const cli = pv.models.find((m) => m.id === model.value)?.engine !== 'api'; mcp.disabled = cli; if (cli) mcp.checked = false; };
     model.addEventListener('change', syncMcp);
 
 
     const s0 = task?.schedule || schedule || { repeat: 'weekdays', time: '08:00' };
-    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === s0.repeat })));
+
+    const trigger = h('select', { className: 'routine-trigger' }, TRIGGERS.map((k) => h('option', { value: k, textContent: T(`routines.trigger.kind.${k}`), selected: k === triggerOf(s0) })));
+    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === (triggerOf(s0) === 'schedule' ? s0.repeat : 'weekdays') })));
+    const emailEvery = h('input', { type: 'number', min: 5, max: 1440, value: s0.minutes || 10, className: 'task-minutes routine-email-every' });
+    emailEvery.setAttribute('aria-label', T('routines.field.emailEvery'));
     const time = h('input', { type: 'time', value: s0.time || '08:00', required: true });
     time.setAttribute('aria-label', T('routines.field.time'));
     const days = h('fieldset', { className: 'routine-days' }, h('legend', { textContent: T('routines.field.days') }),
@@ -12955,7 +13842,40 @@ $('agent-stop')?.addEventListener('click', () => {
       cron: h('div', {}, h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.cron') }), cron), h('p', { className: 'task-meta', textContent: T('routines.field.cron.hint') })),
     };
     const next = h('p', { className: 'task-meta routine-next', 'aria-live': 'polite' });
+    const hooks = core.state().webhooks || { on: false, port: 47821, listening: false, error: '' };
+    const emailBox = h('div', { className: 'routine-email' },
+      h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.emailEvery') }), emailEvery, h('span', { textContent: T('routines.field.minutesUnit') })),
+      h('p', { className: 'task-meta', textContent: T('routines.email.hint') }),
+      (state.connected || []).includes('gmail') ? null : h('p', { className: 'task-meta task-error routine-email-needs', textContent: T('routines.email.needsGmail') }),
+      task?.routine?.emailError ? h('p', { className: 'task-meta task-error', textContent: T('routines.email.error', { error: task.routine.emailError }) }) : null);
+    const hookBox = h('div', { className: 'routine-webhook' }, h('p', { className: 'task-meta', textContent: T('routines.webhook.hint') }));
+    if (!hooks.on) hookBox.append(h('p', { className: 'task-meta task-error routine-webhook-off', textContent: T('routines.webhook.settingOff') }));
+    else if (hooks.error) hookBox.append(h('p', { className: 'task-meta task-error', textContent: T('routines.webhook.inUse', { port: hooks.port }) }));
+    if (!task) hookBox.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.saveFirst') }));
+    else {
+      const url = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-url', value: shownKey?.url || `http://127.0.0.1:${hooks.port}/routines/${task.id}/run` });
+      hookBox.append(field(T('routines.webhook.url'), url));
+      const copyText = async (b, text) => { try { await navigator.clipboard.writeText(text); b.textContent = T('routines.webhook.copied'); setTimeout(() => { b.textContent = T('routines.webhook.copyCurl'); }, 1500); } catch (err) { console.error('[lumen] copy failed:', err); } };
+      const showKey = (made) => {
+        const keyBox = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-key', value: made.key });
+        const copy = btn(T('routines.webhook.copyCurl'), () => copyText(copy, made.curl), 'btn routine-webhook-copy');
+        return h('div', { className: 'routine-webhook-made' }, field(T('routines.webhook.key'), keyBox), h('p', { className: 'task-meta', textContent: T('routines.webhook.keyShown') }), copy);
+      };
+      const keyArea = h('div', {});
+      const makeKey = btn(task.routine?.hasKey || shownKey ? T('routines.webhook.regenerate') : T('routines.webhook.make'), async () => {
+        const res = await api.routineWebhookKey(task.id);
+        if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
+        keyArea.replaceChildren(showKey(res));
+        makeKey.textContent = T('routines.webhook.regenerate');
+      }, 'btn routine-webhook-make');
+      if (shownKey) keyArea.append(showKey(shownKey));
+      else if (task.routine?.hasKey) keyArea.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.hasKey') }));
+      hookBox.append(keyArea, h('div', { className: 'approval-actions' }, makeKey));
+    }
+    const scheduleBox = h('div', { className: 'routine-schedule-box' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron);
     const getSchedule = () => {
+      if (trigger.value === 'webhook') return { repeat: 'webhook' };
+      if (trigger.value === 'email') return { repeat: 'email', minutes: Number(emailEvery.value) };
       const r = repeat.value;
       if (r === 'once') return { repeat: r, at: new Date(when.value).getTime() };
       if (r === 'hours') return { repeat: r, hours: Number(hours.value), ...(task?.schedule.repeat === 'hours' && Number(hours.value) === task.schedule.hours ? { anchor: task.schedule.anchor } : {}) };
@@ -12968,9 +13888,15 @@ $('agent-stop')?.addEventListener('click', () => {
       const res = await api.routinePreview({ schedule: getSchedule() });
       if (seq !== previewSeq) return;
       next.classList.toggle('task-error', !res.ok);
-      next.textContent = res.ok ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : res.error;
+      next.textContent = res.ok ? (trigger.value === 'schedule' ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : '') : res.error;
     };
+    const enabledLabel = h('span', {});
     const sync = () => {
+      const k = trigger.value;
+      scheduleBox.hidden = k !== 'schedule';
+      emailBox.hidden = k !== 'email';
+      hookBox.hidden = k !== 'webhook';
+      enabledLabel.textContent = k === 'schedule' ? T('routines.field.enabled') : T('routines.field.enabled.event');
       const r = repeat.value;
       rows.time.hidden = !['daily', 'weekdays', 'weekly'].includes(r);
       rows.days.hidden = r !== 'weekly';
@@ -12980,7 +13906,8 @@ $('agent-stop')?.addEventListener('click', () => {
       updateNext();
     };
     repeat.addEventListener('change', sync);
-    for (const c of [time, hours, when, cron, days]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
+    trigger.addEventListener('change', sync);
+    for (const c of [time, hours, when, cron, days, emailEvery]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
 
 
     let siteTimer = null;
@@ -12999,9 +13926,13 @@ $('agent-stop')?.addEventListener('click', () => {
       name.value = T(`routines.template.${tp.key}.name`);
       what.value = T(`routines.template.${tp.key}.prompt`);
       if (tp.page) start.value = /^https?:/i.test(pv.pageUrl) ? pv.pageUrl : '';
+      trigger.value = triggerOf(tp.schedule);
       repeat.value = tp.schedule.repeat;
       time.value = tp.schedule.time || '08:00';
+      if (tp.schedule.cron) cron.value = tp.schedule.cron;
+      quiet.checked = Boolean(tp.quiet);
       for (const i of days.querySelectorAll('input')) i.checked = (tp.schedule.days || [1]).includes(Number(i.value));
+      templateKey = tp.key;
       sitesTouched = false;
       sync();
       followSites();
@@ -13013,29 +13944,37 @@ $('agent-stop')?.addEventListener('click', () => {
       save.disabled = true;
       const res = await api.saveRoutine({
         id: task?.id, title: name.value, prompt: what.value, startUrl: start.value, sites: sitesTouched ? sites.value.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
-        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, confirmed: true,
+        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, quietUnlessNeeded: quiet.checked, confirmed: true,
       });
       if (!res.ok) { error.textContent = res.error; error.hidden = false; save.disabled = false; return; }
       if (fromComposer) { composerInput.value = ''; composerInput.dispatchEvent(new Event('input')); }
       core.announce(task ? T('routines.saved') : T('routines.created'));
       fromComposer = false;
+      const firstKey = !task?.routine?.hasKey && trigger.value === 'webhook' && !shownKey;
       close();
       await core.openPanel(res.id, { tab: 'routines' });
+      if (firstKey) {
+        const made = await api.routineWebhookKey(res.id);
+        const saved = made.ok ? await api.get(res.id) : null;
+        if (saved) open({ task: saved, shownKey: made });
+      }
     }, 'btn primary');
 
     box.append(
       h('h2', { textContent: task ? T('routines.edit.title') : T('routines.create.title') }),
       task ? null : h('div', { className: 'routine-template-row', role: 'group', 'aria-label': T('routines.templates') }, h('span', { className: 'task-meta', textContent: T('routines.templates.start') }),
-        TEMPLATES.map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
+        templates().map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
       field(T('routines.field.name'), name),
       field(T('tasks.create.prompt'), what),
       field(T('routines.field.start'), start),
-      h('div', { className: 'task-schedule' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron, next),
+      h('div', { className: 'task-schedule' }, field(T('routines.field.trigger'), trigger, false),
+        scheduleBox, emailBox, hookBox, next),
       field(T('tasks.create.sites'), sites),
       h('label', { className: 'task-field' }, model, h('span', { textContent: T('tasks.create.model') })),
       h('label', { className: 'task-check' }, signedIn, T('tasks.create.signedIn')),
       pv.hasMcp ? h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp')) : null,
-      task ? h('label', { className: 'task-check' }, enabled, T('routines.field.enabled')) : null,
+      h('label', { className: 'task-check', title: T('routines.field.quiet.hint') }, quiet, T('routines.field.quiet')),
+      task ? h('label', { className: 'task-check' }, enabled, enabledLabel) : null,
       h('p', { className: 'task-meta', textContent: `${T('tasks.create.asks')} ${T('routines.create.whileOpen')}` }),
       ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
@@ -13085,10 +14024,55 @@ $('agent-stop')?.addEventListener('click', () => {
     };
   }
 
-  window.lumenRoutines = { list, history, scheduleText, open };
+
+  async function fromMain({ routine, id, prompt } = {}) {
+    if (routine === 'edit') {
+      const task = await api.get(id);
+      if (!task) return;
+      await core.openPanel(id, { tab: 'routines' });
+      open({ task });
+      return;
+    }
+    open({ prompt: typeof prompt === 'string' ? prompt : '' });
+  }
+
+
+
+  (() => {
+    const phrase = window.routinePhrase;
+    if (!phrase || !composerInput) return;
+    const label = h('span', { className: 'routine-offer-text' });
+    const yes = btn(T('routines.offer.button'), () => {}, 'btn primary routine-offer-yes');
+    const no = btn(T('routines.offer.dismiss'), () => {}, 'btn routine-offer-no');
+    const bar = h('div', { className: 'routine-offer', role: 'status', hidden: true }, label, yes, no);
+    composerInput.before(bar);
+    let timer = null;
+    let seq = 0;
+    let dismissedFor = '';
+    const hide = () => { seq++; clearTimeout(timer); bar.hidden = true; };
+    composerInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      const text = composerInput.value.trim();
+      if (!core.state().settings.enabled || text === dismissedFor || !phrase.looksScheduled(text)) { hide(); return; }
+      timer = setTimeout(async () => {
+        const mine = ++seq;
+        const res = await api.routinePreview({ text });
+        if (mine !== seq || composerInput.value.trim() !== text) return;
+        if (!res.parsed) { bar.hidden = true; return; }
+        label.textContent = `${T('routines.offer.text')} ${scheduleText({ type: 'routine', ...res.parsed.schedule })}`;
+        yes.onclick = () => { hide(); open({ prompt: res.parsed.prompt, schedule: res.parsed.schedule, fromComposer: true }); };
+        no.onclick = () => { dismissedFor = text; hide(); composerInput.focus(); };
+        bar.hidden = false;
+      }, 400);
+    });
+    composerInput.form?.addEventListener('submit', hide);
+  })();
+
+  window.lumenRoutines = { list, history, scheduleText, open, fromMain };
 })();
 ;
 // ---- chat-commands.js
+
 
 
 
@@ -13318,6 +14302,33 @@ $('agent-stop')?.addEventListener('click', () => {
     },
   });
   slash.register({
+    name: 'memory',
+    label: tr('slash.memory', 'Memory'),
+    description: tr('slash.memory.description', 'What the AI has saved about you between chats.'),
+    takesInput: false,
+    async run() {
+      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI and agents.') };
+      const view = await window.assistant.memory.list().catch(() => null);
+      const box = Object.assign(document.createElement('div'), { className: 'notice slash-help memory-list' });
+      const entries = view?.entries || [];
+      box.append(Object.assign(document.createElement('strong'), { textContent: tr('slash.memory.title', 'Memory') }), ' ');
+      if (!view?.on) box.append(tr('slash.memory.off', 'Memory is off: the AI doesn’t save or read anything between chats.'));
+      else if (!entries.length) box.append(tr('slash.memory.empty', 'Nothing saved yet. Tell the AI “remember that …”.'));
+      if (entries.length) {
+        const list = document.createElement('ul');
+        for (const e of entries.slice(0, 50)) list.append(Object.assign(document.createElement('li'), { textContent: e.text }));
+        box.append(list);
+        if (entries.length > 50) box.append(tr('slash.memory.more', '…and {n} more.', { n: entries.length - 50 }), ' ');
+        if (!view.on) box.append(tr('slash.memory.offKept', 'These are kept but not used while Memory is off.'), ' ');
+      }
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.memory.open', 'Manage memory') });
+      open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
+      box.append(' ', open);
+      note(box);
+      return { ok: true };
+    },
+  });
+  slash.register({
     name: 'model',
     label: tr('slash.model', 'Change the model'),
     description: tr('slash.model.description', 'Open the model menu. /model sonnet searches it.'),
@@ -13349,6 +14360,617 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 })();
 ;
+// ---- ../ai/plan-mode.js
+
+
+
+
+
+
+
+{
+
+
+
+
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
+  const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
+  const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
+
+
+  function planToolError(name, input = {}) {
+    if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
+    return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
+  }
+
+
+  function planSite(raw) {
+    const text = String(raw ?? '').trim().toLowerCase();
+    if (!text || text.length > 255 || /\s/.test(text)) return '';
+    let url;
+    try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`); } catch { return ''; }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return '';
+    const host = url.host.replace(/\.(?=:|$)/, '');
+    if (!host || host.includes('*')) return '';
+    if (!/^(localhost|\[[0-9a-f:]+\]|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$/.test(host)) return '';
+    return host;
+  }
+
+  const stepText = (s) => (typeof s === 'string' ? s : s && typeof s === 'object' && typeof s.text === 'string' ? s.text : '');
+
+
+
+  function validatePlan(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'The plan must be an object with title, steps, sites and risky_steps.' };
+    const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, LIMITS.title) || 'Plan';
+    if (!Array.isArray(input.steps)) return { error: 'steps must be a list of short sentences, one per step.' };
+    const steps = input.steps.map((s) => stepText(s).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!steps.length) return { error: 'The plan needs at least one step.' };
+    if (steps.length > LIMITS.steps) return { error: `A plan has at most ${LIMITS.steps} steps; group the small ones.` };
+    const sites = [];
+    for (const [i, raw] of (Array.isArray(input.sites) ? input.sites : []).entries()) {
+      const host = planSite(raw);
+      if (!host) return { error: `sites[${i}] ("${String(raw).slice(0, 80)}") is not a site name. Use host names such as "www.example.com".` };
+      if (!sites.includes(host)) sites.push(host);
+    }
+    if (sites.length > LIMITS.sites) return { error: `A plan names at most ${LIMITS.sites} sites.` };
+    const risky = [];
+    for (const raw of Array.isArray(input.risky_steps) ? input.risky_steps : []) {
+      const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+      if (!Number.isInteger(n) || n < 1 || n > steps.length) return { error: `risky_steps holds step numbers from 1 to ${steps.length}; ${JSON.stringify(raw)} is not one.` };
+      if (!risky.includes(n)) risky.push(n);
+    }
+    risky.sort((a, b) => a - b);
+    return { plan: { title, steps: steps.map((s) => s.slice(0, LIMITS.step)), sites, risky_steps: risky } };
+  }
+
+
+  function approvedHosts(plan) {
+    const checked = validatePlan(plan);
+    return checked.plan ? checked.plan.sites : [];
+  }
+
+
+
+
+  const interactKey = (host) => `interact:${host}`;
+  const approvedKeys = (plan) => approvedHosts(plan).map(interactKey);
+
+
+  function approvedText(plan, words = {}) {
+    const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
+    const lines = [w.head, '', plan.title, ...plan.steps.map((s, i) => `${i + 1}. ${s}${plan.risky_steps.includes(i + 1) ? ' (risky)' : ''}`)];
+    if (plan.sites.length) lines.push('', `${w.sites} ${plan.sites.join(', ')}`);
+    if (plan.risky_steps.length) lines.push(`${w.risky} ${plan.risky_steps.join(', ')}`);
+    return lines.join('\n');
+  }
+
+
+  function planCommand(text) {
+    const m = /^\/plan(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+    return m ? { task: (m[1] || '').trim() } : null;
+  }
+
+
+  const PLAN_NOTE = 'Plan mode is on for this message. Do not act yet: only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search) to learn what the task needs. Tools that click, type, navigate, open tabs, upload or run scripts are refused. Then call propose_plan once: a short title, numbered steps in plain words, every site the plan will act on (host names), and the numbers of risky steps (anything that buys, pays, sends, posts, submits, deletes or signs up). After propose_plan, stop: reply with one short sentence at most. The user runs, edits or rejects the plan.\n';
+
+  const PLAN_TOOL = {
+    name: 'propose_plan',
+    description: 'Plan mode only: show the user your plan for the task as a card they can run, edit or send back. Call it once, after reading what you need, then stop.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What the plan does, in a few words.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'The steps in order, one short sentence each (at most 20).' },
+        sites: { type: 'array', items: { type: 'string' }, description: 'Host names of every site the plan will click, type or navigate on, e.g. "www.example.com" (at most 10). Running the plan allows exactly these.' },
+        risky_steps: { type: 'array', items: { type: 'integer' }, description: 'Numbers (from 1) of steps that buy, pay, send, post, submit, delete or sign up.' },
+      },
+      required: ['title', 'steps', 'sites'],
+    },
+  };
+
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, interactKey, approvedKeys, approvedText, planCommand };
+  if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
+  else globalThis.planMode = planApi;
+}
+;
+// ---- plan-mode.js
+
+
+
+
+
+
+
+
+(() => {
+  const rules = window.planMode;
+  const composer = document.getElementById('composer');
+  const promptEl = document.getElementById('prompt');
+  if (!rules || !composer || !promptEl) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+  const CLI = /^(claudecode|grokbuild|antigravity|codex):/;
+  const modelSelect = document.getElementById('model');
+  const onCli = () => CLI.test(String(modelSelect?.value || ''));
+
+  let on = false;
+  const byChat = new Map();
+  const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
+
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
+  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+
+  function render() {
+    const cli = onCli();
+    chip.disabled = cli;
+    chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
+      : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
+        : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
+    chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    composer.classList.toggle('planning', on && !cli);
+  }
+  function setOn(value) { on = Boolean(value); remember(); render(); }
+  chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  modelSelect?.addEventListener('change', render);
+  promptEl.addEventListener('focus', render);
+
+
+  function chatShown(view, sameChat) {
+    if (sameChat) { remember(); return; }
+    const id = view?.id || null;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    render();
+  }
+
+
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), className ? { className } : {}, text !== undefined ? { textContent: text } : {});
+
+  function card(plan) {
+    const checked = rules.validatePlan(plan);
+    if (!checked.plan) return null;
+    const p = checked.plan;
+    const box = el('div', 'msg assistant plan-card');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', tr('plan.card.label', 'Proposed plan: {title}', { title: p.title }));
+    const head = el('div', 'plan-head');
+    head.append(el('span', 'plan-kicker', tr('plan.card.kicker', 'Plan')), el('span', 'plan-title', p.title));
+    const list = el('ol', 'plan-steps');
+    p.steps.forEach((text, i) => {
+      const li = el('li');
+      if (p.risky_steps.includes(i + 1)) li.dataset.risky = '1';
+      const span = el('span', 'plan-step-text', text);
+      li.append(span);
+      if (li.dataset.risky) li.append(el('span', 'plan-risky', tr('plan.card.risky', 'Risky')));
+      list.append(li);
+    });
+    const sites = el('div', 'plan-sites');
+    const siteList = el('span', 'plan-site-list');
+    const drawSites = (hosts) => {
+      siteList.replaceChildren();
+      for (const host of hosts) {
+        const chipEl = el('span', 'plan-site');
+        chipEl.dataset.host = host;
+        chipEl.append(el('span', '', host));
+        const x = el('button', 'plan-site-x', '×');
+        x.type = 'button';
+        x.title = tr('plan.card.removeSite', 'Leave {site} out', { site: host });
+        x.setAttribute('aria-label', x.title);
+        x.onclick = () => { chipEl.remove(); if (!siteList.children.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none'))); };
+        chipEl.append(x);
+        siteList.append(chipEl);
+      }
+      if (!hosts.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none')));
+    };
+    drawSites(p.sites);
+    sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan lets the AI click and type on these sites in this chat. Opening or sending to a site after reading a page still asks, and so does anything that buys, sends, posts or submits.'));
+    const problem = el('div', 'plan-problem');
+    problem.setAttribute('role', 'alert');
+    problem.hidden = true;
+    const actions = el('div', 'plan-actions');
+    const run = el('button', 'btn primary plan-run', tr('plan.card.run', 'Run plan'));
+    const edit = el('button', 'btn plan-edit', tr('plan.card.edit', 'Edit'));
+    const keep = el('button', 'btn plan-keep', tr('plan.card.keep', 'Keep planning'));
+    for (const b of [run, edit, keep]) b.type = 'button';
+    actions.append(run, edit, keep);
+    box.append(head, list, sites, note, problem, actions);
+
+    let editing = false;
+    edit.onclick = () => {
+      editing = !editing;
+      box.classList.toggle('editing', editing);
+      for (const span of list.querySelectorAll('.plan-step-text')) {
+        if (editing) { span.contentEditable = 'plaintext-only'; span.setAttribute('role', 'textbox'); span.setAttribute('aria-label', tr('plan.card.stepLabel', 'Step')); } else { span.removeAttribute('contenteditable'); span.removeAttribute('role'); }
+      }
+      edit.textContent = editing ? tr('plan.card.doneEditing', 'Done editing') : tr('plan.card.edit', 'Edit');
+      if (editing) list.querySelector('.plan-step-text')?.focus();
+    };
+
+    const current = () => {
+      const steps = [];
+      const risky = [];
+      for (const li of list.children) {
+        const text = li.querySelector('.plan-step-text')?.textContent.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        steps.push(text);
+        if (li.dataset.risky) risky.push(steps.length);
+      }
+      return { title: p.title, steps, sites: [...siteList.querySelectorAll('.plan-site')].map((s) => s.dataset.host), risky_steps: risky };
+    };
+    run.onclick = () => {
+      const got = rules.validatePlan(current());
+      if (!got.plan) { problem.textContent = got.error; problem.hidden = false; return; }
+      problem.hidden = true;
+      setOn(false);
+      box.classList.add('used');
+      for (const b of [run, edit, keep]) b.disabled = true;
+      for (const span of list.querySelectorAll('[contenteditable]')) span.removeAttribute('contenteditable');
+      for (const x of box.querySelectorAll('.plan-site-x')) x.remove();
+      const text = rules.approvedText(got.plan, { head: tr('plan.approved.head', 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.'), sites: tr('plan.approved.sites', 'Sites:'), risky: tr('plan.approved.risky', 'Ask me before these steps as usual:') });
+      window.ask(text, [], null, undefined, { approvedPlan: got.plan });
+    };
+    keep.onclick = () => {
+      setOn(true);
+      promptEl.focus();
+    };
+    return box;
+  }
+
+
+  window.slashCommands?.register({
+    name: 'plan',
+    label: tr('slash.plan', 'Plan first'),
+    description: tr('slash.plan.description', 'The AI only reads, then shows a plan you can run, edit or send back: /plan book a table for two on Friday'),
+    hint: tr('slash.plan.hint', 'The task to plan, then press Enter'),
+    takesInput: true,
+    run({ input }) {
+      if (onCli()) return { ok: false, message: tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.') };
+      if (!input) { setOn(true); return { ok: true }; }
+      window.ask(input, [], null, undefined, { plan: true });
+      return { ok: true };
+    },
+  });
+
+  window.planModeUI = {
+    forSend: () => on && !onCli(),
+    card,
+    chatShown,
+    setOn,
+    isOn: () => on,
+  };
+
+  window.addEventListener('lumen:plan-default', () => { if (!shownChatId && !document.querySelector('#messages .msg')) { on = window.lumenPlanModeDefault === true; render(); } });
+  on = window.lumenPlanModeDefault === true;
+  render();
+})();
+;
+// ---- side-tabs-core.js
+
+
+(function (root) {
+  const MIN = 160;
+  const MAX = 420;
+  const DEFAULT = 240;
+  const COLLAPSED = 52;
+
+  const clampWidth = (w) => {
+    const n = Math.round(Number(w));
+    return Number.isFinite(n) ? Math.min(MAX, Math.max(MIN, n)) : DEFAULT;
+  };
+
+
+  const fromPrefs = (p) => ({ on: p?.tabLayout === 'side', width: clampWidth(p?.sideTabsWidth ?? DEFAULT), collapsed: p?.sideTabsCollapsed === true });
+
+
+
+
+  function dropBefore(items, x, y, listWidth) {
+    for (const it of items) {
+      const r = it.r;
+      if (y < r.top) return it;
+      if (y > r.bottom) continue;
+      const wide = r.right - r.left > listWidth / 2;
+      if (wide ? y < (r.top + r.bottom) / 2 : x < (r.left + r.right) / 2) return it;
+    }
+    return null;
+  }
+
+
+  const joinGroup = (hit, tabs) => (hit && !hit.outside ? tabs.find((t) => t.id === hit.id)?.groupId || null : null);
+
+
+
+  function homeBefore(items, moving) {
+    const skip = new Set(moving);
+    const last = items.map((it) => skip.has(it.id)).lastIndexOf(true);
+    return items.slice(last + 1).find((it) => !skip.has(it.id)) || null;
+  }
+
+  const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.sideTabsCore = api;
+})(this);
+;
+// ---- side-tabs.js
+
+
+
+
+
+{
+  const core = window.sideTabsCore;
+  const panel = $('side-tabs');
+  const list = $('side-tabs-list');
+  const head = $('side-head');
+  const tabsEl = $('tabs');
+  const strip = $('tabstrip');
+  const newTab = $('new-tab');
+  const collapseBtn = $('side-collapse');
+  const grip = $('side-resize');
+  const TEAR_PX = 48;
+  let cfg = core.fromPrefs(null);
+  let peekTimer = 0;
+  let leaveTimer = 0;
+  let saveTimer = 0;
+
+  const save = (o) => { try { Promise.resolve(window.browser.sideTabs?.(o)).catch(() => {}); } catch {  } };
+
+
+  function place() {
+    document.body.classList.toggle('side-layout', cfg.on);
+    panel.hidden = !cfg.on;
+    tabsEl.classList.toggle('side', cfg.on);
+    tabsEl.setAttribute('aria-orientation', cfg.on ? 'vertical' : 'horizontal');
+    if (cfg.on) {
+      list.append(tabsEl);
+      head.prepend(newTab);
+    } else {
+      strip.insertBefore(tabsEl, strip.firstChild);
+      strip.insertBefore(newTab, tabsEl.nextSibling);
+    }
+    hideHoverCard();
+
+    tabsRendered = false;
+    lastLayoutSig = null;
+    if (lastTabState) renderTabsNow(lastTabState);
+  }
+  function paint() {
+    panel.style.setProperty('--side-w', `${cfg.width}px`);
+    panel.classList.toggle('collapsed', cfg.collapsed);
+    if (!cfg.collapsed) panel.classList.remove('peek');
+    const label = t(cfg.collapsed ? 'tabs.side.expand' : 'tabs.side.collapse');
+    collapseBtn.title = label;
+    collapseBtn.setAttribute('aria-label', label);
+    collapseBtn.setAttribute('aria-pressed', String(cfg.collapsed));
+  }
+  function apply(p) {
+    const was = cfg.on;
+    cfg = core.fromPrefs(p);
+    paint();
+    if (cfg.on !== was) place();
+    if (cfg.on && typeof sidebarWish === 'number') setSidebarWidth(sidebarWish);
+  }
+  const fromPrefs = () => { const p = window.lumenSideTabs; if (p) apply(p); };
+  document.addEventListener('lumen:side-tabs', fromPrefs);
+  fromPrefs();
+
+  collapseBtn.addEventListener('click', () => save({ collapsed: !cfg.collapsed }));
+
+
+  panel.addEventListener('pointerenter', (e) => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(leaveTimer);
+    if (!cfg.collapsed || panel.classList.contains('peek')) return;
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => panel.classList.add('peek'), 180);
+  });
+  panel.addEventListener('pointerleave', () => {
+    clearTimeout(peekTimer);
+    if (drag || !panel.classList.contains('peek')) return;
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => { if (!drag && !panel.matches(':focus-within')) panel.classList.remove('peek'); }, 250);
+  });
+  panel.addEventListener('focusin', (e) => { if (cfg.collapsed && e.target.matches?.(':focus-visible')) { clearTimeout(leaveTimer); panel.classList.add('peek'); } });
+  panel.addEventListener('focusout', (e) => { if (!panel.contains(e.relatedTarget) && !panel.matches(':hover')) panel.classList.remove('peek'); });
+
+
+  const setWidth = (w) => { cfg.width = core.clampWidth(w); panel.style.setProperty('--side-w', `${cfg.width}px`); };
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const w0 = cfg.width;
+    document.body.classList.add('side-resizing');
+    const move = (ev) => setWidth(w0 + ev.clientX - x0);
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('side-resizing');
+      save({ width: cfg.width });
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { setWidth(core.DEFAULT); save({ width: cfg.width }); });
+  grip.addEventListener('keydown', (e) => {
+    const to = { ArrowLeft: cfg.width - 16, ArrowRight: cfg.width + 16, Home: core.MIN, End: core.MAX }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    setWidth(to);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => save({ width: cfg.width }), 300);
+  });
+
+
+  const menuAt = (e) => {
+    if (e.defaultPrevented || e.target.closest?.('.tab, .group-label')) return;
+    e.preventDefault();
+    window.browser.stripMenu?.({ x: e.clientX, y: e.clientY });
+  };
+  for (const el of [panel, tabsEl, newTab]) el.addEventListener('contextmenu', menuAt);
+
+
+  const inWindow = (e) => e.clientX >= -TEAR_PX / 2 && e.clientY >= -TEAR_PX / 2 && e.clientX <= window.innerWidth + TEAR_PX / 2 && e.clientY <= window.innerHeight + TEAR_PX / 2;
+  const out = (e) => e.clientX > panel.getBoundingClientRect().right + TEAR_PX || !inWindow(e);
+  const near = (e) => e.clientX > panel.getBoundingClientRect().right + 8 || e.clientX < 8 || e.clientY > window.innerHeight - 8;
+
+
+
+  function candidates(d) {
+    const skip = new Set(d.moving);
+    const now = lastTabState?.tabs || [];
+    const groups = lastTabState?.groups || [];
+    const found = [];
+    for (const el of tabsEl.querySelectorAll('.tab:not(.tab-ghost), .group-label')) {
+      if (el.matches('.handed, .held, .gathered')) continue;
+      let id;
+      let outside = false;
+      if (el.classList.contains('group-label')) {
+        const g = Number(el.dataset.group);
+        if (d.pinnedDrag || g === d.groupId) continue;
+        id = now.find((x) => x.groupId === g && !skip.has(x.id))?.id;
+        outside = true;
+      } else {
+        id = Number(el.dataset.id);
+        if (el.classList.contains('pinned') !== d.pinnedDrag) continue;
+        const g = now.find((x) => x.id === id)?.groupId;
+        if (g && groups.find((x) => x.id === g)?.collapsed) continue;
+      }
+      if (id != null) found.push({ id, outside, r: el.getBoundingClientRect() });
+    }
+    return found;
+  }
+
+  function showLine(d, items, hit) {
+    const line = d.line || (d.line = Object.assign(document.createElement('div'), { className: 'side-drop-line' }));
+    if (!line.isConnected) document.body.append(line);
+    const lr = list.getBoundingClientRect();
+    const ref = hit || items[items.length - 1];
+    if (!ref) { line.hidden = true; return; }
+    line.hidden = false;
+    const r = ref.r;
+    const tile = d.pinnedDrag && r.right - r.left < lr.width / 2;
+    const after = !hit;
+    const box = tile
+      ? { left: (after ? r.right + 1 : r.left - 1) - 1, top: r.top, width: 2, height: r.bottom - r.top }
+      : { left: lr.left + 6, top: (after ? r.bottom + 1 : r.top - 1) - 1, width: lr.width - 12, height: 2 };
+    Object.assign(line.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+    const join = d.groupId == null && !d.pinnedDrag ? core.joinGroup(hit, lastTabState?.tabs || []) : null;
+    const color = join && (lastTabState?.groups || []).find((x) => x.id === join)?.color;
+    line.style.background = color ? `var(--g-${String(color).replace(/[^a-z]/g, '')})` : '';
+  }
+
+  function follow(d) {
+    d.el.style.transform = `translate(${d.lastX - d.startX}px, ${d.lastY - d.startY + (list.scrollTop - d.scroll0)}px)`;
+    const all = candidates(d);
+    const skip = new Set(d.moving);
+    const items = all.filter((it) => !skip.has(it.id));
+    let hit = core.dropBefore(items, d.lastX, d.lastY, list.clientWidth);
+    if (d.groupId != null) {
+      const tabsNow = lastTabState?.tabs || [];
+      const inside = (it) => it && !it.outside && tabsNow.find((x) => x.id === it.id)?.groupId;
+      const g = inside(hit);
+      if (g) hit = items.slice(items.indexOf(hit) + 1).find((it) => inside(it) !== g) || null;
+    }
+    d.hit = hit;
+    d.targeted = true;
+    showLine(d, items, hit);
+  }
+
+  function stopEdge(d) { d.edge = 0; if (d.edgeTimer) { cancelAnimationFrame(d.edgeTimer); d.edgeTimer = 0; } }
+
+
+  function handOff(e) {
+    const d = drag;
+    stopEdge(d);
+    d.line?.remove();
+    if (d.groupId == null) { handOffTabDrag(e); return; }
+    d.handed = true;
+    d.group = d.members;
+    d.single = (lastTabState?.tabs.length || 0) - d.members.length < 1;
+    d.el.style.transform = '';
+    d.el.classList.remove('tearing');
+    if (d.single) {
+      d.el.classList.remove('dragging');
+      tabsEl.classList.remove('reordering');
+    } else {
+      d.el.classList.add('handed');
+      for (const el of tabsEl.querySelectorAll('.tab')) if (d.members.includes(Number(el.dataset.id))) el.classList.add('handed');
+    }
+    window.browser.dragTabStart(d.id, { x: e.clientX, y: e.clientY, stripX: d.into + 12, pressY: api.tearY(d.el), ids: d.members, group: d.groupId, layout: null });
+  }
+
+  const api = {
+
+    move(e) {
+      const d = drag;
+      if (!d.moved && Math.abs(e.clientX - d.startX) < 5 && Math.abs(e.clientY - d.startY) < 5) return;
+      if (!d.moved) {
+        d.moved = true;
+        hideHoverCard();
+        d.el.classList.add('dragging');
+        tabsEl.classList.add('reordering');
+        d.scroll0 = list.scrollTop;
+        const label = d.groupId != null;
+        d.moving = label ? d.members : selectedTabs.size > 1 && selectedTabs.has(d.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [d.id];
+        d.pinnedDrag = !label && d.el.classList.contains('pinned');
+
+        if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - d.moving.length < 1) { handOff(e); return; }
+      }
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      if (!d.prepped && window.browser.dragTabPrep && near(e)) { d.prepped = true; window.browser.dragTabPrep(d.id); }
+      if (window.browser.dragTabStart && out(e)) { handOff(e); return; }
+      follow(d);
+
+      const lr = list.getBoundingClientRect();
+      d.edge = list.scrollHeight > list.clientHeight + 1 ? (e.clientY < lr.top + 28 ? -1 : e.clientY > lr.bottom - 28 ? 1 : 0) : 0;
+      if (d.edge && !d.edgeTimer) {
+        const tick = () => {
+          if (drag !== d || !d.edge || d.handed) { d.edgeTimer = 0; return; }
+          list.scrollTop += 9 * d.edge;
+          follow(d);
+          d.edgeTimer = requestAnimationFrame(tick);
+        };
+        d.edgeTimer = requestAnimationFrame(tick);
+      }
+    },
+
+    end(d, escaped) {
+      stopEdge(d);
+      d.line?.remove();
+      if (d.handed) return;
+      d.el.style.transform = '';
+      d.el.classList.remove('dragging', 'tearing');
+      tabsEl.classList.remove('reordering');
+      if (!d.moved || escaped || !d.targeted) return;
+      const hit = d.hit;
+      const home = core.homeBefore(candidates(d), d.moving);
+      if ((hit?.id ?? null) === (home?.id ?? null)) return;
+      const tabsNow = lastTabState?.tabs || [];
+      const live = $('tab-live');
+      expectMove();
+      if (d.groupId != null) window.browser.moveTabs?.(d.members, hit?.id ?? null, d.groupId);
+      else if (d.pinnedDrag) window.browser.moveTab?.(d.id, indexBefore(hit?.id ?? null, d.id), true);
+      else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, core.joinGroup(hit, tabsNow));
+      if (live) live.textContent = d.moving.length > 1 ? t('tabs.movedMany', { n: d.moving.length }) : t('tabs.moved', { title: tabsNow.find((x) => x.id === d.id)?.title || '' });
+    },
+
+    tearY(el) { return Math.round(list.getBoundingClientRect().top + 6 + (el.offsetHeight || 30) / 2); },
+  };
+  window.sideTabs = api;
+}
+;
 // ---- ui-prefs.js
 
 {
@@ -13365,6 +14987,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (!p) return;
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
+    if ('tabLayout' in p) { window.lumenSideTabs = { tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed }; document.dispatchEvent(new Event('lumen:side-tabs')); }
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite));
@@ -13382,6 +15005,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode }));
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false }));
+    if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };

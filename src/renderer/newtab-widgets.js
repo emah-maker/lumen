@@ -1706,6 +1706,115 @@ const WIDGET_RENDERERS = {
     card.el.setAttribute('aria-label', `${text(w.title, 60) || 'AI status'}: ${text(d.summary, 90)}`);
   },
 
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last. Main shapes it from the runner's
+  // view and the page formats the times in its own language. Every row is a real button: a result opens that routine's page in the
+  // sidebar, the plus (and the empty card's button) opens its editor. Nothing here is a secret or markup: names and snippets are text.
+  // The words come from locales/en.json routines.card.* (ft, like the Files card); newtab.html decides how many rows the card's height has room for.
+  routines(w, card) {
+    const d = w.data;
+    card.el.classList.add('routines');
+    const STATUS = ['done', 'failed', 'stopped', 'interrupted', 'skipped'];
+    const now = Date.now();
+    const num = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+    const rows = (v) => (Array.isArray(v) ? v : []).filter((r) => r && typeof r === 'object' && typeof r.id === 'string' && /^[\w-]{1,60}$/.test(r.id)).slice(0, 3);
+    const upcoming = rows(d.upcoming).filter((r) => num(r.nextRun));
+    const latest = rows(d.latest).filter((r) => num(r.at));
+    const counts = d.counts && typeof d.counts === 'object' ? d.counts : {};
+    const total = Math.max(0, int(counts.total) || 0);
+    const on = Math.max(0, int(counts.on) || 0);
+    const paused = d.enabled === false;
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'Routines'}: ${ft('routines.card.summary', '{on} of {total} on', { on, total })}`);
+    const newRoutine = () => widgetAct(w.id, 'routine-new');
+    if (!paused) {
+      const add = iconButton(ICON_PLUS, ft('routines.card.newAria', 'Create a new routine'), newRoutine);
+      add.title = ft('routines.card.new', 'New routine');
+      add.classList.add('rt-add', 'always');
+      card.head.append(add);
+    }
+    const wrap = el('div', 'rt-wrap');
+    card.body.append(wrap);
+    const note = (title, hint) => { const n = el('div', 'rt-state'); n.append(el('p', 'rt-state-title', title), el('p', 'rt-state-hint', hint)); return n; };
+    if (paused) {
+      wrap.append(note(ft('routines.card.paused', 'Routines are paused'), ft('routines.card.pausedHint', 'Switch them back on in Settings.')));
+      return;
+    }
+    if (!total) {
+      const n = note(ft('routines.card.empty', 'No routines yet'), ft('routines.card.emptyHint', 'A routine runs a request on a schedule and keeps what it finds.'));
+      const b = el('button', 'w-btn rt-new', ft('routines.card.new', 'New routine'));
+      b.type = 'button';
+      b.setAttribute('aria-label', ft('routines.card.newAria', 'Create a new routine'));
+      b.addEventListener('click', newRoutine);
+      n.append(b);
+      wrap.append(n);
+      return;
+    }
+    // Times, in the page's language: "3:40 PM" today, "tomorrow 8:00 AM", "Fri 8:00 AM", else "Oct 9, 8:00 AM".
+    const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const when = (ms) => {
+      const day = (t) => new Date(t).setHours(0, 0, 0, 0);
+      const diff = Math.round((day(ms) - day(now)) / 864e5);
+      if (diff === 0) return clock(ms);
+      if (Math.abs(diff) === 1) {
+        let word = diff === 1 ? 'tomorrow' : 'yesterday';
+        try { word = new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto' }).format(diff, 'day'); } catch { /* the English word stays */ }
+        return `${word} ${clock(ms)}`;
+      }
+      if (Math.abs(diff) < 7) return `${new Date(ms).toLocaleDateString([], { weekday: 'short' })} ${clock(ms)}`;
+      return `${new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${clock(ms)}`;
+    };
+    const section = (cls, label) => { const s = el('section', `rt-sec ${cls}`); s.setAttribute('aria-label', label); s.append(el('h3', 'rt-h', label)); return s; };
+    const list = (s) => { const u = el('ul', 'rt-list'); s.append(u); return u; };
+    const row = (ul, r, mark, aria, parts) => {
+      const li = el('li', 'rt-item');
+      const b = el('button', 'rt-row');
+      b.type = 'button';
+      b.dataset.routine = r.id;
+      b.setAttribute('aria-label', aria);
+      b.addEventListener('click', () => widgetAct(w.id, 'routine-open', { id: r.id }));
+      b.append(mark, el('span', 'rt-title', text(r.title, 80)), el('span', 'rt-when', parts.when));
+      if (parts.sub) b.append(el('span', 'rt-sub', parts.sub));
+      li.append(b);
+      ul.append(li);
+    };
+    // Next runs.
+    const nextSec = section('rt-next', ft('routines.card.next', 'Next runs'));
+    if (!upcoming.length) nextSec.append(el('p', 'rt-none', ft('routines.card.nothingNext', 'Nothing is scheduled')));
+    else {
+      const ul = list(nextSec);
+      for (const r of upcoming) {
+        const mark = el('i', 'rt-mark rt-st-next');
+        mark.setAttribute('aria-hidden', 'true');
+        row(ul, r, mark, ft('routines.card.nextAria', '{title}, next run {when}. Open', { title: text(r.title, 80), when: when(r.nextRun) }), { when: when(r.nextRun) });
+      }
+    }
+    // Latest results.
+    const lastSec = section('rt-latest', ft('routines.card.latest', 'Latest results'));
+    if (!latest.length) lastSec.append(el('p', 'rt-none', ft('routines.card.noResults', 'No results yet')));
+    else {
+      const ul = list(lastSec);
+      const label = { done: ['routines.card.done', 'Done'], failed: ['routines.card.failed', 'Failed'], stopped: ['routines.card.stopped', 'Stopped'], interrupted: ['routines.card.interrupted', 'Interrupted'], skipped: ['routines.card.skipped', 'Skipped'] };
+      for (const r of latest) {
+        const status = STATUS.includes(r.status) ? r.status : 'done';
+        const waiting = r.waiting === true;
+        const mark = el('i', `rt-mark rt-st-${waiting ? 'wait' : status}`);
+        mark.setAttribute('aria-hidden', 'true');
+        const words = [];
+        if (waiting) words.push(ft('routines.card.needsOk', 'Needs your OK'));
+        else if (status !== 'done') words.push(ft(...label[status]));
+        if (r.trigger === 'catch-up') words.push(ft('routines.card.late', 'ran late'));
+        if (r.unseen === true && !waiting) words.push(ft('routines.card.unseen', 'New'));
+        const body = text(status === 'done' || status === 'skipped' ? r.snippet || r.error : r.error || r.snippet, 140);
+        const sub = [words.join(' · '), body].filter(Boolean).join(' — ');
+        const spoken = [words.join(', '), body].filter(Boolean).join('. ');
+        row(ul, r, mark, ft('routines.card.resultAria', '{title}: {status}, {when}. Open result', { title: text(r.title, 80), status: spoken || ft(...label[status]), when: when(r.at) }), { when: when(r.at), sub });
+        const li = ul.lastElementChild;
+        if (waiting) li.classList.add('rt-waiting');
+      }
+    }
+    wrap.append(nextSec, lastSec);
+    if (d.offline === true) wrap.append(el('p', 'rt-off', ft('routines.card.offline', 'Offline: runs wait for the connection.')));
+  },
+
   // Files (features/files.js): pinned folders and files, then the ones opened lately. Rows are what fitLists trims, from the bottom, to the
   // card's height ("+N more"); a missing file is grey, says "moved or deleted" and offers Find it. The list is read through the page's own
   // bridge (see filesLoad above), so this card has no data of its own.
@@ -2166,8 +2275,10 @@ function renderWidgets(list) {
     updateFoot(card, w);
     setRefreshing(card, w);
     card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
+    if (w.react === true && (w.type === 'spotify' || w.type === 'applemusic')) card.dataset.mreact = '1'; else delete card.dataset.mreact; // [look] "React to music" (newtab-music-react.js)
     return card;
   });
+  window.musicCardsChanged?.();
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);
@@ -2282,7 +2393,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom', 'todoist'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'routines', 'custom', 'todoist'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {

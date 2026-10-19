@@ -12,7 +12,7 @@ Settings also has **Switch account** (GitHub signs in the account that is signed
 
 ## Permissions
 
-The device flow asks for `read:user` and `notifications`. That shows who you are and the unread count; review requests and assigned items on public repositories need no scope. Private repositories need GitHub's `repo` scope, which GitHub offers only as read and write (OAuth apps have no read-only version), so Lumen asks for it only when you turn on **Include private repositories**. Lumen only ever reads. The gh CLI's own token usually carries `repo`, which covers both. A token with none of the useful scopes is refused, and one without notifications is accepted with a note.
+The device flow asks for `read:user` and `notifications`. That shows who you are and the unread count; review requests and assigned items on public repositories need no scope. Private repositories need GitHub's `repo` scope, which GitHub offers only as read and write (OAuth apps have no read-only version), so Lumen asks for it only when you turn on **Include private repositories**. The card only reads. The AI's GitHub connector can also comment on an issue or pull request and open an issue, each only after you allow its card; that needs `repo` (Include private repositories, or the gh CLI) or a pasted token with Issues and Pull requests "Read and write". Without it the connector says the sign-in can only read and how to allow writing. The gh CLI's own token usually carries `repo`, which covers both. A token with none of the useful scopes is refused, and one without notifications is accepted with a note.
 
 ## Where the token lives
 

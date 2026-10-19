@@ -12,6 +12,8 @@
 'use strict';
 
 const SV = require('./spotify-view');
+const RECS = require('./spotify-recs');
+const LIBM = require('./spotify-library');
 const { PLAYER } = SV;
 
 const TAB_MAX_AGE_MS = 5000;
@@ -104,12 +106,12 @@ async function runSearch(ui, term, ctx, call = ctx.searchCall) {
 function clearSearch(ui) { ui.searchSeq = (ui.searchSeq || 0) + 1; ui.search = null; }
 // The pictures of library rows the card shows (it names them by id): each list's rows get a thumb, from the addresses kept when the list was read.
 async function loadLibraryThumbs(ui, ids, ctx) {
-  const lib = ui.library;
-  if (!lib) return;
+  const lib = ui.library || {};
   const want = new Set(ids || []);
   const asked = (ui.libThumbAsked ||= new Set());
   const rows = [];
   for (const field of ['recent', 'liked', 'playlists', 'albums', 'artists']) for (const r of lib[field] || []) if (want.has(r.id) && !r.thumb && !asked.has(`${r.kind}:${r.id}`)) rows.push(r);
+  for (const r of L2.rows(ui)) if (want.has(r.id) && !r.thumb && !asked.has(`${r.kind}:${r.id}`)) rows.push(r);
   const todo = rows.slice(0, 12);
   for (const r of todo) asked.add(`${r.kind}:${r.id}`);
   await Promise.all(todo.map(async (r) => { const images = ui.libImages?.[`${r.kind}:${r.id}`] || []; if (images.length) r.thumb = await pic(images, ctx.searchImage || ctx.image); if (r.thumb) (ui.libThumbs ||= new Map()).set(`${r.kind}:${r.id}`, r.thumb); }));
@@ -242,7 +244,8 @@ const currentIndex = (items, id) => items.findIndex((i) => i.id === id);
 // user-read-recently-played, user-follow-read) says why: 'scope'. Sections of Spotify's own Home the API does not expose (its generated "Based on your recent listening" mixes,
 // podcasts, charts and the like) are not drawn: nothing here is invented.
 const HOME_TTL_MS = 60e3;
-const HOME_SHELVES = ['quick', 'jump', 'made', 'recent', 'toptracks', 'topartists', 'new', 'playlists', 'albums', 'artists'];
+// (the order of Spotify's Home: what you were playing, made for you, then suggestions, then your own library; the suggestion shelves: features/spotify-recs.js)
+const HOME_SHELVES = ['quick', 'jump', 'made', 'recommended', 'newfrom', 'recent', 'toptracks', 'topartists', 'moretop', 'related', 'genres', 'genreartists', 'new', 'playlists', 'albums', 'artists'];
 const SOURCES = {
   recent: { req: () => PLAYER.homeRecent(), what: 'recent', read: (b) => ({ albums: SV.normalizeRecentAlbums(b), tracks: SV.normalizeRecentTiles(b), contexts: SV.recentContexts(b) }) },
   playlists: { req: () => PLAYER.homePlaylists(), what: 'library', read: SV.tilePlaylists },
@@ -272,6 +275,9 @@ const SHELVES = {
   albums: { src: ['albums'], build: (d) => d.albums.slice(0, SV.HOME_MAX) },
   artists: { src: ['following'], build: (d) => d.following.slice(0, SV.HOME_MAX) },
 };
+// The suggestion shelves load through their own loaders (they probe endpoints Spotify may refuse, and take a day's seed): `load` -> { ok, why, items, captionVars }
+const RECS_ = RECS.make({ ask, homeSource, busy });
+for (const k of RECS.KEYS) SHELVES[k] = { load: RECS_.LOADERS[k], ttl: RECS.REC_TTL_MS };
 function homeSource(call, ui, name, ctx) {
   const src = SOURCES[name];
   const store = (ui.homeSrc ||= {});
@@ -295,13 +301,22 @@ async function loadShelf(call, key, ctx) {
   if (!shelf) return;
   const home = (ui.home ||= {});
   const cur = home[key];
-  if (cur && (cur.pending || (!ctx.force && cur.ok && ctx.now() - cur.at < HOME_TTL_MS))) return;
-  home[key] = { ok: cur?.ok !== false, why: '', items: cur?.items || [], pending: true, at: ctx.now() };
-  const got = await Promise.all(shelf.src.map((n) => homeSource(call, ui, n, ctx)));
-  if (!got[0].ok) { home[key] = { ok: false, why: got[0].why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
-  const items = keepImages(ui, shelf.build(Object.fromEntries(shelf.src.map((n, i) => [n, got[i].ok ? got[i].data : null]))));
+  if (cur && (cur.pending || (!ctx.force && (cur.ok || cur.why === 'blocked') && ctx.now() - cur.at < (shelf.ttl || HOME_TTL_MS)))) return;
+  home[key] = { ok: cur?.ok !== false, why: '', items: cur?.items || [], pending: true, at: ctx.now(), captionVars: cur?.captionVars };
+  let items;
+  let captionVars;
+  if (shelf.load) {
+    const out = await shelf.load(call, ui, ctx).catch((err) => ({ ok: false, why: 'page', items: [], error: err }));
+    if (!out.ok) { home[key] = { ok: false, why: out.why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
+    items = keepImages(ui, out.items);
+    captionVars = out.captionVars;
+  } else {
+    const got = await Promise.all(shelf.src.map((n) => homeSource(call, ui, n, ctx)));
+    if (!got[0].ok) { home[key] = { ok: false, why: got[0].why, items: [], pending: false, at: ctx.now() }; ctx.onPart?.(); return; }
+    items = keepImages(ui, shelf.build(Object.fromEntries(shelf.src.map((n, i) => [n, got[i].ok ? got[i].data : null]))));
+  }
   for (const r of items) { const t = ui.libThumbs?.get(`${r.kind}:${r.id}`); if (t) r.thumb = t; }
-  home[key] = { ok: true, why: '', items, pending: false, at: ctx.now() };
+  home[key] = { ok: true, why: '', items, pending: false, at: ctx.now(), captionVars };
   ctx.onPart?.(); // (the names first, the covers as they come)
   await Promise.all(items.map(async (r) => {
     if (r.thumb) return;
@@ -312,12 +327,27 @@ async function loadShelf(call, key, ctx) {
   ctx.onPart?.();
 }
 // What the card is given for the Home tab: { home: { shelves: { <shelf>: { ok, why, pending, items } } }, homeText } (null: nothing asked yet).
+// `signIn`: a Reconnect / Connect press in progress or that failed ({ state: 'waiting' | 'allowlist' | 'failed', message }), null when none.
 function homeFields(ui, text) {
+  const out = {};
+  if (text) out.homeText = text;
+  if (ui) out.signIn = ui.signIn || null;
   const home = ui && ui.home;
-  if (!home) return text ? { homeText: text } : null;
-  const shelves = {};
-  for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [] };
-  return { home: { shelves }, ...(text ? { homeText: text } : {}) };
+  if (home) {
+    const shelves = {};
+    for (const [k, s] of Object.entries(home)) shelves[k] = { ok: s.ok !== false, why: s.why || '', pending: s.pending === true, items: s.items || [], ...(s.captionVars ? { captionVars: s.captionVars } : {}) };
+    // No item shows twice among the suggestions, and none of them is something already on the Home's own shelves (your library, what you played, your top).
+    const claimed = new Set();
+    for (const [k, s] of Object.entries(shelves)) if (!RECS.KEYS.includes(k)) for (const i of s.items) claimed.add(`${i.kind}:${i.id}`);
+    for (const k of HOME_SHELVES.filter((x) => RECS.KEYS.includes(x))) {
+      const s = shelves[k];
+      if (!s) continue;
+      s.items = s.items.filter((i) => !claimed.has(`${i.kind}:${i.id}`));
+      for (const i of s.items) claimed.add(`${i.kind}:${i.id}`);
+    }
+    out.home = { shelves };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // ---- the card's buttons ----
@@ -397,6 +427,11 @@ async function act(call, action, ctx) {
       return { local: true };
     }
     case 'ethumb': { await loadThumbs(ui, action.ids, ctx); return { local: true }; }
+    case 'elib': case 'edetail': return L2.act(call, action, ctx);
+    case 'eplay': { // a list of the Library, or a row of it, played inside that list (the context with an offset)
+      const done = await L2.play(call, ui, { kind: action.kind, item: action.item, pos: action.pos, with: action.with, shuffle: action.shuffle === true }, cached, { fail: need, noDevice, warm: ctx.warm });
+      return done === false ? false : { delay: 1200 };
+    }
     case 'ehome': { if (!HOME_SHELVES.includes(action.arg)) return false; await loadShelf(call, action.arg, { ...ctx, force: action.force === true }); return { local: true }; }
     case 'emore': { await searchMore(ui, ctx, ctx.searchCall || call); return { local: true }; }
     case 'playitem': {
@@ -493,6 +528,7 @@ async function extras(call, ctx, playback) {
     tracks,
     lists,
     ...(homeFields(ui, ctx.homeText) || (ctx.homeText ? { homeText: ctx.homeText } : {})),
+    ...(lib2Fields(ui, ctx.libText) || {}),
     ...(libraryFields(ui) || { recent: [], likedSongs: [], playlists: [], albums: [], artists: [], libraryOk: true, libraryWhy: '', libraryPending: false, libraryEmpty: false }),
     devices: dev ? dev.items : [],
     devicesOk: dev ? dev.ok : true,
@@ -522,6 +558,11 @@ function directLibrary(ui) {
 }
 
 // The Home tab's words (locales/en.json: spotify.home.<key>); {title} is replaced by the card.
-const HOME_STRINGS = { greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
+const HOME_STRINGS = { ...RECS.STRINGS, greetingMorning: 'Good morning', greetingAfternoon: 'Good afternoon', greetingEvening: 'Good evening', quick: 'Quick picks', jump: 'Jump back in', made: 'Made for you', recent: 'Recently played', toptracks: 'Your top songs', topartists: 'Your top artists', new: 'New releases', playlists: 'Your playlists', albums: 'Your albums', artists: 'Artists you follow', play: 'Play {title}', queue: 'Add {title} to the queue', queueShort: 'Queue', reconnect: 'Reconnect Spotify to show more', reconnectButton: 'Reconnect Spotify', unavailable: 'Spotify doesn’t share this right now.', empty: 'Nothing here yet.', loading: 'Loading…', retry: 'Try again', connectText: 'Home shows your Spotify account’s music, so Spotify has to be connected to Lumen once. The music itself still plays in Lumen.', connectButton: 'Connect Spotify', waiting: 'Waiting for Spotify in the tab that just opened…', ownApp: 'Use my own Spotify app', scrollLeft: 'Scroll {title} left', scrollRight: 'Scroll {title} right', tab: 'Home' };
 
-module.exports = { HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };
+// The Library's words (locales/en.json: spotify.library.*) and the card fields of the Library (see features/spotify-library.js).
+const L2 = LIBM.make({ ask, keepImages, wakeAndRetry, bare });
+const LIB_STRINGS = LIBM.LIB_STRINGS;
+const lib2Fields = (ui, text) => L2.fields(ui, text);
+
+module.exports = { LIB_STRINGS, lib2Fields, HOME_STRINGS, homeFields, loadShelf, HOME_SHELVES, libraryFields, directLibrary, listKey, titleOf, loadList, act, extras, loadTab, runSearch, searchMore, clearSearch, loadThumbs, directResults, TABS, NEEDS };

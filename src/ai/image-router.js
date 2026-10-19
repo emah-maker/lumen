@@ -119,6 +119,18 @@ const toolResult = (r) => `Picture made with ${r.credit} and shown to the user i
 // Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first.
 const PICTURE_NOTE = 'The user wants a picture: call generate_image (it shows in the chat) with a self-contained prompt written from what they mean in this conversation. Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: use the svg option for exact math, graphs and diagrams.';
 
+// Told to the model (same hidden block, only for the message in hand) when the picture wanted is an exact technical drawing (free-body
+// diagrams, circuits, schematics, graphs: genImages.technicalIntent) or when a picture provider declined or failed such a request. A picture
+// model draws arrows, angles and text badly, so the chat model draws it as inline SVG, one diagram per item, after reading what the user
+// points at (the words alone never say what "each problem" is).
+const DIAGRAM_NOTE = 'The user wants exact diagrams for items they point at ("each problem", "these"). Do not use an image model: it draws arrows, angles and text badly. First collect the items: the current tab\'s text (attached above, else read_page, or read_pdf for a PDF), attached files, and earlier messages; list each with its number. If you find none, ask once, naming what you looked at, and stop. Otherwise, for each item write a "Problem N" heading, ONE inline ```svg block (viewBox, arrowhead <marker>, <line>/<path> arrows, a <text> label for every force, angle, dimension, axis and support), then 2-5 numbered steps for how to solve it and what to draw for full credit. One diagram per item; no file, no tab. Missing figure or values: draw what is given and state your assumptions.';
+
+// Lumen's own answer when a request points at something ("each problem") and there is nothing to read: no readable tab, no attachment, no
+// earlier message. Asked once, naming what was looked at.
+function noContextAsk({ tab = 'no tab is open' } = {}) {
+  return `I looked at the current tab (${tab}), your attachments (none) and this chat (no earlier messages), and found no problems to draw. Open the page or PDF that has them, attach the file, or paste them here (text is enough; for a figure add the supports, loads, angles and dimensions), and I'll draw one labelled diagram per problem.`;
+}
+
 // An SVG (exact math, graphs, diagrams) drawn to a PNG buffer by rasterize(svg, w, h): no file, no tab. Scripts never run (an <img>).
 async function renderSvg(svg, { rasterize }) {
   let src = String(svg || '').trim().replace(/^<\?xml[^>]*\?>\s*/i, '');
@@ -140,4 +152,4 @@ async function renderSvg(svg, { rasterize }) {
   return Buffer.from(png);
 }
 
-module.exports = { PICTURE_NOTE, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };
+module.exports = { PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };

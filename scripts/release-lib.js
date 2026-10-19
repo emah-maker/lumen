@@ -270,8 +270,211 @@ function lockDecision(content, isAlive) {
   return held && Number.isInteger(held.pid) && isAlive(held.pid) ? { action: 'busy', pid: held.pid } : { action: 'take' };
 }
 
+// ------------------------------------------------------------------------------------------ a version burned by a failed build
+
+const sectionVersion = (key) => { const m = /^## v?(\d+\.\d+\.\d+)\b/.exec(key); return m ? m[1] : null; };
+
+// The CHANGELOG versions that were cut but never shipped: a "## X.Y.Z" section whose tag exists but whose GitHub release was never published
+// (release.yml failed after the tag), and which is newer than the newest published release (old sections without tags are history, not burned).
+// { changelogText, tags: ['v0.5.38', ...], published: ['0.5.37', ...] } -> versions, oldest first.
+function findBurned({ changelogText, tags, published }) {
+  const tagged = new Set(tags.map((t) => String(t).replace(/^v/, '')));
+  const pub = new Set(published.map((v) => String(v).replace(/^v/, '')));
+  const newest = [...pub].filter((v) => parseVersion(v)).sort(compareVersions).pop();
+  return parseChangelog(changelogText).sections.map((s) => sectionVersion(s.key)).filter(Boolean)
+    .filter((v) => tagged.has(v) && !pub.has(v) && (!newest || compareVersions(v, newest) > 0))
+    .sort(compareVersions);
+}
+
+// Moves the notes of the burned versions into "## Unreleased" (older notes first) and drops their sections, so that cutChangelog then files them
+// under the new version: a release that never shipped has no notes of its own. Returns { text, folded: [versions found in the file] }.
+function foldBurned(text, versions) {
+  const nl = nlOf(text);
+  const parsed = parseChangelog(text);
+  if (!parsed.sections.some((s) => isUnreleased(s.key))) throw new Error('CHANGELOG.md has no "## Unreleased" section');
+  const folded = [];
+  const moved = [];
+  for (const v of [...versions].sort(compareVersions)) {
+    const i = parsed.sections.findIndex((s) => sectionVersion(s.key) === v);
+    if (i < 0) continue;
+    moved.push(...parseItems(parsed.sections[i].body).items);
+    parsed.sections.splice(i, 1);
+    folded.push(v);
+  }
+  if (!folded.length) return { text, folded };
+  const at = parsed.sections.findIndex((s) => isUnreleased(s.key));
+  const cur = parseItems(parsed.sections[at].body);
+  if (moved.length) moved[moved.length - 1].gap = cur.items.length ? cur.items[0].gap : 1;
+  const items = [...moved, ...cur.items];
+  if (items.length && !items[items.length - 1].gap) items[items.length - 1].gap = 1;
+  const body = [...(cur.head.every((l) => l.trim() === '') ? [''] : cur.head)]; // an empty head is one blank line, so the cut leaves the usual gap
+  for (const it of items) { body.push(...it.lines); for (let i = 0; i < it.gap; i++) body.push(''); }
+  parsed.sections[at] = { key: parsed.sections[at].key, body };
+  return { text: fromLf(serializeChangelog(parsed), nl), folded };
+}
+
+// ----------------------------------------------------------------------------------------------- when the PR's CI can be skipped
+
+const RELEASE_FILES = ['CHANGELOG.md', 'package.json', 'package-lock.json'];
+
+// The two package files differ only in the version being released.
+function versionOnly(baseText, headText, version, isLock) {
+  let b; let h;
+  try { b = JSON.parse(baseText); h = JSON.parse(headText); } catch { return false; }
+  if (!h || h.version !== version || !b || b.version === version) return false;
+  b.version = version;
+  if (isLock) {
+    if (!b.packages || !h.packages || !b.packages[''] || !h.packages[''] || h.packages[''].version !== version) return false;
+    b.packages[''].version = version;
+  }
+  return require('util').isDeepStrictEqual(b, h);
+}
+
+// Can the wait for CI on a release PR be skipped? Only when the release commit is mechanically nothing but the release:
+//  files: the paths the commit changes against the base commit; base/head: { changelog, package, lock } texts (lock may be null when unchanged and absent);
+//  baseCi: 'success' when CI already passed on the base commit (origin/main as the release was cut from it).
+// -> { skip, reasons } (reasons: what blocks the skip, or what was verified).
+function ciSkipVerdict({ files, version, base, head, baseCi }) {
+  const blocks = [];
+  const extra = files.filter((f) => !RELEASE_FILES.includes(f));
+  if (!files.length) blocks.push('the release commit changes nothing');
+  if (extra.length) blocks.push(`it also changes ${extra.slice(0, 4).join(', ')}${extra.length > 4 ? ` and ${extra.length - 4} more` : ''}`);
+  if (!files.includes('package.json')) blocks.push('package.json is not bumped');
+  else if (!versionOnly(base.package, head.package, version, false)) blocks.push(`package.json changes more than "version": "${version}"`);
+  if (files.includes('package-lock.json') && !versionOnly(base.lock, head.lock, version, true)) blocks.push(`package-lock.json changes more than the version ${version}`);
+  if (files.includes('CHANGELOG.md')) {
+    const date = new RegExp(`^## ${version.replace(/\./g, '\\.')} \\((\\d{4}-\\d{2}-\\d{2})\\)`, 'm').exec(toLf(head.changelog));
+    let want;
+    try { want = date ? cutChangelog(base.changelog, version, date[1]) : null; } catch { want = null; }
+    if (want === null || toLf(want) !== toLf(head.changelog)) blocks.push('CHANGELOG.md is not exactly "Unreleased" cut into the new version section');
+  }
+  if (baseCi !== 'success') blocks.push(`CI has not passed on the base commit (${baseCi || 'no run'})`);
+  return blocks.length ? { skip: false, reasons: blocks } : { skip: true, reasons: [`only ${files.join(', ')} change, the version fields and the CHANGELOG cut verified line by line`, 'CI passed on the base commit'] };
+}
+
+// ------------------------------------------------------------------------------------------------- the build preflight and its artifacts
+
+// The dispatched preflight run for a commit, from `gh run list --json databaseId,headSha,createdAt,status,conclusion,url`: the newest run on that SHA
+// created no earlier than the dispatch (a minute of clock skew allowed), or null.
+function pickPreflightRun(runs, { sha, notBeforeMs }) {
+  const mine = (runs || []).filter((r) => r.headSha === sha && Date.parse(r.createdAt) >= notBeforeMs - 60000);
+  return mine.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] || null;
+}
+
+// 'pending' | 'passed' | 'failed' for a run's status and conclusion.
+function runVerdict(run) {
+  if (!run || run.status !== 'completed') return 'pending';
+  return run.conclusion === 'success' ? 'passed' : 'failed';
+}
+
+// The manifest the preflight run records next to its artifacts: what was built, from which tree, and the SHA-256 of every file.
+function buildManifest({ version, sha, tree, files }) {
+  return { schema: 1, version, sha, tree, platforms: [...new Set(files.map((f) => f.platform))].sort(), files: files.map((f) => ({ name: f.name, platform: f.platform, sha256: f.sha256, size: f.size })).sort((a, b) => (a.name < b.name ? -1 : 1)) };
+}
+
+// May the tag run publish this preflight's artifacts instead of building again? The tree of the tagged commit must equal the tree the preflight built
+// (a squash merge gets a new commit SHA but the same tree when main did not move), the version must match, and both platforms must be there.
+function artifactsReusable({ manifest, tree, version, platforms = ['mac', 'win'] }) {
+  if (!manifest || manifest.schema !== 1) return { ok: false, reason: 'no usable manifest' };
+  if (!tree || manifest.tree !== tree) return { ok: false, reason: `the preflight built tree ${String(manifest.tree).slice(0, 8)}, the tag is tree ${String(tree).slice(0, 8)}` };
+  if (manifest.version !== version) return { ok: false, reason: `the preflight built ${manifest.version}, the tag is ${version}` };
+  const missing = platforms.filter((p) => !(manifest.platforms || []).includes(p));
+  if (missing.length) return { ok: false, reason: `the preflight has no ${missing.join(', ')} build` };
+  if (!manifest.files || !manifest.files.length) return { ok: false, reason: 'the manifest lists no files' };
+  return { ok: true, reason: 'same tree and version' };
+}
+
+// The downloaded files against the manifest: { ok, problems }. actual: { name: sha256 }.
+function verifyChecksums(manifest, actual) {
+  const problems = [];
+  for (const f of manifest.files) {
+    if (!(f.name in actual)) problems.push(`${f.name} is missing`);
+    else if (actual[f.name] !== f.sha256) problems.push(`${f.name} does not match its recorded checksum`);
+  }
+  const listed = new Set(manifest.files.map((f) => f.name));
+  for (const n of Object.keys(actual)) if (!listed.has(n)) problems.push(`${n} is not in the manifest`);
+  return { ok: !problems.length, problems };
+}
+
+// ------------------------------------------------------------------------------------------------------------ parallel checks
+
+// Suites whose numbers depend on a quiet machine: they run alone, after everything else.
+const PERF_SENSITIVE = ['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'overlay-first-perf', 'page-load-stall', 'igpu-perf'];
+const isPerfSensitive = (name) => PERF_SENSITIVE.includes(name);
+
+// Stages ([{ name, kind: 'plain' | 'electron' }]) into phases of lanes: lanes of one phase run at the same time, phases one after another.
+// Parallel: [pure-node stages | other Electron suites], then the perf-sensitive ones alone. Serial: one lane in the old order, perf-sensitive last.
+function planLanes(stages, { serial = false } = {}) {
+  const pure = stages.filter((s) => s.kind === 'plain');
+  const electron = stages.filter((s) => s.kind === 'electron' && !isPerfSensitive(s.name));
+  const perf = stages.filter((s) => s.kind === 'electron' && isPerfSensitive(s.name)).sort((a, b) => PERF_SENSITIVE.indexOf(a.name) - PERF_SENSITIVE.indexOf(b.name));
+  const phases = serial ? [[[...pure, ...electron]], [perf]] : [[pure, electron], [perf]];
+  return phases.map((lanes) => lanes.filter((l) => l.length)).filter((lanes) => lanes.length);
+}
+
+// How many unit suites test-units.js runs at once: leave cores for a concurrent Electron lane, never fewer than 2 or more than 8.
+function unitJobs({ cpus, withElectron }) {
+  return Math.max(2, Math.min(8, Math.floor(cpus / (withElectron ? 4 : 2))));
+}
+
+// ----------------------------------------------------------------------------------------------------------------- node_modules
+
+// Can a worktree reuse the main checkout's node_modules? hidden: node_modules/.package-lock.json of the main checkout (what npm installed),
+// lock: the worktree's package-lock.json. Every non-optional package must be installed at the locked version.
+function nodeModulesMatch(hidden, lock) {
+  if (!hidden || !hidden.packages || !lock || !lock.packages) return { ok: false, reason: 'no lockfile to compare' };
+  for (const [name, entry] of Object.entries(lock.packages)) {
+    if (!name || entry.link) continue;
+    const have = hidden.packages[name];
+    if (!have) { if (entry.optional || entry.peer) continue; return { ok: false, reason: `${name} is not installed` }; }
+    if (have.version !== entry.version) return { ok: false, reason: `${name} is ${have.version} there, ${entry.version} in the lockfile` };
+  }
+  return { ok: true, reason: 'every locked package is installed at its locked version' };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------- the plan
+
+// The stages in order; a state file records the last one finished ('none' before the first).
+const STAGES = ['worktree', 'install', 'prepare', 'preflight', 'checks', 'pr', 'ci', 'merge', 'tag', 'publish'];
+const stageDone = (st, stage) => STAGES.indexOf(st.stage) >= STAGES.indexOf(stage);
+
+// What --resume still has to do for a recorded state: the stages after the last finished one. The build preflight is skipped by --no-preflight and
+// --checks-only (nothing is pushed then); and while the CI gate is still ahead it is always checked again before the PR (a release whose checks ran with
+// --checks-only has none yet, and one whose run was cancelled or failed gets a new dispatch), so a resume never trusts a stale run.
+function stagesLeft(st, { checksOnly = false, noPreflight = false } = {}) {
+  let left = STAGES.filter((s) => !stageDone(st, s));
+  if (noPreflight || checksOnly) left = left.filter((s) => s !== 'preflight');
+  if (checksOnly) return left.filter((s) => STAGES.indexOf(s) <= STAGES.indexOf('checks'));
+  if (!noPreflight && !stageDone(st, 'ci') && !left.includes('preflight')) { const at = left.indexOf('pr'); left.splice(at >= 0 ? at : 0, 0, 'preflight'); }
+  return left;
+}
+
+// The release stages as printed by --dry-run: [{ id, text, parallel }]; `parallel` stages run at the same time as the stage before them.
+function releasePlan({ version, date, opts, counts = {} }) {
+  const p = [];
+  const add = (id, text, parallel = false) => p.push({ id, text, parallel });
+  add('worktree', `git fetch (retried on network errors), worktree add release-${version} from origin/main`);
+  add('install', opts.freshInstall ? 'npm ci --ignore-scripts, copy node_modules/electron/dist and path.txt from the main checkout' : 'reuse the main checkout\'s node_modules through a junction when its installed versions match this lockfile (else npm ci --ignore-scripts and copy electron/dist)');
+  add('prepare', `fold the notes of any burned version (tag pushed, release never published) into Unreleased; CHANGELOG "## Unreleased" -> "## ${version} (${date})"; npm version ${version} --no-git-tag-version; node --check src/main.js; commit "Release ${version}"`);
+  const early = !opts.noPreflight && !opts.checksOnly;
+  if (early) add('preflight', `push release-${version} and dispatch release.yml on it (workflow_dispatch: builds win + mac and runs their tests, publishes nothing)`);
+  add('checks', `${counts.stages || '?'} stages: ${opts.serialChecks ? 'one after another' : 'pure-node lane (units in parallel, acceptance, lint) alongside the Electron lane; perf-sensitive suites (' + PERF_SENSITIVE.join(', ') + ') alone at the end'}; the Electron lock is ${opts.holdLock ? 'held while Electron runs' : 'taken per suite'}`, early);
+  if (opts.checksOnly) { add('stop', 'stop here (--checks-only): nothing pushed; --resume ships it'); return p; }
+  add('pr', `push release-${version} (retried), gh pr create "Release ${version}"`);
+  add('ci', (opts.noSkipCi ? 'wait for CI on the PR head' : 'skip the wait for the PR\'s CI when the commit is verified to be only the CHANGELOG cut and the version fields and CI passed on its base commit; otherwise wait for CI') + (opts.noPreflight ? '' : '. Wait for the preflight run to pass'));
+  add('merge', 'gh pr merge --squash --match-head-commit');
+  add('tag', `annotated v${version} on the merge commit, pushed (retried)`);
+  add('publish', `release.yml on the tag: publish the preflight's artifacts when the tagged tree equals the preflight's tree and every checksum matches, else build at the tag; expect ${opts.assets} assets`);
+  return p;
+}
+
 module.exports = {
   mergeBlocker, lockDecision,
+  sectionVersion, findBurned, foldBurned,
+  RELEASE_FILES, ciSkipVerdict,
+  pickPreflightRun, runVerdict, buildManifest, artifactsReusable, verifyChecksums,
+  PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs,
+  STAGES, stageDone, stagesLeft, nodeModulesMatch, releasePlan,
   parseChangelog, mergeChangelog, cutChangelog, changelogSection,
   readSuites, mergeSuiteList, splitSuiteFile,
   parseVersion, compareVersions, bumpVersion,

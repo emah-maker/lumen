@@ -112,7 +112,11 @@ function createHandler({ netFetchFor }) {
       try { res = await netFetchFor(ses)(target, { headers, credentials: 'include', redirect: 'follow' }); } catch { return plain(502, 'The PDF could not be fetched.'); }
       const out = new Headers({ 'content-type': 'application/pdf', 'cache-control': 'no-store', 'accept-ranges': res.headers.get('accept-ranges') || 'none' });
       if (attachment) out.set('content-disposition', disposition(target));
-      for (const h of ['content-length', 'content-range', 'etag', 'last-modified']) if (res.headers.get(h)) out.set(h, res.headers.get(h));
+      // (net.fetch hands back a gzip/br body already decoded: the upstream length and range describe the encoded bytes, so they are dropped)
+      const encoding = res.headers.get('content-encoding');
+      const decoded = Boolean(encoding) && !/^identity$/i.test(encoding);
+      if (decoded) out.set('accept-ranges', 'none');
+      for (const h of decoded ? ['etag', 'last-modified'] : ['content-length', 'content-range', 'etag', 'last-modified']) if (res.headers.get(h)) out.set(h, res.headers.get(h));
       return new Response(res.status === 204 || res.status === 304 ? null : res.body, { status: res.status, headers: out });
     }
     const file = resolveAsset(url.pathname);
@@ -149,20 +153,23 @@ function attachSession(ses, handler) {
 // ---- tabs
 // getSetting(): 'lumen' | 'chrome'. Called for every tab's webContents (wireView in main.js).
 function create({ getSetting = () => 'lumen' } = {}) {
+  // PDFs pdf.js could not open, per tab: shown by Chrome's viewer instead (fallback below), so routing leaves them alone.
+  const chromeOnly = new WeakMap(); // webContents -> Set of addresses (no fragment)
+  const keptInChrome = (wc, url) => Boolean(chromeOnly.get(wc)?.has(String(url).split('#')[0]));
   function attach(tab) {
     const wc = tab.view.webContents;
     const toViewer = (url) => { if (!wc.isDestroyed()) wc.loadURL(viewerUrl(url)).catch(() => {}); };
     // The address of a PDF: swapped before the PDF loads (Chromium's own viewer never starts).
     wc.on('did-start-navigation', (details) => {
       if (!details.isMainFrame || details.isSameDocument) return;
-      if (shouldRoute({ url: details.url, setting: getSetting() })) setImmediate(() => toViewer(details.url));
+      if (shouldRoute({ url: details.url, setting: getSetting() }) && !keptInChrome(wc, details.url)) setImmediate(() => toViewer(details.url));
     });
     // A response that is a PDF without saying so in its address: the document type tells, once the page has committed.
     // The PDF's own entry is dropped from history, so Back doesn't land on it and go straight to the viewer again.
     wc.on('did-frame-navigate', (_e, url, _code, _text, isMainFrame) => {
       if (isMainFrame || !isChromeViewerFrame(url)) return;
       const page = wc.getURL();
-      if (!isWebOrFile(page) || isViewerUrl(page) || getSetting() !== 'lumen') return;
+      if (!isWebOrFile(page) || isViewerUrl(page) || getSetting() !== 'lumen' || keptInChrome(wc, page)) return;
       wc.executeJavaScript('document.contentType', true).then((type) => {
         if (!shouldRouteDocument({ url: page, contentType: type, setting: getSetting() }) || wc.isDestroyed() || wc.getURL() !== page) return;
         const history = wc.navigationHistory;
@@ -177,7 +184,21 @@ function create({ getSetting = () => 'lumen' } = {}) {
     wc.executeJavaScript(`window.lumenPdf && window.lumenPdf.${name} && window.lumenPdf.${name}()`, true).catch(() => {});
     return true;
   }
-  return { attach, command };
+  // The viewer could not open its PDF (pdf.js refused a file Chromium's own viewer can show, or a second fetch of a one-time
+  // link got a page instead): the same address again in Chrome's viewer, in place of the viewer's entry. Returns the address, or null.
+  function fallback(wc) {
+    if (!wc || wc.isDestroyed()) return null;
+    const viewer = wc.getURL();
+    const pdf = pdfUrlOf(viewer);
+    if (!pdf) return null;
+    if (!chromeOnly.has(wc)) chromeOnly.set(wc, new Set());
+    chromeOnly.get(wc).add(pdf.split('#')[0]);
+    const history = wc.navigationHistory;
+    const index = history.getActiveIndex();
+    wc.loadURL(pdf).then(() => { try { if (index >= 0 && history.getEntryAtIndex(index)?.url === viewer) history.removeEntryAtIndex(index); } catch { /* history changed */ } }).catch(() => {});
+    return pdf;
+  }
+  return { attach, command, fallback, keptInChrome };
 }
 
 module.exports = {

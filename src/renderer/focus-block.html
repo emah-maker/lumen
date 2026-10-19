@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'" />
+  <title data-i18n="focus.page.title">Focus mode</title>
+  <link rel="stylesheet" href="settings.css" />
+  <link rel="stylesheet" href="focus-block.css" />
+</head>
+<body class="interstitial focus-page">
+  <main>
+    <p class="eyebrow" data-i18n="focus.page.eyebrow">Focus mode</p>
+    <h1 id="title">Focus mode is on</h1>
+    <p class="timer" id="timer" role="timer" aria-live="off"></p>
+    <p class="note" id="summary"></p>
+    <div class="actions" id="actions">
+      <button class="primary" id="back" type="button" data-i18n="focus.page.back">Go back</button>
+      <button id="allow" type="button" data-i18n="focus.page.allow">I need this for school</button>
+      <a id="continue" href="#" hidden data-i18n="focus.page.continue">Continue</a>
+    </div>
+    <p class="note small" id="allow-note"></p>
+    <div class="end" id="end">
+      <button class="hold" id="hold" type="button" aria-describedby="hold-note"><span class="fill" aria-hidden="true"></span><span class="label" id="hold-label" data-i18n="focus.page.hold">Hold to end focus</span></button>
+      <p class="note small" id="hold-note"></p>
+    </div>
+    <p class="note small"><a id="settings" href="#" data-i18n="focus.page.settings">Focus settings</a></p>
+  </main>
+  <script src="i18n.js"></script>
+  <script src="focus-block.js"></script>
+</body>
+</html>

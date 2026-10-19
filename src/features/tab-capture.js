@@ -189,9 +189,9 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
   if (!gotFirst && !ended) { // nothing is drawn for this view: poll it
     dbg.removeListener('message', onMessage);
     dbg.sendCommand('Page.stopScreencast').catch(() => {});
-    // (the engine reads the pixels back on the browser's main thread: an 800 px wide top of the page, 16:10, keeps that read to under a third of a full-size
-    // 1440 px window's; the card shows the top of the page at its own size either way)
-    const cssW = Math.min(w, 800);
+    // The whole width of the page, 16:10 from its top, as the screencast shows it: a clip of only its left 800 px showed a wide page's top-left corner,
+    // blown up to the card's width (the sidebar and half a list). Scale 1 always: a smaller scale lays the live page out at the clip's size (see viaProtocolNow).
+    const cssW = w;
     const cssH = Math.min(h, cssW * 0.625);
     const pollGap = 1000 / Math.min(fps, 8);
     let q = Math.min(quality, 60);
@@ -200,7 +200,7 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
       if (ended) return;
       const t0 = performance.now();
       try {
-        const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
+        const shot = await oneAtATime(wc, () => dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } })); // (in the page's queue: a clip taken while another capture is in flight left the page laid out at the clip's size)
         const data = shot && typeof shot.data === 'string' ? shot.data : '';
         if (data.length > 90000) q = Math.max(25, q - 10); else if (data.length < 40000) q = Math.min(Math.min(quality, 60), q + 5); // (about 30-65 KB a frame)
         if (!ended && data && data !== lastData && !(data.length * 0.75 <= 9000 && isBlankFrame(data))) { lastData = data; try { onFrame(data); } catch { /* the listener's own */ } }
@@ -269,4 +269,115 @@ function shrinkThumb(base64, { width = 420, maxBytes = 45000 } = {}) {
   return null;
 }
 
-module.exports = { streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+// ---------- the page-size safety net (kept here: one module less to load at startup) ----------
+// A tab's page must always fill the tab area. Chromium can leave a page drawn or laid out smaller than its view (a DevTools screenshot with a clip, taken
+// while another capture was in flight, leaves it at the clip's size in the view's top-left corner), and neither the capture paths (features/tab-capture.js
+// runs them one at a time) nor the engine always put it right. This is the safety net: for the tab in front it compares what the page lays itself out at
+// (window.innerWidth/innerHeight) with the view's bounds, and reads a 2x2 crop of the view's bottom-right corner (a surface drawn smaller than the view
+// cannot give one). A page that is wrong gets any device-metrics override cleared and the view's bounds set again, a pixel off and back (a bounds change is
+// what makes the engine lay the page out afresh). Every time it acts it is written to <userData>/diagnostics/page-size.jsonl, to learn which path did it.
+const COOLDOWN_MS = 4000; // after acting on a view
+const MIN_GAP_MS = 1500; // between two reads of the same view
+const TOLERANCE = 3; // CSS px (rounding, a scrollbar being drawn)
+const lastFix = new WeakMap(); // view -> when it was last acted on
+const checked = new WeakMap(); // view -> when it was last read
+
+// Pure: does the page's layout differ from its view's size? sizes in CSS px.
+function layoutMismatch(inner, bounds, zoom = 1) {
+  if (!Array.isArray(inner) || inner.length < 2 || !(bounds.width > 8) || !(bounds.height > 8)) return false;
+  const z = zoom > 0 ? zoom : 1;
+  return Math.abs(inner[0] - bounds.width / z) > TOLERANCE || Math.abs(inner[1] - bounds.height / z) > TOLERANCE;
+}
+
+async function surfaceSmaller(view) {
+  const b = view.getBounds();
+  try {
+    const image = await view.webContents.capturePage({ x: Math.max(0, b.width - 2), y: Math.max(0, b.height - 2), width: 2, height: 2 });
+    return image.isEmpty();
+  } catch { return true; } // (a rect outside the drawn surface: refused)
+}
+
+// checkPageSize(view, opts) -> a description of what was wrong and put right, or null.
+//   opts.shown()     the view is still the tab in front
+//   opts.skip()      the page is laid out at another size on purpose (the new-tab page under the sidebar: device emulation of its own)
+//   opts.relayout()  lays the views out again (main.js layout())
+//   opts.log(entry)  diagnostics
+//   opts.force       act whatever the read says is not needed for the layout test (only the cooldown still applies)
+async function checkPageSize(view, { shown = () => true, skip = () => false, relayout = () => {}, log = () => {}, source = '', now = Date.now } = {}) {
+  try {
+    const wc = view?.webContents;
+    if (!wc || wc.isDestroyed() || !shown() || skip() || wc.isLoading()) return null;
+    const t = now();
+    if (t - (lastFix.get(view) || 0) < COOLDOWN_MS || t - (checked.get(view) || 0) < MIN_GAP_MS) return null;
+    checked.set(view, t);
+    const bounds = view.getBounds();
+    let inner = null;
+    try { inner = await wc.executeJavaScript('[innerWidth, innerHeight]', false); } catch { return null; }
+    const zoom = wc.getZoomFactor?.() || 1;
+    const layoutOff = layoutMismatch(inner, bounds, zoom);
+    const smaller = layoutOff ? false : await surfaceSmaller(view);
+    if (!shown() || (!layoutOff && !smaller)) return null;
+    lastFix.set(view, now());
+    const dbg = wc.debugger;
+    let cleared = false;
+    try {
+      const had = dbg.isAttached();
+      if (!had) dbg.attach('1.3');
+      try { await dbg.sendCommand('Emulation.clearDeviceMetricsOverride'); cleared = true; } catch { /* not supported or going away */ }
+      if (!had) { try { dbg.detach(); } catch { /* gone */ } }
+    } catch { /* another debugger owns it */ }
+    const b = view.getBounds();
+    view.setBounds({ ...b, width: Math.max(1, b.width - 1) });
+    const timer = setTimeout(() => { try { relayout(); } catch { /* going away */ } }, 60);
+    timer.unref?.();
+    const entry = { at: new Date(t).toISOString(), source, kind: layoutOff ? 'layout' : 'surface', inner, bounds: { width: bounds.width, height: bounds.height }, zoom, cleared };
+    try { log(entry); } catch { /* diagnostics are best effort */ }
+    return entry;
+  } catch { return null; }
+}
+
+// The tab's visible area as a JPEG already scaled to maxWidth, drawn and encoded by the browser's own processes: { data (base64), width,
+// height }, or null (no debugger, a tab that will not paint: the caller falls back to captureTab). capturePage() hands the main process
+// the full-size bitmap; nativeImage.resize() of it then ran 14 to 45 ms on the main thread per screenshot, toJPEG 4 to 13 ms more.
+// Here the main process receives only the finished JPEG. One at a time across all pages, with the event loop let through in between, so
+// several agents' screenshots do not stack their readback and encode work into one stall; and in the page's own queue (see oneAtATime).
+let captureChain = Promise.resolve();
+let capturing = 0; // screenshots queued or being taken
+const idleWaiters = new Set();
+function captureJpeg(wc, opts) {
+  capturing++;
+  const run = captureChain.then(() => oneAtATime(wc, () => captureJpegNow(wc, opts)));
+  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve))).then(() => { if (--capturing === 0) for (const done of [...idleWaiters]) done(); });
+  return run;
+}
+// Resolves once no screenshot is being taken, or after maxMs. A screenshot's result lands on the main process as a ~9 ms task; a step of making an
+// agent's window (5-6 ms each) that ran just as one landed stacked into a stall of 15 ms and more (test/mcp-perf.js), so those steps wait for a gap.
+function whenCaptureIdle(maxMs = 150) {
+  if (capturing === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, maxMs);
+    function done() { clearTimeout(timer); idleWaiters.delete(done); resolve(); }
+    idleWaiters.add(done);
+  });
+}
+async function captureJpegNow(wc, { maxWidth, quality }) {
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
+    const m = await dbg.sendCommand('Page.getLayoutMetrics');
+    const v = m.cssVisualViewport;
+    if (!(v?.clientWidth > 0 && v?.clientHeight > 0)) return null;
+    const scale = Math.min(maxWidth / v.clientWidth, 2); // (never magnified past 2x: a narrow view is not blown up to the full width)
+    const width = Math.max(1, Math.round(v.clientWidth * scale));
+    const height = Math.max(1, Math.round(v.clientHeight * scale));
+    const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } });
+    return shot?.data ? { data: shot.data, width, height } : null;
+  } catch {
+    return null;
+  } finally {
+    if (attachedHere) { try { dbg.detach(); } catch {} }
+  }
+}
+
+module.exports = { checkPageSize, captureJpeg, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };

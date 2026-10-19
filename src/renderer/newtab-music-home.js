@@ -6,7 +6,7 @@
 'use strict';
 
 (() => {
-  const SHELF_ORDER = ['quick', 'jump', 'made', 'recent', 'toptracks', 'topartists', 'new', 'playlists', 'albums', 'artists'];
+  const SHELF_ORDER = ['quick', 'jump', 'made', 'recommended', 'newfrom', 'recent', 'toptracks', 'topartists', 'moretop', 'related', 'genres', 'genreartists', 'new', 'playlists', 'albums', 'artists'];
   const ASK_AGAIN_MS = 60e3;
   const SAFE_ID = /^[A-Za-z0-9._-]{1,64}$/;
   const KINDS = ['song', 'album', 'playlist', 'artist'];
@@ -41,6 +41,7 @@
     .hm-quick .hm-play { top: 8px; right: 6px; width: 26px; height: 26px; }
     .hm-quick .hm-queue { display: none; }
     .hm-skel .hm-cover, .hm-skel .hm-title { background: var(--field); color: transparent; border-radius: 6px; }
+    .hm-caption { margin: -2px 4px 6px; font-size: 11px; color: var(--muted); }
     .hm-note { margin: 0; font-size: 12px; color: var(--muted); }
     .hm-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-radius: 8px; background: var(--field); font-size: 12px; }
     @media (prefers-reduced-motion: reduce) { .hm-play { transition: none; } }
@@ -69,21 +70,33 @@
     const asked = (ui.homeAsked ||= {});
     const scroll = (ui.homeScroll ||= {});
     const hour = new Date().getHours();
-    const state = SHELF_ORDER.map((k) => { const s = shelves[k]; return s ? [k, s.ok !== false, s.why || '', s.pending === true, (s.items || []).map((i) => `${i.id}${thumbOk(i.thumb) ? 1 : 0}`).join()] : [k]; });
+    const state = SHELF_ORDER.map((k) => { const s = shelves[k]; return s ? [k, s.ok !== false, s.why || '', s.pending === true, (s.items || []).map((i) => `${i.id}${thumbOk(i.thumb) ? 1 : 0}`).join(), s.captionVars && s.captionVars.title] : [k]; });
     const needsScope = SHELF_ORDER.some((k) => shelves[k] && shelves[k].ok === false && shelves[k].why === 'scope');
-    const changed = h.fill(panel, h.sig([state, needsScope, greetingKey(hour), d.homeText && d.homeText.tab]), (box) => {
+    const connect = Boolean(d.home && d.home.connect); // (Play as Lumen without the account connected: Home has nothing to read it with)
+    const sign = d.signIn && typeof d.signIn === 'object' ? { state: String(d.signIn.state || ''), message: typeof d.signIn.message === 'string' ? d.signIn.message.slice(0, 300) : '' } : null;
+    const changed = h.fill(panel, h.sig([state, needsScope, connect, sign, greetingKey(hour), d.homeText && d.homeText.tab]), (box) => {
       const root = el('div', 'hm');
       root.append(el('h2', 'hm-greet', say(d, greetingKey(hour))));
-      if (needsScope) {
+      if (needsScope || connect || sign) {
+        // One bar: what is wrong and one button that starts Spotify's sign-in right here (the card asks main for do=reconnect; no detour through Settings).
         const b = el('div', 'hm-banner');
         b.setAttribute('role', 'status');
-        b.append(el('span', '', say(d, 'reconnect')));
-        const btn = el('button', 'w-btn primary', say(d, 'reconnectButton'));
+        const waiting = sign && sign.state === 'waiting';
+        b.append(el('span', '', sign && sign.message ? sign.message : connect ? say(d, 'connectText') : say(d, 'reconnect')));
+        const btn = el('button', 'w-btn primary', connect ? say(d, 'connectButton') : say(d, 'reconnectButton'));
         btn.type = 'button';
-        btn.addEventListener('click', () => act('configure'));
+        btn.disabled = Boolean(waiting);
+        btn.addEventListener('click', () => act('reconnect'));
         b.append(btn);
+        if (sign && sign.state === 'allowlist') { // (Lumen's own app only lets 25 listed accounts in: the steps for the user's own app are in the card's editor)
+          const own = el('button', 'w-btn', say(d, 'ownApp'));
+          own.type = 'button';
+          own.addEventListener('click', () => act('configure'));
+          b.append(own);
+        }
         root.append(b);
       }
+      if (connect) { box.append(root); return; }
       for (const key of SHELF_ORDER) {
         const s = shelves[key];
         const items = clean(s && s.items, thumbOk);
@@ -106,6 +119,8 @@
             }
           }
           sec.append(head);
+          const caption = loading ? '' : say(d, `${key}Caption`, s && s.captionVars ? s.captionVars : {}); // (a suggestion shelf says what it is built from)
+          if (caption) sec.append(el('p', 'hm-caption', caption));
         }
         const list = el('ul', key === 'quick' ? 'hm-quick' : 'hm-row');
         list.setAttribute('aria-label', title);
@@ -150,16 +165,32 @@
     // The shelves are asked for as they come into view (not all ten at once): the ones at the top at once, the rest when scrolled to.
     const ask = (key) => {
       const s = shelves[key];
-      const fresh = Date.now() - (asked[key] || 0) > ASK_AGAIN_MS;
+      const fresh = Date.now() - (asked[key] || 0) > (s ? ASK_AGAIN_MS : 3000); // (a shelf main has no data for — a new sign-in reset the card — is asked for again at once)
       if (!fresh || (s && s.pending)) return;
       asked[key] = Date.now();
       act('ehome', { arg: key });
     };
+    // Which shelves are in view, kept by the observer; one that is in view and still has nothing (its ask was too soon after a sign-in reset the card, or was lost) is
+    // asked for again a few seconds later.
+    const visible = (panel._visible ||= new Set());
+    panel._latest = { shelves, ask };
+    const recheck = () => {
+      if (panel._retry || !panel.isConnected) return;
+      panel._retry = setTimeout(() => {
+        panel._retry = null;
+        if (!panel.isConnected) return;
+        const now = panel._latest;
+        let again = false;
+        for (const k of visible) { const s = now.shelves[k]; if (!s && !(d.home && d.home.connect)) { now.ask(k); again = true; } }
+        if (again) recheck();
+      }, 3200);
+    };
     if (changed || !panel._io) {
       if (panel._io) panel._io.disconnect();
+      visible.clear();
       const sections = [...panel.querySelectorAll('[data-shelf]')];
       if (typeof IntersectionObserver !== 'function') { for (const s of sections.slice(0, 3)) ask(s.dataset.shelf); return; }
-      panel._io = new IntersectionObserver((entries) => { for (const e of entries) if (e.isIntersecting) ask(e.target.dataset.shelf); }, { root: panel, rootMargin: '0px 0px 300px 0px' });
+      panel._io = new IntersectionObserver((entries) => { for (const e of entries) { const k = e.target.dataset.shelf; if (e.isIntersecting) { visible.add(k); panel._latest.ask(k); } else visible.delete(k); } recheck(); }, { root: panel, rootMargin: '0px 0px 300px 0px' });
       for (const s of sections) panel._io.observe(s);
     }
   }
