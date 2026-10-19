@@ -127,8 +127,21 @@ These are set from the sidebar rather than the settings page:
 | Apps the AI can use | `aiDesktopApps` | none | The apps you chose Always for. Added only from the approval card; Revoke removes one. |
 | Bypass permissions | `bypassPermissions` | off | Every approval card is answered Allow for you (a PDF, a signed-in account, an upload of a file you attached, an MCP tool, Grok Build's terminal commands, new sites, leaving with what it read), for the sidebar AI on every model and for connected agents, and each one shows as a step ("Allowed automatically: …"). Chosen from the bolt menu in the sidebar head or Settings → AI → **Asking before it acts** (**Ask** / **Auto-allow actions** / **Bypass permissions**); the three levels are one choice. Sites with AI off, tabs kept off and hands-off mode still apply, uploads still use only files you attached or picked, and the **Choose file…** card still waits for you. Background tasks bypass only with the next setting on. |
 | Bypass in background tasks and routines too | `bypassBackground` | off | With Bypass permissions on, background tasks and routines also get every card answered Allow, including steps that buy, send, post or submit something; each is listed in the task's steps. Does nothing without Bypass permissions, and switches itself off when you leave Bypass permissions (it is chosen again each time). Sites with AI off and tabs kept off still apply; a task has no files to upload. |
+| Start new chats in plan mode | `planModeDefault` | off | A new sidebar chat starts with **Plan** on (the button next to the message box): the AI only reads pages, tabs and the web, then shows a plan card with its steps, the sites it will act on and the risky steps. **Run plan** sends the plan as your next message and lets the AI click and type on exactly those sites in that chat (opening or sending to them after reading a page still asks); **Edit** lets you change the steps or drop sites first; **Keep planning** sends it back. Plan can be turned on or off per chat in the message box, or used once with `/plan <task>`. API models only: on Claude Code, Codex, Grok Build and Antigravity the button is off. |
+| Take requests from my Telegram bot | `telegramChannel` | off | Settings → AI and agents → Phone (Telegram). While Lumen is open, messages from the paired chat of your own Telegram bot run as background tasks and the results are sent back; the tasks' approval questions come with Allow and Deny buttons. Needs a bot token (stored encrypted) and pairing. Messages and results pass through Telegram's servers. See [Phone (Telegram)](telegram.md). |
+| Use my sign-ins in these tasks | `telegramSignedIn` | off | Tasks started from Telegram use your cookies (a background task's **Use my sign-ins**). Off: they work signed out. |
 | Meeting helper | `meetingHelper` | on | Enables the Meeting Helper panel in the sidebar (opened with Ctrl+Shift+E or the More menu) for live meeting prompting, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries saved to chat history. |
 | Using: *page* | `pageContext` | on | Sends the current page to the sidebar AI with each message. |
+
+### Skills
+
+Settings → Skills (`lumen://settings/skills`): saved instructions you run with `/name`, import and export as JSON or as SKILL.md folders (the Agent Skills format Claude Code uses), and let the AI load on its own. Kept in `skills.json` in the profile folder. See [Skills](skills.md).
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Let the AI use skills on its own | `skillsAutoUse` | on | Skills marked **AI can use this on its own** (none by default) are listed by name and one line in each new chat's system prompt, and the AI loads one with `use_skill` when the request matches. Off: skills run only from `/`. Sidebar API chats only. |
+| Use my Claude Code skills | `skillsFromClaudeCode` | off | Also offers `~/.claude/skills/*/SKILL.md` as read-only `/` commands, and to the AI on its own. Only each SKILL.md is read; scripts beside it are never run. |
+| Offer to save and improve skills | `skillsSuggest` | off | After a run that ended well and took 8 or more tool steps, offers **Save how I did this as a skill?**. After you correct a skill's result, offers **Update the skill with what changed?** with a diff to accept. Never saves or changes a skill without your click. |
 
 ### Macros
 
@@ -293,6 +306,15 @@ Kept in one `bgTasks` object (Tasks panel > Settings, in the sidebar). Every tas
 | Notify me when a task finishes or needs me | `bgTasks.notifications` | on | An in-app banner, plus a system notification when Lumen is not the window in front. |
 | Also notify me when a task finishes fine | `bgTasks.notifyDone` | on | Off: only failures, questions, watch alerts and interruptions notify. |
 | Refuse an unanswered question after | `bgTasks.approvalWaitMin` | 60 | 15, 60 or 240 minutes. A card nobody answered is refused (never approved) so the task can finish and free its place. |
+
+### Routine web links
+
+In Settings → AI and agents → Routines. See [Routines](routines.md#triggers).
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Routine web links | `routineWebhooks` | off | Listens on 127.0.0.1 (this computer only) so a program can start a routine whose trigger is **From a web link**: `POST /routines/<id>/run` with `Authorization: Bearer <key>`, the routine's own key (shown once in its editor). An optional `{"text": "..."}` body (up to 4 KB) goes to the AI as untrusted input. The request's Host header must be `127.0.0.1:<port>` or `localhost:<port>` (a tunnel must rewrite it). At most one started run a minute per routine (refused calls don't count); approvals apply as for any routine run. |
+| Port | `routineWebhookPort` | 47821 | The local port the web links use (1024 to 65535). If another program has it, Settings says so and nothing listens. |
 
 ## Extensions
 

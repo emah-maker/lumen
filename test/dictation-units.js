@@ -160,7 +160,7 @@ const audio = () => Buffer.from('fake-audio-bytes');
     check('renderer: MediaRecorder + getUserMedia, audio only', /new MediaRecorder\(/.test(r) && /getUserMedia\(\{ audio: /.test(r) && !/video:/.test(r));
     check('renderer: no storage of the audio', !/localStorage|indexedDB|sessionStorage|caches\./.test(r));
     check('renderer: loaded by the sidebar and the chat page', /src="dictation\.js"/.test(read('src/renderer/index.src.html')) && /src="dictation\.js"/.test(read('src/renderer/chat-page.html')));
-    check('renderer: the size cap is checked before the recording is sent', /bytes\.byteLength > \(s\.status\.maxBytes/.test(r) && /maxBytes: dictationLib\.MAX_BYTES/.test(main));
+    check('renderer: the size cap is checked before the recording is sent', /bytes\.byteLength > \(s\.status\.maxBytes/.test(r) && /maxBytes: dictationLib\(\)\.MAX_BYTES/.test(main));
     check('renderer: Esc cancels, in the capture phase', /e\.key !== 'Escape'/.test(r) && /stopImmediatePropagation/.test(r));
     const src = read('src/features/shortcuts-help.js');
     check('shortcuts sheet: mod+shift+space listed once, no clash', (src.match(/'mod\+shift\+space'/g) || []).length === 1);

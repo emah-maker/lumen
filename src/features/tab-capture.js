@@ -189,9 +189,9 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
   if (!gotFirst && !ended) { // nothing is drawn for this view: poll it
     dbg.removeListener('message', onMessage);
     dbg.sendCommand('Page.stopScreencast').catch(() => {});
-    // (the engine reads the pixels back on the browser's main thread: an 800 px wide top of the page, 16:10, keeps that read to under a third of a full-size
-    // 1440 px window's; the card shows the top of the page at its own size either way)
-    const cssW = Math.min(w, 800);
+    // The whole width of the page, 16:10 from its top, as the screencast shows it: a clip of only its left 800 px showed a wide page's top-left corner,
+    // blown up to the card's width (the sidebar and half a list). Scale 1 always: a smaller scale lays the live page out at the clip's size (see viaProtocolNow).
+    const cssW = w;
     const cssH = Math.min(h, cssW * 0.625);
     const pollGap = 1000 / Math.min(fps, 8);
     let q = Math.min(quality, 60);
