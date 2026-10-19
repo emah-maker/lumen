@@ -8485,9 +8485,9 @@ const anyConnected = () => {
 };
 const connectorsFacade = {
   hasAny: () => anyConnected(),
-  defs: () => (anyConnected() ? connectorsSvc().defs() : []),
+  defs: (opts) => (anyConnected() ? connectorsSvc().defs(opts) : []), // opts.readOnly: a background task or routine (no writes)
   isWrite: (input) => connectorsSvc().isWrite(input),
-  describeWrite: (input) => connectorsSvc().describeWrite(input),
+  describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
   list: () => connectorsSvc().list(),
 };
@@ -9147,7 +9147,7 @@ let widgetRefreshTimer = null;
 // new-tab page waiting for Ctrl+T, a new-tab page in a background tab) must not start it: no new-tab page in front of
 // any window means a read only looks at what is already known. The page asks again when it is shown (it refreshes when it becomes visible).
 const newTabInFront = () => [...winRecs].some((rec) => rcAlive(rec) && !isSpare(rec) && !rec.agent && !rec.win.isMinimized() && tabsOf(rec).some((t) => t.id === activeIdOf(rec) && alive(t) && isNewTab(t.view.webContents.getURL())));
-const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'command', 'search', 'searchMore', 'loadThumbs', 'warm', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
+const engineFacade = (engine, fake) => Object.fromEntries(['read', 'control', 'seek', 'playItem', 'playNext', 'playLater', 'command', 'search', 'searchMore', 'readItem', 'loadThumbs', 'warm', 'signIn', 'showPlayer', 'refreshLists', 'reload'].map((name) => [name, (...args) => (TEST && fake()?.[name] ? fake()[name](...args) : name === 'read' && !newTabInFront() ? engine().read({ ...args[0], wake: false }) : engine()[name](...args))]));
 // After sleep or a network change Chromium may hold dead sockets and a stale DNS cache; drop both so the next request makes fresh ones.
 function resetNetwork() {
   const ses = session.defaultSession;

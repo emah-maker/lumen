@@ -528,7 +528,7 @@ function create(deps) {
     return {
       background: true, // a task's own one-tab browser: agent.ownNavigationTab must not open the sidebar chat's background tab here
       externalTools: ext,
-      connectors: task.routine ? deps.connectors : undefined, // a routine reads the services the user connected (Gmail, Canvas…): reads go through, anything that changes something asks
+      connectors: task.routine ? deps.connectors : undefined, // a routine reads the services the user connected (Gmail, Canvas…): reads go through; it is offered no writes, and agent.js refuses one
       activeTab: tab,
       tabById: (id) => (id === WORK_TAB ? tab() : null),
       noTabReason: () => 'This background task’s tab is closed.',
