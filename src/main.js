@@ -290,6 +290,7 @@ const UI_ONLY_IPC = new Set([
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
+  'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -704,12 +705,21 @@ const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   showNotes: (opts) => dialogs.showNotes(opts),
 }));
 if (TEST) global.__whatsNew = whatsNew;
-// "Turn this on?" for features that ship off (features/feature-offers.js): once, right after the notes.
+// "New in Lumen: want to turn these on?" card in the empty chat, for features that ship off (features/feature-offers.js).
 const featureOffers = lazy(() => require('./features/feature-offers').createFeatureOffers({
   readSettings, writeSettings, t, test: TEST,
   setSetting: (key, value) => settingsBackend.set(key, value),
-  showMessageBox: (opts) => dialogs.showMessageBox(null, { type: 'question', ...opts }),
+  ready: () => ({ dictation: Boolean(dictationState().provider) }), // voice input already works (a key is set): nothing to offer
 }));
+// The card asks, and answers one click at a time; 'turn-on' of a "set up" feature only opens its Settings section.
+ipcMain.handle('offers:get', () => featureOffers.get());
+ipcMain.handle('offers:act', async (_e, action, arg) => {
+  const offers = featureOffers;
+  if (action === 'shown') { offers.onShown(Array.isArray(arg) ? arg.filter((x) => typeof x === 'string').slice(0, 20) : []); return { ok: true }; }
+  if (action === 'dismiss') return offers.dismiss({ never: arg === 'never' });
+  if (action === 'act' && typeof arg === 'string') return offers.act(arg);
+  return { ok: false };
+});
 if (TEST) global.__featureOffers = featureOffers;
 
 // Take screenshot and QR code for the page (features/screenshot.js, features/qr.js), both drawn in one
@@ -7728,7 +7738,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       if (w.isDestroyed()) return;
       featureOffers.prepare(); // before the notes record the version: it tells an update from a fresh install
       whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message))
-        .then(() => featureOffers.present()).catch((err) => console.error('[lumen] feature offers:', err.message));
+        .catch((err) => console.error('[lumen] feature offers:', err.message));
     }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
     if (firstWindow && !TEST && setup.welcomePending()) ui()?.send('setup:welcome');
