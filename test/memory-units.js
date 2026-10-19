@@ -227,7 +227,7 @@ const make = (file, extra = {}) => M.createMemoryStore({ file, ...keychain, now:
     check('settings: aiMemory is off by default, aiMemoryChatSearch on', /aiMemory: false,/.test(backend) && /aiMemoryChatSearch: true,/.test(backend));
     check('settings: Memory is offered once after an update', require('../src/features/feature-offers').OFFERS.some((o) => o.key === 'aiMemory' && o.value === true));
     check('settings: the page has the switches, the list and Delete all', /buildMemory/.test(src('src/renderer/settings.bundle.js')) && /memory-delete-all/.test(src('src/renderer/settings.js')));
-    check('commands: /memory is a chat command and reserved for skills', /name: 'memory'/.test(src('src/renderer/ui.bundle.js')) && require('../src/features/skills').RESERVED?.has?.('memory') !== false && /'btw', 'memory'\]/.test(src('src/features/skills.js')));
+    check('commands: /memory is a chat command and reserved for skills', /name: 'memory'/.test(src('src/renderer/ui.bundle.js')) && require('../src/features/skills').RESERVED?.has?.('memory') !== false && /'btw', (?:'plan', )?'memory'\]/.test(src('src/features/skills.js')));
     check('chat: the "Remembered" row with Undo and Forget is in the sidebar bundle', /case 'memory':[\s\S]{0,1500}memory\.undo/.test(src('src/renderer/ui.bundle.js')));
     const en = JSON.parse(src('src/locales/en.json'));
     check('strings: the chat row and Settings have their text', ['memory.remembered', 'memory.undo', 'memory.forget', 'settings.ai.memory', 'settings.ai.memoryChatSearch', 'slash.memory'].every((k) => typeof en[k] === 'string'));

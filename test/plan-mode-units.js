@@ -172,7 +172,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     check('agent.js: CLI engines answer a plan-mode message with a note, never run it', /if \(planning && \(viaClaudeCode \|\| viaGrokBuild \|\| viaAntigravity \|\| viaCodex\)\)/.test(agentSrc));
     check('agent.js: the propose_plan call runs proposePlan', agentSrc.includes("case 'propose_plan': return this.proposePlan(input);"));
     check('agent.js: propose_plan is offered only while planning', /plan \? \[planMode\.PLAN_TOOL\] : \[\]/.test(agentSrc) && /this\.planning\(\) \? \[OTHER_PLAN\] : \[\]/.test(agentSrc));
-    check('skills: "plan" is reserved for the command', /'btw', 'plan'\]/.test(src('src/features/skills.js')));
+    check('skills: "plan" is reserved for the command', /'btw', 'plan'(?:, 'memory')?\]/.test(src('src/features/skills.js')));
     const html = src('src/renderer/index.src.html');
     check('the sidebar loads the rules before the card', html.indexOf('../ai/plan-mode.js') > 0 && html.indexOf('../ai/plan-mode.js') < html.indexOf('"plan-mode.js"'));
     check('the full-page chat loads them too', src('src/renderer/chat-page.html').includes('<script src="plan-mode.js"></script>'));
