@@ -1199,6 +1199,11 @@ function create(deps) {
     handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); slackSetup.stopWatch(); slackSetup.close(); return deps.widgets.state(); });
     handle('prefs:slack-disconnect', async () => { slackSetup.stopWatch(); slackSetup.close(); await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
     handle('prefs:slack-channels', () => deps.widgets.slackChannels());
+    // GitHub sign-in (features/github-auth.js): the code comes back at once; the rest arrives as widgets:changed. Never a token.
+    handle('prefs:github-start', (opts) => deps.widgets.githubStart(opts));
+    handle('prefs:github-cli', () => deps.widgets.githubCli());
+    handle('prefs:github-cancel', () => deps.widgets.githubCancel());
+    handle('prefs:github-signout', () => deps.widgets.githubSignOut());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });

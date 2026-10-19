@@ -8481,6 +8481,14 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   google: connectorsGoogle,
   mcp: mcpClient,
   openSignIn: connectorsOpen,
+  // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
+  // card's encrypted secret each time, never copied into connectors.json. Disconnecting the connector signs the card out too.
+  shared: {
+    github: {
+      info: () => { const a = require('./features/github-auth').unpack(widgetSecret('github')); return a ? { token: a.token, account: a.login } : null; },
+      signOut: () => widgets.githubSignOut(),
+    },
+  },
 }));
 let connectedOnDisk = null; // before the service exists: whether the file lists anything (read once)
 const anyConnected = () => {
@@ -9183,6 +9191,17 @@ const widgets = createWidgets({
   canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+  // GitHub sign-in (features/github-auth.js): the device-flow page opens in a Lumen tab, https://github.com/login/device only (a test only
+  // records it); the shared token's other user is the GitHub connector, which is set up or taken down to match whenever the sign-in changes.
+  openGithubSignIn: (url) => {
+    if (/^https:\/\/github\.com\/login\/device(?:[?#]|$)/.test(String(url))) return openTab(url);
+    if (TEST) { (global.__githubOpened ||= []).push(String(url)); return undefined; }
+    throw new Error('Refusing to open that address.');
+  },
+  githubClientId: () => (TEST && global.__githubClientId) || '', // (the constant in features/github-auth.js, or LUMEN_GITHUB_CLIENT_ID, unless a test stands one in)
+  githubPollScale: () => (TEST && global.__githubPollScale) || 1, // (a test shrinks the device flow's waits)
+  onGithubChange: () => { try { connectorsSvc().syncShared('github'); } catch { setTimeout(() => { try { connectorsSvc().syncShared('github'); } catch { /* the connector looks again at the next sign-in change */ } }, 1500).unref?.(); } }, // (once more if the file was busy)
+  githubInUse: () => { try { return connectorsSvc().usesShared('github'); } catch { return false; } },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   // The Gmail widget's default mode: read the inbox's Atom feed with the Google sign-in already in Lumen's normal session.
   googleMail: {
