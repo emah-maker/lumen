@@ -41,7 +41,7 @@ module.exports = [
   // settings-macros.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-macros.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-providers.js is loaded before settings.js and uses its helpers (called later, from its builders).
-  { files: ['src/renderer/settings-providers.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', meterRow: 'readonly', tokens: 'readonly', dollars: 'readonly', tr: 'readonly', save: 'readonly', st: 'readonly', usageChip: 'readonly', syncCliAccess: 'readonly', ENGINE_NAMES: 'readonly', grokUsageRows: 'readonly', codexUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings-providers.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', meterRow: 'readonly', flash: 'readonly', tokens: 'readonly', dollars: 'readonly', tr: 'readonly', save: 'readonly', st: 'readonly', usageChip: 'readonly', syncCliAccess: 'readonly', ENGINE_NAMES: 'readonly', grokUsageRows: 'readonly', codexUsageRows: 'readonly' } } },
   // settings-unload.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-unload.js'], languageOptions: { globals: { S: 'readonly', st: 'readonly', h: 'readonly', tr: 'readonly', save: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', select: 'readonly', flash: 'readonly', withKeywords: 'readonly', applyPageClasses: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.

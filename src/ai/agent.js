@@ -3729,7 +3729,7 @@ ${prompt}` : prompt), historyImages: [] };
     const toolsOk = providers.canUseTools(provider, model);
     if (!toolsOk && messages.chatOnlyNoted !== model) {
       messages.chatOnlyNoted = model;
-      emit({ type: 'notice', text: `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
+      emit({ type: 'notice', text: provider === 'local' ? `${model} can't use tools, so it answers as plain chat: it can read the page you're on but can't click or type in your tabs. Browser actions need a tool-capable local model (Settings → AI → Local shows which ones are).` : `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
     }
     // A model known to be text-only gets the chat without its images: said once, not dropped silently.
     const blind = fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false;
@@ -3753,7 +3753,7 @@ ${prompt}` : prompt), historyImages: [] };
       emit,
       noTools,
     });
-    this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit);
+    if (provider !== 'local') this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit); // (a model on this computer has no limits or cost to count)
     return turn;
   }
 

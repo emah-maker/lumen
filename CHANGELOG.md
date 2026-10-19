@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Chat with local AI models through Ollama or LM Studio.** Settings → AI → AI providers → **Local** has a switch, a Server choice (Ollama or LM Studio), the server address (filled in with each one's usual address) and a **Detect** button that lists the models you have installed. They appear in the model menu under **Local**. No key is needed and nothing leaves your computer: only `localhost`, `127.0.0.1` and `::1` addresses work unless you confirm another one. Models that support tools can click and type in your tabs; a model that doesn't answers as plain chat and says so (the list marks it **Chat only**). Auto and the automatic switch to another model never use a local model, and a local model that fails is never handed to a cloud one. New: `docs/local-models.md`, `test/local-models-units.js` and `test/local-models.js`.
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)
