@@ -2251,6 +2251,10 @@ explain describe list find give compare difference summarize summary write rewri
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
   }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
+  }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
@@ -2384,7 +2388,7 @@ explain describe list find give compare difference summarize summary write rewri
       open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
 
 
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
@@ -5236,6 +5240,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source);
 }
 
 
@@ -6211,6 +6216,7 @@ function startChat() {
     copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>',
     check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
     up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
+    note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
     down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
   };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -6334,6 +6340,24 @@ function startChat() {
       if (time) { time.classList.add('msg-hover'); strip.append(time); }
     }
     if (!strip.querySelector('.reply-thumbs') && bubble.querySelector('.reply-copy')) strip.append(thumbs(bubble, info.feedback));
+    const note = strip.querySelector('.reply-note');
+    if (note && note !== strip.lastElementChild) strip.append(note);
+  }
+
+
+  function noteButton(bubble, source) {
+    if (!bubble || !window.assistant?.notes || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-note')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+    const b = button('reply-thumb reply-note', t('notes.add'), ICONS.note, async () => {
+      const r = await window.assistant.notes.act('add', { text: String(source) }).catch(() => null);
+      b.title = t(r?.ok ? 'notes.added' : 'notes.addFailed');
+      b.setAttribute('aria-label', b.title);
+      b.classList.toggle('done', Boolean(r?.ok));
+      b.innerHTML = r?.ok ? ICONS.check : ICONS.note;
+      setTimeout(() => { b.title = t('notes.add'); b.setAttribute('aria-label', b.title); b.classList.remove('done'); b.innerHTML = ICONS.note; }, 2200);
+    });
+    strip.append(b);
   }
   function thumbs(bubble, current = null) {
     const box = el('span', { className: 'reply-thumbs' });
@@ -6406,7 +6430,7 @@ function startChat() {
     copy.click();
   });
 
-  window.chatActions = { userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+  window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();
 ;
 // ---- tabs-ask-core.js
@@ -11895,6 +11919,26 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   window.researchUi = { decorate, refresh };
   refresh();
+})();
+;
+// ---- notes-loader.js
+
+
+(() => {
+  const api = window.assistant?.notes;
+  const button = document.getElementById('notes-btn');
+  if (!api || !button) return;
+  let loading = null;
+  const load = () => loading || (loading = new Promise((resolve, reject) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'notes.css' });
+    document.head.appendChild(css);
+    const script = Object.assign(document.createElement('script'), { src: 'notes.js' });
+    script.onload = resolve;
+    script.onerror = () => { loading = null; script.remove(); css.remove(); reject(new Error('notes.js did not load')); };
+    document.body.appendChild(script);
+  }));
+
+  button.onclick = () => load().catch(() => {});
 })();
 ;
 // ---- meeting-loader.js

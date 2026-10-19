@@ -51,6 +51,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
       open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
     },
+    notes: { act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg) }, // [notes] "Add to notes" under a reply (features/notes-hub.js)
     memory: { // [memory] the chat's "Remembered" row (Undo / Forget) and /memory (ai/memory.js)
       list: () => ipcRenderer.invoke('memory:list'),
       undo: (token) => ipcRenderer.invoke('memory:undo', token),

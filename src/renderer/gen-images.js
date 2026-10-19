@@ -48,6 +48,10 @@
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
   }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
+  }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
@@ -181,7 +185,7 @@
       open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
       // [image routing] which provider made it (the user's own keys or plan, so it is always said)
       // a picture taken from a file the AI made: its file name
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
