@@ -1054,6 +1054,10 @@
     .gh-of { color: var(--muted); font-size: 12px; }
     .gh-full { display: none; flex-direction: column; gap: 6px; }
     @container card (min-width: 220px) and (min-height: 150px) { .gh-summary { display: none; } .gh-full { display: flex; } }
+    .gh-signin { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+    .gh-signin .w-actions { display: flex; flex-wrap: wrap; gap: 0 8px; }
+    .gh-user-code { font-size: 26px; font-weight: 600; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; user-select: all; }
+    .gh-err { color: var(--danger, #d44); }
     .gh-unread { margin: 0 0 2px; padding: 0 6px; font-size: 13px; font-weight: 500; }
     .gh-section { display: flex; flex-direction: column; }
     .gh-kind { flex: none; align-self: flex-start; margin-top: 2px; padding: 1px 6px; border-radius: 999px; background: var(--field); color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }
