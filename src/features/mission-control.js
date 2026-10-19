@@ -30,6 +30,10 @@ function cardText(card = {}) {
   return { host: str(card.host, 200), action: str(card.action || 'interact', 30), title: str(card.title, 300), detail: clip(card.args || card.query || '', 300) };
 }
 
+// What started a routine's run, when it was not the clock: its web link, new email, or a missed time run late. null otherwise.
+const EVENTS = new Set(['webhook', 'email', 'catch-up']);
+const eventTrigger = (trigger) => (EVENTS.has(trigger) ? trigger : null);
+
 function choicesFor(kind, action) {
   if (kind === 'task') return SITE_ACTIONS.has(action) ? ['once', 'site', 'deny'] : ['once', 'deny'];
   return PLAIN_ACTIONS.has(action) ? ['allow', 'deny'] : [];
@@ -37,7 +41,8 @@ function choicesFor(kind, action) {
 
 // inputs:
 //   chats      [{ chatId, title, running, queued, startedAt, step, approvals: [{ approvalId, host, action, title, args, since }] }]
-//   tasks      background-runner summaries (bg.summarize) with `runs` (their history) added
+//   tasks      background-runner summaries (bg.summarize) with `runs` (their history), a routine's `history` (what started each run)
+//              and `trigger` (what started the run going now) added, and `via: 'telegram'` for a task sent from the phone
 //   agents     [{ id, clientName, since, step }]
 //   agentCards [{ approvalId, clientName, agentId, host, action, title, args, since }]
 //   chatsDone  [{ chatId, title, startedAt, endedAt, status, preview }]
@@ -65,21 +70,22 @@ function aggregate({ chats = [], tasks = [], agents = [], agentCards = [], chats
     const title = clip(t.title, 120);
     for (const p of t.pending || []) {
       const card = cardText(p);
-      needsYou.push({ kind: 'task', id: t.id, approvalId: p.approvalId, who: title, routine: Boolean(t.routine), since: num(t.waitingSince) || num(t.runningSince), ...card, choices: choicesFor('task', card.action) });
+      needsYou.push({ kind: 'task', id: t.id, approvalId: p.approvalId, who: title, routine: Boolean(t.routine), via: t.via || null, since: num(t.waitingSince) || num(t.runningSince), ...card, choices: choicesFor('task', card.action) });
     }
     if (t.status === 'running' || t.status === 'waiting-approval' || t.status === 'queued') {
       const startedAt = t.status === 'queued' ? 0 : num(t.runningSince);
-      running.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), status: t.status, step: clip(t.currentStep, 140), startedAt, elapsedMs: startedAt ? Math.max(0, now - startedAt) : 0, cost: t.cost || null, canStop: true });
+      running.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), via: t.via || null, trigger: eventTrigger(t.trigger), status: t.status, step: clip(t.currentStep, 140), startedAt, elapsedMs: startedAt ? Math.max(0, now - startedAt) : 0, cost: t.cost || null, canStop: true });
     }
     const repeats = t.schedule && ['routine', 'every', 'watch', 'at'].includes(t.schedule.type);
     if (t.routine || (repeats && (t.nextRun || t.enabled === false))) {
-      scheduled.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), schedule: t.schedule || null, nextRun: t.enabled === false ? null : num(t.nextRun) || null, enabled: t.enabled !== false, canToggle: t.schedule?.type !== 'at' });
+      scheduled.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), on: eventTrigger(t.schedule?.repeat), schedule: t.schedule || null, nextRun: t.enabled === false ? null : num(t.nextRun) || null, enabled: t.enabled !== false, canToggle: t.schedule?.type !== 'at' });
     }
     for (const r of t.runs || []) {
       const endedAt = num(r?.endedAt);
       if (!endedAt || r.kind === 'watch' || r.kind === 'judge') continue; // (a watched page's checks are not runs)
       const startedAt = num(r.startedAt);
-      recent.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), status: str(r.status, 30) || 'done', startedAt, endedAt, durationMs: startedAt ? Math.max(0, endedAt - startedAt) : 0, preview: clip(r.summary), cost: r.cost ?? null });
+      const trigger = eventTrigger((t.history || []).find((h) => num(h?.startedAt) === startedAt)?.trigger);
+      recent.push({ kind: 'task', id: t.id, title, routine: Boolean(t.routine), via: t.via || null, trigger, status: str(r.status, 30) || 'done', startedAt, endedAt, durationMs: startedAt ? Math.max(0, endedAt - startedAt) : 0, preview: clip(r.summary), cost: r.cost ?? null });
     }
   }
 

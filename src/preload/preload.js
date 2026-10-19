@@ -143,7 +143,7 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen), // screen: 'on' | 'off' (the camera button), else the words decide
+  ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts), // screen: 'on' | 'off' (the camera button), else the words decide; opts: [plan mode] { plan } or { approvedPlan }
   dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id), // the screenshot chip's x
   // Files attached to a message (renderer/chat-core.js): kept by main until it is sent, named to the AI by ref only; and the
   // "Choose file…" card's picker. See features/upload-files.js.
@@ -256,6 +256,8 @@ contextBridge.exposeInMainWorld('assistant', {
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
     saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
     routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
+    routineWebhookKey: (id) => ipcRenderer.invoke('routines:webhook-key', id), // a new key for a routine's web link, shown once
+
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),
@@ -318,6 +320,8 @@ contextBridge.exposeInMainWorld('skillsApi', {
   context: (options) => ipcRenderer.invoke('skills:context', options),
   prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
   draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token), // the cards under a reply (Settings → Skills → "Offer to save and improve skills")
+  offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
   onChanged: on('skills:changed'),
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });

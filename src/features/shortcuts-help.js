@@ -47,6 +47,7 @@ const SECTIONS = [
       ['shortcuts.bookmarkPage', ['mod+d']],
       ['shortcuts.bookmarkAllTabs', ['mod+shift+d']],
       ['shortcuts.bookmarks', ['mod+shift+o']],
+      ['shortcuts.saveForLater', ['mod+shift+y']],
       ['shortcuts.openFile', ['mod+o']],
       ['shortcuts.findFiles', ['mod+shift+f']],
       ['shortcuts.clearData', [{ mac: 'mod+shift+backspace' }, { other: 'mod+shift+delete' }]],
@@ -78,7 +79,7 @@ const SECTIONS = [
       ['shortcuts.askFromAddress', ['alt+enter']],
       ['shortcuts.sendNow', ['mod+enter']],
       ['shortcuts.meetingHelper', ['mod+shift+e']],
-      ['shortcuts.missionControl', ['mod+shift+y']], // lumen://tasks (features/mission-control.js)
+      ['shortcuts.missionControl', ['mod+shift+x']], // lumen://tasks (features/mission-control.js)
       ['shortcuts.dictate', ['mod+shift+space']], // [dictation] in the chat box only (renderer/dictation.js)
     ],
   },

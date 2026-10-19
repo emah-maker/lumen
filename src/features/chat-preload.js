@@ -20,7 +20,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen),
+    ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts),
     dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
     uploads: {
       stash: (file) => ipcRenderer.invoke('uploads:stash', file),
@@ -125,6 +125,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     context: (options) => ipcRenderer.invoke('skills:context', options),
     prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
     draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+    offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token),
+    offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
     onChanged: on('skills:changed'),
   });
   contextBridge.exposeInMainWorld('lumenExtras', {

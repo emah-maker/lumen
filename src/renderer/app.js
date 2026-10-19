@@ -110,6 +110,7 @@ const PAGE_ICONS = {
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
   tasks: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>', // lumen://tasks
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
   // A tab that shows a file with no icon of its own (tab.fileKind: features/file-tabs.js iconKind): a page with a folded corner, marked by what the file is.
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',

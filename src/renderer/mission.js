@@ -23,6 +23,8 @@ const when = (time) => {
   return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
 const kindText = (item) => t(item.kind === 'task' && item.routine ? 'mission.kind.routine' : `mission.kind.${item.kind}`);
+// Where a task came from and what started a routine's run, when it was not the user here or the clock: Telegram, its web link, new email.
+const originText = (item) => [item.via ? t(`mission.via.${item.via}`) : '', item.trigger ? t(`mission.trigger.${item.trigger}`) : ''].filter(Boolean).join(' · ');
 const statusText = (s) => t(`tasks.status.${s}`);
 const costText = (cost) => (typeof cost === 'string' ? cost : typeof cost === 'number' && cost > 0 ? `~$${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(2)}` : ''); // (a task's own words, or a past run's dollars)
 
@@ -48,7 +50,7 @@ function needsCard(c) {
   const actions = c.choices.map((choice) => button(c, 'answer', label[choice] || choice, { choice }, choice === 'allow' || choice === 'once'));
   actions.push(button(c, 'goto', t('mission.goto')));
   const card = el('div', { className: 'card', role: 'group' },
-    el('span', { className: 'who', textContent: `${kindText(c)} · ${c.who}` }),
+    el('span', { className: 'who', textContent: [kindText(c), originText(c), c.who].filter(Boolean).join(' · ') }),
     el('p', { className: 'what', textContent: what }),
     c.detail ? el('span', { className: 'detail', textContent: c.detail }) : null,
     c.choices.length ? null : el('span', { className: 'detail', textContent: t('mission.answerThere') }),
@@ -58,7 +60,7 @@ function needsCard(c) {
 }
 
 function runningRow(r) {
-  const bits = [statusText(r.status), r.startedAt ? duration(Date.now() - r.startedAt) : '', costText(r.cost), r.step].filter(Boolean);
+  const bits = [statusText(r.status), originText(r), r.startedAt ? duration(Date.now() - r.startedAt) : '', costText(r.cost), r.step].filter(Boolean);
   const actions = [r.canStop ? button(r, 'stop', t('mission.stop')) : null, button(r, 'goto', t('mission.goto'))];
   return el('div', { className: 'row' },
     el('div', { className: 'main' },
@@ -69,7 +71,7 @@ function runningRow(r) {
 }
 
 function scheduledRow(s) {
-  const detail = s.enabled ? (s.nextRun ? t('mission.next', { time: when(s.nextRun) }) : '') : t('mission.off');
+  const detail = !s.enabled ? t('mission.off') : s.on ? t(`mission.on.${s.on}`) : s.nextRun ? t('mission.next', { time: when(s.nextRun) }) : '';
   return el('div', { className: 'row' },
     el('div', { className: 'main' },
       el('span', { className: 'kind', textContent: kindText(s) }),
@@ -81,7 +83,7 @@ function scheduledRow(s) {
 }
 
 function recentRow(r) {
-  const bits = [statusText(r.status), r.durationMs ? duration(r.durationMs) : '', costText(r.cost), when(r.endedAt)].filter(Boolean);
+  const bits = [statusText(r.status), originText(r), r.durationMs ? duration(r.durationMs) : '', costText(r.cost), when(r.endedAt)].filter(Boolean);
   return el('div', {},
     el('div', { className: 'row' },
       el('div', { className: 'main' },

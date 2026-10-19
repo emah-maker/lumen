@@ -109,6 +109,20 @@ const src = (...p) => fs.readFileSync(path.join(__dirname, '..', 'src', ...p), '
   const rt = pv.create();
   check('command: zoomIn / zoomOut / zoomReset / find reach the viewer', ['zoomIn', 'zoomOut', 'zoomReset', 'find'].every((n) => rt.command(cmdTab, n) === true) && ran.length === 4, String(ran.length));
   check('command: not on another page, and never an expression', rt.command({ ...cmdTab, getURL: () => 'https://a.test/' }, 'zoomIn') === false && rt.command(cmdTab, 'x();y') === false && rt.command(cmdTab, '') === false);
+  // A PDF pdf.js could not open goes to Chrome viewer in place of the viewer's entry, and is then left there (no loop back to the viewer).
+  const pdfAddr = 'https://a.test/files/notes.pdf';
+  const removed = []; const loaded = [];
+  const failTab = { isDestroyed: () => false, getURL: () => pv.viewerUrl(pdfAddr + '#page=2'), loadURL: (u) => { loaded.push(u); return Promise.resolve(); }, navigationHistory: { getActiveIndex: () => 3, getEntryAtIndex: () => ({ url: pv.viewerUrl(pdfAddr + '#page=2') }), removeEntryAtIndex: (i) => removed.push(i) } };
+  const rt2 = pv.create();
+  check('fallback: an unopenable PDF loads its own address (Chrome viewer) and drops the viewer entry', rt2.fallback(failTab) === pdfAddr + '#page=2' && loaded[0] === pdfAddr + '#page=2' && (await new Promise((r) => setImmediate(r)), removed[0] === 3), J({ loaded, removed }));
+  check('fallback: that PDF is kept in Chrome viewer for the tab (with or without a fragment), others still route', rt2.keptInChrome(failTab, pdfAddr) && rt2.keptInChrome(failTab, pdfAddr + '#page=9') && !rt2.keptInChrome(failTab, 'https://a.test/other.pdf') && !rt2.keptInChrome(cmdTab, pdfAddr));
+  check('fallback: nothing on a page that is not the viewer', rt2.fallback({ ...failTab, getURL: () => 'https://a.test/' }) === null && rt2.fallback(null) === null);
+  const viewerJs = src('renderer', 'pdfviewer.js');
+  check('viewer page: a failed open (not a password, not missing) asks for Chrome viewer and logs the real error', viewerJs.includes('window.lumenPdfHost?.openInChrome') && viewerJs.includes("console.warn('pdf: could not open'") && main.includes("ipcMain.on('pdf:fallback'") && src('preload', 'permissions-preload.js').includes("openInChrome: (why) => ipcRenderer.send('pdf:fallback'"));
+  // A body the server compressed comes back decoded: its length and ranges no longer fit, so they are not passed on.
+  const gz = pv.createHandler({ netFetchFor: () => async () => new Response('%PDF-1.7 whole', { status: 200, headers: { 'content-encoding': 'gzip', 'content-length': '5', 'accept-ranges': 'bytes' } }) });
+  const gzRes = await gz(new Request(pv.dataUrl(pdfAddr), { headers: { 'sec-fetch-site': 'same-origin' } }), {});
+  check('data: a compressed upstream body is passed on without its encoded length or ranges', gzRes.status === 200 && !gzRes.headers.get('content-length') && gzRes.headers.get('accept-ranges') === 'none' && (await gzRes.text()) === '%PDF-1.7 whole', J([...gzRes.headers]));
   const agent = src('ai', 'agent.js');
   check('AI: read_pdf reads the PDF behind the viewer address, list_tabs and the approval card show its address, per-site AI off follows it', /pdfViewer\.pdfUrlOf\(wc\.getURL\(\)\)/.test(agent) && /taskTabUrl\(\) \{ try \{ const u = .*pdfViewer\.pdfUrlOf\(u\) \|\| u/.test(agent) && /const url = pdfViewer\.pdfUrlOf\(raw\) \|\| raw/.test(agent) && /aiOff: \(url\) => aiSites\.isOff\(pdfViewer\.pdfUrlOf\(url\) \|\| url\)/.test(main));
 

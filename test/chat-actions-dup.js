@@ -2,6 +2,8 @@
 // thinking or streaming has no Regenerate / Retry buttons; a finished one has exactly one of each, below its text and clear of
 // the thinking row; a chat reopened mid-run (its history ends on your message) does not keep the "reply stopped" row that
 // holds those buttons; a handoff retry ("Trying another way...") does not double them. Run with LUMEN_TEST_BACKGROUND=1.
+// [plan mode] Also: with the Plan chip on, the request offers propose_plan, the plan comes back as a card with Run plan / Edit /
+// Keep planning, and Run plan sends the approved plan as a normal message with exactly its sites allowed for the chat.
 // LUMEN_ACTIONS_SHOTS=<dir> saves a screenshot of the page at each stage.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -25,9 +27,13 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.waitForSelector('.tab');
   await app.evaluate(() => {
     const fake = global.__fake = { n: 0, gate: null };
-    global.__agent.getClient = () => ({ beta: { messages: { stream: () => {
-      const text = `Reply ${++fake.n}.`;
-      const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: 'end_turn', content: [{ type: 'text', text }], usage: { input_tokens: 1000, output_tokens: 200 } };
+    global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
+      fake.tools = (params?.tools || []).map((t) => t.name); // [plan mode]
+      const proposing = fake.proposeNext && fake.tools.includes('propose_plan');
+      fake.proposeNext = false;
+      const text = proposing ? 'Here is my plan.' : `Reply ${++fake.n}.`;
+      const content = proposing ? [{ type: 'text', text }, { type: 'tool_use', id: `toolu_plan${fake.n}`, name: 'propose_plan', input: { title: 'Check out', steps: ['Open the cart', 'Pay'], sites: ['shop.example.com'], risky_steps: [2] } }] : [{ type: 'text', text }];
+      const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: proposing ? 'tool_use' : 'end_turn', content, usage: { input_tokens: 1000, output_tokens: 200 } };
       return {
         async *[Symbol.asyncIterator]() { if (fake.gate) await fake.gate; yield { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'pondering' } }; yield { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text } }; },
         finalMessage: async () => message,
@@ -112,6 +118,21 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('(c) after a handoff retry there is still exactly one Regenerate and one Retry', s.regen === 1 && s.retry === 1 && s.only === 0, JSON.stringify(s));
   check('(d) and they are clear of the text, the thinking row and each other', s.overlaps.length === 0, JSON.stringify(s.overlaps));
   await app.evaluate(() => global.__fake.release());
+
+  // ---- [plan mode] the Plan chip, a proposed plan's card, and Run plan
+  await waitFor(async () => !(await state()).running);
+  await app.evaluate(() => { global.__fake.gate = null; global.__fake.proposeNext = true; });
+  await inPage(`(() => { document.getElementById('plan-chip').click(); const p = document.getElementById('prompt'); p.value = 'buy what is in my cart'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
+  const card = await waitFor(async () => { const c = await inPage(`(() => { const c = document.querySelector('#messages .plan-card'); return c && !document.getElementById('send').classList.contains('stop') ? { steps: c.querySelectorAll('.plan-steps li').length, risky: c.querySelectorAll('[data-risky]').length, sites: c.querySelector('.plan-sites').textContent, buttons: [...c.querySelectorAll('.plan-actions button')].map((b) => b.textContent) } : null; })()`); return c && typeof c === 'object' ? c : null; }, 20000);
+  const offered = await app.evaluate(() => global.__fake.tools || []);
+  check('(plan) with the Plan chip on, the request offers propose_plan', offered.includes('propose_plan'), JSON.stringify(offered));
+  check('(plan) the proposed plan shows as a card: steps, risky step, sites, Run plan / Edit / Keep planning', card && card.steps === 2 && card.risky === 1 && /shop\.example\.com/.test(card.sites) && card.buttons.join('|') === 'Run plan|Edit|Keep planning', JSON.stringify(card));
+  await shot('5-plan');
+  await inPage(`document.querySelector('#messages .plan-card .plan-run').click()`);
+  await waitFor(async () => /Run this plan/.test(await inPage("[...document.querySelectorAll('#messages .msg.user')].pop()?.textContent || ''")) && !(await state()).running, 20000);
+  const after = await app.evaluate(() => ({ tools: global.__fake.tools || [], hosts: [...global.__agent.approvedHosts] }));
+  check('(plan) Run plan sends the plan as a normal message (no propose_plan offered) and allows exactly its site, for clicking and typing only', !after.tools.includes('propose_plan') && after.hosts.join() === 'interact:shop.example.com', JSON.stringify(after));
+  check('(plan) the chip is off for the chat after Run plan', (await inPage(`document.getElementById('plan-chip').getAttribute('aria-pressed')`)) === 'false');
 
   await app.close();
   console.log(failures ? `\n${failures} failed` : '\nALL PASSED');

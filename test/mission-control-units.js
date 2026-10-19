@@ -78,6 +78,20 @@ let many = [];
 for (let i = 0; i < 80; i++) many = M.noteFinished(many, { chatId: `c${i}`, endedAt: i + 1 });
 check('the finished-chat list keeps the newest 50', many.length === 50 && many[0].chatId === 'c79' && many[49].chatId === 'c30');
 
+// ---- where tasks came from: Telegram, a routine's web link or new email
+const s5 = M.aggregate({ now: NOW, tasks: [
+  task({ id: 'tg', title: 'From the phone', via: 'telegram', status: 'waiting-approval', runningSince: NOW - MIN, pending: [{ approvalId: 3, host: 'a.com', action: 'open' }] }),
+  task({ id: 'hook', title: 'Hooked', routine: {}, schedule: { type: 'routine', repeat: 'webhook' }, status: 'running', runningSince: NOW - MIN, trigger: 'webhook',
+    runs: [{ startedAt: NOW - 9 * MIN, endedAt: NOW - 8 * MIN, status: 'done', summary: 'ok', kind: 'run' }, { startedAt: NOW - 30 * MIN, endedAt: NOW - 29 * MIN, status: 'done', summary: 'clock', kind: 'run' }],
+    history: [{ startedAt: NOW - 9 * MIN, trigger: 'email' }, { startedAt: NOW - 30 * MIN, trigger: 'schedule' }] }),
+  task({ id: 'mail', title: 'Mail', routine: {}, schedule: { type: 'routine', repeat: 'email', minutes: 10 } }),
+] });
+check('a Telegram task and its card say where they came from', s5.needsYou[0].via === 'telegram' && s5.running.find((r) => r.id === 'tg').via === 'telegram');
+check('a routine started by its web link says so while it runs', s5.running.find((r) => r.id === 'hook').trigger === 'webhook');
+check('Recent names the trigger of each run, and none for the clock', s5.recent.find((r) => r.preview === 'ok').trigger === 'email' && s5.recent.find((r) => r.preview === 'clock').trigger === null);
+check('Scheduled says a routine runs on its web link or on new email', s5.scheduled.find((x) => x.id === 'hook').on === 'webhook' && s5.scheduled.find((x) => x.id === 'mail').on === 'email', JSON.stringify(s5.scheduled));
+check('an event routine has no clock time to show', s5.scheduled.find((x) => x.id === 'mail').nextRun === null);
+
 // ---- the page's requests
 const ok = (r) => M.cleanRequest(r);
 check('answer a chat card', JSON.stringify(ok({ op: 'answer', kind: 'chat', id: 'c1', approvalId: 7, choice: 'allow' })) === '{"op":"answer","kind":"chat","id":"c1","approvalId":7,"choice":"allow"}');
