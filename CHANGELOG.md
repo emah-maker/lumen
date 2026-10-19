@@ -4,6 +4,11 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.51 (2026-10-18)
+
+- **Homework diagrams work.** Asking for a picture of "each problem", or for free-body diagrams, circuits, flowcharts or trusses, no longer goes straight to an image engine with only your words: the chat model reads the page, PDF, files and chat, finds each problem and draws one exact labelled SVG diagram per problem with short steps. Illustrative pictures still go to image generation; if an image engine declines a diagram, Lumen says so in one line and draws it instead.
+- **PowerPoint EMF/WMF pictures convert on slow PCs too.** A slow PowerShell start no longer times out the whole conversion: pictures that finished are kept, and the limit is now 30 s with no progress (60 s at most).
+
 ## 0.5.50 (2026-10-18)
 
 - **The music-reactive home screen is now a living background, and it no longer touches your music.** Settings → Appearance → New tab page → "Music-reactive home screen": a field of about 180 soft dots in your accent's tones drifts behind the widgets, bursts outward on the beat, swells with the bass, swirls with the mids and twinkles with the highs, with a glow that flows behind them. It reacts to the sound your PC is playing (Windows' output loopback: any program, the Spotify desktop app included), a copy of what already plays, so nothing is muted, delayed or stuttering when you switch tabs; it listens only while the new tab is on screen. Text keeps its contrast (the picture is cut to a tenth behind the content column and capped in opacity), nothing flashes more than three times a second, Visual effects: Light and software drawing get 40 dots at 15 frames a second, and Reduce motion and Performance mode turn it off. A Preview button in Settings shows it with a made-up beat. Windows only for now. Only loudness numbers are used: nothing is recorded, stored or sent, and the microphone is never used.
