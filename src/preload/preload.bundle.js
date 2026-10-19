@@ -691,6 +691,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
 
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') },
   onHistory: on('agent:history'),
 
   openFullPage: () => ipcRenderer.send('chat:open-page'),
