@@ -9905,9 +9905,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     const askExtra = { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, fromPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } };
     // [plan mode] askOpts.plan: this message only reads and proposes a plan (agent.js planCheck). askOpts.approvedPlan: the user pressed
-    // Run plan, so exactly the plan's sites join this chat's approved sites (the set an "Allow" card adds to); buy/send/submit cards still ask.
+    // Run plan, so the plan's sites join this chat's approved sites for clicking and typing only ("interact:<host>", ai/plan-mode.js
+    // approvedKeys): opening or sending to one after reading a page, and scripts there, still ask.
     const planOpts = askOpts && typeof askOpts === 'object' ? askOpts : {};
-    if (planOpts.approvedPlan) for (const host of planModeLib.approvedHosts(planOpts.approvedPlan)) hosts.add(host);
+    if (planOpts.approvedPlan) for (const key of planModeLib.approvedKeys(planOpts.approvedPlan)) hosts.add(key);
     else if (planOpts.plan === true) askExtra.plan = true;
     // [working-on chip] A chat-page run takes a tab at once only when the request is about the page the user is looking at; any other
     // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).

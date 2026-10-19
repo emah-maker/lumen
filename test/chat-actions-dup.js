@@ -131,7 +131,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await inPage(`document.querySelector('#messages .plan-card .plan-run').click()`);
   await waitFor(async () => /Run this plan/.test(await inPage("[...document.querySelectorAll('#messages .msg.user')].pop()?.textContent || ''")) && !(await state()).running, 20000);
   const after = await app.evaluate(() => ({ tools: global.__fake.tools || [], hosts: [...global.__agent.approvedHosts] }));
-  check('(plan) Run plan sends the plan as a normal message (no propose_plan offered) and allows exactly its site', !after.tools.includes('propose_plan') && after.hosts.join() === 'shop.example.com', JSON.stringify(after));
+  check('(plan) Run plan sends the plan as a normal message (no propose_plan offered) and allows exactly its site, for clicking and typing only', !after.tools.includes('propose_plan') && after.hosts.join() === 'interact:shop.example.com', JSON.stringify(after));
   check('(plan) the chip is off for the chat after Run plan', (await inPage(`document.getElementById('plan-chip').getAttribute('aria-pressed')`)) === 'false');
 
   await app.close();

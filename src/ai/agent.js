@@ -4218,10 +4218,13 @@ ${prompt}` : prompt), historyImages: [] };
       } catch { return ''; }
     };
     // A script OK is kept as "script:<host>" next to the host itself (it covers interacting too).
+    // [plan mode] A site from a plan the user ran is kept as "interact:<host>": it covers clicking and typing there only, never opening
+    // or sending to it from a chat that has read a page (askOpen checks the plain host) nor a script (planMode.interactKey).
     const keyOf = (host) => (scripted ? `script:${host}` : host);
+    const planned = (host) => !scripted && hosts.has(planMode.interactKey(host));
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
-      if (!host || hosts.has(keyOf(host))) return;
+      if (!host || hosts.has(keyOf(host)) || planned(host)) return;
       const ok = this.autoAllows(gate) ? true : await this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who });
       if (!ok) throw new Error(scripted
         ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
@@ -4229,7 +4232,7 @@ ${prompt}` : prompt), historyImages: [] };
       hosts.add(host);
       hosts.add(keyOf(host));
     }
-    if (!hosts.has(keyOf(siteOf()))) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
+    if (!hosts.has(keyOf(siteOf())) && !planned(siteOf())) throw new Error('The page kept changing to other sites while waiting for approval. Check the page and try again.');
   }
 
   // ensureAllowed for a tool another tool runs (each batch step), with the outer call's context.

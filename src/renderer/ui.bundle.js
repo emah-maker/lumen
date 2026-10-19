@@ -13618,6 +13618,12 @@ $('agent-stop')?.addEventListener('click', () => {
   }
 
 
+
+
+  const interactKey = (host) => `interact:${host}`;
+  const approvedKeys = (plan) => approvedHosts(plan).map(interactKey);
+
+
   function approvedText(plan, words = {}) {
     const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
     const lines = [w.head, '', plan.title, ...plan.steps.map((s, i) => `${i + 1}. ${s}${plan.risky_steps.includes(i + 1) ? ' (risky)' : ''}`)];
@@ -13650,7 +13656,7 @@ $('agent-stop')?.addEventListener('click', () => {
     },
   };
 
-  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, approvedText, planCommand };
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, interactKey, approvedKeys, approvedText, planCommand };
   if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
   else globalThis.planMode = planApi;
 }
@@ -13750,7 +13756,7 @@ $('agent-stop')?.addEventListener('click', () => {
     };
     drawSites(p.sites);
     sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
-    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan allows these sites for this chat. Anything that buys, sends, posts or submits still asks you first.'));
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan lets the AI click and type on these sites in this chat. Opening or sending to a site after reading a page still asks, and so does anything that buys, sends, posts or submits.'));
     const problem = el('div', 'plan-problem');
     problem.setAttribute('role', 'alert');
     problem.hidden = true;

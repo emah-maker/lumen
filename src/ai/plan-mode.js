@@ -68,6 +68,12 @@
     return checked.plan ? checked.plan.sites : [];
   }
 
+  // What Run plan adds to the chat's approved sites for each of them: "interact:<host>", which agent.js ensureAllowed takes as an OK to
+  // click and type there and nothing more. The plan's sites come from a model that has read pages, so a page could have put one there:
+  // opening it, sending a search or a read to it (the "open <host>" card, keyed by the plain host) and scripts there still ask.
+  const interactKey = (host) => `interact:${host}`;
+  const approvedKeys = (plan) => approvedHosts(plan).map(interactKey);
+
   // The message Run plan sends: the plan as the user approved it (edits included), as plain text the chat shows and the model reads.
   function approvedText(plan, words = {}) {
     const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
@@ -101,7 +107,7 @@
     },
   };
 
-  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, approvedText, planCommand };
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, interactKey, approvedKeys, approvedText, planCommand };
   if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
   else globalThis.planMode = planApi; // (the renderer: globalThis is the window)
 }

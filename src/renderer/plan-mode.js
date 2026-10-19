@@ -92,7 +92,7 @@
     };
     drawSites(p.sites);
     sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
-    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan allows these sites for this chat. Anything that buys, sends, posts or submits still asks you first.'));
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan lets the AI click and type on these sites in this chat. Opening or sending to a site after reading a page still asks, and so does anything that buys, sends, posts or submits.'));
     const problem = el('div', 'plan-problem');
     problem.setAttribute('role', 'alert');
     problem.hidden = true;
