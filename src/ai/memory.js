@@ -165,6 +165,7 @@ function createMemoryStore({ file, encrypt, decrypt, available = () => true, now
   }
   function clear() {
     const all = load();
+    if (readOnly) throw new Error('Memory can\'t be read on this computer right now, so it can\'t be cleared. Use Start over in Settings to set the file aside.');
     const n = all.length;
     if (!n) return 0;
     const kept = all.splice(0);
@@ -219,7 +220,17 @@ function createMemoryStore({ file, encrypt, decrypt, available = () => true, now
     return `${head}\n\n${sections.join('\n\n')}${left ? `\n\n(${left} older entr${left === 1 ? 'y' : 'ies'} left out to keep this short: use the memory tool's search.)` : ''}\n${tail}`;
   }
   // Forget what is cached (the keychain went away, or the file changed elsewhere): read again on next use.
-  function reset() { entries = null; readOnly = false; undos.clear(); }
+  // `discard` (Settings' "Start over", offered only while the file can't be read): the file is set aside as memory.json.bad
+  // (kept, never deleted) and memory starts empty. A file that is merely locked right now is left alone.
+  function reset({ discard = false } = {}) {
+    if (discard) load();
+    if (discard && readOnly && fs.existsSync(file)) {
+      let unreadable = true;
+      try { const outer = JSON.parse(fs.readFileSync(file, 'utf8')); JSON.parse(outer.enc ? decrypt(outer.enc) : '{}'); unreadable = false; } catch (err) { if (err?.code && err.code !== 'ENOENT') unreadable = false; } // (EBUSY / EACCES: locked, not damaged)
+      if (unreadable) fs.renameSync(file, `${file}.bad`);
+    }
+    entries = null; readOnly = false; undos.clear();
+  }
 
   return { list, add, update, forget, clear, undo, search, block, reset, get readOnly() { load(); return readOnly; } };
 }

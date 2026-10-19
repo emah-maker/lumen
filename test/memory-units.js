@@ -62,6 +62,20 @@ const make = (file, extra = {}) => M.createMemoryStore({ file, ...keychain, now:
     const r = make(other);
     check('keychain: a file another machine\'s keys wrote reads as empty and read-only', r.list().length === 0 && r.readOnly === true);
     check('keychain: ...and is never written over', throws(() => r.add({ text: 'new fact' }), /can't be read/) && fs.readFileSync(other, 'utf8').includes('Z:not ours'));
+    check('keychain: Delete all says why it can\'t, rather than doing nothing', throws(() => r.clear(), /Start over/) && fs.existsSync(other));
+    r.reset();
+    check('keychain: a plain reset reads it again and it is still unreadable (nothing moved)', r.readOnly === true && fs.existsSync(other) && !fs.existsSync(`${other}.bad`));
+    r.reset({ discard: true });
+    check('keychain: Start over sets the file aside as .bad (kept) and memory works again', !fs.existsSync(other) && fs.readFileSync(`${other}.bad`, 'utf8').includes('Z:not ours') && r.readOnly === false && r.add({ text: 'fresh start' }).entry.text === 'fresh start' && make(other).list().length === 1);
+    const damaged = path.join(dir, 'damaged.json');
+    fs.writeFileSync(damaged, '{"enc": "K:half');
+    const d = make(damaged);
+    check('keychain: a damaged (unparseable) file is read-only too, and Start over recovers it', d.readOnly === true && (d.reset({ discard: true }), d.readOnly === false) && fs.existsSync(`${damaged}.bad`));
+    const good = path.join(dir, 'good.json');
+    const g = make(good);
+    g.add({ text: 'keep me' });
+    g.reset({ discard: true });
+    check('keychain: Start over never sets aside a file that reads fine', fs.existsSync(good) && !fs.existsSync(`${good}.bad`) && g.list().length === 1);
   }
   // ---- secrets
   {
@@ -166,18 +180,34 @@ const make = (file, extra = {}) => M.createMemoryStore({ file, ...keychain, now:
     agent.askApproval = async (host, _emit, _signal, opts) => { asked = { host, ...opts }; return false; };
     const gate = { emit: () => {}, signal: new AbortController().signal, who: 'Claude', external: false, noAsk: false, run: {} };
     await agent.allowMemory({ action: 'add', text: 'Likes jazz' }, gate);
-    check('approval: a save in a run that has not read anything with a tool goes straight through', asked === null);
+    check('approval: a save in a chat that holds no outside content goes straight through', asked === null);
     let denied = '';
-    try { await agent.allowMemory({ action: 'add', text: 'Likes jazz' }, { ...gate, run: { readByTool: true } }); } catch (err) { denied = err.message; }
-    check('approval: after a page was read with a tool, a save asks on a card (no Always, not answered by Bypass) and No refuses it', asked && /wants to remember: “Likes jazz”/.test(asked.title) && asked.noAlways && asked.noBypass && /did not allow/.test(denied));
+    const read = { chat: Object.assign([], { settings: {} }) };
+    agent.markTainted(read, {}); // a page read with a tool
+    try { await agent.allowMemory({ action: 'add', text: 'Likes jazz' }, { ...gate, run: read }); } catch (err) { denied = err.message; }
+    check('approval: after a page was read, a save asks on a card (no Always, not answered by Bypass) and No refuses it', asked && /wants to remember: “Likes jazz”/.test(asked.title) && asked.noAlways && asked.noBypass && /did not allow/.test(denied));
+    // The page text attached to the message (agent.js runTaskOnce: markTainted() with no tool call) counts too, and so do
+    // attached files and emails, helpers' answers, web_search, connectors and apps: they all go through markTainted.
+    for (const [what, opts] of [['the page text attached to a message', {}], ['text from another app', { app: true }]]) {
+      asked = null;
+      const chatRun = { chat: Object.assign([], { settings: {} }), tabId: 1 };
+      agent.markTainted(chatRun, opts);
+      let refused = '';
+      try { await agent.allowMemory({ action: 'add', text: 'Prefers aisle seats' }, { ...gate, run: chatRun }); } catch (err) { refused = err.message; }
+      check(`approval: ${what}, with no tool read, still asks before a save`, asked && /Prefers aisle seats/.test(asked.title) && /did not allow/.test(refused));
+    }
     asked = null;
-    await agent.allowMemory({ action: 'search', query: 'x' }, { ...gate, run: { readByTool: true } });
+    agent.askApproval = async (host, _emit, _signal, opts) => { asked = { host, ...opts }; return true; };
+    await agent.allowMemory({ action: 'forget', id: 'abcd1234' }, { ...gate, run: read });
+    check('approval: forget asks too once the chat holds outside content, and Allow lets it through', asked && /wants to forget/.test(asked.title));
+    asked = null;
+    await agent.allowMemory({ action: 'search', query: 'x' }, { ...gate, run: read });
     check('approval: reading memory never asks', asked === null);
     let ext = '';
     try { await agent.allowMemory({ action: 'search' }, { ...gate, external: true }); } catch (err) { ext = err.message; }
     check('approval: an outside agent can\'t use the tool at all', /Unknown tool/.test(ext));
     let unattended = '';
-    try { await agent.allowMemory({ action: 'add', text: 'x y' }, { ...gate, noAsk: true, run: { readByTool: true } }); } catch (err) { unattended = err.message; }
+    try { await agent.allowMemory({ action: 'add', text: 'x y' }, { ...gate, noAsk: true, run: read }); } catch (err) { unattended = err.message; }
     check('approval: with nobody to ask, a save after reading is refused', /nobody is here/.test(unattended));
     check('agent: the step label comes from memory.js', (await agent.describeStep('memory', { action: 'add', text: 'Likes jazz' })) === 'Remembering “Likes jazz”');
     agentLib.setMemorySource(null);
@@ -190,6 +220,8 @@ const make = (file, extra = {}) => M.createMemoryStore({ file, ...keychain, now:
     check('wiring: Settings\' calls are settings:* (the settings page and the UI only) and in its preload', /ipcMain\.handle\('settings:memory-delete-all'/.test(main) && /settings:memory-delete-all/.test(src('src/preload/settings-preload.js')));
     check('wiring: a temporary chat starts with noMemory; background tasks too', /temporaryChats\.has\(chatId\) \? \{ noMemory: true \}/.test(main) && /noMemory: true/.test(src('src/features/background-runner.js')));
     check('wiring: the store is encrypted with safeStorage in the profile', /memory\.json'\)[\s\S]{0,200}safeStorage\.encryptString/.test(main));
+    check('wiring: allowMemory asks on the chat\'s taint (the same one the destination cards use), not on a tool-read flag', /WRITES\.has\(String\(input\?\.action \|\| ''\)\) \|\| !taintHolder\(run\)\?\.tainted\) return;/.test(agentSrc) && !/readByTool/.test(agentSrc));
+    check('wiring: Settings has Start over for a file that can\'t be read', /settings:memory-start-over/.test(main) && /settings:memory-start-over/.test(src('src/preload/settings-preload.js')) && /memory-start-over/.test(src('src/renderer/settings.bundle.js')));
     check('wiring: memory writes are checked in ensureAllowed, the tool runs through memoryTool', /if \(name === 'memory'\) await this\.allowMemory/.test(agentSrc) && /case 'memory': return this\.memoryTool\(input\)/.test(agentSrc));
     const backend = src('src/settings/settings-backend.js');
     check('settings: aiMemory is off by default, aiMemoryChatSearch on', /aiMemory: false,/.test(backend) && /aiMemoryChatSearch: true,/.test(backend));

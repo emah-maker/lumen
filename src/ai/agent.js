@@ -1021,7 +1021,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'memory', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'memory']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -4038,11 +4038,12 @@ ${prompt}` : prompt), historyImages: [] };
     try { return Boolean(m.on()) && !m.isTemporary?.(messages); } catch { return false; }
   }
 
-  // A save is the user's own information: after the AI has read a page, a file or a past chat with a tool in this run, the
-  // text could come from that content, so the user sees it on a card first (no Always; Bypass and Auto-allow don't answer it).
+  // A save is the user's own information: once the chat holds content from elsewhere (the page text attached to a message, a page,
+  // file, email, connector, app or past chat the AI read, a helper's answer), the text could come from that content, so the user
+  // sees it on a card first (no Always; Bypass and Auto-allow don't answer it). The same taint the destination cards use.
   async allowMemory(input, { emit, signal, who, external, noAsk, run }) {
     if (external) throw new Error('Unknown tool: memory');
-    if (!memoryLib.WRITES.has(String(input?.action || '')) || !run?.readByTool) return;
+    if (!memoryLib.WRITES.has(String(input?.action || '')) || !taintHolder(run)?.tainted) return;
     if (noAsk) throw new Error('Saving to memory after reading content needs the user to say yes, and nobody is here to ask.');
     const text = input.action === 'forget' ? `forget [${String(input.id || '').slice(0, 12)}]` : memoryLib.clean(input.text);
     const title = input.action === 'forget' ? `${who} wants to forget a saved memory` : `${who} wants to remember: ${quote(text, 160)}`;
@@ -4062,7 +4063,7 @@ ${prompt}` : prompt), historyImages: [] };
       chatId,
       searchChats: m.chatSearch?.() ? (q) => m.searchChats(q, chatId) : null,
       changed: (ev) => { try { emit({ type: 'memory', ...ev }); } catch { /* a closed view: the change stands */ } },
-      read: () => { this.markTainted(scope); scope.readByTool = true; }, // past chats hold what pages said, too
+      read: () => this.markTainted(scope), // past chats hold what pages said, too
     });
   }
   // ---- [/memory]
@@ -4259,7 +4260,6 @@ ${prompt}` : prompt), historyImages: [] };
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // app text taints web actions, but not the desktop tool's own acting calls on the same app (src/desktop tracks its sources)
     if (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
-    if (run && (READING_TOOLS.has(name) || ((name === 'navigate' || name === 'open_tab') && input?.read !== false))) run.readByTool = true; // [memory] this run read content with a tool: a save to memory asks (allowMemory)
     if (!ACTING_TOOLS.has(name)) return;
     const siteOf = () => {
       const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();

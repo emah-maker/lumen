@@ -88,6 +88,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       update: call('settings:memory-update'),
       remove: call('settings:memory-delete'),
       removeAll: call('settings:memory-delete-all'),
+      startOver: call('settings:memory-start-over'),
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
