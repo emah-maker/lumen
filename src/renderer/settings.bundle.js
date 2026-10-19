@@ -1716,6 +1716,195 @@ async function buildUpdates(card) {
   card.append(r, auto, notes, notesRow);
 }
 ;
+// ---- settings-sync.js
+
+
+
+
+
+const SYNC_KINDS = ['bookmarks', 'history', 'chats', 'widgets', 'settings'];
+const syncKindText = (kind) => ({
+  bookmarks: [tr('settings.sync.kind.bookmarks', 'Bookmarks'), tr('settings.sync.kind.bookmarksDesc', 'Your bookmarks and their folders.')],
+  history: [tr('settings.sync.kind.history', 'History'), tr('settings.sync.kind.historyDesc', 'The pages you visited, for the address bar’s suggestions and the History page.')],
+  chats: [tr('settings.sync.kind.chats', 'Chats'), tr('settings.sync.kind.chatsDesc', 'Your saved AI chats, with their titles, pins and archive. A chat that is open on a computer waits until you leave it.')],
+  widgets: [tr('settings.sync.kind.widgets', 'Home page widgets'), tr('settings.sync.kind.widgetsDesc', 'Which cards are on the new tab page, and where. Sign-ins and keys of a card stay on the computer.')],
+  settings: [tr('settings.sync.kind.settings', 'Settings'), tr('settings.sync.kind.settingsDesc', 'Look and feel and everyday choices: theme, accent color, search engine, privacy switches. Never API keys, sign-ins, folders or what the AI may do.')],
+}[kind]);
+
+function syncAgo(ms) {
+  if (!ms) return tr('settings.sync.never', 'not yet');
+  const sec = Math.round((Date.now() - ms) / 1000);
+  if (sec < 45) return tr('settings.sync.justNow', 'just now');
+  try {
+    const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    if (sec < 3600) return rtf.format(-Math.round(sec / 60), 'minute');
+    if (sec < 86400) return rtf.format(-Math.round(sec / 3600), 'hour');
+    return rtf.format(-Math.round(sec / 86400), 'day');
+  } catch { return new Date(ms).toLocaleString(); }
+}
+
+
+function syncError(err) {
+  const code = err?.code || 'error';
+  const known = {
+    'no-folder': tr('settings.sync.err.noFolder', 'That folder isn’t there. Choose it again, or check that your cloud drive is running.'),
+    'not-writable': tr('settings.sync.err.notWritable', 'Lumen can’t write in that folder.'),
+    'bad-folder': tr('settings.sync.err.badFolder', 'Choose a folder outside Lumen’s own data.'),
+    'wrong-passphrase': tr('settings.sync.err.wrongPassphrase', 'That isn’t the passphrase this folder was set up with. Use the one you chose on your first computer.'),
+    'short-passphrase': tr('settings.sync.err.shortPassphrase', 'Use a passphrase of at least 8 characters.'),
+    'bad-meta': tr('settings.sync.err.badMeta', 'The setup file in that folder is damaged. Move the “Lumen Sync” folder away to start again.'),
+    newer: tr('settings.sync.err.newer', 'That folder was set up by a newer Lumen. Update Lumen first.'),
+    'no-keychain': tr('settings.sync.err.noKeychain', 'This computer has no secure storage to keep the passphrase in, so sync can’t be turned on.'),
+    'no-passphrase': tr('settings.sync.err.noPassphrase', 'The passphrase isn’t saved on this computer any more. Enter it again below.'),
+    'passwords-off': tr('settings.sync.err.passwordsOff', 'Turn on Save passwords first (Privacy and security), then come back to this switch.'),
+  }[code];
+  return known || err?.message || tr('settings.sync.err.other', 'Something went wrong.');
+}
+
+async function buildSync(card) {
+  const slot = card.at('sync');
+  const box = h('div', { class: 'sync-box', id: 'sync-box' });
+  slot.append(box);
+  let state = await S.sync.state();
+  let formOpen = false;
+  let busy = false;
+  const draft = { folder: '', kinds: Object.fromEntries(SYNC_KINDS.map((k) => [k, true])), passwords: false };
+
+  const switchRow = (id, label, desc, checked, onchange, disabled = false) => {
+    const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
+    input.checked = checked;
+    input.disabled = disabled;
+    input.addEventListener('change', () => onchange(input));
+    const el = row(label, desc, input);
+    el.classList.add('sub-row');
+    el.querySelector('.label').addEventListener('click', () => { if (!input.disabled) input.click(); });
+    return el;
+  };
+
+
+  const passwordsRow = (checked, onchange, id) => {
+    const canUse = state.passwordsOn;
+    const el = switchRow(id, tr('settings.sync.passwords', 'Also sync saved passwords'),
+      tr('settings.sync.passwordsDesc', 'Off unless you turn it on. Passwords go into the folder only inside the passphrase-encrypted files, like everything else, but anyone who gets your passphrase and your cloud drive could read them, so use a strong passphrase. A password changed on one computer replaces the one on the others.'),
+      checked && canUse, onchange, !canUse);
+    if (!canUse) el.querySelector('.text').append(h('span', { class: 'note', text: tr('settings.sync.passwordsNeedOn', 'Turn on Save passwords (Privacy and security) to use this.') }));
+    return el;
+  };
+
+
+  function setupForm({ again } = {}) {
+    const folder = h('input', { type: 'text', class: 'grow', id: 'sync-folder-path', readonly: true, placeholder: tr('settings.sync.noFolder', 'No folder chosen'), 'aria-label': tr('settings.sync.folder', 'Folder'), value: draft.folder || state.path || '' });
+    const pick = h('button', { id: 'sync-pick', type: 'button', text: tr('settings.sync.choose', 'Choose folder…'), onclick: async () => { const p = await S.sync.pick().catch(() => null); if (p) { draft.folder = p; folder.value = p; } } });
+    const pass = h('input', { type: 'password', class: 'grow', id: 'sync-passphrase', autocomplete: 'off', spellcheck: 'false', placeholder: tr('settings.sync.passphrasePlaceholder', 'Sync passphrase'), 'aria-label': tr('settings.sync.passphrase', 'Sync passphrase') });
+    const note = status('sync-form-status');
+    note.setAttribute('role', 'status');
+    const go = h('button', { id: 'sync-enable', type: 'button', class: 'primary', text: again ? tr('settings.sync.save', 'Save passphrase') : tr('settings.sync.turnOn', 'Turn on sync') });
+    go.addEventListener('click', async () => {
+      const folderPath = draft.folder || state.path;
+      if (!folderPath) { flash(note, tr('settings.sync.err.noFolder', 'That folder isn’t there. Choose it again, or check that your cloud drive is running.'), 'err'); return; }
+      go.disabled = true;
+      flash(note, tr('settings.sync.working', 'Connecting to the folder…'), '');
+      const r = await S.sync.enable({ folder: folderPath, passphrase: pass.value, kinds: draft.kinds, passwords: draft.passwords }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      go.disabled = false;
+      if (!r.ok) { flash(note, syncError(r), 'err'); return; }
+      pass.value = '';
+      formOpen = false;
+      state = r.state;
+      render();
+    });
+    const cancel = h('button', { id: 'sync-cancel', type: 'button', text: tr('settings.sync.cancel', 'Cancel'), onclick: () => { formOpen = false; render(); } });
+    const wrap = h('div', { class: 'stack sync-form', id: 'sync-form' },
+      h('div', { class: 'controls' }, folder, pick),
+      h('div', { class: 'controls' }, pass),
+      h('span', { class: 'note', text: tr('settings.sync.passphraseHelp', 'Use the same passphrase on every computer. Lumen keeps it on this computer only (in your system’s secure storage) and can’t recover it for you. At least 8 characters when you set up a new folder.') }),
+      again ? null : h('div', { class: 'sync-kinds' },
+        ...SYNC_KINDS.map((k) => switchRow(`sync-new-${k}`, syncKindText(k)[0], syncKindText(k)[1], draft.kinds[k], (i) => { draft.kinds[k] = i.checked; })),
+        passwordsRow(draft.passwords, (i) => { draft.passwords = i.checked; }, 'sync-new-passwords')),
+      h('div', { class: 'controls' }, go, again ? null : cancel), note);
+    return wrap;
+  }
+
+
+  function onView() {
+    const parts = [];
+    const err = state.error;
+    const statusNote = status('sync-status');
+    statusNote.setAttribute('role', 'status');
+    if (err) flash(statusNote, syncError(err), 'err');
+    else if (state.running) flash(statusNote, tr('settings.sync.syncing', 'Syncing…'), '');
+    else flash(statusNote, tr('settings.sync.last', 'Last synced {when}.', { when: syncAgo(state.lastSynced) }), state.lastSynced ? 'ok' : '');
+    const others = (state.devices || []).filter((d) => !d.self);
+    const devices = h('span', { class: 'note', id: 'sync-devices', text: others.length
+      ? tr('settings.sync.devices', 'Other computers seen in this folder: {names}.', { names: others.map((d) => `${d.name || tr('settings.sync.unnamed', 'a computer')} (${syncAgo(d.seen)})`).join(', ') })
+      : tr('settings.sync.noDevices', 'No other computer has used this folder yet.') });
+    const extra = [];
+    if (state.damaged) extra.push(h('span', { class: 'note warn', id: 'sync-damaged', text: tr(state.damaged === 1 ? 'settings.sync.damagedOne' : 'settings.sync.damagedMany', state.damaged === 1 ? '1 file in the folder couldn’t be read (damaged, still downloading, or made with another passphrase). Lumen skips it.' : '{n} files in the folder couldn’t be read (damaged, still downloading, or made with another passphrase). Lumen skips them.', { n: state.damaged }) }));
+    if (state.newer) extra.push(h('span', { class: 'note warn', text: tr('settings.sync.newerFiles', 'Some files were written by a newer Lumen and are skipped until you update.') }));
+    for (const s of state.skipped || []) {
+      const text = s.reason === 'mass-delete'
+        ? tr('settings.sync.massDelete', 'Many {what} went missing at once, so Lumen did not copy those deletions to your other computers. If you meant that, press Sync now.', { what: s.provider })
+        : tr('settings.sync.skipped', '{what} could not be read just now and was left alone.', { what: s.provider });
+      extra.push(h('span', { class: 'note warn', text }));
+    }
+    const nowBtn = h('button', { id: 'sync-now', type: 'button', class: 'primary', text: tr('settings.sync.now', 'Sync now'), disabled: state.running || busy || err?.code === 'no-passphrase' });
+    nowBtn.addEventListener('click', async () => {
+      busy = true; nowBtn.disabled = true; flash(statusNote, tr('settings.sync.syncing', 'Syncing…'), '');
+      const r = await S.sync.now().catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      busy = false;
+      if (r.state) state = r.state; else if (!r.ok) flash(statusNote, syncError(r), 'err');
+      render();
+    });
+    const off = armedButton(tr('settings.sync.off', 'Turn off'), tr('settings.sync.offSure', 'Turn off? Click again'), async () => {
+      const r = await S.sync.off().catch(() => null);
+      if (r?.state) state = r.state; else state = await S.sync.state();
+      formOpen = false;
+      render();
+    }, 'danger', 'sync-off');
+    const head = row(tr('settings.sync.on', 'Sync is on'),
+      tr('settings.sync.onDesc', 'Folder: {path}', { path: state.folderName || state.path }),
+      nowBtn, off);
+    head.id = 'sync-head';
+    head.querySelector('.text').append(statusNote, devices, ...extra);
+    parts.push(head);
+    if (err?.code === 'no-passphrase') parts.push(setupForm({ again: true }));
+    parts.push(...SYNC_KINDS.map((k) => switchRow(`sync-kind-${k}`, syncKindText(k)[0], syncKindText(k)[1], state.kinds[k] !== false, async (input) => {
+      input.disabled = true;
+      const r = await S.sync.set({ kinds: { [k]: input.checked } }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      if (r.state) state = r.state; else { input.checked = !input.checked; flash(statusNote, syncError(r), 'err'); }
+      render();
+    })));
+    const pw = passwordsRow(state.passwords, async (input) => {
+      input.disabled = true;
+      const r = await S.sync.set({ passwords: input.checked }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      if (r.state) state = r.state; else { input.checked = !input.checked; flash(statusNote, syncError(r), 'err'); }
+      render();
+    }, 'sync-passwords');
+    parts.push(pw);
+    parts.push(h('div', { class: 'row sub-row sync-note' }, h('div', { class: 'text' }, h('span', { class: 'desc', text: tr('settings.sync.offHelp', 'Turning sync off stops this computer and forgets the passphrase here. Your data stays on every computer, and the files stay in the folder: delete the “Lumen Sync” folder yourself if you want them gone.') }))));
+    return parts;
+  }
+
+  function offView() {
+    const setup = h('button', { id: 'sync-setup', type: 'button', class: 'primary', text: tr('settings.sync.setup', 'Set up…'), onclick: () => { formOpen = !formOpen; render(); } });
+    const head = row(tr('settings.sync.title', 'Sync through a folder'),
+      tr('settings.sync.desc', 'Keep your bookmarks, history, chats, home page widgets and settings the same on your computers. Choose a folder that your own cloud drive (OneDrive, Dropbox, Google Drive, iCloud Drive) already syncs. Lumen has no server and no account: nothing leaves this computer except into that folder, and everything in it is encrypted with a passphrase only you know. Off by default.'),
+      setup);
+    head.id = 'sync-head';
+    withKeywords(head, 'sync syncing account devices phone cloud backup transfer move onedrive dropbox google drive icloud computers share');
+    if (!state.keychain) head.querySelector('.text').append(h('span', { class: 'note warn', id: 'sync-nokeychain', text: syncError({ code: 'no-keychain' }) }));
+    return [head, ...(formOpen ? [setupForm()] : [])];
+  }
+
+  function render() {
+    box.replaceChildren(...(state.on ? onView() : offView()));
+    for (const el of box.querySelectorAll('.row')) { if (!el.dataset.search) el.dataset.search = (el.textContent || '').toLowerCase(); }
+  }
+  render();
+  if (S.sync.onChanged) S.sync.onChanged(async () => { if (busy || document.activeElement?.id === 'sync-passphrase') return; state = await S.sync.state().catch(() => state); if (!(formOpen && !state.on)) render(); });
+
+  setInterval(() => { if (state.on && !busy && !document.hidden) S.sync.state().then((s) => { state = s; if (!box.querySelector('#sync-passphrase')) render(); }).catch(() => {}); }, 60000).unref?.();
+}
+;
 // ---- settings-unload.js
 
 
@@ -2189,6 +2378,141 @@ function buildExternalApps() {
     if (!appsBox.contains(document.activeElement)) drawApps();
   }, 2500);
   return root;
+}
+;
+// ---- settings-focus.js
+
+
+
+
+
+async function buildFocus(card) {
+  const F = window.lumenSettings.focus;
+  const DEFAULT_SITES = ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'];
+  let info = await F.get();
+  const lengths = [25, 45, 60, 90, 120, 180];
+  const lengthLabel = (m) => (m % 60 === 0 ? tr(m === 60 ? 'focus.dur.hour' : 'focus.dur.hours', m === 60 ? '1 hour' : '{n} hours', { n: m / 60 }) : tr('focus.dur.minutes', '{n} minutes', { n: m }));
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dayName = (d) => new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(2026, 0, 4 + d));
+  const timeName = (hhmm) => { const [hh, mm] = hhmm.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  const daysName = (days) => {
+    const key = days.join(',');
+    return key === '1,2,3,4,5' ? tr('focus.days.weekdays', 'Weekdays') : key === '0,1,2,3,4,5,6' ? tr('focus.days.every', 'Every day') : key === '0,6' ? tr('focus.days.weekends', 'Weekends') : days.map(dayName).join(', ');
+  };
+  const failText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const locked = () => Boolean(info.state.active);
+
+
+  const statusLine = h('span', { class: 'note', id: 'focus-status', role: 'status' });
+  const lengthSelect = h('select', { id: 'focus-length', 'aria-label': tr('settings.focus.length', 'How long') }, lengths.map((m) => h('option', { value: String(m), text: lengthLabel(m) })));
+  lengthSelect.value = '60';
+  const startButton = h('button', { class: 'primary', id: 'focus-start', type: 'button', text: tr('settings.focus.start', 'Start'), onclick: async () => {
+    startButton.disabled = true;
+    try { await F.start(Number(lengthSelect.value)); await reload(); } catch (err) { flash(statusLine, failText(err), 'err'); }
+    startButton.disabled = false;
+  } });
+  const drawStatus = () => {
+    const s = info.state;
+    statusLine.className = 'note';
+    statusLine.textContent = s.active
+      ? tr(s.source === 'schedule' ? 'settings.focus.onSchedule' : 'settings.focus.on', s.source === 'schedule' ? 'On until {time} (a schedule). Change the lists when it ends.' : 'On until {time}. Change the lists when it ends.', { time: clock(s.until) })
+      : s.next ? tr('settings.focus.nextStart', 'Off. The next schedule starts {time}.', { time: `${dayName(new Date(s.next).getDay())} ${clock(s.next)}` }) : tr('settings.focus.off', 'Off. Nothing is blocked until you start it.');
+    startButton.disabled = s.active;
+    lengthSelect.disabled = s.active;
+  };
+
+
+  const siteList = h('div', { class: 'list', id: 'focus-sites' });
+  const siteInput = h('input', { type: 'text', class: 'grow', id: 'focus-site-add', placeholder: 'example.com', 'aria-label': tr('settings.focus.addSite', 'Site to block') });
+  const siteNote = h('span', { class: 'note', id: 'focus-sites-note', role: 'status' });
+  const setSites = async (list) => {
+    try { st = await S.set('focusSites', list); siteNote.textContent = ''; } catch (err) { flash(siteNote, failText(err), 'err'); }
+    drawSites();
+  };
+  const sites = () => st.prefs.focusSites || [];
+  function drawSites() {
+    const list = sites();
+    siteList.replaceChildren(...(list.length ? list.map((host) => h('div', { class: 'item', 'data-site': host },
+      h('span', { class: 'grow', text: host }),
+      h('button', { text: tr('settings.focus.remove', 'Remove'), disabled: locked(), onclick: () => setSites(list.filter((x) => x !== host)) })))
+      : [h('span', { class: 'note', text: tr('settings.focus.noSites', 'No sites: focus mode blocks nothing.') })]));
+    siteInput.disabled = locked();
+    addSiteButton.disabled = locked();
+    resetSites.disabled = locked();
+  }
+  const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
+  const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
+  siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addSite(); } });
+  const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });
+
+
+  const scheduleList = h('div', { class: 'list', id: 'focus-schedules' });
+  const scheduleNote = h('span', { class: 'note', id: 'focus-schedules-note', role: 'status' });
+  const schedules = () => st.prefs.focusSchedules || [];
+  const setSchedules = async (list) => {
+    try { st = await S.set('focusSchedules', list); scheduleNote.textContent = ''; } catch (err) { flash(scheduleNote, failText(err), 'err'); }
+    await reload();
+  };
+  function drawSchedules() {
+    const list = schedules();
+    scheduleList.replaceChildren(...(list.length ? list.map((s) => {
+      const on = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `${daysName(s.days)} ${timeName(s.from)}`, checked: s.on !== false, disabled: locked(), onchange: (e) => setSchedules(list.map((x) => (x.id === s.id ? { ...x, on: e.target.checked } : x))) });
+      return h('div', { class: 'item', 'data-schedule': s.id },
+        h('span', { class: 'grow', text: `${daysName(s.days)}, ${timeName(s.from)} – ${timeName(s.to)}` }), on,
+        h('button', { text: tr('settings.focus.remove', 'Remove'), disabled: locked(), onclick: () => setSchedules(list.filter((x) => x.id !== s.id)) }));
+    }) : [h('span', { class: 'note', text: tr('settings.focus.noSchedules', 'No schedules.') })]));
+    for (const el of scheduleForm.querySelectorAll('input, button')) el.disabled = locked();
+  }
+  const phraseInput = h('input', { type: 'text', class: 'grow', id: 'focus-phrase', placeholder: tr('settings.focus.phrasePlaceholder', 'weekdays 7–9 pm'), 'aria-label': tr('settings.focus.phrase', 'Schedule in words') });
+  const addPhrase = async () => {
+    const text = phraseInput.value.trim();
+    if (!text) return;
+    const parsed = await F.phrase(text).catch(() => null);
+    if (!parsed) { flash(scheduleNote, tr('settings.focus.phraseBad', 'Try something like “weekdays 7–9 pm” or “mon, wed 4:30–6 pm”.'), 'err'); return; }
+    phraseInput.value = '';
+    setSchedules([...schedules(), { ...parsed, on: true }]);
+  };
+  phraseInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPhrase(); } });
+  const dayBoxes = [1, 2, 3, 4, 5, 6, 0].map((d) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: String(d), 'data-day': String(d), checked: d >= 1 && d <= 5 }), dayName(d)));
+  const fromInput = h('input', { type: 'time', id: 'focus-from', value: '19:00', 'aria-label': tr('settings.focus.from', 'From') });
+  const toInput = h('input', { type: 'time', id: 'focus-to', value: '21:00', 'aria-label': tr('settings.focus.to', 'Until') });
+  const scheduleForm = h('div', { class: 'controls start', id: 'focus-schedule-form' },
+    ...dayBoxes, fromInput, h('span', { class: 'note', text: tr('settings.focus.until', 'until') }), toInput,
+    h('button', { id: 'focus-schedule-add', type: 'button', text: tr('settings.focus.addSchedule', 'Add schedule'), onclick: () => {
+      const days = dayBoxes.map((l) => l.querySelector('input')).filter((i) => i.checked).map((i) => Number(i.value));
+      if (!days.length || !fromInput.value || !toInput.value || fromInput.value === toInput.value) { flash(scheduleNote, tr('settings.focus.scheduleBad', 'Pick at least one day and two different times.'), 'err'); return; }
+      setSchedules([...schedules(), { days, from: fromInput.value, to: toInput.value, on: true }]);
+    } }));
+
+
+  const logList = h('div', { class: 'list', id: 'focus-log' });
+  function drawLog() {
+    const rows = info.log.filter((e) => e && e.type).slice(0, 12).map((e) => {
+      const when = new Date(e.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      const text = e.type === 'start' ? tr('settings.focus.log.start', 'Started, {n} min', { n: e.minutes })
+        : e.type === 'allow' ? tr('settings.focus.log.allow', 'Allowed {site} for {n} min', { site: e.site, n: e.minutes })
+          : e.how === 'early' ? tr('settings.focus.log.early', 'Ended early after {n} min', { n: e.minutes }) : tr('settings.focus.log.end', 'Ended');
+      return h('div', { class: 'item', 'data-type': e.type }, h('span', { class: 'grow', text: text }), h('span', { class: 'note', text: when }));
+    });
+    logList.replaceChildren(...(rows.length ? rows : [h('span', { class: 'note', text: tr('settings.focus.log.none', 'Nothing yet.') })]));
+  }
+
+  async function reload() {
+    info = await F.get();
+    drawStatus(); drawSites(); drawSchedules(); drawLog();
+  }
+
+  card.append(
+    withKeywords(stackRow(tr('settings.focus.title', 'Focus mode'), tr('settings.focus.desc', 'For a homework session: sites that pull you away are blocked until the timer ends. Start it here, from the toolbar button, or by typing “focus for 90 minutes” in the chat. Nothing is blocked until you start it.'),
+      h('div', { class: 'controls start' }, lengthSelect, startButton), statusLine), 'focus homework study distraction block timer pomodoro youtube reddit'),
+    withKeywords(stackRow(tr('settings.focus.sites', 'Blocked sites'), tr('settings.focus.sitesDesc', 'These sites, and their subdomains, show a calm page instead while focus mode is on. “I need this for school” opens one for 10 minutes and is noted in the log below.'),
+      siteList, h('div', { class: 'controls start' }, siteInput, addSiteButton, resetSites), siteNote), 'focus block sites list youtube reddit tiktok instagram twitter facebook twitch netflix'),
+    withKeywords(stackRow(tr('settings.focus.schedules', 'Schedules'), tr('settings.focus.schedulesDesc', 'Focus mode starts by itself at these times and ends when they do. Type one in words, or pick the days and times.'),
+      scheduleList, h('div', { class: 'controls start' }, phraseInput, h('button', { id: 'focus-phrase-add', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addPhrase })), scheduleForm, scheduleNote), 'focus schedule recurring weekdays evening study time'),
+    stackRow(tr('settings.focus.log', 'Focus log'), tr('settings.focus.logDesc', 'When focus mode started and ended, and every time you used “I need this for school”. It stays on this computer.'), logList),
+  );
+  drawStatus(); drawSites(); drawSchedules(); drawLog();
+  setInterval(() => { F.get().then((next) => { if (JSON.stringify(next.state) !== JSON.stringify(info.state) || next.log.length !== info.log.length) { info = next; drawStatus(); drawSites(); drawSchedules(); drawLog(); } }).catch(() => {}); }, 10000);
 }
 ;
 // ---- settings-connectors.js
@@ -3153,7 +3477,7 @@ async function buildRoutines(card) {
 
 
 
-const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter'];
+const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter', 'local'];
 const PROVIDER_CLI = { claudecode: true, grokbuild: true, codex: true, antigravity: true };
 
 const MENU_PREF = { claudecode: ['claudeCodeSidebar', true], grokbuild: ['grokSidebar', false], codex: ['codexSidebar', true], antigravity: ['antigravitySidebar', false] };
@@ -3253,6 +3577,63 @@ function providerUsageRows(u, refresh) {
 
 
 
+
+async function localRows() {
+  const L = S.ai.local;
+  let state = await L.get();
+  const flavor = h('select', { id: 'local-flavor', 'aria-label': tr('settings.local.server', 'Server') }, h('option', { value: 'ollama', text: 'Ollama' }), h('option', { value: 'lmstudio', text: 'LM Studio' }));
+  const url = h('input', { type: 'text', id: 'local-url', class: 'grow', autocomplete: 'off', spellcheck: 'false', 'aria-label': tr('settings.local.address', 'Server address') });
+  const sw = h('input', { type: 'checkbox', class: 'switch', id: 'local-enabled', role: 'switch', 'aria-label': tr('settings.local.use', 'Use local models') });
+  const note = h('span', { class: 'note', id: 'local-status', role: 'status' });
+  const ask = h('span', { id: 'local-confirm-box' });
+  const list = h('div', { class: 'list', id: 'local-models' });
+  const toolsText = (m) => (m.tools === true ? tr('settings.local.tools', 'Can use tools') : m.tools === false ? tr('settings.local.chatOnly', 'Chat only') : tr('settings.local.toolsUnknown', 'Tools not known yet'));
+  const draw = () => {
+    flavor.value = state.flavor;
+    url.value = state.url;
+    url.placeholder = state.defaults[state.flavor];
+    sw.checked = state.enabled;
+    list.replaceChildren(...(state.models.length
+      ? state.models.map((m) => h('div', { class: 'item', 'data-model': m.id }, h('span', { class: 'grow', text: m.id }), h('span', { class: 'note', text: toolsText(m) })))
+      : [h('span', { class: 'note', text: tr('settings.local.none', 'No models yet. Start the server, then press Detect.') })]));
+  };
+  const entered = () => ({ enabled: sw.checked, flavor: flavor.value, url: url.value.trim() });
+  const run = async (kind, extra = {}) => {
+    ask.replaceChildren();
+    flash(note, kind === 'detect' ? tr('settings.local.looking', 'Looking for models…') : '', '');
+    let r;
+    try { r = await L[kind]({ ...entered(), ...extra }); } catch (err) { r = { ok: false, error: String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }; }
+    if (r.needsConfirm) {
+      flash(note, r.error, 'warn');
+      ask.replaceChildren(h('button', { id: 'local-confirm', text: tr('settings.local.confirm', 'Use this address anyway'), onclick: () => run(kind, { confirmRemote: true }) }));
+      return;
+    }
+    if (!r.ok) { flash(note, r.error, 'err'); return; }
+    state = { ...state, enabled: r.enabled, flavor: r.flavor, url: r.url, confirmedHost: r.confirmedHost, models: r.models };
+    draw();
+    flash(note, kind === 'detect' ? (r.note || tr('settings.local.found', 'Found {n} on {server}.', { n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }), server: state.names[state.flavor] })) : tr('settings.local.saved', 'Saved.'), 'ok');
+  };
+  sw.addEventListener('change', () => run('save'));
+  url.addEventListener('keydown', (e) => { if (e.key === 'Enter') run('save'); });
+  url.addEventListener('change', () => run('save'));
+  flavor.addEventListener('change', () => {
+    const other = state.defaults[state.flavor];
+    if (!url.value.trim() || url.value.trim() === other) url.value = state.defaults[flavor.value];
+    state = { ...state, flavor: flavor.value };
+    run('save');
+  });
+  draw();
+  const detect = h('button', { id: 'local-detect', text: tr('settings.local.detect', 'Detect'), onclick: () => run('detect') });
+  return [
+    row(tr('settings.local.use', 'Use local models'), tr('settings.local.useDesc', 'Chat with models that run on this computer through Ollama or LM Studio. No key, and nothing leaves this computer.'), sw),
+    row(tr('settings.local.server', 'Server'), tr('settings.local.serverDesc', 'The program that runs your models.'), flavor),
+    row(tr('settings.local.address', 'Server address'), tr('settings.local.addressDesc', 'Ollama is usually http://127.0.0.1:11434 and LM Studio http://127.0.0.1:1234/v1. Only addresses on this computer work unless you confirm another.'), url, detect),
+    stackRow(tr('settings.local.models', 'Installed models'), tr('settings.local.modelsDesc', 'Models that can use tools can click and type in your tabs. The others answer as plain chat: browser actions need a tool-capable model.'), list, h('div', { class: 'controls' }, note, ask)),
+  ];
+}
+
+
+
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
   const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
@@ -3297,7 +3678,7 @@ async function buildProviders(page) {
   };
   for (const key of PROVIDER_ORDER) {
     page.group(providerName(key));
-    page.append(...rowsFor(key));
+    page.append(...(key === 'local' ? await localRows() : rowsFor(key)));
   }
 }
 ;
@@ -3662,7 +4043,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -3690,14 +4071,14 @@ const CATEGORY_ICONS = {
 
 
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map();
@@ -4240,7 +4621,6 @@ async function buildAi(card) {
 function buildImport(card) {
 
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -4305,7 +4685,11 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
 
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
@@ -6196,7 +6580,7 @@ async function buildDownloads(card) {
 
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -6915,7 +7299,7 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -6923,7 +7307,7 @@ async function init() {
 
 
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
     search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'],
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
