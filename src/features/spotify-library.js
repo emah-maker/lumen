@@ -22,7 +22,7 @@ const KINDS = ['playlist', 'album', 'liked', 'artist'];
 const LIB_STRINGS = {
   filter: 'Filter your library', filterLabel: 'Filter your library', chips: 'Show', chipPlaylists: 'Playlists', chipAlbums: 'Albums', chipArtists: 'Artists',
   liked: 'Liked Songs', likedSub: '{n} songs', songs: '{n} songs', open: 'Open {title}', loading: 'Loading…', loadingMore: 'Loading more…', retry: 'Try again',
-  empty: 'Nothing here yet.', noMatch: 'Nothing in your library matches that.', failed: 'Couldn’t read this part of your library.', scope: 'Reconnect Spotify to show your library.', reconnectButton: 'Reconnect Spotify',
+  empty: 'Nothing here yet.', noMatch: 'Nothing in your library matches that.', failed: 'Couldn’t read this part of your library.', failedSignedOut: 'Spotify is signed out in Lumen, so this list couldn’t be read. Sign in to Spotify and try again.', failedChanged: 'Spotify changed its page, so Lumen couldn’t read this list. Try again later.', failedSlow: 'Spotify was too slow to show this list. Try again.', failedForbidden: 'Spotify doesn’t share these songs with apps. You can still play the list.', failedMissing: 'Spotify says this list isn’t available.', failedRate: 'Spotify asked Lumen to slow down. Try again in a minute.', failedOffline: 'Lumen couldn’t reach Spotify. Check your connection and try again.', failedBig: 'Spotify’s answer for this list was too big to read.', scope: 'Reconnect Spotify to show your library.', reconnectButton: 'Reconnect Spotify',
   back: 'Back', backLabel: 'Back to your library', play: 'Play', shuffle: 'Shuffle', playLabel: 'Play {title}', shuffleLabel: 'Shuffle {title}', by: 'By {title}',
   trackPlay: 'Play {title} from {list}', trackQueue: 'Add {title} to the queue', queue: 'Queue', albums: 'Albums', topSongs: 'Top songs', noTop: 'Spotify no longer shares an artist’s top songs with apps.',
   truncated: 'Showing the first {n} songs.', header: '#', playsFrom: 'Plays from {title}', artist: 'Artist', album: 'Album', playlist: 'Playlist',
@@ -31,7 +31,8 @@ const LIB_STRINGS = {
 function make(h) {
   const { ask, keepImages, wakeAndRetry, bare } = h;
   const flat = (req) => [req[0], req[1], req[2]];
-  const failed = (res) => (SV.scopeError(res.status, res.body) ? 'scope' : res.error?.why === 'big' ? 'big' : 'page');
+  const failed = (res) => SV.failureWhy(res) || 'page';
+  const say = (what, detail) => String(`${what}${detail ? ` (${detail})` : ''}`).slice(0, 200);
 
   const lib = (ui) => (ui.lib2 ||= { lists: {}, likedTotal: null, userId: '', details: {}, open: '', at: 0 });
   const listOf = (ui, kind) => (lib(ui).lists[kind] ||= { items: [], next: '', done: false, loading: false, ok: true, why: '', total: null, at: 0 });
@@ -52,7 +53,13 @@ function make(h) {
     const res = await ask(call, ui, req, WHAT[kind]).catch((err) => ({ ok: false, status: 0, body: '', error: err }));
     l.loading = false;
     l.at = ctx.now();
-    if (!res.ok) { l.ok = false; l.why = failed(res); if (!more) { l.items = []; l.done = true; } ctx.onPart?.(); return; }
+    if (!res.ok) {
+      l.ok = false; l.why = failed(res);
+      console.warn(`[spotify] library ${kind}: ${say(`the Web API answered ${res.status || 'nothing'}`, res.error?.message)}: ${l.why}`);
+      if (!more) { l.items = []; l.done = true; }
+      ctx.onPart?.();
+      return;
+    }
     l.ok = true;
     l.why = '';
     const rows = keepImages(ui, NORM[kind](res.body));
@@ -98,30 +105,68 @@ function make(h) {
     if (d.loading) return;
     if (more) { if (d.done) return; } else if (d.at && d.ok && !ctx.force && ctx.now() - d.at < DETAIL_TTL_MS) { ctx.onPart?.(); return; }
     d.loading = true;
-    if (!more) { d.items = []; d.offset = 0; d.done = false; d.sections = null; }
+    if (!more) { d.items = []; d.offset = 0; d.done = false; d.sections = null; d.truncated = false; d.viaPage = false; }
     ctx.onPart?.();
-    if (kind === 'artist') await loadArtist(call, ui, d, ctx);
-    else {
-      const req = kind === 'playlist' ? PLAYER.playlistPage(id, d.offset) : kind === 'album' ? PLAYER.albumPage(id, d.offset) : PLAYER.likedPage(d.offset);
-      const res = await ask(call, ui, req, kind === 'liked' ? 'liked' : 'library').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
-      d.at = ctx.now();
-      if (!res.ok) { d.ok = false; d.why = failed(res); d.done = true; }
-      else {
-        const page = SV.normalizeTrackPage(kind, res.body, d.offset, d.cover);
-        d.ok = true;
-        d.why = '';
-        d.total = page.total;
-        if (kind === 'liked') s.likedTotal = page.total;
-        const rows = keepImages(ui, page.items);
-        for (const r of rows) { const t = ui.libThumbs?.get(`${r.kind}:${r.id}`); if (t) r.thumb = t; }
-        d.items = d.items.concat(rows);
-        d.offset += page.raw;
-        d.done = page.raw === 0 || d.offset >= page.total || d.items.length >= MAX_ROWS;
-        d.truncated = d.items.length >= MAX_ROWS && d.offset < page.total;
-      }
+    try {
+      if (kind === 'artist') await loadArtist(call, ui, d, ctx);
+      else await loadSongs(call, ui, d, ctx, more);
+    } catch (err) { // (never leave the card "loading" for good: a Try again must be able to ask again)
+      d.at = ctx.now(); d.ok = d.items.length > 0; d.why = d.ok ? '' : 'page'; d.done = true;
+      console.warn(`[spotify] library ${kind} ${id}: ${say('reading its songs failed', err && err.message)}`);
     }
     d.loading = false;
     ctx.onPart?.();
+  }
+  // What the player's own page says about why a list could not be read -> the card's cause: signedOut (Spotify's page asks to log in), changed (its controls or rows are not where
+  // they were), slow (nothing showed in time), missing (no such list), else changed.
+  const PAGE_WHY = { signedOut: 'signedOut', noPlayer: 'changed', noPanel: 'changed', collapsed: 'changed', page: 'changed', timeout: 'slow', missing: 'missing' };
+  // The songs of an opened playlist, album or Liked Songs: a page at a time from the Web API. A playlist the Web API will not give (403 / 404: the account follows it but does not
+  // own it) is read from the player's own page of it instead, when the card has one (ctx.pageRead), whole in one go.
+  async function loadSongs(call, ui, d, ctx, more) {
+    const { kind, id } = d;
+    const s = lib(ui);
+    const req = kind === 'playlist' ? PLAYER.playlistPage(id, d.offset) : kind === 'album' ? PLAYER.albumPage(id, d.offset) : PLAYER.likedPage(d.offset);
+    const res = await ask(call, ui, req, kind === 'liked' ? 'liked' : 'library').catch((err) => ({ ok: false, status: 0, body: '', error: err }));
+    d.at = ctx.now();
+    let page = null;
+    let why = '';
+    let detail = '';
+    if (!res.ok) { why = failed(res); detail = say(`the Web API answered ${res.status || 'nothing'}`, res.error?.message); }
+    else {
+      page = SV.normalizeTrackPage(kind, res.body, d.offset, d.cover);
+      if (page.bad) { why = kind === 'playlist' ? 'forbidden' : 'page'; detail = 'the Web API answer was not a list of songs'; page = null; }
+    }
+    if (!page && kind === 'playlist' && !more && (why === 'forbidden' || why === 'missing') && typeof ctx.pageRead === 'function') {
+      console.warn(`[spotify] playlist ${id}: ${detail}; reading its songs from the player's page instead`);
+      const got = await Promise.resolve(ctx.pageRead('playlist', id)).catch((err) => ({ ok: false, why: 'page', detail: String((err && err.message) || err).slice(0, 120) }));
+      d.at = ctx.now();
+      if (got && got.ok) {
+        const items = (Array.isArray(got.items) ? got.items : []).filter((r) => r && SV.SAFE_ID.test(r.id || '')).map((r, i) => ({ id: r.id, kind: 'song', title: r.title, sub: r.sub || '', ms: r.ms || 0, ...(r.album ? { album: r.album } : {}), images: r.art ? [r.art] : [], pos: i }));
+        page = { total: d.count ?? items.length, raw: items.length, items, viaPage: true, partial: got.partial === true };
+        console.warn(`[spotify] playlist ${id}: read ${items.length} songs from the player's page${page.partial ? ' (not all: it was too slow)' : ''}`);
+      } else {
+        why = PAGE_WHY[got && got.why] || 'changed';
+        detail = say(`${detail}; the player's page said ${(got && got.why) || 'nothing'}`, got && got.detail);
+      }
+    }
+    if (!page) {
+      console.warn(`[spotify] library ${kind} ${id}: couldn't read its songs: ${why} (${detail})`);
+      if (more && d.items.length) { d.ok = true; d.why = ''; d.done = true; d.truncated = true; return; } // (a later page failed: the songs read so far stay)
+      d.ok = false; d.why = why; d.detail = detail; d.done = true;
+      return;
+    }
+    d.ok = true;
+    d.why = '';
+    d.detail = '';
+    d.total = page.total;
+    if (kind === 'liked') s.likedTotal = page.total;
+    const rows = keepImages(ui, page.items);
+    for (const r of rows) { const t = ui.libThumbs?.get(`${r.kind}:${r.id}`); if (t) r.thumb = t; }
+    d.items = d.items.concat(rows);
+    if (page.viaPage) { d.viaPage = true; d.done = true; d.truncated = page.partial === true; return; }
+    d.offset += page.raw;
+    d.done = page.raw === 0 || d.offset >= page.total || d.items.length >= MAX_ROWS;
+    d.truncated = d.items.length >= MAX_ROWS && d.offset < page.total;
   }
   // An artist: the top songs (Spotify removed that endpoint for new apps in February 2026: then there are none and the card says so) and the albums.
   async function loadArtist(call, ui, d, ctx) {
@@ -166,7 +211,7 @@ function make(h) {
       const uid = await userId(call, ui);
       make = uid ? () => PLAYER.playLiked(uid, hasPos ? a.pos : 0) : null;
     } else if (a.kind === 'artist') make = () => PLAYER.playContext('artist', a.item);
-    else make = () => PLAYER.playContext(a.kind, a.item, hasPos ? a.pos : undefined);
+    else make = () => PLAYER.playContext(a.kind, a.item, hasPos ? a.pos : undefined, hasPos && d && d.viaPage && row ? row.id : undefined);
     let res = make ? await call(...flat(make())) : { ok: false, status: 400, body: '' };
     if (!res.ok && noDevice(res) && make) {
       res = await wakeAndRetry(call, make);

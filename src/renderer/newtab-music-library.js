@@ -69,6 +69,9 @@
     const raw = d.libText && typeof d.libText[key] === 'string' ? d.libText[key] : '';
     return vars ? raw.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : raw;
   };
+  // Why a list could not be read (features/spotify-library.js: failed / the player's page), in words; anything unknown is the general line.
+  const FAIL_KEY = { signedOut: 'failedSignedOut', changed: 'failedChanged', slow: 'failedSlow', forbidden: 'failedForbidden', missing: 'failedMissing', rate: 'failedRate', offline: 'failedOffline', big: 'failedBig' };
+  const failText = (d, why) => say(d, FAIL_KEY[why] || 'failed') || say(d, 'failed');
   const clean = (list, thumbOk, kindOk) => (Array.isArray(list) ? list : []).filter((i) => i && typeof i.id === 'string' && SAFE_ID.test(i.id) && typeof i.title === 'string' && i.title && kindOk(i.kind)).map((i) => ({
     id: i.id, kind: i.kind, title: i.title.slice(0, 120), sub: typeof i.sub === 'string' ? i.sub.slice(0, 120) : '', album: typeof i.album === 'string' ? i.album.slice(0, 120) : '',
     count: Number.isInteger(i.count) ? i.count : null, ms: Number.isFinite(i.ms) ? i.ms : 0, pos: Number.isInteger(i.pos) ? i.pos : -1, thumb: thumbOk(i.thumb) ? i.thumb : '' }));
@@ -185,12 +188,12 @@
       const showLiked = likedRow && (!q || likedRow.title.toLowerCase().includes(q));
       const rowsList = showLiked ? [likedRow, ...items] : items;
       const withPic = items.filter((i) => i.thumb).length;
-      const state = !lib.lists.playlists && !d.lib2 ? 'wait' : list.ok === false ? `err:${list.why}` : 'rows';
+      const state = !lib.lists.playlists && !d.lib2 ? 'wait' : list.ok === false ? (list.loading ? 'wait' : `err:${list.why}`) : 'rows'; // (Try again: "Loading…" while it asks, not the old failure)
       render([S.view, S.chip, q, state, rowsList.map((i) => i.id).join(), withPic, list.done, list.loading, lib.likedTotal, say(d, 'liked')], (box) => {
         if (state === 'wait') { note(box, say(d, 'loading')); return; }
         if (state.startsWith('err:')) {
           if (state === 'err:scope') note(box, say(d, 'scope'), say(d, 'reconnectButton'), () => act('reconnect'));
-          else note(box, say(d, 'failed'), say(d, 'retry'), () => act('elib', { arg: S.chip, force: '1' }));
+          else note(box, failText(d, list.why), say(d, 'retry'), () => act('elib', { arg: S.chip, force: '1' }));
           return;
         }
         if (!rowsList.length && list.done) { note(box, q ? say(d, 'noMatch') : say(d, 'empty')); return; }
@@ -239,7 +242,7 @@
     const title = o ? (o.kind === 'liked' ? say(d, 'liked') : o.title || (det && det.title) || '') : '';
     const total = det && Number.isInteger(det.total) ? det.total : o && Number.isInteger(o.count) ? o.count : null;
     const metaParts = [o && o.kind === 'playlist' && (det?.sub || o.sub) ? say(d, 'by', { title: det?.sub || o.sub }) : '', o && o.kind === 'album' ? (det?.sub || o.sub) : '', total !== null && o && o.kind !== 'artist' ? say(d, 'songs', { n: total }) : '', o && o.kind === 'artist' ? say(d, 'artist') : ''].filter(Boolean);
-    const state = !det ? 'wait' : det.ok === false ? `err:${det.why}` : 'rows';
+    const state = !det || (det.loading && !det.items.length && !det.sections) ? 'wait' : det.ok === false ? `err:${det.why}` : 'rows'; // (while its songs are being read, also on Try again: "Loading…", never the old failure or "Nothing here yet")
     render(['detail', o && o.kind, o && o.id, state, rows.map((r) => `${r.pos}${r.thumb ? 1 : 0}`).join(), sections ? [sections.top.length, sections.albums.length, sections.topOk, sections.top.map((r) => r.thumb ? 1 : 0).join(), sections.albums.map((r) => r.thumb ? 1 : 0).join()] : 0, det && det.done, det && det.loading, title, total, S.stack.length, det && det.truncated], (box) => {
       const back_ = el('button', 'lv-back', `‹ ${say(d, 'back')}`);
       back_.type = 'button';
@@ -266,7 +269,7 @@
       if (state === 'wait') { note(box, say(d, 'loading')); return; }
       if (state.startsWith('err:')) {
         if (state === 'err:scope') note(box, say(d, 'scope'), say(d, 'reconnectButton'), () => act('reconnect'));
-        else note(box, say(d, 'failed'), say(d, 'retry'), () => act('edetail', { kind: o.kind, arg: o.id, force: '1' }));
+        else note(box, failText(d, det.why), say(d, 'retry'), () => act('edetail', { kind: o.kind, arg: o.id, force: '1' }));
         return;
       }
       const pics = [];
