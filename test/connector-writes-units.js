@@ -37,6 +37,8 @@ function fakeFetch() {
       if (rec.method === 'POST' && mode.github === 'locked') return reply(403, { message: 'Unable to create comment because issue is locked.' });
       if (rec.method === 'POST' && mode.github === 'archived') return reply(403, { message: 'Repository was archived so is read-only.' });
       if (rec.method === 'POST' && mode.github === 'notfound') return reply(404, { message: 'Not Found' });
+      if (rec.method === 'POST' && mode.github === 'oauthread') return reply(404, { message: 'Not Found' }, { 'x-oauth-scopes': 'notifications, read:user' }); // a Sign in with GitHub token without repo
+      if (rec.method === 'POST' && mode.github === 'oauthrepo') return reply(404, { message: 'Not Found' }, { 'x-oauth-scopes': 'notifications, read:user, repo' });
       if (rec.method === 'POST' && mode.github === 'rate429') return reply(429, { message: 'Too many requests' });
       if (rec.method === 'POST' && /^\/repos\/ada\/notes\/issues\/7\/comments$/.test(u.pathname)) return reply(201, { id: 1, html_url: 'https://github.com/ada/notes/issues/7#issuecomment-1' });
       if (rec.method === 'POST' && u.pathname === '/repos/ada/notes/issues') return reply(201, { number: 8, title: rec.body.title, html_url: 'https://github.com/ada/notes/issues/8' });
@@ -77,7 +79,7 @@ async function main() {
   check('a chat is offered the writes, marked with !', /comment\(repo,number,body\)!/.test(full.description) && /create_issue\(repo,title,body\?\)!/.test(full.description) && /create_page\(parent_id,title,body\?\)!/.test(full.description) && /append\(page_id,body\)!/.test(full.description) && /add_task\(.*\)!/.test(full.description), full.description);
   check('a background task or routine is offered the reads only, and told nothing can change', !/!/.test(bg.description.replace(/^[^.]*\./, '')) && !/comment|create_issue|create_page|append\(|add_task/.test(bg.description) && /prs|search|tasks/.test(bg.description) && /Read only here/.test(bg.description), bg.description);
   check('every connector connected still fits in under 2.6k characters', JSON.stringify(full).length < 2600, String(JSON.stringify(full).length));
-  check('no Gmail draft and no Calendar event are offered (their sign-ins are read-only)', !Object.values(registry.get('gmail').actions).some((a) => a.write) && !Object.values(registry.get('gcal').actions).some((a) => a.write), '');
+  check('no Calendar event is offered (an iCal address is read-only); Gmail’s one write is create_draft (test/gmail-drafts-units.js)', !Object.values(registry.get('gcal').actions).some((a) => a.write) && Object.entries(registry.get('gmail').actions).filter(([, a]) => a.write).map(([n]) => n).join() === 'create_draft', '');
 
   console.log('--- GitHub');
   const comment = { app: 'github', action: 'comment', args: { repo: 'ada/notes', number: 7, body: 'Looks good.\n\n- one\n- two' } };
@@ -103,6 +105,16 @@ async function main() {
   const why = {};
   for (const m of ['locked', 'archived', 'notfound', 'rate429']) { fake.mode.github = m; why[m] = await fails(() => svc.call(comment)); }
   check('a locked conversation, an archived repo, Not Found and a 429 each say what they are, not "can only read"', /locked/.test(why.locked) && /archived/.test(why.archived) && /can’t find/.test(why.notfound) && /limiting requests/.test(why.rate429) && !Object.values(why).some((m) => /can only read/.test(m)), JSON.stringify(why));
+  fake.mode.github = 'oauthread';
+  const classic = await fails(() => svc.call(comment));
+  check('a pasted classic token without repo is told which scope to give it (not sign-in advice)', /This token can’t write/.test(classic) && /public_repo/.test(classic) && /Read and write/.test(classic) && !/Include private repositories/.test(classic), classic);
+  const ghProvider = require('../src/features/connectors/providers/github');
+  const sharedCtx = { config: { shared: true }, http: async () => ({ status: 404, ok: false, text: '{"message":"Not Found"}', headers: new Headers({ 'x-oauth-scopes': 'notifications, read:user' }) }) };
+  const signin = await fails(() => ghProvider.actions.comment(sharedCtx, comment.args));
+  check('a read-only "Sign in with GitHub" token says how to allow writing (Include private repositories, or the GitHub CLI)', /sign-in can only read/.test(signin) && /Include private repositories/.test(signin) && /GitHub CLI/.test(signin), signin);
+  fake.mode.github = 'oauthrepo';
+  const withRepo = await fails(() => svc.call(comment));
+  check('a sign-in token that has repo gets the plain Not Found, not "can only read"', /can’t find/.test(withRepo) && !/can only read/.test(withRepo), withRepo);
   fake.mode.github = 'ok';
 
   console.log('--- Notion');

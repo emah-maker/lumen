@@ -42,6 +42,10 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       slackCancel: call('prefs:slack-cancel'),
       slackDisconnect: call('prefs:slack-disconnect'),
       slackChannels: call('prefs:slack-channels'),
+      githubStart: call('prefs:github-start'), // device-flow sign-in: the one-time code comes back, never a token
+      githubCli: call('prefs:github-cli'),
+      githubCancel: call('prefs:github-cancel'),
+      githubSignOut: call('prefs:github-signout'),
       search: call('prefs:widget-search'),
       help: call('prefs:widget-help'), // opens a fixed "where do I get this" page by name
       savedPlaces: call('prefs:widget-saved-places'),
@@ -267,6 +271,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         detect: call('connectors:detect'),
         connect: call('connectors:connect'),
         disconnect: call('connectors:disconnect'),
+        allowDrafts: call('connectors:allow-drafts'),
         signIn: call('connectors:sign-in'),
       },
       setAutomation: call('automation:set'),

@@ -551,12 +551,12 @@ const PARALLEL_TASKS_TOOL = {
   },
   eager_input_streaming: true,
 };
-// [desktop apps] desktop operates other programs on this Windows PC (src/desktop/, docs/desktop-apps.md). One dispatcher tool keeps the tool prompt small. Offered to the
+// [desktop apps] desktop operates other programs on this computer, Windows or macOS (src/desktop/, docs/desktop-apps.md). One dispatcher tool keeps the tool prompt small. Offered to the
 // sidebar's API chats only while Settings > AI > "Let the AI use other apps on this computer" is on, or once the conversation asks for an app (requestFor / otherTurn),
 // so the default request costs nothing. Not listed to MCP clients or the CLI engines.
 const DESKTOP_TOOL = {
   name: 'desktop',
-  description: 'Operate other apps on this Windows PC (Word, File Explorer...). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys}. The user is asked per app.',
+  description: 'Operate other apps on this computer (Windows or macOS: Word, File Explorer, Finder...). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys}. The user is asked per app.',
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app'] }, args: { type: 'object' } }, required: ['action'] },
   eager_input_streaming: true,
 };
@@ -564,7 +564,7 @@ const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'ope
 // What an app shows (titles, text, a picture) is untrusted content: after these actions web actions ask (the run is tainted, app-only), and src/desktop asks a card before acting in any OTHER app than the one that was read.
 const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app']);
 // A conversation that asks for another app (not just the word "word") is offered the tool even while the switch is off, so the AI can ask to turn it on.
-const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
+const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify|finder|textedit|keynote)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [research] research_board is the sidebar chat's own source list (settings.research), so, like delegate, it is not listed to MCP clients or the CLI engines.
 const BOARD_TOOL = { ...research.BOARD_TOOL, eager_input_streaming: true };
 // [skills] use_skill loads one of the user's skills that may be used on its own (features/skills.js useForAI). Offered only
@@ -5402,7 +5402,7 @@ ${out.text}${note}
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
       ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(fields ? { fields } : {}) } // ([connectors] fields: a write's text the user can edit on the card)
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(fields ? { fields } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)

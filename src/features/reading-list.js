@@ -62,7 +62,7 @@ function create({ file, fs = nodeFs, now = () => Date.now(), cap = 1000, delay =
 
   async function writeNow() {
     clearTimeout(timer); timer = null;
-    if (!dirty) return;
+    if (!dirty) { await writing; return; } // (a write already under way: flush() still waits for it to land)
     dirty = false;
     const text = body();
     const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;

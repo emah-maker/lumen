@@ -98,11 +98,13 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
   // ---- 1. Creating from the composer shows what the task may do, and nothing is made until Create.
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  await ui.waitForSelector('#send-bg');
+  await ui.waitForSelector('#send-bg', { state: 'attached' }); // (a row of the menu on Send's chevron)
   const badgeGone = await ui.evaluate(() => document.getElementById('tasks-badge').hidden);
   check('the Tasks button is there and its badge starts empty', badgeGone, '');
   check('the composer\'s background button starts disabled (nothing typed)', await ui.evaluate(() => document.getElementById('send-bg').disabled), '');
   await ui.fill('#prompt', `TASK-A read the page at 127.0.0.1:${port}/a and report it`);
+  await ui.click('#send-more');
+  check('the chevron on Send opens a menu with "Run in the background"', await ui.evaluate(() => document.getElementById('send-more').getAttribute('aria-expanded') === 'true' && document.getElementById('send-menu').getAttribute('role') === 'menu' && !document.getElementById('send-bg').disabled), '');
   await ui.click('#send-bg');
   await ui.waitForSelector('.task-create-card');
   const summary = await ui.evaluate(() => document.querySelector('.task-summary').textContent);
@@ -448,7 +450,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
   // ---- 10. Settings: disabled hides the composer button and refuses new tasks; no schedule runs.
   await ui.evaluate(() => window.assistant.tasks.settings({ enabled: false }));
-  check('turned off: the composer button hides', await waitFor(() => ui.evaluate(() => document.getElementById('send-bg').hidden)), '');
+  check('turned off: the composer button hides (and so does the chevron that held it)', await waitFor(() => ui.evaluate(() => document.getElementById('send-bg').hidden && document.getElementById('send-more').hidden)), '');
   const off2 = await create({ prompt: 'TASK-OFF nope', schedule: { type: 'now' } });
   check('and creating a task is refused', off2.ok === false && /turned off/.test(off2.error), JSON.stringify(off2));
   await ui.evaluate(() => window.assistant.tasks.settings({ enabled: true, maxConcurrent: 5, timeoutMin: 45 }));

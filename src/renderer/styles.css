@@ -639,13 +639,8 @@ body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 
 .sidebar-resize:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
-.sidebar-head { position: relative; z-index: var(--z-head); display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
+.sidebar-head { position: relative; z-index: var(--z-head); display: flex; align-items: center; justify-content: flex-end; height: 46px; padding: 0 8px 0 20px; }
 .sidebar-actions { display: flex; gap: 2px; flex: none; }
-/* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
-   buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
-   sidebar, which clips. The picker button ellipsizes (styles below). */
-.sidebar-head .model-picker { min-width: 78px; margin-right: 8px; } /* the name keeps room to be read, and the buttons still fit at 300 px */
-.sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 
 /* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
@@ -896,7 +891,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 .composer {
   position: absolute; z-index: var(--z-composer); bottom: 16px; right: 16px; width: calc(var(--sidebar-width) - 33px) !important;
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px 6px 6px 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 8px 8px 14px;
   border-radius: var(--r-xl);
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
   backdrop-filter: blur(18px) saturate(150%);
@@ -907,10 +902,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
    blur behind the composer resample each frame; the glass is a flat veil for those few hundred milliseconds. */
 body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
-.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; overflow-y: auto; scrollbar-width: thin; padding: 4px 0;
+.composer textarea { flex: 1 1 100%; min-width: 0; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; overflow-y: auto; scrollbar-width: thin; padding: 4px 2px; line-height: 1.5;
   /* The browser sizes the box to its text, at any width, hidden or shown, with no script to measure it: one line when empty (the
      placeholder stays on one line too), growing to 40% of the window, then scrolling. */
-  field-sizing: content; min-height: calc(1lh + 8px); max-height: min(240px, 40vh); }
+  field-sizing: content; min-height: 60px; max-height: max(60px, 40vh); } /* roomy: two or three lines from the start, growing to about 40% of the height, then it scrolls */
 .composer textarea::placeholder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
@@ -935,6 +930,52 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 }
 .send-now:hover { background: var(--accent-deep); color: var(--on-accent); }
 .send-now[hidden] { display: none; }
+
+/* ---------- the toolbar under the box (renderer/composer-bar.js): "+" menu and the picker on the left, mic and Send on the right ---------- */
+.composer-bar { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.cb-start { flex: 1 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.cb-end { flex: none; display: flex; align-items: center; gap: 4px; }
+.cm-wrap, .send-split { position: relative; display: flex; align-items: center; flex: none; }
+.plus-btn, .send-more {
+  position: relative; flex: none; display: grid; place-items: center; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; align-self: center;
+  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
+}
+.plus-btn { width: 28px; height: 28px; border-radius: 50%; }
+.plus-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.plus-btn:hover, .plus-btn[aria-expanded="true"], .send-more:hover, .send-more[aria-expanded="true"] { color: var(--text); background: var(--hover); }
+.plus-btn[data-lit="1"] { color: var(--accent); }
+.plus-btn:focus-visible, .send-more:focus-visible, .plan-tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.plus-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); }
+.plus-dot[hidden], .send-more[hidden], .plan-tag[hidden] { display: none; }
+.send-more { width: 20px; height: 26px; border-radius: var(--r-sm); }
+.send-more svg { display: block; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.plan-tag { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: none; border-radius: var(--r-xl); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.plan-tag svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.composer-menu {
+  position: absolute; z-index: var(--z-menu); left: 0; bottom: calc(100% + 8px); min-width: 224px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 4px;
+  border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text);
+  box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+}
+.composer-menu[hidden] { display: none; }
+.composer-menu.send-menu { left: auto; right: 0; }
+.cm-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; box-sizing: border-box; padding: 0 10px; border: none; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cm-item svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.cm-item:hover:not(:disabled), .cm-item:focus-visible { background: var(--hover); }
+.cm-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cm-item:disabled { opacity: 0.45; cursor: default; }
+.cm-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-state { flex: none; color: var(--muted); font-size: 12px; }
+.cm-item[aria-checked="true"] svg { color: var(--accent); }
+.cm-item[aria-checked="true"]:not(#screen-btn)::after { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* the picker on the toolbar: its whole short name first, a long one ends in an ellipsis; the provider tag and "last used" stay in the list */
+.composer-bar .model-picker { flex: 0 1 auto; min-width: 0; margin: 0; align-items: center; }
+.composer-bar .model-picker .picker-button { max-width: 100%; min-width: 0; padding: 4px 2px 4px 8px; font-size: 13px; font-weight: 500; color: var(--text); }
+.composer-bar .picker-provider, .composer-bar .picker-last { display: none; }
+.composer-bar .model-picker svg { position: static; flex: none; margin: 0 6px 0 0; } /* the caret follows the name directly */
+.composer-status { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 2px; container-type: inline-size; }
+@container (max-width: 280px) { .composer-status .usage-meter .um-bar { display: none; } } /* the minimum sidebar: the words first, so "resets Oct 19, 1:50pm" is not cut off beside the badge */
+.composer-status:not(:has(> :not([hidden]))) { display: none; }
+.composer-status > .meter-strip { flex: 1 1 0; margin: 0; }
 
 /* ---------- "@" tabs: chips above the composer, the picker, the once-per-chat confirm ---------- */
 .tab-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px; }
@@ -963,16 +1004,6 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .msg-tabs { margin-top: 6px; font-size: 11px; opacity: 0.8; }
 .msg-tabs:first-child { margin-top: 0; }
 
-/* The attach button (a file picker) sits left of Send, like the background button. */
-.attach-btn {
-  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: transparent; color: var(--muted);
-  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
-}
-.attach-btn svg { width: 15px; height: 15px; stroke-width: 1.5; }
-.attach-btn:not(:disabled):hover { color: var(--text); background: var(--hover); }
-.attach-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.attach-btn:disabled { opacity: 0.4; }
 /* [dictation] The mic (renderer/dictation.js) right of the paperclip: red while it records, dimmed while the words are on their way.
    Over the box while it records: a dot, the microphone's level, the time out of two minutes, and "Esc to cancel". */
 .mic-btn {
@@ -994,21 +1025,6 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .dictation-hint { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @keyframes dictation-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .dictation-dot { animation: none; } .dictation-meter i { transition: none; } }
-/* The screen button (a camera) left of the paperclip: lit when the next message will carry a screenshot of the tab, by the words
-   (auto: a soft ring, so it reads as "decided for you") or because the user switched it on; crossed when switched off. */
-.screen-btn {
-  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: transparent; color: var(--muted);
-  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out, box-shadow var(--t-base) ease-out;
-}
-.screen-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.screen-btn:hover { color: var(--text); background: var(--hover); }
-.screen-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.screen-btn[data-state="auto"], .screen-btn[data-state="on"] { color: var(--accent); background: var(--accent-soft); }
-.screen-btn[data-state="auto"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-.screen-btn[data-state="on"] { box-shadow: inset 0 0 0 1px var(--accent); }
-.screen-btn[data-state="off"] svg { opacity: 0.55; }
-.screen-btn[data-state="off"]::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 1.5px; background: currentColor; transform: rotate(-40deg); border-radius: 1px; }
 /* "Included a screenshot of <tab>" under the message that carried one: × takes it out of the chat, hover shows it. */
 .msg-screen { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin-top: 6px; padding: 1px 3px 1px 8px; border-radius: var(--r-pill); font-size: 11px; line-height: 1.5; background: color-mix(in srgb, currentColor 12%, transparent); }
 .msg-screen:first-child { margin-top: 0; }
