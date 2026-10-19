@@ -191,6 +191,13 @@ module.exports = async function githubSigninUnits(check) {
     // token) must not be found in its place.
     process.env.PATH = [bin, process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') : '/usr/bin', process.platform === 'win32' ? '' : '/bin'].filter(Boolean).join(path.delimiter);
     check('github CLI: the only gh this test can find is its own stub', GA.findGh()?.shown?.startsWith(bin), JSON.stringify(GA.findGh()));
+    { // a gh.cmd in a Windows short-name folder (RUNNER~1, PROGRA~1) is found; one whose path cmd.exe would read as an operator is not
+      const w = require('path').win32; const at = (want) => ({ statSync: (p) => ({ isFile: () => p === want }) });
+      const short = String.raw`C:\Users\RUNNER~1\AppData\Local\Temp\gh-stub\gh.cmd`;
+      const found = GA.findGh({ env: { PATH: w.dirname(short), ComSpec: 'cmd.exe' }, platform: 'win32', fs: at(short), path: w });
+      const amp = String.raw`C:\Tools & Co\gh.cmd`;
+      check('github CLI: a gh.cmd under a short-name folder (~) is found, one under a path with & is not', found?.shown === short && found.pre.includes(short) && GA.findGh({ env: { PATH: w.dirname(amp) }, platform: 'win32', fs: at(amp), path: w }) === null, JSON.stringify(found));
+    }
     if (prevPathWin !== undefined) process.env.Path = process.env.PATH;
 
     // ---- a card on a signed-out profile asks for the sign-in (it needs a stored widget first) ----
