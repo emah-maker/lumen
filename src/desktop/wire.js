@@ -27,7 +27,17 @@ function wire({ electron, readSettings, writeSettings, stopRun, hidden = false, 
 
   // live: { visible(), light() } turns on the card's live picture (live.js); the display scale is read here, when it is needed.
   const liveDeps = live ? { ...live, dpr: () => { try { return electron.screen?.getPrimaryDisplay?.().scaleFactor || 1; } catch { return 1; } } } : null;
-  controller = createDesktop({ settings, banner, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe: process.execPath } });
+  // macOS: the permission checks (they never prompt), pictures resized in-process, and the button that opens a System Settings pane.
+  const mac = process.platform === 'darwin' ? {
+    access: {
+      accessibility: () => { try { return electron.systemPreferences.isTrustedAccessibilityClient(false); } catch { return null; } },
+      screen: () => { try { return electron.systemPreferences.getMediaAccessStatus('screen') === 'granted'; } catch { return null; } },
+    },
+    resize: (buf, w, q) => { const img = electron.nativeImage.createFromBuffer(buf); const size = img.getSize(); return (size.width > w ? img.resize({ width: Math.round(w), quality: 'good' }) : img).toJPEG(Math.round(q) || 60).toString('base64'); },
+    openSettings: (url) => (/^x-apple\.systempreferences:com\.apple\.preference\.security\?Privacy_[A-Za-z]+$/.test(url) ? electron.shell.openExternal(url) : null),
+  } : {};
+  const exe = require('./platforms').backendFor(process.platform)?.lumenExe(process.execPath) || process.execPath;
+  controller = createDesktop({ settings, banner, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe }, ...mac });
   controller.banner = banner;
   controller.shortcut = shortcut;
   return { controller, settings };

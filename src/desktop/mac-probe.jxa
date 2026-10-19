@@ -1,0 +1,40 @@
+// [desktop apps] macOS: the "you took over" and "stop" checks (the Windows side is winapi.js). Started by mac-probe.js while the AI is using an
+// app, ended when it stops. About 8 times a second it writes one JSON line: whether Esc is held, whether a typing key or a mouse button is
+// down, where the pointer is, which app is in front and which app's window is under the pointer. It reads key state only (never which
+// characters are typed) and window owners and bounds only. It ends when Lumen stops reading (a closed pipe) or after an hour.
+ObjC.import('AppKit');
+ObjC.import('CoreGraphics');
+
+var TYPING = [];
+(function () { for (var k = 0; k <= 50; k++) if (k !== 53) TYPING.push(k); [65, 67, 69, 71, 75, 76, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92, 115, 116, 117, 119, 121, 123, 124, 125, 126].forEach(function (k) { TYPING.push(k); }); })();
+
+function underPointer(x, y) {
+  var arr = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
+  for (var i = 0; i < arr.length; i++) {
+    var w = arr[i];
+    var b = w.kCGWindowBounds;
+    if (w.kCGWindowLayer !== 0 || !b) continue;
+    if (x >= b.X && x < b.X + b.Width && y >= b.Y && y < b.Y + b.Height) return w.kCGWindowOwnerPID;
+  }
+  return 0;
+}
+
+function run(argv) {
+  var out = $.NSFileHandle.fileHandleWithStandardOutput;
+  var height = $.NSScreen.screens.objectAtIndex(0).frame.size.height;
+  var ticks = Math.min(Number(argv[0]) || 30000, 30000);
+  var under = 0;
+  for (var n = 0; n < ticks; n++) {
+    var esc = Boolean($.CGEventSourceKeyState(0, 53));
+    var typing = false;
+    for (var i = 0; i < TYPING.length && !typing; i++) if ($.CGEventSourceKeyState(0, TYPING[i])) typing = true;
+    var m = $.NSEvent.mouseLocation;
+    var x = Math.round(m.x), y = Math.round(height - m.y);
+    if (n % 2 === 0) under = underPointer(x, y);
+    var f = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+    var line = JSON.stringify({ esc: esc, typing: typing, down: $.NSEvent.pressedMouseButtons !== 0, x: x, y: y, front: f.isNil() ? 0 : f.processIdentifier, under: under }) + '\n';
+    out.writeData($(line).dataUsingEncoding($.NSUTF8StringEncoding));
+    delay(0.12);
+  }
+  return '';
+}
