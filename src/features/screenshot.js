@@ -102,7 +102,9 @@ function createScreenshot(deps) {
     return { image };
   }
 
-  async function captureFull(ctx) {
+  // (in the page's capture queue: a clipped capture taken while another is in flight leaves the page at the clip's size, see features/tab-capture.js)
+  function captureFull(ctx) { return require('./tab-capture').oneAtATime(ctx.wc, () => captureFullNow(ctx)); }
+  async function captureFullNow(ctx) {
     const dbg = ctx.wc.debugger;
     let attachedHere = false;
     try {

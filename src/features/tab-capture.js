@@ -200,7 +200,7 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
       if (ended) return;
       const t0 = performance.now();
       try {
-        const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
+        const shot = await oneAtATime(wc, () => dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } })); // (in the page's queue: a clip taken while another capture is in flight left the page laid out at the clip's size)
         const data = shot && typeof shot.data === 'string' ? shot.data : '';
         if (data.length > 90000) q = Math.max(25, q - 10); else if (data.length < 40000) q = Math.min(Math.min(quality, 60), q + 5); // (about 30-65 KB a frame)
         if (!ended && data && data !== lastData && !(data.length * 0.75 <= 9000 && isBlankFrame(data))) { lastData = data; try { onFrame(data); } catch { /* the listener's own */ } }
@@ -269,4 +269,72 @@ function shrinkThumb(base64, { width = 420, maxBytes = 45000 } = {}) {
   return null;
 }
 
-module.exports = { streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+// ---------- the page-size safety net (kept here: one module less to load at startup) ----------
+// A tab's page must always fill the tab area. Chromium can leave a page drawn or laid out smaller than its view (a DevTools screenshot with a clip, taken
+// while another capture was in flight, leaves it at the clip's size in the view's top-left corner), and neither the capture paths (features/tab-capture.js
+// runs them one at a time) nor the engine always put it right. This is the safety net: for the tab in front it compares what the page lays itself out at
+// (window.innerWidth/innerHeight) with the view's bounds, and reads a 2x2 crop of the view's bottom-right corner (a surface drawn smaller than the view
+// cannot give one). A page that is wrong gets any device-metrics override cleared and the view's bounds set again, a pixel off and back (a bounds change is
+// what makes the engine lay the page out afresh). Every time it acts it is written to <userData>/diagnostics/page-size.jsonl, to learn which path did it.
+const COOLDOWN_MS = 4000; // after acting on a view
+const MIN_GAP_MS = 1500; // between two reads of the same view
+const TOLERANCE = 3; // CSS px (rounding, a scrollbar being drawn)
+const lastFix = new WeakMap(); // view -> when it was last acted on
+const checked = new WeakMap(); // view -> when it was last read
+
+// Pure: does the page's layout differ from its view's size? sizes in CSS px.
+function layoutMismatch(inner, bounds, zoom = 1) {
+  if (!Array.isArray(inner) || inner.length < 2 || !(bounds.width > 8) || !(bounds.height > 8)) return false;
+  const z = zoom > 0 ? zoom : 1;
+  return Math.abs(inner[0] - bounds.width / z) > TOLERANCE || Math.abs(inner[1] - bounds.height / z) > TOLERANCE;
+}
+
+async function surfaceSmaller(view) {
+  const b = view.getBounds();
+  try {
+    const image = await view.webContents.capturePage({ x: Math.max(0, b.width - 2), y: Math.max(0, b.height - 2), width: 2, height: 2 });
+    return image.isEmpty();
+  } catch { return true; } // (a rect outside the drawn surface: refused)
+}
+
+// checkPageSize(view, opts) -> a description of what was wrong and put right, or null.
+//   opts.shown()     the view is still the tab in front
+//   opts.skip()      the page is laid out at another size on purpose (the new-tab page under the sidebar: device emulation of its own)
+//   opts.relayout()  lays the views out again (main.js layout())
+//   opts.log(entry)  diagnostics
+//   opts.force       act whatever the read says is not needed for the layout test (only the cooldown still applies)
+async function checkPageSize(view, { shown = () => true, skip = () => false, relayout = () => {}, log = () => {}, source = '', now = Date.now } = {}) {
+  try {
+    const wc = view?.webContents;
+    if (!wc || wc.isDestroyed() || !shown() || skip() || wc.isLoading()) return null;
+    const t = now();
+    if (t - (lastFix.get(view) || 0) < COOLDOWN_MS || t - (checked.get(view) || 0) < MIN_GAP_MS) return null;
+    checked.set(view, t);
+    const bounds = view.getBounds();
+    let inner = null;
+    try { inner = await wc.executeJavaScript('[innerWidth, innerHeight]', false); } catch { return null; }
+    const zoom = wc.getZoomFactor?.() || 1;
+    const layoutOff = layoutMismatch(inner, bounds, zoom);
+    const smaller = layoutOff ? false : await surfaceSmaller(view);
+    if (!shown() || (!layoutOff && !smaller)) return null;
+    lastFix.set(view, now());
+    const dbg = wc.debugger;
+    let cleared = false;
+    try {
+      const had = dbg.isAttached();
+      if (!had) dbg.attach('1.3');
+      try { await dbg.sendCommand('Emulation.clearDeviceMetricsOverride'); cleared = true; } catch { /* not supported or going away */ }
+      if (!had) { try { dbg.detach(); } catch { /* gone */ } }
+    } catch { /* another debugger owns it */ }
+    const b = view.getBounds();
+    view.setBounds({ ...b, width: Math.max(1, b.width - 1) });
+    const timer = setTimeout(() => { try { relayout(); } catch { /* going away */ } }, 60);
+    timer.unref?.();
+    const entry = { at: new Date(t).toISOString(), source, kind: layoutOff ? 'layout' : 'surface', inner, bounds: { width: bounds.width, height: bounds.height }, zoom, cleared };
+    try { log(entry); } catch { /* diagnostics are best effort */ }
+    return entry;
+  } catch { return null; }
+}
+
+
+module.exports = { checkPageSize, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
