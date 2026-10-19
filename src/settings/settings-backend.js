@@ -24,7 +24,7 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ask-before-acting', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'memory', 'hands-off', 'ask-before-acting', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
   'skills', 'macros', 'routines', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
   'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys', 'files'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
@@ -162,6 +162,8 @@ const DEFAULTS = {
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
+  telegramChannel: false, // [telegram] Settings > AI > Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
+  telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
@@ -188,14 +190,19 @@ const DEFAULTS = {
   aiInstructionsOn: true, // [ai] Settings > AI > Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
   aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
   aiInstructionsStyle: '', // [ai] "How should Lumen respond"
+  planModeDefault: false, // [ai] [plan mode] new sidebar chats start with the composer's Plan chip on (ai/plan-mode.js, renderer/plan-mode.js)
   skillsAutoUse: true, // [skills] skills marked "AI can use this on its own" are listed in the system prompt and loaded with use_skill (features/skills.js)
   skillsFromClaudeCode: false, // [skills] also list ~/.claude/skills/*/SKILL.md, read-only (features/skill-md.js)
   skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
+  aiMemory: false, // [ai] Settings > AI > Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
+  aiMemoryChatSearch: true, // [ai] ...and, while Memory is on, may search the titles and text of your saved chats (the memory tool's search_chats)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'off', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js)
+  dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
+  dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
@@ -260,6 +267,7 @@ function validate(key, value) {
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
     case 'aiInstructionsAbout': case 'aiInstructionsStyle': return typeof value === 'string' ? require('../ai/custom-instructions').clean(value) : null;
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'dictationProvider': return pick(value, require('../ai/dictation').SETTINGS, null);
     case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
@@ -472,7 +480,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -858,6 +866,7 @@ function create(deps) {
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
+      case 'telegramChannel': deps.onTelegramChange?.(); break; // [telegram]
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
@@ -872,7 +881,7 @@ function create(deps) {
     }
     const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
     if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
-    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (wallpaperAccent || ['compactTabs', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'planModeDefault' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }

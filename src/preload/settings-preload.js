@@ -82,6 +82,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCsv: call('settings:passwords-import'),
       removeNever: call('settings:passwords-never-remove'),
     },
+    // [memory] Settings → AI and agents → Memory (ai/memory.js): the saved entries, edited and deleted here
+    memory: {
+      list: call('settings:memory-list'),
+      update: call('settings:memory-update'),
+      remove: call('settings:memory-delete'),
+      removeAll: call('settings:memory-delete-all'),
+      startOver: call('settings:memory-start-over'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     deviceGrants: call('prefs:device-grants'),
@@ -174,6 +182,15 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setProviderKey: call('settings:set-provider-key'),
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
+      // [telegram] Phone (Telegram): the token goes in, never comes back
+      telegram: {
+        status: call('settings:telegram'),
+        setToken: call('settings:telegram-token'),
+        pair: call('settings:telegram-pair'),
+        cancelPair: call('settings:telegram-pair-cancel'),
+        unpair: call('settings:telegram-unpair'),
+        remove: call('settings:telegram-remove'),
+      },
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),

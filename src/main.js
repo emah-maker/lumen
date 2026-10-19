@@ -138,6 +138,7 @@ const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
 const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
+const planModeLib = require('./ai/plan-mode'); // [plan mode] an approved plan's sites
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
@@ -273,6 +274,7 @@ const UI_ONLY_IPC = new Set([
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
+  'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
@@ -287,6 +289,7 @@ const UI_ONLY_IPC = new Set([
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
@@ -1033,6 +1036,14 @@ const deviceChooser = require('./features/device-chooser').createDeviceChooser({
   ordinary: (wc) => !(spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) || agentContents.has(wc) || dialogs.isOwnView(wc) || manners.isAiTab(tabByContents(wc))),
 });
 
+// [dictation] The sidebar's window and the chat page may record audio for voice input (ai/dictation.js ownPageMic).
+function ownPageMic(wc, permission, details) {
+  if (permission !== 'media') return false;
+  const own = (url) => isUiUrl(url) || chatPage.isChatUrl(url);
+  const isOwnView = uiContents.has(wc) ? isUiUrl(wc.getURL()) : Boolean(chatPageRt?.everyChatTab().some((t) => t.view.webContents === wc));
+  return require('./ai/dictation').ownPageMic({ permission, mediaTypes: details?.mediaTypes, requestingUrl: details?.requestingUrl, pageUrl: wc.getURL(), isMainFrame: details?.isMainFrame, isOwnView, isOwnPage: own });
+}
+
 function setupPermissions() {
   const ses = session.defaultSession;
   settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
@@ -1042,6 +1053,7 @@ function setupPermissions() {
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
     // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
     if (musicReact.allowsDisplay(wc, permission, details)) return callbackAsked(true); // [look] the new-tab page's analyser may listen to the PC's sound (loopback), nothing else
+    if (ownPageMic(wc, permission, details)) return callbackAsked(true); // [dictation] the chat box's voice input in Lumen's own sidebar and chat page; web pages still ask
     const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
     if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
@@ -1075,6 +1087,7 @@ function setupPermissions() {
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
     musicReact.allowsDisplay(wc, permission, details) ? true : // [look] Music-reactive home screen (the new-tab page, the PC's sound only)
+    wc && ownPageMic(wc, permission, { mediaTypes: [details?.mediaType], requestingUrl: details?.requestingUrl, isMainFrame: details?.isMainFrame }) ? true : // [dictation] Lumen's own chat boxes (audio only)
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
     spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
@@ -8242,7 +8255,12 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+  memory: { // [memory] Settings → AI and agents → Memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
+    on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
+    chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
+    searchChats: (query, exclude) => memorySearchChats(query, exclude),
+  },
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -8342,6 +8360,27 @@ const bgTasks = require('./features/background-runner').create({
 bgTasks.register(ipcMain);
 app.on('will-quit', () => bgTasks.shutdown());
 if (TEST) global.__bg = bgTasks;
+// [telegram] Phone (Telegram): requests from the user's own Telegram bot run as background tasks (features/telegram.js).
+// Off by default (telegramChannel); the bot token is encrypted like the API keys (keys.telegram) and never leaves this
+// process except to api.telegram.org. Tests never reach Telegram: only a stand-in (global.__telegramFetch).
+const telegram = require('./features/telegram').create({
+  fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
+  readSettings, writeSettings, t,
+  getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !safeStorage.isEncryptionAvailable()) return null; try { return decryptKey(enc); } catch { return null; } },
+  setToken: (token) => {
+    const settings = readSettings();
+    const keys = { ...(settings.keys || {}) };
+    if (token) keys.telegram = safeStorage.encryptString(String(token)).toString('base64');
+    else delete keys.telegram;
+    writeSettings({ ...settings, keys });
+  },
+  canEncrypt: () => safeStorage.isEncryptionAvailable(),
+  isOnline: () => net.isOnline(),
+  tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
+});
+telegram.register(ipcMain);
+app.on('will-quit', () => telegram.shutdown());
+if (TEST) global.__telegram = telegram;
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -8495,6 +8534,31 @@ const meetingHelper = lazy(() => require('./features/meeting').createMeetingHelp
   broadcast: (ch, p) => ui()?.send(ch, p),
 }));
 if (TEST) global.__meetingHelper = meetingHelper;
+
+// [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). The recording arrives once, goes to the
+// provider chosen in Settings with the user's key (the page never sees the key), and the buffer is cleared afterwards;
+// nothing is written to disk. The sidebar and the chat page may ask (UI_ONLY_IPC, chat-page.js CHAT_IPC).
+const dictationLib = require('./ai/dictation');
+function dictationState() {
+  const s = readSettings();
+  const choice = dictationLib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
+  if (!choice.provider) { const m = dictationLib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
+  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, maxBytes: dictationLib.MAX_BYTES, autoSend: s.dictationAutoSend === true };
+}
+ipcMain.handle('dictation:status', () => dictationState());
+ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
+  const state = dictationState();
+  if (!state.provider) return { error: state.message, settings: true };
+  if (!(bytes instanceof Uint8Array)) return { error: t('dictation.error.empty') };
+  if (format !== state.format) return { error: t('dictation.error.changed') }; // the setting changed while recording
+  const audio = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  try {
+    const res = await dictationLib.transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
+    return res.error ? { error: t(res.error.key, res.error.params), settings: res.error.key === 'dictation.error.key' } : { text: res.text, autoSend: state.autoSend };
+  } finally {
+    audio.fill(0); // (the only copy in this process)
+  }
+});
 
 ipcMain.handle('meeting:state', () => meetingHelper.getState());
 ipcMain.handle('meeting:context-get', () => meetingHelper.loadContext());
@@ -8973,6 +9037,7 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
@@ -9793,7 +9858,7 @@ function stampRun(run, done = null) {
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null, askOpts = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   let shownPick = null; // what every picker shows right now (the open chat's model, or the saved pick while it has none), before the sender's own chat is brought up
   try { shownPick = shownModel().pick || null; } catch { /* not set up yet */ }
@@ -9919,6 +9984,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     const askExtra = { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, fromPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } };
+    // [plan mode] askOpts.plan: this message only reads and proposes a plan (agent.js planCheck). askOpts.approvedPlan: the user pressed
+    // Run plan, so the plan's sites join this chat's approved sites for clicking and typing only ("interact:<host>", ai/plan-mode.js
+    // approvedKeys): opening or sending to one after reading a page, and scripts there, still ask.
+    const planOpts = askOpts && typeof askOpts === 'object' ? askOpts : {};
+    if (planOpts.approvedPlan) for (const key of planModeLib.approvedKeys(planOpts.approvedPlan)) hosts.add(key);
+    else if (planOpts.plan === true) askExtra.plan = true;
     // [working-on chip] A chat-page run takes a tab at once only when the request is about the page the user is looking at; any other
     // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).
     if (fromChatPage && agent.aboutCurrentPage(askText, askExtra)) { const cand = chatPageRt.pick(); if (cand != null) chatPageRt.retarget(cand); }
@@ -10527,6 +10598,47 @@ ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(Strin
 ipcMain.handle('chats:archive', (_e, id, on) => { const ok = chats().setArchived(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
 // Chats whose title or messages contain the words typed: [{ id, snippet }] (the list shows them in its own order).
 ipcMain.handle('chats:search', (_e, query) => chats().search(String(query ?? '').slice(0, 200)));
+
+// ---- [memory] Saved memory across chats (ai/memory.js; docs/memory.md). Off by default (aiMemory). One encrypted file in the profile;
+// with no keychain nothing is kept. The chat's "Remembered: …" row (Undo / Forget), the /memory command and Settings → AI and agents → Memory.
+let memoryStore = null;
+function memory() {
+  return (memoryStore ||= require('./ai/memory').createMemoryStore({
+    file: path.join(app.getPath('userData'), 'memory.json'),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+    available: () => safeStorage.isEncryptionAvailable(),
+  }));
+}
+function memoryOn() { return readSettings().aiMemory === true; }
+// The chat id a run's messages array belongs to (the open chat, or one running in the background). null: none (a background task).
+function chatIdOfMessages(messages) {
+  if (!messages) return null;
+  if (messages === agent.messages) return chatId;
+  for (const [id, run] of chatRuns) if (run.messages === messages) return id;
+  return null;
+}
+// search_chats: saved chats (never temporary ones: they are not saved) whose title or text has every word; the running chat left out.
+function memorySearchChats(query, exclude) {
+  const titles = new Map(chats().list().map((c) => [c.id, c]));
+  return chats().search(query, { max: 6 }).filter((h) => h.id !== exclude).slice(0, 5).map((h) => {
+    const c = titles.get(h.id);
+    return { id: h.id, title: c?.title || '', date: c?.updated ? new Date(c.updated).toISOString().slice(0, 10) : '', snippet: h.snippet };
+  });
+}
+require('./ai/agent').setMemorySource({ on: memoryOn, text: () => memory().block() });
+const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated) });
+const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
+// The chat's row and /memory (the sidebar and the chat page).
+ipcMain.handle('memory:list', () => memoryView());
+ipcMain.handle('memory:undo', (_e, token) => { const ok = memory().undo(String(token ?? '').slice(0, 20)); if (ok) memoryEdited(); return ok; });
+ipcMain.handle('memory:forget', (_e, id) => { try { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return true; } catch { return false; } });
+// Settings → AI and agents → Memory.
+ipcMain.handle('settings:memory-list', () => memoryView());
+ipcMain.handle('settings:memory-update', (_e, id, text) => { memory().update(String(id ?? '').slice(0, 20), { text: String(text ?? '') }); memoryEdited(); return memoryView(); });
+ipcMain.handle('settings:memory-delete', (_e, id) => { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return memoryView(); });
+ipcMain.handle('settings:memory-delete-all', () => { memory().clear(); memoryEdited(); return memoryView(); });
+ipcMain.handle('settings:memory-start-over', () => { memory().reset({ discard: true }); memoryEdited(); return memoryView(); }); // the file can't be read: set aside as memory.json.bad, start empty
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 // `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
 function chatMarkdown(id, folder = null) {
@@ -10761,6 +10873,10 @@ ipcMain.handle('eml:open', async (e, index) => {
   return true;
 });
 ipcMain.on('pdf:print', (e) => { if (e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url)) printTab(e.sender); });
+ipcMain.on('pdf:fallback', (e, why) => { // the viewer could not open its PDF: Chrome's viewer shows it instead (features/pdf-viewer.js fallback)
+  if (e.senderFrame !== e.sender.mainFrame || !pdfViewer.isViewerUrl(e.senderFrame?.url)) return;
+  if (pdfRt.fallback(e.sender)) console.warn(`[pdf] Lumen's viewer could not open a PDF (${String(why || 'unknown').slice(0, 300)}); showing it in Chrome's viewer`);
+});
 aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without
 // the "Allow … to interact" card. Stored as askBeforeActing: false (see autoApprove above).
@@ -11231,6 +11347,7 @@ app.whenReady().then(async () => {
   downloads.load(); // the list from last time (downloads.json)
   usage.load(); // [usage] the log from earlier sessions (usage.json)
   bgTasks.init(); // background tasks: restore them and start the scheduler
+  telegram.refresh(); // [telegram] listen to the user's bot, when Phone (Telegram) is on and a token is saved
   downloads.setup();
   siteActivity.watch(session.defaultSession);
   loadChat();

@@ -91,6 +91,11 @@ function create(deps) {
   let routineTimer = null; // the one timer for every routine: set for the earliest next run (runRoutines)
   let routinesOffline = []; // routines due while there is no connection: they start when it is back
   let onlineCheck = () => (deps.isOnline ? deps.isOnline() : true);
+  // Who else hears about a task's cards and its end (features/telegram.js): { type: 'approval', taskId, approvalId, card },
+  // { type: 'approval_done', taskId, approvalId, ok }, { type: 'finished', taskId, status, title, result, error }.
+  const listeners = new Set();
+  const tell = (e) => { for (const fn of listeners) { try { fn(e); } catch (err) { console.error('[lumen] a background task listener failed:', err.message); } } };
+  const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 
   const settings = () => bg.normalizeSettings(deps.readSettings().bgTasks);
   const find = (id) => tasks.find((t) => t.id === String(id));
@@ -521,6 +526,7 @@ function create(deps) {
       if (kind === 'judge') applyVerdict(task, rt, text);
       else if (status === 'done') announce(task, 'done', task.routine && rt.trigger === 'catch-up' && rt.scheduledFor ? deps.t('routines.notify.doneLate', { title: task.title, time: new Date(rt.scheduledFor).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) }) : deps.t(`${notify}.done`, { title: task.title }));
       else if (status === 'failed') announce(task, 'failed', deps.t(`${notify}.failed`, { title: task.title, error: task.error }));
+      if (kind === 'run') tell({ type: 'finished', taskId: task.id, status, title: task.title, result: task.resultOld ? '' : task.result, error: task.error });
       saveSoon();
       broadcast();
       pump();
@@ -533,11 +539,11 @@ function create(deps) {
         if (isLocalEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone
         const start = task.routine?.startUrl;
         if (start && deps.aiOff?.(start)) throw new Error(deps.t('tasks.error.aiOff', { host: bg.hostOfUrl(start) })); // a routine's start page with AI off: it doesn't run at all
-        const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false }), (p) => deps.getKey(p), { riskOf });
+        const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false, noMemory: true }), (p) => deps.getKey(p), { riskOf });
         rt.agent = agent;
         agent.baseHosts = new Set(task.allowedSites);
         agent.approvedHosts = new Set(task.allowedSites);
-        agent.messages.settings = { model: task.model, adhdMode: false };
+        agent.messages.settings = { model: task.model, adhdMode: false, noMemory: true }; // [memory] unattended runs never read or write saved memory
         agent.messages.tainted = true; // every site outside the allowed ones asks first
         agent.onUsage = (engine, data) => deps.reportUsage?.(engine, data);
         const allowedNav = (url) => {
@@ -652,6 +658,7 @@ function create(deps) {
       case 'approval': {
         rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '' });
         if (!rt.waitingSince) rt.waitingSince = now();
+        tell({ type: 'approval', taskId: task.id, approvalId: e.approvalId, card: rt.pending.get(e.approvalId) });
         const was = task.status;
         if (transition(task, 'waiting-approval') && was !== 'waiting-approval') announce(task, 'approval', deps.t(task.routine ? 'routines.notify.approval' : 'tasks.notify.approval', { title: task.title })); // one message per wait, not per card
         else broadcast();
@@ -659,6 +666,7 @@ function create(deps) {
       }
       case 'approval_done': {
         rt.pending.delete(e.approvalId);
+        tell({ type: 'approval_done', taskId: task.id, approvalId: e.approvalId, ok: Boolean(e.ok) });
         if (!rt.pending.size) {
           if (rt.waitingSince) { rt.waitedMs += now() - rt.waitingSince; rt.waitingSince = 0; }
           transition(task, 'running');
@@ -918,7 +926,7 @@ function create(deps) {
   }
 
   return {
-    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
+    init, shutdown, register, propose, subscribe, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
     // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
     routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },
