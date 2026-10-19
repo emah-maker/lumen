@@ -16,7 +16,7 @@ const KNOWN_UNDOCUMENTED = new Set([
   'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation', 'homeWidgets', 'pdfViewer', 'tabSleepMode', 
   'tabSleepFreePercent', 
   'tabPreload', 'performanceMode', 'organizeOnlyMixed', 'organizeDelaySeconds', 'maxSteps', 'aiSubagents', 'aiSubagentModel',
-  'maxChatRuns', 'autoModel', 'usageBars', 'aiSignedInSites', 'pinchZoom', 'featureOffersSeen', 'aiDeviceAccess', 'grokTerminal', 'grokKeepConnected',
+  'maxChatRuns', 'autoModel', 'usageBars', 'aiSignedInSites', 'pinchZoom', 'featureOffersSeen', 'featureCardNever', 'aiDeviceAccess', 'grokTerminal', 'grokKeepConnected',
   'codexKeepConnected', 'grokKeepIdleMinutes', 'researchTabs', 'sidebarNewChat',
 ]);
 
