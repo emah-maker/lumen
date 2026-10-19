@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Spotify: a playlist you follow (but did not make) now opens with its songs in the home screen widget’s Library.** Spotify only lets apps read the songs of playlists you own, so the list used to say “Couldn’t read this part of your library” and Try again asked the same refused question. Lumen now reads such a playlist from Spotify’s own player page instead, scrolling it so every song shows. When a list still can’t be read, the message now says why (Spotify signed out, Spotify changed its page, too slow, not shared, rate limit, offline), it is logged, and Try again really asks again.
+
 ## 0.5.56 (2026-10-19)
 
 - **Outside AI agents (MCP) no longer make Lumen stutter when several start together.** Opening an agent's window used to hold the browser up for about 12 ms in one go (making the window, showing it, loading its page and its blank first tab), and a full-size page capture meant for the sidebar's first open ran for every agent window as well. Each step now runs on its own and waits for a moment when no screenshot is landing, agent windows skip that capture, and the first web request no longer loads its machinery in the middle of the calls, so with six agents at once the longest pause is about 12 ms instead of 20 or more.
