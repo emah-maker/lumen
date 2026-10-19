@@ -1,0 +1,10 @@
+/* Focus mode (features/focus.js): the toolbar button, and the time left beside it while a session is on (renderer/focus.js). */
+.focus-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.focus-btn .dot { fill: currentColor; stroke: none; }
+.focus-btn.on { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; min-width: 30px; padding: 0 10px 0 8px; border-radius: var(--r-xl); background: var(--accent-soft); color: var(--accent); }
+.focus-btn.on:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+.focus-time { font-size: 12px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.focus-time[hidden] { display: none; }
+.focus-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.toolbar-end[data-compact="2"] .focus-btn.on .focus-time { display: none; }
+.toolbar-end[data-compact="2"] .focus-btn.on { padding: 0; width: 30px; }

@@ -225,12 +225,14 @@ let selectedTabs = new Set();
 
 // A strip still sliding (a tab just closed, opened or dropped): finish that first, so what is measured is where
 // the tabs actually are, and the drag's own transform isn't overridden by an animation.
+// [side tabs] Tab layout: Side: the list (#tabs) sits in a column on the left (renderer/side-tabs.js). Its drag is vertical and is worked out there.
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch { /* infinite: leave it */ } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
   // Losing the pointer (another app or the system took it) cancels the drag: nothing moves on a guess.
@@ -253,6 +255,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -826,13 +829,15 @@ function handOffTabDrag(e) {
   // x, y: the cursor in this window (it holds its place if the whole window is dragged). pressY:
   // where the tab was grabbed. layout: where that point will sit in the new strip, so the window
   // opens with it under the cursor even when this strip is scrolled or other tabs travel along.
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+  // (the side list: the new window's list starts where this one's does, so the grab point is the tab's offset into it)
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; } // main moves the card (or window) with it
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -963,6 +968,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped); // (a drop in the side list is worked out there; a tab taken out of it ends below as any other)
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
   // A single tab released over a different slot lands there. The same slot it already occupied is
@@ -1097,8 +1103,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0; // (the side list moves tabs up and down)
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
       // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
       // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
@@ -1444,7 +1452,8 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key]; // (the side list also steps with Up and Down)
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
@@ -1584,6 +1593,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return; // (the list shows the titles; a card would sit under the page view)
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -1646,6 +1656,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return; // (rows are the list's full width: nothing widens into a gap)
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -1894,7 +1905,7 @@ function renderTabsNow(state) {
   // strip scrolls). It collapses to a bare dot only when the chips themselves would take most of the strip: so many groups that names cannot all be shown.
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6; // (an estimate: the text, the padding and the gap beside it)
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
   // Shown when Organize would do something: 4+ tabs it may regroup (main counts them: not pinned, not in the user's own
   // groups; automatic groups' tabs count). 4 is the bar automatic by-topic grouping uses: fewer is easy to do by hand.
@@ -2705,7 +2716,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null; // the width the user chose; a narrow window may hold it smaller for now
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420)); // the page keeps 420px
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0))); // the page keeps 420px (the side list, if there is one, comes out of the rest)
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();

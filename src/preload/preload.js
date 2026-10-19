@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
   hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at), // right-click on the toggle: hide or close the AI's tabs
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at), // right-click on the empty strip or the side list: tab layout
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o), // the side list's saved width and fold: { width?, collapsed? }
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point), // right-click on Back / Forward: the pages behind / ahead
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go
@@ -281,6 +283,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
   // Other apps using Lumen (external-apps.js): pills and prompt; mcp:external-<state|answer> / -<stop|takeover|resume>
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') }, // Focus mode (features/focus.js): the toolbar button
   onHistory: on('agent:history'),
   // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
   openFullPage: () => ipcRenderer.send('chat:open-page'),

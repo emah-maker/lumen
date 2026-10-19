@@ -225,7 +225,8 @@ function sameKindModel(preferred, options) {
 
 // Models a turn can be handed to: connected (the picker only lists those), signed in, and able to use tools.
 function usable(options) {
-  return (options || []).filter((o) => o?.id && !String(o.id).endsWith(':__more') && !o.more && o.signedIn !== false && !(o.badges || []).includes('sign in') && !(o.badges || []).includes('chat only'));
+  // (a model on this computer is never a stand-in: a turn that fails there must not move to a cloud model, and nothing moves onto it unasked)
+  return (options || []).filter((o) => o?.id && !/^local:/.test(String(o.id)) && !String(o.id).endsWith(':__more') && !o.more && o.signedIn !== false && !(o.badges || []).includes('sign in') && !(o.badges || []).includes('chat only'));
 }
 
 // ---------- cooldowns ----------
@@ -374,6 +375,7 @@ function distance(current, candidate) {
 // allowEngines false: Claude Code and Grok Build are left out (a turn that already ran tools can't move to
 // them, since they can't continue an API tool loop).
 function order({ current, options, allowEngines = true }) {
+  if (/^local:/.test(String(current || ''))) return []; // a local model that fails is not handed to a cloud one: that would send the chat off this computer
   const list = usable(options).filter((o) => o.id !== current && (allowEngines || !isEngine(o.id)));
   const here = providerOf(current);
   const byProvider = new Map();
@@ -414,7 +416,7 @@ function resolve({ preferred, options, cooldowns, at = Date.now(), enabled = tru
 
 // ---------- the chat's line ----------
 
-const PROVIDER_NAMES = { anthropic: 'Anthropic', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex', openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const PROVIDER_NAMES = { anthropic: 'Anthropic', claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex', openai: 'OpenAI', xai: 'xAI', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local' };
 
 // A model as a person reads it, like the reply label: "Claude Opus 5.5", "OpenAI GPT-5.6", "Claude Code · Sonnet".
 function nameOf(id, options = []) {

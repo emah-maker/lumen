@@ -470,6 +470,8 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids),
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on),
   hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at),
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at),
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o),
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point),
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection),
@@ -689,6 +691,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
 
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') },
   onHistory: on('agent:history'),
 
   openFullPage: () => ipcRenderer.send('chat:open-page'),

@@ -81,7 +81,7 @@ async function serializeInSlices(snapshot) {
   return { text: parts.join(''), digest: hash.digest('base64'), size };
 }
 
-function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now(), onError = (err) => console.error('Could not save chat:', err?.message) }) {
+function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now(), onError = (err) => console.error('Could not save chat:', err?.message), onChange = null }) {
   const indexFile = path.join(dir, 'index.json');
   const chatFile = (id) => path.join(dir, `${id}.json`);
 
@@ -222,7 +222,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       return Array.isArray(data.chats) ? data.chats.filter((c) => ID_RE.test(c?.id)) : [];
     } catch { return null; }
   }
-  const remember = (idx) => { known.clear(); for (const c of idx.chats) known.add(c.id); };
+  // [sync] onChange: the list on disk was written (features/sync-folder.js notices the change; null while sync is off).
+  const remember = (idx) => { known.clear(); for (const c of idx.chats) known.add(c.id); if (onChange) { try { onChange(); } catch { /* a listener must not break saving */ } } };
   // A change that only moves the "open chat" pointer (switchChat, on every tab switch) is written a moment later, once: the index is read back
   // from disk, merged, encrypted and replaced each time it is written, which is work a tab switch must not wait for. Any other write carries
   // the pointer along, and flush() (quitting) writes what is pending.
@@ -771,6 +772,27 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return true;
   }
 
+  // [sync] A chat that arrived from another computer (features/sync-folder.js): saved as it is, with its dates and flags kept
+  // (save() would stamp it as used just now). A renamed chat keeps its title. False when it could not be kept.
+  function adopt(id, snapshot, meta = {}) {
+    if (!save(id, snapshot)) return false;
+    const idx = readIndex();
+    const entry = idx.chats.find((c) => c.id === id);
+    if (!entry || idx.degraded) return false;
+    const date = (n) => (Number.isFinite(Number(n)) && Number(n) > 0 ? Math.round(Number(n)) : null);
+    if (date(meta.created)) entry.created = date(meta.created);
+    if (date(meta.updated)) entry.updated = date(meta.updated);
+    if (meta.renamed && cleanTitle(meta.title)) { entry.title = cleanTitle(meta.title); entry.renamed = true; }
+    if (meta.pinned) entry.pinned = true; else delete entry.pinned;
+    if (meta.archived) entry.archived = true; else delete entry.archived;
+    delete entry.autoArchived;
+    delete entry.trashed;
+    writeIndexSoon(0);
+    return true;
+  }
+  // [sync] Can the list be read and written right now? (A locked or undecryptable index, or no keychain, reads as an empty list.)
+  const usable = () => available() && !readIndex().degraded;
+
   function current() { return readIndex().current; }
   // `defer`: the pointer changes at once, and the file a moment later (see writeIndexSoon).
   function setCurrent(id, { defer = false } = {}) {
@@ -807,7 +829,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
-  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll };
+  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
