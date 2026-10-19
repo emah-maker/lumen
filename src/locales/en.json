@@ -2761,7 +2761,7 @@
   "settings.ai.stayOnMyTab": "Bring tabs the AI opened to the front",
   "settings.ai.stayOnMyTabDesc": "On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.",
   "settings.ai.closeAiTabs": "When the AI finishes",
-  "settings.ai.closeAiTabsDesc": "Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them when the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.",
+  "settings.ai.closeAiTabsDesc": "Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close (the default) closes them when the AI is done, with Undo, but keeps the tab you are looking at, one playing sound, one holding text you typed, and one the AI said you still need. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.",
   "settings.ai.closeAiTabs.off": "Leave open",
   "settings.ai.closeAiTabs.ask": "Ask",
   "settings.ai.closeAiTabs.always": "Close",
