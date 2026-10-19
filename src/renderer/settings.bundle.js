@@ -3288,7 +3288,7 @@ async function buildRoutines(card) {
 
 
 
-const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter'];
+const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter', 'local'];
 const PROVIDER_CLI = { claudecode: true, grokbuild: true, codex: true, antigravity: true };
 
 const MENU_PREF = { claudecode: ['claudeCodeSidebar', true], grokbuild: ['grokSidebar', false], codex: ['codexSidebar', true], antigravity: ['antigravitySidebar', false] };
@@ -3388,6 +3388,63 @@ function providerUsageRows(u, refresh) {
 
 
 
+
+async function localRows() {
+  const L = S.ai.local;
+  let state = await L.get();
+  const flavor = h('select', { id: 'local-flavor', 'aria-label': tr('settings.local.server', 'Server') }, h('option', { value: 'ollama', text: 'Ollama' }), h('option', { value: 'lmstudio', text: 'LM Studio' }));
+  const url = h('input', { type: 'text', id: 'local-url', class: 'grow', autocomplete: 'off', spellcheck: 'false', 'aria-label': tr('settings.local.address', 'Server address') });
+  const sw = h('input', { type: 'checkbox', class: 'switch', id: 'local-enabled', role: 'switch', 'aria-label': tr('settings.local.use', 'Use local models') });
+  const note = h('span', { class: 'note', id: 'local-status', role: 'status' });
+  const ask = h('span', { id: 'local-confirm-box' });
+  const list = h('div', { class: 'list', id: 'local-models' });
+  const toolsText = (m) => (m.tools === true ? tr('settings.local.tools', 'Can use tools') : m.tools === false ? tr('settings.local.chatOnly', 'Chat only') : tr('settings.local.toolsUnknown', 'Tools not known yet'));
+  const draw = () => {
+    flavor.value = state.flavor;
+    url.value = state.url;
+    url.placeholder = state.defaults[state.flavor];
+    sw.checked = state.enabled;
+    list.replaceChildren(...(state.models.length
+      ? state.models.map((m) => h('div', { class: 'item', 'data-model': m.id }, h('span', { class: 'grow', text: m.id }), h('span', { class: 'note', text: toolsText(m) })))
+      : [h('span', { class: 'note', text: tr('settings.local.none', 'No models yet. Start the server, then press Detect.') })]));
+  };
+  const entered = () => ({ enabled: sw.checked, flavor: flavor.value, url: url.value.trim() });
+  const run = async (kind, extra = {}) => {
+    ask.replaceChildren();
+    flash(note, kind === 'detect' ? tr('settings.local.looking', 'Looking for models…') : '', '');
+    let r;
+    try { r = await L[kind]({ ...entered(), ...extra }); } catch (err) { r = { ok: false, error: String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }; }
+    if (r.needsConfirm) {
+      flash(note, r.error, 'warn');
+      ask.replaceChildren(h('button', { id: 'local-confirm', text: tr('settings.local.confirm', 'Use this address anyway'), onclick: () => run(kind, { confirmRemote: true }) }));
+      return;
+    }
+    if (!r.ok) { flash(note, r.error, 'err'); return; }
+    state = { ...state, enabled: r.enabled, flavor: r.flavor, url: r.url, confirmedHost: r.confirmedHost, models: r.models };
+    draw();
+    flash(note, kind === 'detect' ? (r.note || tr('settings.local.found', 'Found {n} on {server}.', { n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }), server: state.names[state.flavor] })) : tr('settings.local.saved', 'Saved.'), 'ok');
+  };
+  sw.addEventListener('change', () => run('save'));
+  url.addEventListener('keydown', (e) => { if (e.key === 'Enter') run('save'); });
+  url.addEventListener('change', () => run('save'));
+  flavor.addEventListener('change', () => {
+    const other = state.defaults[state.flavor];
+    if (!url.value.trim() || url.value.trim() === other) url.value = state.defaults[flavor.value];
+    state = { ...state, flavor: flavor.value };
+    run('save');
+  });
+  draw();
+  const detect = h('button', { id: 'local-detect', text: tr('settings.local.detect', 'Detect'), onclick: () => run('detect') });
+  return [
+    row(tr('settings.local.use', 'Use local models'), tr('settings.local.useDesc', 'Chat with models that run on this computer through Ollama or LM Studio. No key, and nothing leaves this computer.'), sw),
+    row(tr('settings.local.server', 'Server'), tr('settings.local.serverDesc', 'The program that runs your models.'), flavor),
+    row(tr('settings.local.address', 'Server address'), tr('settings.local.addressDesc', 'Ollama is usually http://127.0.0.1:11434 and LM Studio http://127.0.0.1:1234/v1. Only addresses on this computer work unless you confirm another.'), url, detect),
+    stackRow(tr('settings.local.models', 'Installed models'), tr('settings.local.modelsDesc', 'Models that can use tools can click and type in your tabs. The others answer as plain chat: browser actions need a tool-capable model.'), list, h('div', { class: 'controls' }, note, ask)),
+  ];
+}
+
+
+
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
   const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
@@ -3432,7 +3489,7 @@ async function buildProviders(page) {
   };
   for (const key of PROVIDER_ORDER) {
     page.group(providerName(key));
-    page.append(...rowsFor(key));
+    page.append(...(key === 'local' ? await localRows() : rowsFor(key)));
   }
 }
 ;
@@ -6335,7 +6392,7 @@ async function buildDownloads(card) {
 
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
