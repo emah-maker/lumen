@@ -28,7 +28,7 @@ const LIST_CACHE_MS = 600;
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const unwrap = (text, app) => `<untrusted_page_content source="app: ${defang(String(app || 'app')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
 const sourceKey = (w) => `${w.app}|${w.pid}|${w.start || 0}|${w.hpid || 0}`; // one running program: its path, pid and start time
-const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0 }); // what the helper re-checks before it touches a window
+const targetOf = (w) => ({ hwnd: w.hwnd, pid: w.pid, hpid: w.hpid || 0, start: w.start || 0, title: String(w.title ?? '') }); // what the helper re-checks before it touches a window (macOS: the title tells two windows at the same place apart)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (win) => `w${win.hwnd}`;
 
@@ -418,7 +418,7 @@ function createDesktop(deps = {}) {
     if (!found) throw new Error(backend.notFound(name));
     const target = policy.exeKey(found.exe);
     if (!backend.launchable(target)) throw new Error(backend.notLaunchable(found.name));
-    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name };
+    const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name, bundle: found.bundle || '' }; // (macOS: the bundle id from its Info.plist, so a renamed blocked app is still blocked)
     const before = new Set((await apps(true)).map((w) => w.hwnd));
     await authorize(probe, ctx, { acting: true, what: `open ${found.name}` }); // blocked programs are refused before anything starts; the rest ask
     await getClient().call('launch', { key: found.key }, { timeoutMs: 15000 });

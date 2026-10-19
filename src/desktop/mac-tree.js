@@ -1,7 +1,9 @@
 // [desktop apps] macOS: what mac-helper.jxa reads from System Events (accessibility roles such as AXButton, with a path of child indexes from
 // the window) turned into the node shape tree.js already prunes and renders for Windows, plus the element ids (e3) the AI passes back to
-// click and type. The helper is a new osascript per call and keeps nothing, so the ids live here: each id maps to its path and to the role
-// and name it had, and an action is refused when the element at that path is no longer the same one. Pure: test/desktop-mac-units.js.
+// click and type. The helper is a new osascript per call and keeps nothing, so the ids live here: each id maps to its path and to the role,
+// name and description it had, and an action is refused when the element at that path is no longer the same one. An element with neither a
+// name nor a description could not be told from another of its kind at the same place, so it gets no id, unless it is the only one of its
+// role in the window (a document's one text area). Pure: test/desktop-mac-units.js.
 //
 // Raw node from the helper: { r: 'AXButton', sr: subrole, n: title or name, d: description, v: value, en: false if disabled,
 // sel: true if selected, p: [0, 3, 1], c: [children] } or { pw: true } for a secure text field (nothing else of it is ever read).
@@ -26,10 +28,13 @@ const SECURE = /^AXSecureTextField$/;
 const TOGGLES = new Set(['CheckBox', 'RadioButton']);
 const MAX_PATH = 40;
 
-// toNodes(raw) -> { tree, refs: Map('e3' -> { path, role, name }) }
+// toNodes(raw) -> { tree, refs: Map('e3' -> { path, role, name, desc }) }
 function toNodes(raw) {
   const refs = new Map();
   let n = 0;
+  const roles = new Map(); // role -> how many elements of it the window has (for the nameless rule)
+  const count = (node) => { if (!node || typeof node !== 'object' || node.pw === true) return; roles.set(String(node.r || ''), (roles.get(String(node.r || '')) || 0) + 1); for (const c of Array.isArray(node.c) ? node.c : []) count(c); };
+  count(raw);
   const conv = (node) => {
     if (!node || typeof node !== 'object') return null;
     if (node.pw === true || SECURE.test(String(node.sr || ''))) return { pw: true }; // (nothing of a password field is copied, not even its name)
@@ -43,10 +48,11 @@ function toNodes(raw) {
     if (node.en === false) out.en = false;
     if (node.sel === true) out.s = true;
     const path = Array.isArray(node.p) ? node.p.filter((x) => Number.isInteger(x) && x >= 0) : [];
-    if (INTERACTIVE.has(kind) && path.length && path.length <= MAX_PATH) {
+    const named = Boolean(String(node.n || '') || String(node.d || ''));
+    if (INTERACTIVE.has(kind) && path.length && path.length <= MAX_PATH && (named || roles.get(String(node.r || '')) === 1)) {
       const id = `e${++n}`;
       out.i = id;
-      refs.set(id, { path, role: String(node.r || ''), name: String(node.n || '') });
+      refs.set(id, { path, role: String(node.r || ''), name: String(node.n || ''), desc: String(node.d || '') });
     }
     const kids = Array.isArray(node.c) ? node.c.map(conv).filter(Boolean) : [];
     if (kids.length) out.c = kids;

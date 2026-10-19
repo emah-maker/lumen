@@ -60,12 +60,12 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
     });
     const c = macClient.createMacClient({ execFile: fx.execFile, source: () => SOURCE });
     await c.call('tree', { hwnd: 7, pid: 70, start: 1 });
-    await c.call('settext', { hwnd: 7, pid: 70, start: 1, el: 'e1', text: HOSTILE, submit: true });
+    await c.call('settext', { hwnd: 7, pid: 70, start: 1, title: 'Doc', el: 'e1', text: HOSTILE, submit: true });
     await c.call('keys', { hwnd: 7, pid: 70, start: 1, chords: keys.parseKeysMac('cmd+s').chords });
     check('client: every helper call is osascript with the same fixed script, whatever the AI typed', fx.calls.every((x) => x.file === 'osascript' && x.args[3] === SOURCE) && fx.calls.length === 3);
     check('client: the typed text travels only inside the JSON argument', !fx.calls.some((x) => x.args.slice(0, 5).some((v) => String(v).includes('rm -rf'))) && JSON.parse(fx.calls[1].args[5]).text === HOSTILE && JSON.parse(fx.calls[1].args[5]).submit === true);
     check('client: no shell option is ever passed (execFile with an argument array)', fx.calls.every((x) => !x.opts.shell && Array.isArray(x.args)));
-    check('client: settext sends the element path, role and name from the last read, not the id', J(JSON.parse(fx.calls[1].args[5]).path) === '[0]' && JSON.parse(fx.calls[1].args[5]).role === 'AXTextField' && JSON.parse(fx.calls[1].args[5]).name === 'Name');
+    check('client: settext sends the element path, role, name and description from the last read (not the id), and the approved window title', J(JSON.parse(fx.calls[1].args[5]).path) === '[0]' && JSON.parse(fx.calls[1].args[5]).role === 'AXTextField' && JSON.parse(fx.calls[1].args[5]).name === 'Name' && JSON.parse(fx.calls[1].args[5]).desc === '' && JSON.parse(fx.calls[1].args[5]).title === 'Doc');
     check('client: keys go as key codes / characters with modifiers', J(JSON.parse(fx.calls[2].args[5]).chords) === J([{ mods: ['command'], key: 's' }]));
     check('client: an id that was not read is refused before anything runs', /Read the app first/.test((await rejects(() => c.call('invoke', { hwnd: 7, el: 'e99' })))?.message) && fx.calls.length === 3);
     check('client: an id read from another window is refused', /Read the app first/.test((await rejects(() => c.call('invoke', { hwnd: 8, el: 'e1' })))?.message));
@@ -87,7 +87,9 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
     const { tree, refs } = macTree.toNodes(raw);
     const text = treeLib.render({ title: 'Form', name: 'TextEdit' }, tree);
     check('tree: roles map to the kinds tree.js knows (AXTextField -> Edit, AXButton -> Button, AXCheckBox -> CheckBox)', /\[e1\] Edit "Your name" = "Ada"/.test(text) && /\[e2\] Button "Greet"/.test(text) && /CheckBox "I agree" \(checked\)/.test(text), text);
-    check('tree: ids map to the child-index path, role and name', J(refs.get('e1')) === J({ path: [0, 0], role: 'AXTextField', name: 'Your name' }) && J(refs.get('e2').path) === '[0,1]');
+    check('tree: ids map to the child-index path, role, name and description', J(refs.get('e1')) === J({ path: [0, 0], role: 'AXTextField', name: 'Your name', desc: '' }) && J(refs.get('e2').path) === '[0,1]');
+    const nameless = macTree.toNodes({ r: 'AXWindow', p: [], c: [{ r: 'AXButton', p: [0] }, { r: 'AXButton', p: [1] }, { r: 'AXButton', d: 'Back', p: [2] }, { r: 'AXTextArea', p: [3] }] });
+    check('tree: an item with neither name nor description gets no id (it could not be told from another), unless it is the only one of its role', nameless.refs.size === 2 && [...nameless.refs.values()].some((r) => r.desc === 'Back') && [...nameless.refs.values()].some((r) => r.role === 'AXTextArea') && ![...nameless.refs.values()].some((r) => r.role === 'AXButton' && !r.desc));
     check('tree: a secure text field leaves nothing but the count (no name, no value, no id)', !/hunter2|Password"/.test(J(tree)) && /2 password fields left out/.test(text) && ![...refs.values()].some((r) => /Password/.test(r.name)), text);
     check('tree: disabled items say so; static text shows its value', /Button "Off" \(disabled\)/.test(text) && /Hello there/.test(text));
     check('tree: a node without a path (the window itself) gets no id', !tree.i);
@@ -96,7 +98,8 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
 
   // ---- permissions
   {
-    check('permissionOf: -1719 and -25211 (assistive access) -> Accessibility', macClient.permissionOf('System Events got an error: osascript is not allowed assistive access. (-1719)') === 'accessibility' && macClient.permissionOf('', -25211) === 'accessibility');
+    check('permissionOf: "assistive access" and -25211 -> Accessibility', macClient.permissionOf('System Events got an error: osascript is not allowed assistive access. (-1719)') === 'accessibility' && macClient.permissionOf('', -25211) === 'accessibility');
+    check('permissionOf: -1719 alone is "invalid index" (an item that went away), not a permission', macClient.permissionOf("System Events got an error: Can't get UI element 3 of window 1. Invalid index. (-1719)", -1719) === '' && macClient.permissionOf('', -1719) === '');
     check('permissionOf: -1743 (Apple events not allowed) -> Automation; anything else -> nothing', macClient.permissionOf('Not authorized to send Apple events to System Events. (-1743)') === 'automation' && macClient.permissionOf('That window is gone.') === '');
     check('the settings links open the right Privacy & Security panes', macClient.PERMISSIONS.accessibility.url === 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility' && macClient.PERMISSIONS.screen.url === 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
 
@@ -220,6 +223,7 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
     const bad = (k) => { try { keys.parseKeysMac(k); return ''; } catch (e) { return e.message; } };
     check('keys (macOS): cmd+s, a sequence, named keys and F-keys', J(keys.parseKeysMac('cmd+s').chords) === J([{ mods: ['command'], key: 's' }]) && J(keys.parseKeysMac('cmd+a cmd+c').chords.map((c) => c.key)) === '["a","c"]' && keys.parseKeysMac('Enter').chords[0].code === 36 && keys.parseKeysMac('shift+tab').chords[0].code === 48 && keys.parseKeysMac('f5').chords[0].code === 96 && J(keys.parseKeysMac('ctrl+option+shift+x').chords[0].mods) === J(['control', 'option', 'shift']));
     check('keys (macOS): Cmd+Q, Cmd+Tab, Cmd+Space, Option+Cmd+Esc, Ctrl+Cmd+Q, Shift+Cmd+Q, Ctrl+arrows, fn and the Windows key are refused', /quits/.test(bad('cmd+q')) && /switches/.test(bad('cmd+tab')) && /Spotlight/.test(bad('cmd+space')) && /Force Quit/.test(bad('cmd+option+esc')) && /locks/.test(bad('ctrl+cmd+q')) && /logs out/.test(bad('cmd+shift+q')) && /Spaces/.test(bad('ctrl+left')) && /fn/.test(bad('fn+f')) && /cmd/.test(bad('win+r')) && /Not a key/.test(bad('cmd+launch')));
+    check('keys (macOS): function keys only on their own; F3 and F11 never', keys.parseKeysMac('f5').chords[0].code === 96 && /only on its own/.test(bad('cmd+f5')) && /only on its own/.test(bad('ctrl+f2')) && /only on its own/.test(bad('option+f12')) && /only on its own/.test(bad('shift+f1')) && /Mission Control/.test(bad('f3')) && /Mission Control/.test(bad('F11')));
     check('keys (macOS): typed characters are data, not syntax', J(keys.parseKeysMac('"').chords[0]) === J({ mods: [], key: '"' }));
   }
 
@@ -229,13 +233,28 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
     const readdir = (d) => { if (!dirs[d]) throw new Error('ENOENT'); return dirs[d]; };
     const found = macClient.findApps('textedit', { readdir, dirs: Object.keys(dirs) });
     check('findApps: matches .app bundles by name, exact first-class, with full paths', J(found.map((f) => [f.exe, f.exact])) === J([['/Applications/TextEdit Plus.app', false], ['/System/Applications/TextEdit.app', true]]));
-    const fx = fakeExec(() => ok());
+    const ids = { '/System/Applications/TextEdit.app': 'com.apple.TextEdit\n' };
+    const fx = fakeExec((file, a) => (file === 'plutil' ? (ids[a[a.length - 1].replace('/Contents/Info.plist', '')] ? { stdout: ids[a[a.length - 1].replace('/Contents/Info.plist', '')] } : { err: new Error('no key') }) : ok()));
     const c = macClient.createMacClient({ execFile: fx.execFile, source: () => SOURCE, readdir, dirs: Object.keys(dirs) });
     const r = await c.call('resolve', { name: 'TextEdit' });
+    check('resolve: each found app gets its bundle id from Contents/Info.plist through plutil (argument array, no shell)', r.found.find((f) => f.exact).bundle === 'com.apple.TextEdit' && r.found.find((f) => !f.exact).bundle === '' && fx.calls.filter((x) => x.file === 'plutil').length === 2 && J(fx.calls[0].args) === J(macClient.plistArgs('/Applications/TextEdit Plus.app')));
+    const before = fx.calls.length;
     await c.call('launch', { key: '/System/Applications/TextEdit.app' });
-    check('launch: open -a <the path resolve found>', r.found.length === 2 && fx.calls.length === 1 && fx.calls[0].file === 'open' && J(fx.calls[0].args) === J(['-a', '/System/Applications/TextEdit.app']));
+    check('launch: open -a <the path resolve found>', fx.calls.length === before + 1 && fx.calls[before].file === 'open' && J(fx.calls[before].args) === J(['-a', '/System/Applications/TextEdit.app']));
     const e = await rejects(() => c.call('launch', { key: '/System/Applications/Utilities/Terminal.app' }));
-    check('launch: a path resolve did not return is never started', /Only an app open_app found/.test(e?.message) && fx.calls.length === 1);
+    check('launch: a path resolve did not return is never started', /Only an app open_app found/.test(e?.message) && fx.calls.length === before + 1);
+    const e2 = await rejects(() => c.call('launch', { key: '/Applications/TextEdit Plus.app' }));
+    check('launch: an app whose bundle id could not be read is not started', /could not be checked/.test(e2?.message) && fx.calls.length === before + 1);
+
+    // the controller: the bundle id is part of the check made before anything starts
+    const launched = [];
+    const settings = { master: () => true, terminals: () => false, allowed: () => [], allow: () => {}, setMaster: () => {} };
+    const notes = [{ name: 'Notes', exe: '/Applications/Notes.app', key: '/Applications/Notes.app', exact: true, bundle: 'com.apple.Terminal' }];
+    const client = { call: async (cmd) => { if (cmd === 'launch') launched.push(1); return cmd === 'resolve' ? { ok: true, found: notes } : cmd === 'apps' ? { ok: true, apps: [] } : { ok: true }; }, abort() {}, destroy() {} };
+    const d = createDesktop({ platform: 'darwin', client, settings, winapi: { ok: true }, lumen: { pid: 1, exe: '/Applications/Lumen.app' } });
+    const asked = [];
+    const blockedOpen = await rejects(() => d.run({ action: 'open_app', args: { name: 'Notes' } }, { signal: new AbortController().signal, once: new Set(), emit: () => {}, tainted: () => false, ask: async (card) => { asked.push(card); return true; } }));
+    check('open_app: a renamed blocked app (Notes.app whose bundle id is Terminal) is refused before it starts, without a card', /terminal/i.test(blockedOpen?.message) && launched.length === 0 && asked.length === 0, blockedOpen?.message);
   }
 
   // ---- Stop kills what is running
@@ -267,6 +286,137 @@ const ok = (o = {}) => ({ stdout: `${J({ ok: true, ...o })}\n` });
     p.start();
     spawned[1].c.emit('exit', 1);
     check('probe: a probe that ended with an error is "failed"', p.failed() === true);
+  }
+
+  // ---- mac-helper.jxa itself, run in a Node sandbox against a stand-in System Events (never the real one)
+  {
+    const vm = require('vm');
+    const SRC = require('fs').readFileSync(macClient.SCRIPT, 'utf8');
+    // A small model of one app (pid 77) and its windows: elements answer role(), name()... like System Events specifiers, and record what is sent.
+    const world = (opts = {}) => {
+      const w = { front: 77, focused: null, focusThrows: false, sent: [], raised: [], onKey: null };
+      const el = (o) => {
+        const e = { _v: o.value ?? '', uiElements: o.kids || [] };
+        Object.assign(e, { role: () => o.role, subrole: () => o.subrole || '', name: () => o.name || '', description: () => o.desc || '', position: () => o.pos || [10, 10], size: () => o.size || [50, 20] });
+        Object.defineProperty(e, 'value', { get: () => () => e._v, set: (v) => { if (o.fixedValue) throw new Error('not settable'); e._v = v; if (w.onSet) w.onSet(e); } });
+        Object.defineProperty(e, 'focused', { get: () => () => w.focused === e, set: () => { if (o.focusable !== false) w.focused = e; } });
+        e.actions = { name: () => ['AXPress', 'AXRaise'], byName: (n) => ({ perform: () => { if (n === 'AXRaise') w.raised.push(o.name); else w.sent.push(['press', o.name]); } }) };
+        e.attributes = { byName: () => ({ value: () => false }) };
+        return e;
+      };
+      w.el = el;
+      const wins = opts.build ? opts.build(el) : [el({ role: 'AXWindow', name: 'Doc', pos: [0, 0], size: [800, 600], kids: opts.kids || [] })];
+      const coll = Object.assign([...wins], { position: () => wins.map((x) => x.position()), size: () => wins.map((x) => x.size()), name: () => wins.map((x) => x.name()) });
+      const proc = { windows: coll, attributes: { byName: () => ({ value: () => { if (w.focusThrows) throw new Error('AXError'); return w.focused; } }) } };
+      Object.defineProperty(proc, 'frontmost', { set: () => { if (!opts.stuckBehind) w.front = 77; } });
+      const send = (rec) => { w.sent.push(rec); if (w.onKey) w.onKey(rec); };
+      const se = { processes: { whose: (q) => (q.unixId === 77 ? [proc] : []) }, keystroke: (t, o) => send(['keystroke', t, o || null]), keyCode: (c, o) => send(['keyCode', c, o || null]), click: () => send(['click']) };
+      const app = { activationPolicy: 0, processIdentifier: 77, localizedName: 'TextEdit', bundleIdentifier: 'com.apple.TextEdit', bundleURL: { isNil: () => false, path: '/System/Applications/TextEdit.app' }, launchDate: { isNil: () => false, timeIntervalSince1970: 5 }, hidden: false };
+      const cg = opts.cg || [{ kCGWindowLayer: 0, kCGWindowNumber: 31, kCGWindowOwnerPID: 77, kCGWindowName: opts.cgTitle || '', kCGWindowIsOnscreen: true, kCGWindowBounds: { X: 0, Y: 0, Width: 800, Height: 600 } }];
+      const $ = (x) => x;
+      $.NSWorkspace = { sharedWorkspace: { runningApplications: { count: 1, objectAtIndex: () => app }, get frontmostApplication() { return { isNil: () => false, processIdentifier: w.front }; } } };
+      $.CGWindowListCopyWindowInfo = () => cg;
+      const ctx = vm.createContext({ ObjC: { import() {}, unwrap: (x) => x, deepUnwrap: (x) => x, castRefToObject: (x) => x }, $, Application: () => se, delay: () => {} });
+      vm.runInContext(SRC, ctx);
+      w.call = (cmd, data) => JSON.parse(ctx.run([cmd, JSON.stringify({ hwnd: 31, pid: 77, start: 5000, ...data })]));
+      return w;
+    };
+    const keysSent = (w) => w.sent.filter((x) => x[0] === 'keystroke' || x[0] === 'keyCode');
+
+    // (1) keys: the focus is checked before every chord; a focus that cannot be read counts as a password field
+    {
+      const w = world();
+      w.focused = w.el({ role: 'AXTextField', name: 'Search' });
+      const r = w.call('keys', { chords: [{ mods: ['command'], key: 's' }, { mods: [], code: 36 }] });
+      check('helper keys: with an ordinary focus every chord is sent', r.ok && keysSent(w).length === 2 && J(keysSent(w)[0]) === J(['keystroke', 's', { using: ['command down'] }]), J(r));
+      const secure = world();
+      secure.focused = secure.el({ role: 'AXTextField', subrole: 'AXSecureTextField', name: 'Password' });
+      const r2 = secure.call('keys', { chords: [{ mods: ['command'], key: 'v' }] });
+      check('helper keys: focus on a password field -> refused, nothing sent', !r2.ok && /password field/.test(r2.error) && keysSent(secure).length === 0, J(r2));
+      const blind = world();
+      blind.focusThrows = true;
+      const r3 = blind.call('keys', { chords: [{ mods: [], code: 36 }] });
+      check('helper keys: a focus that cannot be read is treated as a password field (fails closed)', !r3.ok && /could not be checked/.test(r3.error) && keysSent(blind).length === 0, J(r3));
+      const none = world();
+      const r4 = none.call('keys', { chords: [{ mods: [], code: 36 }] });
+      check('helper keys: no focused item at all -> refused', !r4.ok && keysSent(none).length === 0);
+      const mid = world();
+      mid.focused = mid.el({ role: 'AXTextField', name: 'Search' });
+      mid.onKey = () => { mid.focused = mid.el({ role: 'AXTextField', subrole: 'AXSecureTextField', name: 'PIN' }); };
+      const r5 = mid.call('keys', { chords: [{ mods: [], key: 'a' }, { mods: [], key: 'b' }, { mods: [], key: 'c' }] });
+      check('helper keys: focus moving to a password field mid-sequence stops before the next chord', !r5.ok && keysSent(mid).length === 1 && /after 1 of the keys/.test(r5.error), J(r5));
+      const behind = world({ stuckBehind: true });
+      behind.front = 12;
+      behind.focused = behind.el({ role: 'AXTextField', name: 'x' });
+      const r6 = behind.call('keys', { chords: [{ mods: [], code: 36 }] });
+      check('helper keys: another app in front that will not give way -> refused, nothing sent', !r6.ok && /Another app/.test(r6.error) && keysSent(behind).length === 0);
+    }
+
+    // (1) and (4) type: the focus is confirmed on the element before Cmd+A or typing, and checked before every piece and before Enter
+    {
+      const typing = (o = {}, data = {}) => {
+        const w = world({ build: (el) => { const fld = el({ role: 'AXTextArea', name: 'Body', fixedValue: true, ...o }); w0.fld = fld; return [el({ role: 'AXWindow', name: 'Doc', pos: [0, 0], size: [800, 600], kids: [fld] })]; } });
+        return w;
+      };
+      let w0 = {};
+      const w = typing();
+      const r = w.call('settext', { path: [0], role: 'AXTextArea', name: 'Body', desc: '', text: 'hello world, this is longer than sixteen' });
+      check('helper type: a field that cannot be set is focused, then Cmd+A and the text go in pieces of 16', r.ok && r.method === 'keys' && J(keysSent(w).map((x) => x[1])) === J(['a', 'hello world, thi', 's is longer than', ' sixteen']), J(keysSent(w)));
+      w0 = {};
+      const nf = typing({ focusable: false });
+      const r2 = nf.call('settext', { path: [0], role: 'AXTextArea', name: 'Body', desc: '', text: 'hi' });
+      check('helper type: focus could not be put on the item -> refused before Cmd+A or any typing', !r2.ok && /could not put the keyboard focus/.test(r2.error) && keysSent(nf).length === 0, J(r2));
+      w0 = {};
+      const moved = typing();
+      moved.onKey = (rec) => { if (rec[1] !== 'a') moved.focused = moved.el({ role: 'AXTextField', subrole: 'AXSecureTextField', name: 'Password' }); };
+      const r3 = moved.call('settext', { path: [0], role: 'AXTextArea', name: 'Body', desc: '', text: 'x'.repeat(40) });
+      check('helper type: focus moving to a password field stops typing before the next piece', !r3.ok && /password field/.test(r3.error) && keysSent(moved).length === 2, J(keysSent(moved)));
+      w0 = {};
+      const away = typing();
+      away.onKey = (rec) => { if (rec[1] !== 'a') away.focused = away.el({ role: 'AXTextField', name: 'Other' }); };
+      const r4 = away.call('settext', { path: [0], role: 'AXTextArea', name: 'Body', desc: '', text: 'x'.repeat(40) });
+      check('helper type: focus moving to another item stops typing', !r4.ok && /left that item/.test(r4.error) && keysSent(away).length === 2, J(r4));
+      w0 = {};
+      const sub = typing({ role: 'AXTextField', name: 'To', fixedValue: false });
+      sub.onSet = () => { sub.focused = sub.el({ role: 'AXTextField', subrole: 'AXSecureTextField', name: 'Password' }); };
+      const r5 = sub.call('settext', { path: [0], role: 'AXTextField', name: 'To', desc: '', text: 'ada@example.com', submit: true });
+      check('helper type: the value is set directly, but Enter is not pressed once the focus is on a password field', !r5.ok && /password field/.test(r5.error) && keysSent(sub).length === 0 && w0.fld._v === 'ada@example.com', J(r5));
+      w0 = {};
+      const ok2 = typing({ role: 'AXTextField', name: 'To', fixedValue: false });
+      const r6 = ok2.call('settext', { path: [0], role: 'AXTextField', name: 'To', desc: '', text: 'ada', submit: true });
+      check('helper type: value set, focus still on the field -> Enter is pressed', r6.ok && r6.method === 'value' && J(keysSent(ok2)) === J([['keyCode', 36, null]]), J(r6));
+
+      // (3) the element at the path must still have the same role, name and description
+      w0 = {};
+      const stale = typing({ desc: 'Message body' });
+      const r7 = stale.call('settext', { path: [0], role: 'AXTextArea', name: 'Body', desc: 'Subject', text: 'hi' });
+      check('helper: an id whose element now has another description is refused as stale', !r7.ok && /changed since it was read/.test(r7.error) && keysSent(stale).length === 0, J(r7));
+      w0 = {};
+      const gone = typing();
+      const r8 = gone.call('settext', { path: [5], role: 'AXTextArea', name: 'Body', desc: '', text: 'hi' });
+      check('helper: a path that no longer exists is "gone", not a permission problem', !r8.ok && /gone/.test(r8.error) && r8.mine === true);
+      w0 = {};
+      const pw = typing({ subrole: 'AXSecureTextField', role: 'AXTextField', name: 'Password' });
+      const r9 = pw.call('settext', { path: [0], role: 'AXTextField', name: 'Password', desc: '', text: 'x' });
+      check('helper: typing into a secure text field is refused', !r9.ok && /password field/.test(r9.error) && w0.fld._v === '');
+    }
+
+    // (7) two windows of the app at the same place and size
+    {
+      const two = (a, b, cgTitle = '') => world({ cgTitle, build: (el) => [el({ role: 'AXWindow', name: a, pos: [0, 0], size: [800, 600] }), el({ role: 'AXWindow', name: b, pos: [0, 0], size: [800, 600] })] });
+      const w = two('Report A', 'Report B');
+      const r = w.call('focus', { title: 'Report B' });
+      check('helper: same place and size -> the approved title picks the window', r.ok && J(w.raised) === J(['Report B']), J([r, w.raised]));
+      const w2 = two('Report A', 'Report B');
+      const r2 = w2.call('focus', { title: '' });
+      check('helper: same place and size and no title to tell them apart -> refused', !r2.ok && /same place and size/.test(r2.error) && w2.raised.length === 0, J(r2));
+      const w3 = two('Untitled', 'Untitled');
+      w3.focused = w3.el({ role: 'AXTextField', name: 'x' });
+      const r3 = w3.call('keys', { title: 'Untitled', chords: [{ mods: [], code: 36 }] });
+      check('helper: same place, size and title -> refused, nothing sent', !r3.ok && /same place and size/.test(r3.error) && keysSent(w3).length === 0);
+      const one = world({ build: (el) => [el({ role: 'AXWindow', name: 'Renamed', pos: [0, 0], size: [800, 600] })] });
+      check('helper: one window at that place is used even if its title changed since', one.call('focus', { title: 'Old title' }).ok && J(one.raised) === J(['Renamed']));
+    }
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

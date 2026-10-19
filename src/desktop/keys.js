@@ -74,6 +74,10 @@ function macChord(text) {
     mods.add(MAC_MODS[m]);
   }
   const has = (m) => mods.has(m);
+  if (/^f([1-9]|1[0-2])$/.test(key)) { // function keys: on their own only; with Cmd, Ctrl or Option (or Shift) they reach macOS's own shortcuts
+    if (mods.size) throw new KeysError('A function key is sent only on its own, without Cmd, Ctrl, Option or Shift (those combinations reach macOS itself).');
+    if (key === 'f3' || key === 'f11') throw new KeysError(`${key.toUpperCase()} opens Mission Control or shows the desktop, so it is not sent.`);
+  }
   const out = { mods: [...mods].sort() };
   if (MAC_CODES[key] !== undefined) out.code = MAC_CODES[key];
   else if (key.length === 1) out.key = key;

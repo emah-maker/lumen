@@ -54,7 +54,8 @@ function processOf(pid) {
 function frontPid() { var f = $.NSWorkspace.sharedWorkspace.frontmostApplication; return f.isNil() ? 0 : f.processIdentifier; }
 
 // The window a call is about, checked: the pid still runs the same app (its start time), the window id still belongs to that pid, and the
-// System Events window is the one at the same place and size.
+// System Events window is the one at the same place and size. Two windows of the app at exactly the same place and size are told apart by
+// the title Lumen approved (a.title); if that does not single one out, the call is refused rather than acting in a guess.
 function target(a, withWindow) {
   var apps = runningApps();
   var pid = Number(a.pid) || 0;
@@ -70,10 +71,16 @@ function target(a, withWindow) {
   var proc = processOf(pid);
   var wins = proc.windows;
   var pos = wins.position(), size = wins.size(), names = wins.name();
-  var hit = -1;
-  for (var j = 0; j < pos.length && hit < 0; j++) if (sameBounds(pos[j], size[j], cg.b) && (!cg.title || str(names[j]) === cg.title)) hit = j;
-  for (var k = 0; k < pos.length && hit < 0; k++) if (sameBounds(pos[k], size[k], cg.b)) hit = k;
-  if (hit < 0) fail('That window could not be found in the app (it may be minimized or on another Space). Use focus_app first.');
+  var hits = [];
+  for (var j = 0; j < pos.length; j++) if (sameBounds(pos[j], size[j], cg.b)) hits.push(j);
+  if (!hits.length) fail('That window could not be found in the app (it may be minimized or on another Space). Use focus_app first.');
+  if (hits.length > 1) {
+    var want = str(a.title) || cg.title;
+    var named = want ? hits.filter(function (h) { return str(names[h]) === want; }) : [];
+    if (named.length !== 1) fail('Two windows of this app are at the same place and size, so Lumen cannot tell which one is meant. Ask the user to move or close one, then call list_apps.');
+    hits = named;
+  }
+  var hit = hits[0];
   return { ap: ap, cg: cg, proc: proc, win: wins[hit], title: str(names[hit]) };
 }
 
@@ -95,6 +102,7 @@ function cmdApps() {
     var used = {};
     for (var j = 0; j < names.length; j++) {
       var hit = null;
+      for (var t = 0; t < mine.length && !hit; t++) if (!used[mine[t].id] && mine[t].title && mine[t].title === str(names[j]) && sameBounds(pos[j], size[j], mine[t].b)) hit = mine[t]; // (same place and size: the title pairs them)
       for (var k = 0; k < mine.length && !hit; k++) if (!used[mine[k].id] && sameBounds(pos[j], size[j], mine[k].b)) hit = mine[k];
       if (!hit) continue;
       used[hit.id] = true;
@@ -144,14 +152,16 @@ function cmdTree(a) {
   return { tree: tree, truncated: truncated };
 }
 
-// The element at a path from the window, checked against the role and name it had when it was read.
+// The element at a path from the window, checked against the role, name and description it had when it was read.
 function element(t, a) {
   var el = t.win;
   var path = a.path || [];
-  for (var i = 0; i < path.length; i++) el = el.uiElements[Number(path[i])];
-  var role, sub, name;
-  try { role = str(el.role()); sub = str(el.subrole()); name = str(el.name()); } catch (e) { fail('That item is gone. Read the app again (read_app).'); }
-  if (role !== str(a.role) || (a.name && name !== str(a.name))) fail('The app changed since it was read, so that id now points at something else. Read the app again (read_app).');
+  var role, sub, name, desc;
+  try {
+    for (var i = 0; i < path.length; i++) el = el.uiElements[Number(path[i])];
+    role = str(el.role()); sub = str(el.subrole()); name = str(el.name()); desc = str(el.description());
+  } catch (e) { fail('That item is gone. Read the app again (read_app).'); }
+  if (role !== str(a.role) || name !== str(a.name) || desc !== str(a.desc)) fail('The app changed since it was read, so that id now points at something else. Read the app again (read_app).');
   if (sub === 'AXSecureTextField') fail('That is a password field. The AI never reads or fills those.');
   return el;
 }
@@ -162,7 +172,24 @@ function bringForward(t) {
   return frontPid() === t.ap.pid;
 }
 function mustBeFront(t) { if (frontPid() !== t.ap.pid) { bringForward(t); if (frontPid() !== t.ap.pid) fail('Another app took the keyboard, so nothing more was typed.'); } }
-function focusedIsSecure(t) { try { var f = t.proc.attributes.byName('AXFocusedUIElement').value(); return str(f.subrole()) === 'AXSecureTextField'; } catch (e) { return false; } }
+// Is the keyboard focus on a password field? A focus that cannot be read counts as one (nothing is sent blind).
+function focusedIsSecure(t) {
+  try {
+    var f = t.proc.attributes.byName('AXFocusedUIElement').value();
+    if (!f) return true;
+    return str(f.subrole()) === 'AXSecureTextField' || str(f.role()) === 'AXSecureTextField';
+  } catch (e) { return true; }
+}
+// Before every key that is sent (each chord, each piece of text, Cmd+A, Enter): the approved app is in front and the focus is not a password field.
+function guard(t, done) {
+  mustBeFront(t);
+  if (focusedIsSecure(t)) fail('The keyboard focus is on a password field (or could not be checked), so nothing more was sent' + (done ? ' after ' + done : '') + '.');
+}
+// Is the keyboard focus on this element? Compared by what it is and where it is (System Events has no identity test).
+function sig(e) { return [str(e.role()), str(e.subrole()), str(e.name()), str(e.description()), String(e.position()), String(e.size())].join('|'); }
+function isFocused(t, el) {
+  try { var f = t.proc.attributes.byName('AXFocusedUIElement').value(); return Boolean(f) && sig(f) === sig(el); } catch (e) { return false; }
+}
 
 function cmdFocus(a) {
   var t = target(a, true);
@@ -187,10 +214,10 @@ function cmdInvoke(a) {
 }
 
 var EDITABLE = { AXTextField: 1, AXTextArea: 1, AXComboBox: 1, AXSearchField: 1, AXDateField: 1 };
-function typeKeys(t, text) {
+function typeKeys(t, el, text) {
   for (var i = 0; i < text.length; i += 16) {
-    mustBeFront(t);
-    if (focusedIsSecure(t)) fail('The keyboard focus moved to a password field, so typing stopped after ' + i + ' characters.');
+    guard(t, i + ' characters');
+    if (!isFocused(t, el)) fail('The keyboard focus left that item, so typing stopped after ' + i + ' characters.');
     se().keystroke(text.slice(i, i + 16));
   }
 }
@@ -211,10 +238,16 @@ function cmdSettext(a) {
   if (method === 'keys') {
     if (text.length > 500) fail('That item cannot be set directly, and typing it key by key is limited to 500 characters. Type it in parts.');
     mustBeFront(t);
+    if (!isFocused(t, el)) fail('Lumen could not put the keyboard focus on that item, so nothing was typed. Click it first (click), then type.');
+    guard(t);
     if (!a.append && EDITABLE[role]) se().keystroke('a', { using: 'command down' });
-    typeKeys(t, text);
+    typeKeys(t, el, text);
   }
-  if (a.submit) { mustBeFront(t); se().keyCode(36); }
+  if (a.submit) {
+    guard(t, 'the text');
+    if (!isFocused(t, el)) fail('The text was entered, but the keyboard focus is not on that item, so Enter was not pressed.');
+    se().keyCode(36);
+  }
   return { method: method };
 }
 
@@ -222,7 +255,7 @@ function cmdKeys(a) {
   var t = target(a, true);
   var chords = a.chords || [];
   for (var i = 0; i < chords.length; i++) {
-    mustBeFront(t);
+    guard(t, i + ' of the keys');
     var c = chords[i];
     var using = (c.mods || []).map(function (m) { return m + ' down'; });
     var opts = using.length ? { using: using } : {};

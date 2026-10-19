@@ -34,11 +34,15 @@ const PERMISSIONS = {
 // Folders open_app looks in (it starts only an app it found here, never a path the AI wrote).
 const APP_DIRS = ['/Applications', '/Applications/Utilities', '/System/Applications', '/System/Applications/Utilities', path.join(os.homedir(), 'Applications')];
 
+// Each found app's bundle id, from its Contents/Info.plist (plutil, a system tool), so the never list sees a renamed app for what it is.
+// An app whose id cannot be read keeps bundle '' and is not started.
+const plistArgs = (app) => ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', path.posix.join(app, 'Contents', 'Info.plist')];
+
 const permissionError = (kind) => Object.assign(new Error(PERMISSIONS[kind].text), { permission: kind, settingsUrl: PERMISSIONS[kind].url });
 // What osascript or System Events said -> which permission is missing ('' when it is not about permission).
 function permissionOf(text, code = 0) {
   const s = `${text || ''} ${code || ''}`;
-  if (/-1719\b|-25211\b|assistive access|accessibility (access|permission)/i.test(s)) return 'accessibility';
+  if (/-25211\b|assistive access|accessibility (access|permission)/i.test(s)) return 'accessibility'; // (not -1719 alone: that is "invalid index", an item that went away)
   if (/-1743\b|not authori[sz]ed to send apple events/i.test(s)) return 'automation';
   return '';
 }
@@ -48,7 +52,7 @@ const jxaArgs = (source, cmd, data = {}) => ['-l', 'JavaScript', '-e', source, S
 const captureArgs = (id, file) => ['-x', '-o', '-t', 'jpg', '-l', String(Math.trunc(Number(id))), file];
 const sipsArgs = (file, out, w, q) => ['-s', 'format', 'jpeg', '-s', 'formatOptions', String(Math.max(10, Math.min(95, Math.round(Number(q) || 60)))), '--resampleWidth', String(Math.max(80, Math.min(2400, Math.round(Number(w) || 1000)))), file, '--out', out];
 
-// The apps open_app can start, by name: [{ name, exe, key, exact }] (key is the app's full path).
+// The apps open_app can start, by name: [{ name, exe, key, exact }] (key is the app's full path). The bundle id is added by the client (bundleIds).
 function findApps(name, { readdir = (d) => fs.readdirSync(d), dirs = APP_DIRS } = {}) {
   const want = String(name || '').trim().toLowerCase().replace(/\.app$/, '');
   if (!want) return [];
@@ -78,7 +82,7 @@ function createMacClient(deps = {}) {
   const getSource = () => (source ??= (deps.source || (() => fs.readFileSync(SCRIPT, 'utf8')))());
   const running = new Set();
   let refs = null; // { hwnd, map } from the latest read_app
-  let resolved = new Set(); // paths the latest resolve found: the only ones launch starts
+  let resolved = new Map(); // path -> bundle id, from the latest resolve: the only apps launch starts
   const frames = new Map(); // window id -> hash of the last picture the live card got
   let destroyed = false;
   let lastMs = 0;
@@ -120,7 +124,8 @@ function createMacClient(deps = {}) {
     return r;
   }
 
-  const target = (a) => ({ hwnd: Number(a.hwnd) || 0, pid: Number(a.pid) || 0, start: Number(a.start) || 0 });
+  // (title: the one Lumen approved, which tells two windows at the same place and size apart)
+  const target = (a) => ({ hwnd: Number(a.hwnd) || 0, pid: Number(a.pid) || 0, start: Number(a.start) || 0, title: typeof a.title === 'string' ? a.title : '' });
 
   // A picture of one window as base64 JPEG ('' when it cannot be captured).
   async function capture(id, w, q, timeoutMs) {
@@ -155,7 +160,7 @@ function createMacClient(deps = {}) {
       case 'invoke': case 'settext': {
         const ref = refs && refs.hwnd === Number(args.hwnd) ? refs.map.get(String(args.el)) : null;
         if (!ref) throw Object.assign(new Error('Read the app first (read_app): ids come from the latest read.'), { fromHelper: true });
-        const data = { ...target(args), path: ref.path, role: ref.role, name: ref.name };
+        const data = { ...target(args), path: ref.path, role: ref.role, name: ref.name, desc: ref.desc };
         if (cmd === 'settext') Object.assign(data, { text: String(args.text ?? ''), append: args.append === true, submit: args.submit === true });
         return jxa(cmd, data, timeoutMs);
       }
@@ -181,12 +186,16 @@ function createMacClient(deps = {}) {
       }
       case 'resolve': {
         const found = findApps(args.name, { readdir: deps.readdir, dirs: deps.dirs });
-        resolved = new Set(found.map((f) => f.key));
+        for (const f of found) {
+          try { const id = (await run('plutil', plistArgs(f.exe), 5000)).trim(); f.bundle = /^[A-Za-z0-9.-]{1,200}$/.test(id) ? id : ''; } catch { f.bundle = ''; }
+        }
+        resolved = new Map(found.map((f) => [f.key, f.bundle]));
         return { ok: true, found };
       }
       case 'launch': {
         const key = String(args.key || '');
         if (!resolved.has(key) || !/^\/[^\0]+\.app$/.test(key)) throw new Error('Only an app open_app found can be started.');
+        if (!resolved.get(key)) throw new Error('That app could not be checked before it starts (its bundle id could not be read), so the AI does not start it. The user can open it, and the AI can then use it.');
         await run('open', ['-a', key], timeoutMs);
         return { ok: true };
       }
@@ -210,4 +219,4 @@ function createMacClient(deps = {}) {
   };
 }
 
-module.exports = { createMacClient, permissionOf, permissionError, jxaArgs, captureArgs, sipsArgs, findApps, PERMISSIONS, SCRIPT, APP_DIRS };
+module.exports = { createMacClient, permissionOf, permissionError, jxaArgs, captureArgs, sipsArgs, plistArgs, findApps, PERMISSIONS, SCRIPT, APP_DIRS };

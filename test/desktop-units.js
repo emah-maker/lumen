@@ -237,7 +237,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     rig.setAnswer(true);
     const out = await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
     check('Once: it reads, wrapped as untrusted content, the password field left out and counted', /^<untrusted_page_content source="app: Microsoft Word">/.test(out) && /\[e2\] Edit "Name" = "Ada"/.test(out) && /1 password field left out/.test(out), out);
-    check('every helper call names the program it was approved for (pid, hosted pid, start time)', J(rig.calls.find(([c]) => c === 'tree')[1]) === J({ hwnd: 100, pid: 10, hpid: 0, start: 1010, max: 700 }), J(rig.calls.find(([c]) => c === 'tree')[1]));
+    check('every helper call names the program it was approved for (pid, hosted pid, start time) and the window title', J(rig.calls.find(([c]) => c === 'tree')[1]) === J({ hwnd: 100, pid: 10, hpid: 0, start: 1010, title: 'Report.docx - Word', max: 700 }), J(rig.calls.find(([c]) => c === 'tree')[1]));
     check('Once: remembered for this chat (the second call does not ask), by path, not saved to Settings', rig.asked.length === 2 && rig.ctx.once.has(key(WORDX)) && rig.store.allowed.length === 0);
     await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
     check('...and a later call asks nothing more', rig.asked.length === 2);
