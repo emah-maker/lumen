@@ -18,7 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const skillMd = require('./skill-md');
+const skillMd = () => require('./skill-md'); // (loaded with the first SKILL.md, Claude Code skill or offer)
 
 const MAX_PROMPT = 8000;
 const MAX_SKILLS = 200;
@@ -335,7 +335,7 @@ function reviewImport(text, existing = []) {
 function reviewSkillMd(read, existing = []) {
   const empty = { candidates: [], rejected: [] };
   if (!read?.ok) return { ok: false, error: read?.error || 'That could not be read.', ...empty };
-  const parsed = skillMd.fromSkillMd(read.text, { folder: read.folder, maxPrompt: MAX_PROMPT });
+  const parsed = skillMd().fromSkillMd(read.text, { folder: read.folder, maxPrompt: MAX_PROMPT });
   if (!parsed.ok) return { ok: false, error: parsed.error, ...empty };
   if (existing.length >= MAX_SKILLS) return { ok: false, error: `There is room for ${MAX_SKILLS} skills in all.`, ...empty };
   const r = normalizeSkill({ ...parsed.skill, source: 'imported', autoUse: false }, { strict: true });
@@ -384,7 +384,7 @@ function createLearning({ now = Date.now, max = 50 } = {}) {
     const e = entry(chatId);
     e.usedNow = Boolean(skill);
     if (skill) { e.skill = skill; e.corrections = []; e.offered = false; return; }
-    if (e.skill && !e.offered && skillMd.looksLikeCorrection(text) && e.corrections.length < 5) e.corrections.push(String(text).slice(0, 1000));
+    if (e.skill && !e.offered && skillMd().looksLikeCorrection(text) && e.corrections.length < 5) e.corrections.push(String(text).slice(0, 1000));
   }
   // The AI loaded a skill with use_skill during this run.
   function used(chatId, skill) {
@@ -407,7 +407,7 @@ function createLearning({ now = Date.now, max = 50 } = {}) {
       offers.set(token, { kind: 'update', chatId, skillId: e.skill.id, corrections: [...e.corrections], at: now() });
       return { token, kind: 'update', skill: { id: info.id, name: info.name, title: info.title } };
     }
-    if (!skillMd.shouldOfferSave({ enabled, ok, toolCalls: toolNames.length, usedSkill })) return null;
+    if (!skillMd().shouldOfferSave({ enabled, ok, toolCalls: toolNames.length, usedSkill })) return null;
     offers.set(token, { kind: 'save', chatId, tools: toolNames.slice(0, 60), at: now() });
     return { token, kind: 'save' };
   }
@@ -536,7 +536,7 @@ function create(deps) {
     if (prefs().skillsFromClaudeCode !== true || !deps.homeDir) return [];
     if (Date.now() - ccCache.at > 10000) {
       let found;
-      try { found = skillMd.listClaudeCodeSkills(deps.homeDir()); } catch { found = []; }
+      try { found = skillMd().listClaudeCodeSkills(deps.homeDir()); } catch { found = []; }
       ccCache = { at: Date.now(), list: found };
     }
     const taken = store.list();
@@ -547,7 +547,7 @@ function create(deps) {
   // when that switch is on. None when Settings → Skills → "Let the AI use skills on its own" is off.
   const autoSkills = () => (prefs().skillsAutoUse === false ? [] : [...store.list().filter((s) => s.autoUse), ...claudeCode()]);
   // The block the system prompt carries (fixed per conversation, like custom instructions), or ''.
-  const promptBlock = () => skillMd.promptListing(autoSkills());
+  const promptBlock = () => skillMd().promptListing(autoSkills());
   // The use_skill tool (ai/agent.js): a skill's instructions by name, or the list.
   function useForAI(input = {}) {
     const list = autoSkills();
@@ -659,7 +659,7 @@ function create(deps) {
     ipcMain.handle('skills:import-md-pick', async () => {
       const { canceled, filePaths } = await deps.dialog.showOpenDialog(deps.win(), { title: 'Import a skill (SKILL.md)', properties: ['openFile', 'openDirectory'], filters: [{ name: 'SKILL.md', extensions: ['md'] }] });
       if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
-      return reviewMd(skillMd.readSkillFolder(filePaths[0]));
+      return reviewMd(skillMd().readSkillFolder(filePaths[0]));
     });
     // Export: <the folder picked>/<name>/SKILL.md. An existing SKILL.md there is never overwritten.
     ipcMain.handle('skills:export-md', async (_e, id) => {
@@ -670,8 +670,10 @@ function create(deps) {
       const dir = path.join(filePaths[0], skill.name);
       const file = path.join(dir, 'SKILL.md');
       await fs.promises.mkdir(dir, { recursive: true });
+      // (Windows follows a dangling symlink even with 'wx' and creates its target: anything already there, a link included, stops it first)
+      if (await fs.promises.lstat(file).then(() => true, () => false)) return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
       // 'wx': created here or not at all, so an existing file, or a symlink there (even one pointing nowhere), is never written through.
-      try { await fs.promises.writeFile(file, skillMd.toSkillMd(skill), { encoding: 'utf8', flag: 'wx' }); } catch (err) {
+      try { await fs.promises.writeFile(file, skillMd().toSkillMd(skill), { encoding: 'utf8', flag: 'wx' }); } catch (err) {
         if (err?.code === 'EEXIST') return { ok: false, error: `There is already a SKILL.md in ${dir}. Nothing was written.` };
         throw err;
       }
@@ -769,7 +771,7 @@ function create(deps) {
     const after = clean(raw?.prompt).trim();
     if (!after || after.length > MAX_PROMPT) throw new Error('The model’s proposal could not be used. Try again.');
     if (after === skill.prompt) throw new Error('The model found nothing to change in the skill.');
-    const u = { token: crypto.randomBytes(8).toString('hex'), id: skill.id, name: skill.name, title: skill.title, before: skill.prompt, after, summary: oneLine(raw?.summary, 300), diff: skillMd.lineDiff(skill.prompt, after) };
+    const u = { token: crypto.randomBytes(8).toString('hex'), id: skill.id, name: skill.name, title: skill.title, before: skill.prompt, after, summary: oneLine(raw?.summary, 300), diff: skillMd().lineDiff(skill.prompt, after) };
     lastUpdate = u;
     return u;
   }

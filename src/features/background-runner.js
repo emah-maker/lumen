@@ -31,7 +31,7 @@ const quiet = require('./agents-quiet');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 const routines = require('./routines');
-const webhooks = require('./routine-webhooks'); // (the listener itself starts only when the user turns routine web links on)
+const webhooks = () => require('./routine-webhooks'); // (loaded, and the listener started, only when the user turns routine web links on)
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
 const CLAUDE_WORLD = 1001; // agent.js's isolated world: where page-scripts keep their element registry
@@ -406,7 +406,7 @@ function create(deps) {
 
   // The web links' listener follows the settings: on with routineWebhooks, on routineWebhookPort. Another program on
   // the port: it says so (Settings shows it) and listens nowhere.
-  const hookPort = () => webhooks.cleanPort(deps.readSettings().routineWebhookPort) || webhooks.DEFAULT_PORT;
+  const hookPort = () => webhooks().cleanPort(deps.readSettings().routineWebhookPort) || webhooks().DEFAULT_PORT;
   const hooksOn = () => deps.readSettings().routineWebhooks === true;
   function webhookState() { return { on: hooksOn(), port: hookPort(), listening: hook.listening, error: hook.error }; }
   function syncWebhooks() {
@@ -415,7 +415,7 @@ function create(deps) {
       if (hook.server && hook.port === want && hook.listening) return;
       if (hook.server) { await hook.server.stop(); hook = { server: null, port: null, listening: false, error: '' }; }
       if (want === null) { hook.error = ''; return; }
-      const server = webhooks.createServer({ port: want, now, hashOf: (id) => find(id)?.routine?.webhookHash || '', fire: (id, text) => (find(id)?.schedule.repeat === 'webhook' ? fireRoutine(id, { trigger: 'webhook', input: text }) : { ok: false, code: 'missing' }) });
+      const server = webhooks().createServer({ port: want, now, hashOf: (id) => find(id)?.routine?.webhookHash || '', fire: (id, text) => (find(id)?.schedule.repeat === 'webhook' ? fireRoutine(id, { trigger: 'webhook', input: text }) : { ok: false, code: 'missing' }) });
       const res = await server.start();
       hook = { server: res.listening ? server : null, port: want, listening: res.listening, error: res.error };
       if (!res.listening) console.error(`[lumen] routine web links: could not listen on port ${want}: ${res.error}`);
@@ -426,12 +426,12 @@ function create(deps) {
   function webhookKey(id) {
     const task = find(id);
     if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
-    const key = webhooks.newKey();
-    task.routine.webhookHash = webhooks.hashKey(key);
+    const key = webhooks().newKey();
+    task.routine.webhookHash = webhooks().hashKey(key);
     touch(task);
     saveNow();
     const port = hookPort();
-    return { key, url: webhooks.runUrl(port, task.id), curl: webhooks.curlCommand(port, task.id, key), webhooks: webhookState() };
+    return { key, url: webhooks().runUrl(port, task.id), curl: webhooks().curlCommand(port, task.id, key), webhooks: webhookState() };
   }
 
   // Create or change a routine (the Routines editor). Throws with a message for the user.
