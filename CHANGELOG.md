@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A "New in Lumen" card offers the features that ship off.** After an update, the empty chat (in the sidebar and on lumen://chat) shows a short card listing memory, plan mode, skills from your Claude Code folder, Phone (Telegram) and voice input, with one plain line each. **Turn on** switches a setting on at once; **Set up** opens the right Settings section for Telegram and voice input, which still ask for their own token or key before anything leaves your computer. The card shows once per batch of new features, never appears over a running task, and has **Not now** and **Don’t show again**. It replaces the pop-up windows that offered features after an update.
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)
