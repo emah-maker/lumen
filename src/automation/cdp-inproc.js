@@ -372,7 +372,10 @@ function inprocUpstream({ tabs, userAgent = () => '', versions = process.version
       s.hub.fetchOwner = s.id;
     }
     if (method === 'Fetch.disable' && s.hub.fetchOwner === s.id) s.hub.fetchOwner = null;
-    const result = await s.wc.debugger.sendCommand(method, params, s.sid || undefined);
+    // A clipped screenshot makes the engine lay the page out at the clip's size for a moment; two at once (or one beside Lumen's own card frames) can leave
+    // it that way. A tab's screenshots go one at a time, in the same queue as Lumen's own (features/tab-capture.js).
+    const send = () => s.wc.debugger.sendCommand(method, params, s.sid || undefined);
+    const result = method === 'Page.captureScreenshot' ? await require('../features/tab-capture').oneAtATime(s.wc, send) : await send();
     const domain = /^(\w+)\.enable$/.exec(method)?.[1];
     if (domain && !NOT_UNDONE.has(domain)) scope.enabled.add(domain);
     if (method === 'Page.setLifecycleEventsEnabled') { if (params.enabled) scope.enabled.add('lifecycle'); else scope.enabled.delete('lifecycle'); }

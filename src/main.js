@@ -1983,6 +1983,26 @@ let pdfRepainter = null;
 function pokePdf(tab) {
   try { const wc = tab?.view?.webContents; if (!wc || !pdfZoom.viewerFrame(wc)) return; /* (not a PDF: the module is not even loaded) */ if (!pdfRepainter) pdfRepainter = require('./features/pdf-repaint').createRepainter({ isPdfTab: (wc) => Boolean(pdfZoom.viewerFrame(wc)) }); pdfRepainter.poke(tab?.view?.webContents); } catch { /* the tab is going away */ }
 }
+// Safety net (features/tab-capture.js): the tab in front must be laid out and drawn at the size of the tab area. Read when a tab is brought to the front
+// and after a burst of captures or card frames in the tab in front; a page that is off is put right and the event is written to diagnostics/page-size.jsonl.
+function pageSizeLog(entry) {
+  if (TEST) (global.__pageSizeFixes ||= []).push(entry);
+  try {
+    const dir = path.join(app.getPath('userData'), 'diagnostics');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'page-size.jsonl');
+    try { if (fs.statSync(file).size > 200000) fs.truncateSync(file, 0); } catch { /* none yet */ }
+    fs.appendFile(file, JSON.stringify(entry) + String.fromCharCode(10), () => {});
+  } catch { /* diagnostics are best effort */ }
+}
+function fillCheck(tabId, source, delay = 0) {
+  const timer = setTimeout(() => {
+    const tab = tabs.find((x) => x.id === tabId);
+    if (!tab || !alive(tab) || tab.id !== activeId || !win || win.isDestroyed() || win.isMinimized()) return;
+    require('./features/tab-capture').checkPageSize(tab.view, { source, shown: () => tab.id === activeId && alive(tab) && tab.view.getVisible() && !tab.fullscreen, skip: () => Boolean(tab.overlay), relayout: layout, log: pageSizeLog });
+  }, delay);
+  timer.unref?.();
+}
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() { return hang.mark('layout', layoutBody); } // [hang recorder]
 function layoutBody() {
@@ -2018,6 +2038,7 @@ function layoutBody() {
     // was laid out once at the narrow width (a resize event, the cards reflowing, widgets re-rendering) every time the sidebar closed.
     if (overlay) setOverlay(tab, overlay);
     if (visible) {
+      if (tab.fillDue) { tab.fillDue = false; fillCheck(tab.id, 'show', 350); } // (just brought to the front: is its page the size of the tab area?)
       if (tab.fullscreen) {
         const [width, height] = win.getContentSize();
         tab.view.setBounds({ x: 0, y: 0, width, height });
@@ -3493,6 +3514,7 @@ function switchTab(id, { wake = true } = {}) {
   const timing = switchTimingOn ? beginSwitchTiming(tab, input, rapid) : null;
   if (input) lastSwitchAt = Date.now();
   if (id !== activeId) {
+    tab.fillDue = true;
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
@@ -9604,7 +9626,7 @@ async function probeRunThumb(run) {
 }
 async function timedCapture(run, opts) {
   const t0 = performance.now();
-  try { return await captureRunThumb(run, opts); } finally { if (TEST) { (global.__thumbsState.windows ||= []).push([t0, performance.now()]); global.__thumbsState.captures = (global.__thumbsState.captures || 0) + 1; } } // (a test checks the main process stayed free while these ran)
+  try { return await captureRunThumb(run, opts); } finally { try { const t = thumbTabOf(run); if (t) fillCheck(t.id, 'capture', 250); } catch { /* the run's tab is gone */ } if (TEST) { (global.__thumbsState.windows ||= []).push([t0, performance.now()]); global.__thumbsState.captures = (global.__thumbsState.captures || 0) + 1; } } // (a test checks the main process stayed free while these ran)
 }
 // The live stream behind the card (features/step-thumbs.js): the engine's screencast of the tab at the card's size, at most THUMB_FPS frames a second,
 // each passed on as the base64 JPEG it is (nothing decoded here). Answers { stop() }, or null for a page that is drawn by the capture path instead.
@@ -9624,6 +9646,7 @@ async function streamRunThumb(run, onFrame, onEnd) {
       const url = wc.getURL();
       if (!/^https?:/i.test(url) || aiSites.isOff(url)) return; // (the page moved on to one the card does not draw)
       onFrame({ data, url, title: wc.getTitle?.() || '', ...named });
+      fillCheck(tab.id, 'stream', 400); // (read at most every 1.5 s, see checkPageSize in tab-capture.js)
       if (TEST) { const st = global.__thumbsState; const ms = performance.now() - t0; st.frameMs = (st.frameMs || 0) + ms; st.frames = (st.frames || 0) + 1; st.frameBytes = (st.frameBytes || 0) + data.length; st.frameMax = Math.max(st.frameMax || 0, ms); } // (a test reports what a frame costs the main process)
     },
   });

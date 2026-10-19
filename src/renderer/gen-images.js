@@ -222,5 +222,5 @@
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable };
+  window.genImages = { figure, decorate, load, zoomable, enlarge };
 })();
