@@ -283,6 +283,7 @@ const UI_ONLY_IPC = new Set([
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
+  'notes:act', // [notes] the Notes panel and the "Add to notes" buttons (features/notes-hub.js; the chat page has it too: CHAT_IPC)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
@@ -5076,6 +5077,7 @@ function showContextMenu(wc, p) {
       { role: 'copy' },
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
+      { label: t('menu.addToNotes'), click: () => addSelectionToNotes(wc, selection) },
       { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
       ...skillMenuItems(selection),
       { type: 'separator' },
@@ -8305,6 +8307,7 @@ const agent = new Agent({
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
   },
+  notes: { store: () => notesStore(), changed: () => pushNotes() }, // [notes] the notes tool (ai/notes.js)
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
@@ -10212,6 +10215,28 @@ function chatPlaceOf(id) {
   const tabsShown = candidates.map((tid, i) => { const f = tabAnywhere(tid); return { id: tid, title: withWindow(f.rec, () => tabTitle(f.t)) || '', home: i === 0, here: isHere(tid, f.rec) }; });
   return { id: tabId, title: withWindow(found.rec, () => tabTitle(found.t)) || '', here: isHere(tabId, found.rec), place: tabChatsLib.chatPlace({ tabId, here: isHere(tabId, found.rec) }), tabs: tabsShown };
 }
+// ---------- [notes] Quick notes (ai/notes.js; features/notes-hub.js; docs/notes.md) ----------
+// A small notepad kept in <userData>/notes.json: the sidebar's Notes panel, "Add to notes" on a reply or a page selection, and the AI's `notes`
+// tool (agent.js notesTool: read and add only). Nothing leaves the computer unless the user asks the AI about a note.
+let notesStoreRef = null;
+const notesStore = () => (notesStoreRef ||= require('./ai/notes').createNotesStore({ file: path.join(app.getPath('userData'), 'notes.json') }));
+function pushNotes() {
+  for (const rec of winRecs) {
+    const w = rec === curRec ? win : rec.win;
+    if (w && !w.isDestroyed()) w.webContents.send('notes:changed', null);
+  }
+}
+const notesHub = lazy(() => require('./features/notes-hub').create({
+  store: notesStore(),
+  push: pushNotes,
+  imageBytes: (id) => { const r = imageStore().read(id); return r ? { buffer: r.buffer, mime: r.mime } : null; },
+}));
+ipcMain.handle('notes:act', (_e, op, arg) => notesHub.act(String(op ?? ''), arg));
+function addSelectionToNotes(wc, text) {
+  const r = notesHub.act('add-selection', { text, title: wc.getTitle(), url: pdfViewer.pdfUrlOf(wc.getURL()) || wc.getURL() });
+  toast(r.ok ? t('notes.added') : t('notes.addFailed'));
+}
+if (TEST) global.__notesStore = notesStore;
 // ---------- [research] the Research board panel (ai/research-board.js; the AI's research_board tool edits the same board) ----------
 // The board is the open chat's settings.research: saved, restored and deleted with the chat. Every handler first follows the sender's
 // chat (syncToSender) and only touches that board; nothing here reads a page except "Add this page" / "Pin selection", which the user
