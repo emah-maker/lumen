@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld('browser', {
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
+  warmDownloads: () => ipcRenderer.send('downloads:warm'), // the pointer or the keyboard reached the button: the panel's page loads ahead of the click
   go: (text) => ipcRenderer.send('nav:go', text),
   back: () => ipcRenderer.send('nav:back'),
   forward: () => ipcRenderer.send('nav:forward'),

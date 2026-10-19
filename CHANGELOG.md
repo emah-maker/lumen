@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Fixed: the first click on the Downloads button waited for the panel to start.** The panel's page was only started by that first click, which took about 150 ms against 30 ms for every later open. When the pointer or the keyboard reaches the button (or a moment after a download starts) the page now loads in the background, hidden and without taking the keyboard focus, so the first open is as quick as the next. A window that never downloads never starts it. The address bar's dropdown was already made ahead. Tests: `test/overlay-first-perf.js` times the first and next open of both.
+
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)

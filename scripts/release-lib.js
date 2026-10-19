@@ -399,7 +399,7 @@ function verifyChecksums(manifest, actual) {
 // ------------------------------------------------------------------------------------------------------------ parallel checks
 
 // Suites whose numbers depend on a quiet machine: they run alone, after everything else.
-const PERF_SENSITIVE = ['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'page-load-stall', 'igpu-perf'];
+const PERF_SENSITIVE = ['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'overlay-first-perf', 'page-load-stall', 'igpu-perf'];
 const isPerfSensitive = (name) => PERF_SENSITIVE.includes(name);
 
 // Stages ([{ name, kind: 'plain' | 'electron' }]) into phases of lanes: lanes of one phase run at the same time, phases one after another.
