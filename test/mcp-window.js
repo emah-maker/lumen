@@ -118,7 +118,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   let paused = false;
   const approver = (async () => {
     while (approving) {
-      if (!paused) await ui.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {});
+      if (!paused) for (const p of app.windows()) await p.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {}); // (the user's window, and the agents' own: an outside agent's card is in its own window)
       await sleep(120);
     }
   })();
@@ -288,10 +288,17 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default, as in the steps above; this part is about the approval card, so it asks)
   paused = true;
   const pendingClick = B.call('click', { text: 'Press B1' });
-  await Promise.race([ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(async (err) => { const seen = await ui.evaluate(() => ({ cards: document.querySelectorAll('[class*=approval]').length, html: [...document.querySelectorAll('[class*=approval]')].slice(0, 3).map((e) => e.className) })).catch(() => null); throw new Error(`${err.message.slice(0, 60)} ${JSON.stringify(seen)} pending ${JSON.stringify(await app.evaluate(() => global.__settings.backend.state?.().prefs?.agentsNoAsk).catch(() => null))}`); }), pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); })]);
-  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: document.getElementById('toggle-sidebar').classList.contains('approval-pending'), title: document.querySelector('.approval:not(.resolved) .approval-title')?.textContent }));
+  // The card is in the agent's own window; the user's window only gets the badge on the AI button (it opens nothing and takes no focus).
+  const codexUi = async () => { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window') && /Codex/.test(document.getElementById('agent-window-chip')?.textContent || '')).catch(() => false)) return p; return null; };
+  let cardUi = null;
+  await Promise.race([
+    waitFor(async () => { cardUi = await codexUi(); return cardUi && (await cardUi.evaluate(() => Boolean(document.querySelector('.approval:not(.resolved)')))); }, 10000),
+    pendingClick.then((early) => { throw new Error(`the click came back without asking: ${B.text(early).slice(0, 300)}`); }),
+  ]);
+  const title = cardUi ? await cardUi.evaluate(() => document.querySelector('.approval:not(.resolved) .approval-title')?.textContent || '') : '';
+  const quiet = await ui.evaluate(() => ({ hidden: document.body.classList.contains('sidebar-hidden'), badge: document.getElementById('toggle-sidebar').classList.contains('approval-pending') }));
   check('an agent approval card does not open the sidebar: the AI button shows a badge instead', quiet.hidden && quiet.badge, JSON.stringify(quiet));
-  check('...and it names the agent and the site', /Codex/.test(quiet.title) && /127[.]0[.]0[.]1/.test(quiet.title), quiet.title);
+  check('...and the card, in its own window, names the agent and the site', /Codex/.test(title) && /127[.]0[.]0[.]1/.test(title), title);
   check('...and no agent window took focus while it waited', !(await app.evaluate(() => global.__focusEvents)).some((id) => id !== 1), JSON.stringify(await app.evaluate(() => global.__focusEvents)));
   paused = false;
   r = await pendingClick;
