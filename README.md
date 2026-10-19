@@ -116,6 +116,10 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ⋯ → Tab groups → Group automatically **Off / By site / By topic**. By topic finds related tabs (recipes, one trip, a library's docs) on your computer from titles and addresses. Turn on **Use AI to name and group topics** in Settings to send tab titles and site names (hostnames only) to the cheapest model of your chat's provider instead. **Organize Tabs by Topic** (tab menu or ⋯ → Tab Groups) regroups on demand, with **Undo Organize**. Groups you made and tabs you moved by hand are left alone.
 
+## Tabs down the side
+
+Settings → Tabs → **Tab layout** lists the tabs down the left of the window instead of across the top (Top is the default). Each row has the favicon and title; pinned tabs are icon tiles at the top, groups are sections you click to fold, and the new-tab button is above the list. Drag a tab up or down to reorder it, or out past the list to open it in a window of its own; drag the list's right edge to resize it (Lumen remembers the width). **Icons only** narrows it to a column of icons that opens out while the pointer is over it. Right-click an empty part of the list to switch layouts or fold it; Up and Down step through the tabs. The page area and the AI sidebar fit around the list. Dragging a tab onto another window's side list doesn't drop it there yet; use the tab menu's Move tab to window for that.
+
 ## A real browser underneath
 
 ![Lumen's settings page](docs/media/settings.png)

@@ -470,6 +470,8 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids),
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on),
   hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at),
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at),
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o),
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point),
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection),

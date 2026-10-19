@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="extras.css" /><!-- Claude Code engine, page context chip -->
   <link rel="stylesheet" href="prefs.css" /><!-- [settings] -->
   <link rel="stylesheet" href="tab-search.css" />
+  <link rel="stylesheet" href="side-tabs.css" /><!-- Tab layout: Side -->
   <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
   <link rel="stylesheet" href="translate.css" /><!-- translate infobar and button -->
   <link rel="stylesheet" href="slash.css" /><!-- the "/" menu and skill tags -->
@@ -134,6 +135,16 @@
   </header>
 
   <main class="body">
+    <!-- [side tabs] Settings → Tabs → Tab layout: Side. The tab list (#tabs) and the new-tab button move in here (renderer/side-tabs.js). -->
+    <aside id="side-tabs" class="side-tabs" aria-label="Tab list" data-i18n-aria-label="tabs.side.label" hidden>
+      <div class="side-head" id="side-head">
+        <button class="icon-btn side-collapse" id="side-collapse" type="button" title="Show icons only" aria-label="Show icons only" aria-pressed="false" data-i18n-title="tabs.side.collapse" data-i18n-aria-label="tabs.side.collapse">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/></svg>
+        </button>
+      </div>
+      <div class="side-list" id="side-tabs-list"></div>
+      <div class="side-resize" id="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the tab list" data-i18n-aria-label="tabs.side.resize" tabindex="0"></div>
+    </aside>
     <div id="viewport" class="viewport"></div>
 
     <aside id="sidebar" class="sidebar" data-chat-root aria-label="AI assistant" data-i18n-aria-label="toolbar.ai">
@@ -349,6 +360,8 @@
   <script src="chat-commands.js"></script>
   <script src="../ai/plan-mode.js"></script>
   <script src="plan-mode.js"></script><!-- [plan mode] the Plan chip, /plan and the plan card -->
+  <script src="side-tabs-core.js"></script>
+  <script src="side-tabs.js"></script><!-- Tab layout: Side (needs app.js) -->
   <script src="ui-prefs.js"></script>
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>
