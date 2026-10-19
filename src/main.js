@@ -268,7 +268,7 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
-  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
+  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
@@ -1156,6 +1156,7 @@ function setupPermissions() {
 
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
     // A page given the camera, the microphone or the screen is capturing: its tab is not put to sleep (tabSleep, canSleep)
+    if (screenRec?.allowsPermission(wc, permission, details)) return callbackAsked(true); // [screen recording] the recorder window while a recording starts (the microphone only if switched on)
     if (musicReact.allowsDisplay(wc, permission, details)) return callbackAsked(true); // [look] the new-tab page's analyser may listen to the PC's sound (loopback), nothing else
     if (ownPageMic(wc, permission, details)) return callbackAsked(true); // [dictation] the chat box's voice input in Lumen's own sidebar and chat page; web pages still ask
     const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
@@ -1190,6 +1191,7 @@ function setupPermissions() {
   });
   // The check handler gets the origin with a trailing slash: read under the same canonical key the decision is stored under.
   ses.setPermissionCheckHandler((wc, permission, origin, details) =>
+    screenRec?.allowsPermission(wc, permission, details) ? true : // [screen recording]
     musicReact.allowsDisplay(wc, permission, details) ? true : // [look] Music-reactive home screen (the new-tab page, the PC's sound only)
     wc && ownPageMic(wc, permission, { mediaTypes: [details?.mediaType], requestingUrl: details?.requestingUrl, isMainFrame: details?.isMainFrame }) ? true : // [dictation] Lumen's own chat boxes (audio only)
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
@@ -1230,6 +1232,47 @@ async function askOpenExternal(wc, details, decisions = externalDecisions) { // 
   return true;
 }
 
+// [screen recording] Record this tab / Record a screen or window to a .webm in Downloads (features/screen-recorder.js). Loaded on the first recording.
+let screenRec = null;
+const screenRecorder = () => (screenRec ||= require('./features/screen-recorder').createScreenRecorder({
+  electron: require('electron'),
+  preload: path.join(__dirname, 'preload', 'recorder-preload.js'),
+  page: path.join(__dirname, 'renderer', 'recorder.html'),
+  downloadDir: () => settingsBackend.downloadDir(),
+  addDownload: (file) => downloads.addFile(file),
+  anchor: () => win,
+  t, toast,
+  hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND),
+}));
+app.on('before-quit', () => { try { screenRec?.shutdown(); } catch { /* nothing recording */ } }); // (what was recorded so far is kept)
+const recordOptions = { mic: false, sound: true, mp4: false }; // the menu's two switches (the microphone is off until the person turns it on)
+async function startRecording(kind, wc) {
+  const r = await screenRecorder().start({ kind, wc, mic: recordOptions.mic, sound: recordOptions.sound, format: recordOptions.mp4 && recordMp4 === true ? 'mp4' : 'webm' });
+  if (r.ok || r.error === 'cancelled' || r.error === 'busy' || r.error === 'closed') return;
+  toast(t(r.error === 'mic' ? 'record.micFailed' : r.error === 'no-folder' ? 'record.noFolder' : 'record.failed'));
+}
+// Whether this Chromium's MediaRecorder can write MP4, asked once of the UI page (its answer is the same for every page). Until it is known, or if no, only WebM is offered.
+let recordMp4 = null;
+function probeRecordMp4() { ui()?.executeJavaScript("MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')").then((ok) => { recordMp4 = ok === true; }, () => { recordMp4 = false; }); }
+// The "Record" submenu (the ⋯ menu, File on macOS). While recording it holds Pause and Stop instead.
+function recordMenu(wc) {
+  const rec = screenRec;
+  if (rec?.active()) {
+    return [
+      { label: t(rec.state().phase === 'paused' ? 'record.resume' : 'record.pause'), enabled: rec.state().phase !== 'starting', click: () => { rec.state().phase === 'paused' ? rec.resume() : rec.pause(); } },
+      { label: t('record.stopItem'), click: () => { rec.stop(); } },
+    ];
+  }
+  return [
+    { label: t('record.tab'), enabled: Boolean(wc) && !wc.isDestroyed(), click: () => { startRecording('tab', wc); } },
+    { label: t('record.screenItem'), click: () => { startRecording('screen'); } },
+    { type: 'separator' },
+    { label: t('record.sound'), type: 'checkbox', checked: recordOptions.sound, click: (item) => { recordOptions.sound = item.checked; } },
+    { label: t('record.mic'), type: 'checkbox', checked: recordOptions.mic, click: (item) => { recordOptions.mic = item.checked; } },
+    ...(recordMp4 === true ? [{ label: t('record.mp4'), type: 'checkbox', checked: recordOptions.mp4, click: (item) => { recordOptions.mp4 = item.checked; } }] : []),
+  ];
+}
+
 // Screen sharing (Meet, Zoom, Teams on the web) failed outright: there was no handler for
 // getDisplayMedia. The user picks an entire screen or one window from a menu of thumbnails;
 // closing the menu shares nothing. `owner`: the window asking, when it isn't the current one (a private window).
@@ -1237,6 +1280,11 @@ async function pickScreenToShare(request, callback, owner = null) {
   { // [look] the music-reactive home screen listens to the PC's sound (loopback, a copy: nothing is muted); the video Chromium insists on is the page's to stop
     let wc = null; try { wc = require('electron').webContents.fromFrame(request.frame); } catch { /* gone */ }
     if (wc && musicReact.takeDisplay(wc, request.frame === wc.mainFrame)) return callback({ audio: 'loopback', video: request.frame });
+  }
+  let recordingScreen = false; // [screen recording] the recorder window asking for a screen or window: the same menu, titled for recording
+  if (screenRec) {
+    let wc = null; try { wc = require('electron').webContents.fromFrame(request.frame); } catch { /* gone */ }
+    if (wc && screenRec.owns(wc)) { const streams = screenRec.takeDisplay(request, wc); if (streams) return callback(streams); recordingScreen = true; }
   }
   const shown = owner && !owner.isDestroyed() ? owner : win;
   let done = false;
@@ -1259,7 +1307,7 @@ async function pickScreenToShare(request, callback, owner = null) {
     const screens = pickable.filter((s) => s.id.startsWith('screen:'));
     const windows = pickable.filter((s) => s.id.startsWith('window:'));
     Menu.buildFromTemplate([
-      { label: host ? t('menu.shareWith', { host }) : t('menu.shareScreen'), enabled: false },
+      { label: recordingScreen ? t('record.pickTitle') : host ? t('menu.shareWith', { host }) : t('menu.shareScreen'), enabled: false },
       ...screens.map((s, i) => item(s, screens.length > 1 ? t('menu.entireScreenN', { n: i + 1 }) : t('menu.entireScreen'))),
       ...(windows.length ? [{ type: 'separator' }] : []),
       ...windows.slice(0, 20).map((s) => item(s, s.name.length > 60 ? `${s.name.slice(0, 59)}…` : s.name)),
@@ -1669,6 +1717,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.savePageAs'), accelerator: 'CmdOrCtrl+S', enabled: web, click: () => pageTools.savePage(wc).catch(() => {}) },
         { label: t('menu.viewSource'), accelerator: 'CmdOrCtrl+U', enabled: web, click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: activeId }) },
         { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
+        { label: t('menu.record'), submenu: recordMenu(wc) }, // [screen recording]
         { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
         { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
@@ -1867,6 +1916,24 @@ function placeDownloadsPanel(height) {
   const [width] = win.getContentSize();
   const x = Math.max(8, Math.min(downloadsAnchor.right - PANEL_WIDTH + 16, width - PANEL_WIDTH - 8));
   downloadsView.setBounds({ x: Math.round(x), y: Math.round(downloadsAnchor.bottom), width: PANEL_WIDTH, height: Math.round(Math.min(height, win.getContentSize()[1] - downloadsAnchor.bottom - 8)) });
+}
+// The panel's page made ahead (hidden), so the first click on the button does not wait for a renderer to start and load (about 100 ms). Asked for when the
+// pointer or the keyboard reaches the button (a click follows) and shortly after a download starts, and only then: a window that never downloads never has one.
+// A new view takes the focus while its first page loads (see createSuggestView), so a view that is not on screen gives the focus back to where it was.
+function warmDownloadsPanel() {
+  if (!win || win.isDestroyed() || (downloadsView && !downloadsView.webContents.isDestroyed())) return;
+  const had = [ui(), activeTab()?.webContents].find((wc) => wc && !wc.isDestroyed() && wc.isFocused());
+  createDownloadsView();
+  const view = downloadsView;
+  const giveBack = () => { if (!view.getVisible() && had && !had.isDestroyed()) had.focus(); };
+  view.webContents.on('focus', giveBack);
+  view.webContents.once('did-finish-load', () => { giveBack(); setTimeout(() => { if (!view.webContents.isDestroyed()) view.webContents.removeListener('focus', giveBack); }, 500); });
+}
+let downloadWarmTimer = null;
+function warmDownloadsPanelSoon() {
+  if (downloadWarmTimer || (downloadsView && !downloadsView.webContents.isDestroyed())) return;
+  downloadWarmTimer = setTimeout(() => { downloadWarmTimer = null; warmDownloadsPanel(); }, 1500);
+  downloadWarmTimer.unref?.();
 }
 function showDownloadsPanel(anchor) {
   if (!win || win.isDestroyed()) return;
@@ -5053,7 +5120,7 @@ const downloads = createDownloads({
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
-  onChange: () => managers?.pushDownloads(),
+  onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
   onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
@@ -6547,6 +6614,7 @@ function macMenu() {
         { type: 'separator' },
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
         { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
+        normal({ label: t('menu.record'), submenu: recordMenu(wc()) }), // [screen recording]
         normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
         { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => printTab(wc())) },
         { label: t('menu.printSystem'), ...shown('Shift+Cmd+P'), click: pv('printSystem', () => printSystem(wc())) },
@@ -7766,6 +7834,7 @@ let markFirstTabLoaded = () => {};
 const firstTabLoaded = new Promise((resolve) => { markFirstTabLoaded = resolve; });
 let firstTabDone = false;
 firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSoon(); }); // (a session with a chat page in it: its next one is made now start-up is over)
+firstTabLoaded.then(() => probeRecordMp4()); // [screen recording] is MP4 offered?
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
 // Opened once extensions and the ad blocker are ready at start-up: until then windows load, but get no tabs.
 let openTabsGate = () => {};
@@ -8796,6 +8865,7 @@ if (TEST) {
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
+  global.__recorder = { mp4: () => recordMp4, get: () => screenRecorder(), options: recordOptions, menu: () => recordMenu(activeTab()?.webContents), startTab: (opts) => screenRecorder().start({ kind: 'tab', wc: activeTab()?.webContents, ...opts }) }; // [screen recording]
   global.__patchSettings = (patch) => writeSettings({ ...readSettings(), ...patch });
   // The tab menu's Mute Tab / Mute Site items (a native menu the tests can't click)
   global.__tabAudioMenu = (id, label) => {
@@ -9898,6 +9968,9 @@ const commandBar = lazy(() => require('./features/command-bar').create({
     themeSystem: () => settingsBackend.set('theme', 'system'),
     settings: (section) => openSettingsPage(section || ''),
     shortcuts: () => shortcutsHelp.open(),
+    recordTab: () => { const wc = activeTab()?.webContents; if (wc) startRecording('tab', wc); }, // [screen recording]
+    recordScreen: () => { startRecording('screen'); },
+    stopRecording: () => { screenRec?.stop(); },
   },
 }));
 ipcMain.handle('cmdbar:data', async () => { await historyReady; return commandBar.data(); });
@@ -9928,6 +10001,7 @@ ipcMain.on('downloads:menu', (_e, anchor) => {
   const n = (v) => (Number.isFinite(v) ? v : 0);
   showDownloadsPanel({ right: n(anchor?.right ?? anchor?.x), bottom: n(anchor?.bottom ?? anchor?.y) });
 });
+ipcMain.on('downloads:warm', warmDownloadsPanel);
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 function goFromAddress(text) {
   const wc = activeTab()?.webContents;

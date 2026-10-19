@@ -82,7 +82,7 @@ for (let i = 0; i < 600; i++) hist.set(`https://h${i}.example.com/`, { url: `htt
 hist.set(`https://long.example.com/${'a'.repeat(400)}`, { url: `https://long.example.com/${'a'.repeat(400)}`, title: 'long', last: 9999 });
 hist.set('lumen://settings', { url: 'lumen://settings', title: 'S', last: 9998 });
 const ran = [];
-const names = ['newTab', 'newWindow', 'newPrivateWindow', 'closeTab', 'reopenTab', 'toggleSidebar', 'newChat', 'chatPage', 'pinTab', 'unpinTab', 'muteTab', 'unmuteTab', 'bookmarkTab', 'unbookmarkTab', 'find', 'reload', 'history', 'bookmarks', 'downloads', 'clearData', 'themeLight', 'themeDark', 'themeSystem', 'shortcuts'];
+const names = ['newTab', 'newWindow', 'newPrivateWindow', 'closeTab', 'reopenTab', 'toggleSidebar', 'newChat', 'chatPage', 'pinTab', 'unpinTab', 'muteTab', 'unmuteTab', 'bookmarkTab', 'unbookmarkTab', 'find', 'reload', 'history', 'bookmarks', 'downloads', 'clearData', 'themeLight', 'themeDark', 'themeSystem', 'shortcuts', 'recordTab', 'recordScreen', 'stopRecording'];
 const actTable = Object.fromEntries(names.map((n) => [n, () => ran.push(n)]));
 actTable.settings = (section) => ran.push(`settings:${section || ''}`);
 const deps = (extra = {}) => ({ history: () => hist, bookmarks: () => [{ url: 'https://b.example.com/', title: 'B' }, { url: 'file:///c:/x', title: 'no' }, null], isWebUrl: (u) => /^https?:/.test(u), act: actTable, ...extra });

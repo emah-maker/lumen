@@ -19,7 +19,7 @@ function create(d) {
   const camel = (id) => id.replace(/-(\w)/g, (_m, c) => c.toUpperCase());
   const COMMANDS = ['new-tab', 'new-window', 'new-private-window', 'close-tab', 'reopen-tab', 'toggle-sidebar', 'new-chat', 'chat-page', 'pin-tab', 'unpin-tab',
     'mute-tab', 'unmute-tab', 'bookmark-tab', 'unbookmark-tab', 'find', 'reload', 'history', 'bookmarks', 'downloads', 'clear-data', 'theme-light', 'theme-dark',
-    'theme-system', 'settings', 'shortcuts'];
+    'theme-system', 'settings', 'shortcuts', 'record-tab', 'record-screen', 'stop-recording'];
 
   function data() {
     const clean = (e) => ({ url: String(e.url), title: String(e.title || '').slice(0, 200) });
