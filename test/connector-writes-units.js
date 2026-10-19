@@ -79,7 +79,7 @@ async function main() {
   check('a chat is offered the writes, marked with !', /comment\(repo,number,body\)!/.test(full.description) && /create_issue\(repo,title,body\?\)!/.test(full.description) && /create_page\(parent_id,title,body\?\)!/.test(full.description) && /append\(page_id,body\)!/.test(full.description) && /add_task\(.*\)!/.test(full.description), full.description);
   check('a background task or routine is offered the reads only, and told nothing can change', !/!/.test(bg.description.replace(/^[^.]*\./, '')) && !/comment|create_issue|create_page|append\(|add_task/.test(bg.description) && /prs|search|tasks/.test(bg.description) && /Read only here/.test(bg.description), bg.description);
   check('every connector connected still fits in under 2.6k characters', JSON.stringify(full).length < 2600, String(JSON.stringify(full).length));
-  check('no Calendar event is offered (an iCal address is read-only); Gmail’s one write is create_draft (test/gmail-drafts-units.js)', !Object.values(registry.get('gcal').actions).some((a) => a.write) && Object.entries(registry.get('gmail').actions).filter(([, a]) => a.write).map(([n]) => n).join() === 'create_draft', '');
+  check('no Calendar event is offered (an iCal address is read-only); Gmail’s writes are create_draft and send (send is hidden until Allow sending, test/gmail-send-units.js) (test/gmail-drafts-units.js)', !Object.values(registry.get('gcal').actions).some((a) => a.write) && Object.entries(registry.get('gmail').actions).filter(([, a]) => a.write).map(([n]) => n).join() === 'create_draft,send', '');
 
   console.log('--- GitHub');
   const comment = { app: 'github', action: 'comment', args: { repo: 'ada/notes', number: 7, body: 'Looks good.\n\n- one\n- two' } };

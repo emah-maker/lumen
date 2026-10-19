@@ -1283,6 +1283,7 @@ function syncWorking() {
 }
 
 // Adds a piece of the running reply above the working line, which stays last without ever moving.
+const sendRows = new Map(); // [connectors] the "sending in 10 s" rows still counting down, by send id
 function appendToTurn(el) {
   if (!turn?.working?.isConnected) return append(el);
   $('empty').hidden = true;
@@ -1640,6 +1641,35 @@ window.assistant.onEvent((event) => {
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'send_grant': { // [connectors] the user said in this chat that the AI may send emails without asking: a standing row with Stop (agent.js recordTyped)
+      if (!event.on || !window.assistant.sendStop || messages.querySelector('.send-grant:not(.ended)')) break;
+      const row = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice send-grant', textContent: t('send.grant') }));
+      const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('send.stop') });
+      stop.onclick = () => { window.assistant.sendStop(); stop.remove(); row.classList.add('ended'); row.textContent = t('send.stopped'); };
+      row.append(' ', stop);
+      break;
+    }
+    case 'send_pending': { // [connectors] an email goes out in 10 seconds unless Undo is pressed ("Sending to … — Undo")
+      if (!window.assistant.sendUndo) break;
+      const row = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice send-pending', role: 'status' }));
+      const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('send.undo') });
+      const until = Date.now() + (Number(event.ms) || 10000);
+      const text = () => t('send.pending', { to: String(event.to || '').slice(0, 120), s: Math.max(0, Math.ceil((until - Date.now()) / 1000)) });
+      const label = Object.assign(document.createElement('span'), { textContent: text() });
+      const tick = setInterval(() => { label.textContent = text(); }, 1000);
+      undo.onclick = () => { undo.disabled = true; window.assistant.sendUndo(event.id); };
+      row.append(label, ' ', undo);
+      sendRows.set(event.id, { row, tick });
+      break;
+    }
+    case 'send_pending_done': {
+      const r = sendRows.get(event.id);
+      if (!r) break;
+      sendRows.delete(event.id);
+      clearInterval(r.tick);
+      r.row.textContent = t(event.result === 'undo' ? 'send.cancelled' : event.result === 'go' ? 'send.going' : 'send.stoppedSend');
+      break;
+    }
     case 'memory': { // [memory] the AI saved, changed or forgot a memory (ai/memory.js): said in the chat, with Undo, and Forget for what it kept
       const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
       if (!key || !window.assistant.memory) break;
@@ -2183,10 +2213,10 @@ function showHelperCard(e) {
   if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
@@ -2293,7 +2323,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
 // [connectors] A write in a connected service (note 'connector') with `fields`: where it goes, then its text in boxes the user can
 // edit; Allow sends what the boxes hold. Only a real click allows it (no Enter, no scripted click).
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '', fields = null }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, denyLabel, warn = '', app = false, note = '', fields = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -2322,7 +2352,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   }) : [];
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
-  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
+  const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: denyLabel ? String(denyLabel) : t('approval.deny') });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
   const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
   const answer = (ok) => {
@@ -2341,7 +2371,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); } // (Escape in a box being edited keeps the card and its edits)
   });
   actions.append(...[deny, always, allow].filter(Boolean));
-  card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
+  const warning = warn ? Object.assign(document.createElement('p'), { className: 'approval-warn', role: 'alert', textContent: String(warn) }) : null; // [connectors] a send to an address the user didn't type
+  card.append(title, ...(warning ? [warning] : []), detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
   append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();

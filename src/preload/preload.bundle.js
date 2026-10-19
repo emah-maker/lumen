@@ -706,6 +706,8 @@ contextBridge.exposeInMainWorld('assistant', {
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)),
   onSidebar: on('chat:sidebar'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  sendUndo: (id) => ipcRenderer.send('agent:send-undo', id),
+  sendStop: () => ipcRenderer.send('agent:send-stop'),
   desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId),

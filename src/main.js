@@ -273,7 +273,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -8471,6 +8471,7 @@ const connectorsGoogleReal = {
   drafts: () => widgets.gmailAuthState().compose, // the shared Google sign-in has gmail.compose (the user pressed Allow drafts)
   allowDrafts: () => widgets.gmailAllowDrafts(), // Settings' Allow drafts button only
   compose: (body) => widgets.gmailCompose(body), // POST /users/me/drafts and nothing else (never send)
+  send: (body) => widgets.gmailSend(body), // the one send request, only after the Allow sending switch, then a card or typed permission (connectors/service.js)
   feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
   connect: () => widgets.gmailConnect({}),
   disconnect: () => widgets.gmailDisconnect(),
@@ -8529,6 +8530,8 @@ ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id
 ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
 ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
 ipcMain.handle('connectors:allow-drafts', (_e, id) => connectorsSvc().allowDrafts(String(id))); // Gmail: ask Google for gmail.compose (an explicit click in Settings)
+ipcMain.handle('connectors:set-sending', (_e, id, on) => connectorsSvc().setSending(String(id), on === true)); // Gmail: the Allow sending switch (Settings only; the AI can't turn it on)
+ipcMain.handle('connectors:send-log', () => connectorsSvc().sendLog()); // Settings' list of what the AI sent: time, to, subject
 ipcMain.handle('connectors:sign-in', (_e, id) => {
   const url = connectorsSvc().signInUrl(String(id));
   if (url) connectorsOpen(url);
@@ -11545,6 +11548,8 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
   return { ok: true, tabId: tab?.id ?? null };
 });
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
+ipcMain.on('agent:send-undo', (_e, id) => agent.undoSend(Number(id))); // [connectors] "Undo" on a "Sending to … in 10 s" row
+ipcMain.on('agent:send-stop', () => agent.stopSendGrant()); // [connectors] "Stop" on "Sending without asking in this chat"
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
 ipcMain.handle('agent:undo', (_e, runId) => agent.undoRun(runId));
 // [content guard] "Undo the AI's edits on this page": the editors and fields that run changed go back to how they started.
