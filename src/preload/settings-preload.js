@@ -168,6 +168,15 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setProviderKey: call('settings:set-provider-key'),
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
+      // [telegram] Phone (Telegram): the token goes in, never comes back
+      telegram: {
+        status: call('settings:telegram'),
+        setToken: call('settings:telegram-token'),
+        pair: call('settings:telegram-pair'),
+        cancelPair: call('settings:telegram-pair-cancel'),
+        unpair: call('settings:telegram-unpair'),
+        remove: call('settings:telegram-remove'),
+      },
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),
