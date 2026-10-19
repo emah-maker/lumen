@@ -233,6 +233,23 @@ async function main() {
   check('the page was told about every change', changes.length >= 10, String(changes.length));
   check('a connector that is only coming soon can’t be connected', /isn’t available yet/.test(await fails(() => svc.connect('spotify', {}))), '');
 
+  // A shared sign-in (the GitHub card's) never replaces a token the connector was connected with.
+  let cardInfo = null;
+  const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-shared-'));
+  const sh = service.create({ userData: sharedDir, secrets: fakeSecrets, fetch: trackedFetch, testLoopback: true, endpoints: () => ({ github: fakes.urls.github }), shared: { github: { info: () => cardInfo, signOut: () => {} } } });
+  await sh.connect('github', { secret: TOKENS.github });
+  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
+  sh.syncShared('github');
+  check('shared sign-in: a connector connected with its own token keeps it when the card signs in', !sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && /"secret"/.test(fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8')), fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8'));
+  cardInfo = null;
+  sh.syncShared('github');
+  check('shared sign-in: …and when the card signs out', sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && !sh.usesShared('github'), '');
+  await sh.disconnect('github');
+  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
+  sh.syncShared('github');
+  check('shared sign-in: with no token of its own the connector follows the card’s sign-in', sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected', '');
+  fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+
   await fakes.stop();
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   registry.setConnected([]);

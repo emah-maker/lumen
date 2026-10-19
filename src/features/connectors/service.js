@@ -12,6 +12,9 @@
 //  - Gmail's drafts need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, only when the
 //    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts).
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
+//  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
+//    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
+//    sign-in applies here at once, and nothing is copied. syncShared() makes the entry match the owner's sign-in.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -33,7 +36,7 @@ const provider = (id) => require(`./providers/${id}`); // loaded when a connecto
 
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
-  google = null, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false,
+  google = null, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
   let connected = load();
@@ -74,13 +77,14 @@ function create({
 
   function makeCtx(def, entry, signal) {
     const base = baseOf(def, entry);
-    const secret = open(entry.secret);
+    const secret = entry.config?.shared ? String(shared[def.id]?.info?.()?.token || '') : open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
       const signIn = def.kind === 'session' || def.id === 'gmail';
       state(signIn ? 'needs-signin' : 'bad-token');
       return new ConnectorError(signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
+        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → You and AI → Connectors.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
@@ -148,7 +152,7 @@ function create({
     if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}` : STATUS_TEXT[status],
+      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.does, drafts,
@@ -271,11 +275,38 @@ function create({
     runtime.delete(id);
     for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
     persist();
+    if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
     if (def.kind === 'mcp' && entry.config?.mcpId) { try { mcp?.remove(entry.config.mcpId); } catch { /* already gone */ } }
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
     changed();
     return list();
   }
+
+  // Make a shared connector's entry match its owner's sign-in: signed in -> connected (as that account); signed out -> gone.
+  // A connector connected with its own token is left alone either way.
+  function syncShared(id) {
+    const def = registry.get(id);
+    const src = shared[id];
+    if (!def || !src) return list();
+    if (connected[id] && !connected[id].config?.shared) return list(); // connected with its own token: it keeps it (never swapped for the card's broader sign-in)
+    const info = src.info();
+    if (info) connected[id] = { at: now(), account: flat(info.account, 60), config: { shared: true } };
+    else if (connected[id]?.config?.shared) delete connected[id];
+    else return list();
+    runtime.delete(id);
+    for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
+    persist();
+    changed();
+    if (info && !info.account) { // a pasted token knows no name: ask the service who it is, once
+      const entry = connected[id];
+      const ctx = makeCtx(def, entry, null);
+      provider(id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }).then((probe) => {
+        if (connected[id] === entry && probe.status === 200 && probe.account) { entry.account = probe.account; persist(); changed(); }
+      }).catch(() => {});
+    }
+    return list();
+  }
+  const usesShared = (id) => connected[id]?.config?.shared === true;
 
   // ---- the AI's tool
   const defs = ({ readOnly = false } = {}) => { const d = registry.toolDef({ readOnly }); return d ? [d] : []; }; // readOnly: background tasks and routines
@@ -352,7 +383,7 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
-  return { list, detect, connect, disconnect, allowDrafts, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

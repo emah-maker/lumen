@@ -133,7 +133,7 @@ module.exports = async function githubUnits(check) {
   script = () => new Response('{"message":"Bad credentials"}', { status: 401 });
   clock += 6 * 60e3;
   card = await settle();
-  check('github widget: a token that GitHub revokes later shows the clear 401 message (old data kept as a warning)', /rejected the token/.test(card.warning || ''), JSON.stringify(card.warning));
+  check('github widget: a token that GitHub revokes later turns the card into a plain "sign in again" state, never a raw error', card.data?.reconnect === true && card.data.reason === 'expired' && !card.error && !card.warning, JSON.stringify([card.data, card.warning, card.error]));
 
   // Notifications refused to a fine-grained token: the two lists still show.
   script = (u) => (u.pathname === '/notifications' ? new Response('{"message":"Resource not accessible by personal access token"}', { status: 403, headers: { 'x-ratelimit-remaining': '4990' } }) : okScript(u));

@@ -316,6 +316,8 @@ function collapsible(title, rows) {
 let gmailWatchOn = false;
 let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
 let slackWatchOn = false;
+let githubWatch = null; // the open GitHub editor's redraw when a sign-in finishes by itself (see githubFields)
+let githubWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
@@ -1799,21 +1801,62 @@ async function buildWidgets(card) {
         section('Channels', [block('Channels to follow', 'Up to 4 channels you are in; their recent messages show on the card.', h('div', { class: 'widget-inline' }, load), chBox)]),
         adv);
     }
-    // ---- github: token and which lists ----
+    // ---- github: sign in (device flow, the GitHub CLI, or a pasted token) and which lists ----
     function githubFields(same) {
       const g = same?.gh || {};
-      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.github ? tr('settings.widgets.github.tokenSaved', 'Saved. Paste a new token to replace it.') : tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
+      const gs = () => ws.github || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
       inputs.reviews = tog('widget-gh-reviews', tr('settings.widgets.github.reviews', 'Review requests'), g.reviews !== false);
       inputs.assigned = tog('widget-gh-assigned', tr('settings.widgets.github.assigned', 'Assigned issues and pull requests'), g.assigned !== false);
-      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, 'Needs a classic token with the notifications scope.');
+      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, tr('settings.widgets.github.notificationsHelp', 'Needs the notifications permission, which signing in with GitHub asks for.'));
       inputs.hideDrafts = tog('widget-gh-drafts', tr('settings.widgets.github.hideDrafts', 'Hide draft pull requests in review requests'), g.hideDrafts);
       inputs.max = segment('widget-gh-max', tr('settings.widgets.github.max', 'Items per list'), [[5, '5'], [10, '10'], [20, '20']], g.max ?? 10);
-      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, ws.secrets.github ? 'Connected: a token is saved. Paste a new one only to replace it.' : 'Not connected yet. Create a token with read-only access to Issues and Pull requests.'), 'github', 'Create a token on GitHub');
+      const status = h('span', { class: 'note', role: 'status', id: 'github-status' });
+      const code = h('div', { class: 'row stack', id: 'github-code-row', hidden: '' });
+      const codeText = h('strong', { id: 'github-code', class: 'gh-user-code', text: '', style: 'font-size:1.6em;letter-spacing:.12em;font-variant-numeric:tabular-nums;user-select:all' });
+      const codeNote = h('span', { class: 'note', text: tr('settings.widgets.github.codeNote', 'Enter this code on github.com/login/device, in the tab Lumen opened, then approve. This fills in when you do.') });
+      const openDevice = h('button', { type: 'button', id: 'github-open', text: tr('settings.widgets.github.openDevice', 'Open github.com/login/device'), onclick: () => { const u = gs().pending?.url; if (u) S.openUrl(u); } });
+      const cancel = h('button', { type: 'button', id: 'github-cancel', text: tr('settings.widgets.github.cancel', 'Cancel'), onclick: () => run(() => S.widgets.githubCancel()) });
+      code.append(codeText, codeNote, h('div', { class: 'sp-actions' }, openDevice, cancel));
+      const priv = tog('github-private', tr('settings.widgets.github.private', 'Include private repositories'), gs().wantPrivate, tr('settings.widgets.github.privateHelp', 'Without this, Lumen asks GitHub only to read who you are and your notifications, so the card shows public repositories. Turning it on also asks for GitHub’s “repo” permission, which GitHub offers only as read and write. The card only reads; with it the AI’s GitHub connector can also comment and open issues, each only after you allow it.'));
+      const privBox = () => priv.querySelector('input');
+      const signin = h('button', { type: 'button', id: 'github-signin', class: 'primary big', text: tr('settings.widgets.github.signIn', 'Sign in with GitHub'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const switchBtn = h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const cliBtn = h('button', { type: 'button', id: 'github-cli', text: tr('settings.widgets.github.cli', 'Use GitHub CLI sign-in'), onclick: () => run(() => S.widgets.githubCli()) });
+      const signout = h('button', { type: 'button', id: 'github-signout', class: 'danger', text: tr('settings.widgets.github.signOut', 'Sign out'), onclick: () => run(() => S.widgets.githubSignOut()) });
+      const via = { device: tr('settings.widgets.github.viaDevice', 'with GitHub'), cli: tr('settings.widgets.github.viaCli', 'through the GitHub CLI'), paste: tr('settings.widgets.github.viaPaste', 'with a pasted token') };
+      const draw = () => {
+        const s = gs();
+        const waiting = Boolean(s.pending);
+        code.hidden = !waiting;
+        codeText.textContent = s.pending?.code || '';
+        if (waiting) flash(status, tr('settings.widgets.github.waiting', 'Waiting for you to approve it on GitHub…'), 'note');
+        else if (s.signedIn && s.expired) flash(status, tr('settings.widgets.github.expired', 'GitHub no longer accepts this sign-in. Sign in again.'), 'warn');
+        else if (s.last && !s.last.ok) flash(status, s.last.message, 'err');
+        else if (s.signedIn) flash(status, tr('settings.widgets.github.signedInAs', 'Signed in as {login} {how}.', { login: s.login ? '@' + s.login : tr('settings.widgets.github.you', 'you'), how: via[s.via] || '' }) + (s.notifications === false ? ' ' + tr('settings.widgets.github.noNotifications', 'Unread notifications aren’t included: sign in with GitHub to add them.') : ''), 'ok');
+        else if (!s.device && !s.cli) flash(status, tr('settings.widgets.github.noDevice', 'GitHub sign-in isn’t set up in this build yet. Paste a token under Advanced for now.'), 'note');
+        else { status.textContent = tr('settings.widgets.github.notSignedIn', 'Not signed in.'); status.className = 'note'; }
+        signin.hidden = waiting || !s.device || (s.signedIn && !s.expired);
+        signin.textContent = s.expired ? tr('settings.widgets.github.signInAgain', 'Sign in again') : tr('settings.widgets.github.signIn', 'Sign in with GitHub');
+        switchBtn.hidden = waiting || !s.device || !s.signedIn || s.expired;
+        cliBtn.hidden = waiting || !s.cli || (s.signedIn && s.via === 'cli' && !s.expired);
+        signout.hidden = !s.signedIn || waiting;
+        priv.hidden = !s.device;
+      };
+      const run = async (fn) => {
+        try { const r = await fn(); if (r?.state) ws = r.state; else if (r?.github) ws = r; draw(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; }
+      };
+      githubWatch = async () => { ws = await S.widgets.state(); draw(); }; // a sign-in that finished by itself (or ended) shows here at once
+      if (!githubWatchOn) { githubWatchOn = true; S.widgets.onChanged?.(() => githubWatch?.()); }
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, signin, cliBtn, switchBtn, signout), status, priv, code);
+      draw();
+      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHint', 'Only if you can’t sign in above. Saving replaces the current sign-in.')), 'github', tr('settings.widgets.github.createToken', 'Create a token on GitHub'));
       fields.replaceChildren(
-        section('Account', [tokenRow], 'Stored encrypted by your system. It is sent only to api.github.com and never reaches the new-tab page.'),
+        section(tr('settings.widgets.github.account', 'Account'), [accountRow], tr('settings.widgets.github.accountFoot', 'One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page. A GitHub connector connected with its own token keeps that token.')),
         section(tr('settings.widgets.github.show', 'Show'), [inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts, setting(tr('settings.widgets.github.max', 'Items per list'), inputs.max)], tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
         advanced([
-          block('Token permissions', null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
+          tokenRow,
+          block(tr('settings.widgets.github.tokenPermsLabel', 'Token permissions'), null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
           block(tr('settings.widgets.github.privacyLabel', 'Private repositories'), null, h('span', { class: 'note', text: tr('settings.widgets.github.privacy', 'Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.') })),
         ]));
     }

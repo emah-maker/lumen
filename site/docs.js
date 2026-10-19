@@ -14,6 +14,7 @@ const PAGES = {
   'image-generation': { title: 'Image generation', file: 'docs/image-generation.md' },
   'external-apps': { title: 'Let other apps use Lumen', file: 'docs/external-apps.md' },
   connectors: { title: 'Connectors', file: 'docs/connectors.md' },
+  'github-signin': { title: 'Sign in with GitHub', file: 'docs/github-signin.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
