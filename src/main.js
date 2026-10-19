@@ -281,6 +281,7 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
   'notes:act', // [notes] the Notes panel and the "Add to notes" buttons (features/notes-hub.js; the chat page has it too: CHAT_IPC)
@@ -1834,6 +1835,11 @@ const saveGates = require('./features/save-gates');
 // (every bookmark change is a settings write, which bumps settingsGen)
 const bookmarkUrlSetMemo = saveGates.memoByGeneration(() => settingsGen, () => new Set(bookmarks().map((b) => b.url)));
 function bookmarkUrlSet() { readSettings(); return bookmarkUrlSetMemo(); } // (readSettings loads the cache first)
+// [split view] what the strip needs to draw a pair as joined tabs: which side this tab is, and its partner.
+function splitMark(t) {
+  const mate = t.split ? splitPartner(t) : null;
+  return mate ? { split: t.split.left === t.id ? 'left' : 'right', splitWith: mate.id } : {};
+}
 function tabState() {
   const active = activeTab();
   const history = active?.webContents.navigationHistory;
@@ -1871,6 +1877,7 @@ function tabState() {
           aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
           openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
+          ...splitMark(t),
           ...tabTools.state(t, false),
         };
       }
@@ -1904,6 +1911,7 @@ function tabState() {
         aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
         openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
+        ...splitMark(t), // [split view]
         ...tabTools.state(t, true), // audible, muted
       };
     }),
@@ -2031,6 +2039,32 @@ function fillCheck(tabId, source, delay = 0) {
 }
 let viewVisibleCalls = 0; // setVisible calls layout() made (the switch-timing recorder reads the difference over one switch)
 function layout() { return hang.mark('layout', layoutBody); } // [hang recorder]
+// [split view] Two tabs side by side (browser/split-layout.js, the "[split view]" section below). The module is loaded on first use.
+const splitLayout = lazy(() => require('./browser/split-layout'));
+// The other tab of `tab`'s pair, or null (no pair, the other half gone or closing).
+function splitPartner(tab) {
+  if (!tab?.split) return null;
+  const other = splitLayout.partnerOf(tabs, tab);
+  return other && !other.closing ? other : null;
+}
+// The pair on show now: the tab in front and its partner, with the two page rectangles; null when one page cannot be shown beside the other
+// (no pair, a page asleep or in full screen, the new-tab page's full chat, a page area too narrow for two).
+function splitView() {
+  const front = tabs.find((t) => t.id === activeId);
+  const partner = splitPartner(front);
+  if (!partner || front.closing || !alive(front) || !alive(partner) || front.fullscreen || partner.fullscreen || chatFullTab === front.id || chatFullTab === partner.id) return null;
+  const rects = splitLayout.compute(contentBounds, front.split.ratio);
+  return rects ? { front, partner, rects } : null;
+}
+// The divider is drawn by the UI in the gap between the pages; it is told where (only when that changed).
+function sendSplitLayout(sp) {
+  const holder = curRec || sendSplitLayout;
+  const msg = sp ? { left: sp.front.split.left, right: sp.front.split.right, active: activeId, x: sp.rects.divider.x - contentBounds.x, width: sp.rects.divider.width, ratio: Math.round(sp.rects.ratio * 1000) / 1000 } : null;
+  const key = msg ? JSON.stringify(msg) : '';
+  if (holder.splitKey === key) return;
+  holder.splitKey = key;
+  ui()?.send('split:layout', msg);
+}
 function layoutBody() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
@@ -2040,8 +2074,9 @@ function layoutBody() {
   const live = tabs.filter(alive);
   const front = live.findIndex((t) => t.id === activeId);
   if (front > 0) live.unshift(...live.splice(front, 1));
+  const sp = splitView(); // [split view] the pair shown side by side, or null
   for (const tab of live) {
-    const visible = tab.id === activeId;
+    const visible = tab.id === activeId || tab === sp?.partner;
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
@@ -2057,7 +2092,7 @@ function layoutBody() {
     // The new-tab page keeps its full-width layout when the sidebar narrows its view (see
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
-    const overlay = visible && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
+    const overlay = visible && !sp && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
       ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
       : null;
     // The full-width layout goes on BEFORE the view narrows and comes off AFTER it has widened again: the other way round, the page
@@ -2065,17 +2100,19 @@ function layoutBody() {
     if (overlay) setOverlay(tab, overlay);
     if (visible) {
       if (tab.fillDue) { tab.fillDue = false; fillCheck(tab.id, 'show', 350); } // (just brought to the front: is its page the size of the tab area?)
+      const at = sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds; // [split view] a side of the pair
       if (tab.fullscreen) {
         const [width, height] = win.getContentSize();
         tab.view.setBounds({ x: 0, y: 0, width, height });
       } else {
-        tab.view.setBounds({ x: contentBounds.x, y: contentBounds.y, width: contentBounds.width, height: contentBounds.height });
+        tab.view.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height });
       }
-      const boundsKey = `${contentBounds.x},${contentBounds.y},${contentBounds.width},${contentBounds.height},${tab.fullscreen ? 1 : 0}`;
+      const boundsKey = `${at.x},${at.y},${at.width},${at.height},${tab.fullscreen ? 1 : 0}`;
       if (tab.pdfBoundsKey !== boundsKey) { if (tab.pdfBoundsKey !== undefined) pokePdf(tab); tab.pdfBoundsKey = boundsKey; } // (resized while a PDF is open: draw again)
     }
     if (!overlay) setOverlay(tab, null);
   }
+  sendSplitLayout(sp);
   spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
   appleMusicWeb.clip(contentBounds);
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
@@ -2500,7 +2537,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab' || manners.isAiTab(tab), openerId: id, partition: tab.isolated, ...fromAiTab() })); // a link from a research tab stays in its session
     return { action: 'deny' };
   });
-  wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(); });
+  wc.on('enter-html-full-screen', () => { const side = Boolean(tab.split) && tab.id !== activeId && splitView()?.partner === tab; tab.fullscreen = true; if (side) switchTab(tab.id); else layout(); }); // ([split view] the other side of a pair going full screen comes to the front: it fills the window)
   wc.on('leave-html-full-screen', () => { tab.fullscreen = false; layout(); });
   // A new page may come from a fresh renderer that doesn't carry the full-width layout override:
   // drop it and let layout() put it back if this is still (or now) the new-tab page under the sidebar.
@@ -2648,7 +2685,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   // A real click in the page is the user choosing it: the guard above must not take focus back.
   wc.on('before-mouse-event', (_e, mouse) => {
     if (mouse.type !== 'mouseDown') return;
-    if (!manners.isAgentInput(wc)) { manners.userInput.click(wc); userTookOver(tab); } // [ai manners] a click of the AI's own tool is not the user's
+    if (!manners.isAgentInput(wc)) { manners.userInput.click(wc); userTookOver(tab); if (tab.split) activateSplitSide(tab); } // [ai manners] a click of the AI's own tool is not the user's // [split view] the side clicked is the one the toolbar, the AI and the shortcuts follow
     tab.showGuardUntil = 0;
   });
   // A page with a beforeunload handler: by default Electron blocks the close/navigation (this event
@@ -2957,7 +2994,7 @@ function sleepFacts(tab) {
   const wc = alive(tab) ? tab.view.webContents : null;
   const url = wc ? realUrl(wc) : tab.sleepUrl || '';
   return {
-    id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen || tab.placeholder), asleep: Boolean(tab.sleeping || tab.placeholder), frozen: Boolean(tab.frozen), active: tab.id === activeId, settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
+    id: tab.id, alive: Boolean(wc), sleeping: Boolean(tab.sleeping || tab.frozen || tab.placeholder), asleep: Boolean(tab.sleeping || tab.placeholder), frozen: Boolean(tab.frozen), active: tab.id === activeId || (Boolean(tab.split) && splitView()?.partner === tab), // ([split view] the other side of the pair on show is in use too) settings: tab.settings, closing: tab.closing, unloadAsked: tab.unloadAsked,
     openPopups: tab.openPopups, agentUsing: wc ? agent.usingTab(tab.id) || Boolean(tab.rec?.agent) : false, aiLock: tab.aiLock, webPage: wc ? isWebUrl(url) || isNewTab(url) : false, newTab: wc ? isNewTab(url) : false, // (a new-tab page sleeps too, and soon: tab-sleep.js)
    
     loading: wc?.isLoading(), audible: wc?.isCurrentlyAudible(), fullscreen: tab.fullscreen, devTools: wc?.isDevToolsOpened(),
@@ -3559,9 +3596,12 @@ function switchTab(id, { wake = true } = {}) {
     const was = tab.sleeping;
     if (tab.sleeping && !tab.frozen && placeholderWanted(tab)) wakeTab(tab, { placeholder: true }); // [tabs] "When you return to an unloaded tab: Show a Reload button"
     else if (tab.sleeping || tab.frozen) wakeTab(tab);
+    const mate = splitPartner(tab); // [split view] its partner is shown beside it: awake too
+    if (mate && (mate.sleeping || mate.frozen)) wakeTab(mate);
     if (was && timing) timing.reloaded();
   };
-  const needsWake = tab.sleeping || tab.frozen;
+  const mateAsleep = () => { const mate = splitPartner(tab); return Boolean(mate && (mate.sleeping || mate.frozen)); };
+  const needsWake = tab.sleeping || tab.frozen || mateAsleep();
   const deferWake = needsWake && rapid;
   if (needsWake && !deferWake) wakeNow();
   activeId = id;
@@ -3573,7 +3613,7 @@ function switchTab(id, { wake = true } = {}) {
   if (deferWake) {
     // Passing through: nothing is loaded for this tab unless the user stays on it.
     const settle = setTimeout(() => {
-      if (activeId !== id || !tabs.includes(tab) || !(tab.sleeping || tab.frozen)) return;
+      if (activeId !== id || !tabs.includes(tab) || !(tab.sleeping || tab.frozen || mateAsleep())) return;
       wakeNow();
       layout();
       if (timing && tab.view) probeSwitch(tab, timing, true);
@@ -3640,6 +3680,8 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
+  const mate = tabs[index].split ? splitPartner(tabs[index]) : null; // [split view] the other side of its pair stays, and takes the page area
+  if (tabs[index].split) splitLayout.unlink(tabs, id);
   const [tab] = tabs.splice(index, 1);
   chatBind.unbindTab(id); // [chat per tab]
   finishLeaving(tab);
@@ -3679,8 +3721,8 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
     openTab();
     return;
   }
-  if (activeId === id) switchTab(tabs[Math.min(index, tabs.length - 1)].id);
-  else sendTabs();
+  if (activeId === id) switchTab(mate && tabs.includes(mate) && !mate.closing ? mate.id : tabs[Math.min(index, tabs.length - 1)].id);
+  else { if (mate) layout(); sendTabs(); }
   chatTabGone(id, tab.rec); // [chat per tab] a chat still working there goes on in a background tab
 }
 
@@ -3701,9 +3743,10 @@ function requestCloseTab(id) {
   // the strip drops the tab now, and the next tab is shown now if this one was in front.
   if (tab.id === activeId && !tab.aiClosing) { // ([ai manners] a tab being closed for the AI stays in front until it is really gone: its page may keep it)
     const index = tabs.indexOf(tab);
-    const next = [...tabs.slice(index + 1), ...tabs.slice(0, index).reverse()].find((t) => !t.closing);
+    const mate = splitPartner(tab); // [split view] closing one side leaves the other
+    const next = mate || [...tabs.slice(index + 1), ...tabs.slice(0, index).reverse()].find((t) => !t.closing);
     if (next) switchTab(next.id);
-  }
+  } else if (tab.split) layout(); // ([split view] the other side is shown alone at once)
   sendTabs();
   tab.view.webContents.close({ waitForBeforeUnload: true });
   // A frozen page never answers the beforeunload check, so the close never finished. If the tab is
@@ -3724,6 +3767,103 @@ function agentRequestCloseTab(id) {
   done.unref?.();
 }
 
+// ---------- [split view] two tabs side by side ----------
+// A pair is one object shared by two tabs (tab.split = { left, right, ratio }, browser/split-layout.js). While the tab in front is in a pair whose
+// other tab is awake and the page area is wide enough, layout() shows both, each in its own rectangle with a gap between them for the divider
+// (drawn by the UI, renderer/split.js). The side last clicked is the tab in front: the toolbar, the sidebar's chat and the shortcuts follow it.
+// A pair that cannot be shown (the other tab asleep, in full screen, a narrow window) keeps its tabs paired and shows the one in front alone.
+// Not saved with the session: a restart brings the tabs back unpaired.
+const SPLIT_MIN_TABS = 2;
+// The user clicked in the other side of the pair on show: it becomes the tab in front.
+function activateSplitSide(tab) {
+  withWindow(tab.rec, () => {
+    if (tab.id === activeId || splitView()?.partner !== tab) return;
+    switchTab(tab.id);
+  });
+}
+// Pairs `id` with `withId` (default: the tab in front), `id` on the right, and brings it to the front. When `id` is the tab in front itself,
+// a new tab opens on its right. Returns the pair, or null when it cannot be made.
+function openSplit(id, { withId = null } = {}) {
+  if (tabs.filter((t) => !t.closing).length < 1) return null;
+  let right = tabs.find((t) => t.id === id && !t.closing);
+  let left = tabs.find((t) => t.id === (withId ?? activeId) && !t.closing);
+  if (!right || !left) return null;
+  let fresh = false;
+  if (left === right) {
+    const { id: newId } = openTab(newTabUrl(), { background: true });
+    right = tabs.find((t) => t.id === newId);
+    if (!right) return null;
+    fresh = true;
+  }
+  const a = tabs.indexOf(left), b = tabs.indexOf(right);
+  if (b !== a + 1 && Boolean(left.pinned) === Boolean(right.pinned) && (left.groupId || null) === (right.groupId || null)) moveTab(right.id, b > a ? a + 1 : a); // joined in the strip
+  const pair = splitLayout.link(tabs, left.id, right.id, 0.5);
+  if (!pair) return null;
+  switchTab(right.id);
+  layout();
+  sendTabs();
+  if (!fresh && alive(right)) { try { right.view.webContents.focus(); } catch { /* gone */ } }
+  return pair;
+}
+// Takes the pair of tab `id` apart; both tabs stay open, the one in front now fills the page area.
+function closeSplit(id) {
+  if (splitLayout.unlink(tabs, id) === null) return false;
+  layout();
+  sendTabs();
+  return true;
+}
+// The divider dragged: the UI sends the left side's share of the page area (0..1).
+ipcMain.on('split:ratio', (_e, ratio) => {
+  const front = tabs.find((t) => t.id === activeId);
+  if (!front?.split || !Number.isFinite(ratio)) return;
+  front.split.ratio = splitLayout.clampRatio(ratio, contentBounds.width);
+  layout();
+});
+ipcMain.on('split:close', () => { if (activeId != null) closeSplit(activeId); });
+// A tab dropped on the right edge of the page area (a drag out of the strip, finishCardDrag) opens beside the tab in front.
+function dropIntoSplit(src, tabId, cursor, wasFront = null) {
+  if (!rcAlive(src)) return false;
+  const w = src.win;
+  const bounds = withWindow(src, () => ({ ...contentBounds }));
+  const origin = w.getContentBounds();
+  const point = { x: cursor.x - origin.x, y: cursor.y - origin.y };
+  if (!splitLayout.inDropZone(point, bounds)) return false;
+  return withWindow(src, () => {
+    const dragged = tabs.find((t) => t.id === tabId && !t.closing);
+    if (!dragged || tabs.filter((t) => !t.closing).length < SPLIT_MIN_TABS) return false;
+    // Beside the tab that was in front when the drag began; when that was the dragged tab itself, beside the one the drag stepped aside to.
+    const keep = tabs.find((t) => t.id === wasFront && t !== dragged && !t.closing) || tabs.find((t) => t.id === activeId && t !== dragged && !t.closing) || tabs.find((t) => t !== dragged && !t.closing);
+    return Boolean(keep && openSplit(tabId, { withId: keep.id }));
+  });
+}
+function splitMenuItems(tab) {
+  const items = [];
+  const paired = Boolean(tab.split && splitPartner(tab));
+  if (paired) items.push({ label: t('menu.closeSplitView'), click: () => withWindow(tab.rec, () => closeSplit(tab.id)) });
+  else if (!tab.closing) items.push({ label: t('menu.openSplitView'), click: () => withWindow(tab.rec, () => openSplit(tab.id)) });
+  return items;
+}
+if (TEST) {
+  global.__split = {
+    open: (id, withId) => Boolean(openSplit(id, { withId: withId ?? null })),
+    close: (id) => closeSplit(id ?? activeId),
+    ratio: (r) => { const front = tabs.find((t) => t.id === activeId); if (front?.split) { front.split.ratio = splitLayout.clampRatio(r, contentBounds.width); layout(); } },
+    menu: (id) => splitMenuItems(tabs.find((t) => t.id === id)).map((i) => ({ label: i.label })),
+    clickMenu: (id) => { splitMenuItems(tabs.find((t) => t.id === id))[0]?.click(); },
+    click: (id) => { const tab = tabs.find((t) => t.id === id); if (tab) activateSplitSide(tab); },
+    drop: (id, x, y) => { const o = win.getContentBounds(); return dropIntoSplit(curRec, id, { x: o.x + x, y: o.y + y }); },
+    state: () => {
+      const sp = splitView();
+      return {
+        activeId, shown: Boolean(sp), pair: tabs.find((t) => t.id === activeId)?.split ? { ...tabs.find((t) => t.id === activeId).split } : null,
+        content: { ...contentBounds },
+        views: tabs.filter(alive).map((t) => ({ id: t.id, visible: t.view.getVisible(), bounds: t.view.getBounds(), paired: Boolean(t.split) })),
+        order: tabs.map((t) => t.id), sent: curRec?.splitKey ?? '',
+      };
+    },
+  };
+}
+
 function listTabs() {
   // Sleeping tabs stay listed (from their sleep snapshot) so the agent can still see and switch to
   // them; switch_tab wakes one up like any other tab click would (see switchTab).
@@ -3733,6 +3873,7 @@ function listTabs() {
     url: t.sleeping ? (t.sleepUrl || '') : (pdfViewer.pdfUrlOf(realUrl(t.view.webContents)) || realUrl(t.view.webContents)), // (a PDF in Lumen's viewer: the PDF's own address)
     active: t.id === activeId,
     group: t.groupId ? tabGroups.groups.get(t.groupId)?.name || null : null,
+    ...(t.split && splitPartner(t) ? { splitWith: splitPartner(t).id } : {}), // [split view] shown beside that tab
   }));
 }
 
@@ -4249,6 +4390,7 @@ function tabMenuTemplate(id) {
     { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
     tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
     ...audioMenuItems(tab),
+    ...splitMenuItems(tab), // [split view]
     ...moveWindowItems(id),
     { type: 'separator' },
     { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
@@ -5647,7 +5789,11 @@ const sidebarTabs = sidebarTabsLib.create();
 // A tab that only carries the chat you were in (no chat of its own: followTabChat) keeps its own sidebar state: it neither takes
 // nor gives the open/closed answer of the tabs showing the same chat, so each tab's sidebar stays as the user left it.
 const carriedTabs = new Set();
-const sidebarSharers = (tabId) => { const c = chatBind.chatOf(tabId); return c && !carriedTabs.has(tabId) ? chatBind.tabsOf(c).filter((t) => t !== tabId && !carriedTabs.has(t)) : []; };
+const sidebarSharers = (tabId) => {
+  const c = chatBind.chatOf(tabId);
+  const mate = tabs.find((t) => t.id === tabId)?.split ? splitPartner(tabs.find((t) => t.id === tabId)) : null; // [split view] the two sides of a pair open and close the sidebar together (the page area must not jump when the other side is clicked)
+  return [...(c && !carriedTabs.has(tabId) ? chatBind.tabsOf(c).filter((t) => t !== tabId && !carriedTabs.has(t)) : []), ...(mate ? [mate.id] : [])];
+};
 const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
 function setTabSidebar(tabId, open) {
   const hit = tabAnywhere(tabId);
@@ -6425,6 +6571,7 @@ function releaseTab(tab, { keepFlags = false } = {}) {
   if (index === -1) return false;
   finishLeaving(tab);
   if (chatFullTab === tab.id) chatFullTab = null;
+  if (tab.split) splitLayout.unlink(tabs, tab.id); // [split view] a tab moved to another window leaves its pair
   tabs.splice(index, 1);
   Object.assign(tab, windowMerge.releaseFlags(tab, { keep: keepFlags })); // leaves its group; placed by hand (automatic grouping leaves it alone), unless a merge: the tab keeps the flag it had
   tabGroups.cleanup();
@@ -7291,6 +7438,7 @@ function finishCardDrag(d, reason, target) {
     return;
   }
   if (closableTabCount(src) - ids.length < 1) { putBack(); hideDragCard(d, 'cancel'); settled(); return; } // its other tabs closed meanwhile
+  if (ids.length === 1 && !d.group && dropIntoSplit(src, d.tabId, cursorPoint(), d.origActive)) { wakeDeferredAside(d); hideDragCard(d, 'drop'); settled(); return; } // [split view] dropped on the page's right edge: it opens beside the tab in front
   // A window of its own, placed so the tab sits under the cursor as it will in the new strip, and no
   // bigger than the display it opens on.
   const cursor = cursorPoint();
@@ -7632,6 +7780,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('did-finish-load', () => {
     if (!uiReady) return; // the first load: set up below
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label });
+    rec.splitKey = ''; // ([split view] the fresh page has no divider)
     tabStripGate.forget(rec); // (the fresh page has no strip: the next send goes out even if the state is what the old page had)
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     followFront({ push: false }); // [chat per tab] this window's tab's chat
@@ -7660,6 +7809,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.once('did-finish-load', () => {
     uiLoaded = true;
     rec.uiLoaded = true;
+    rec.splitKey = ''; // ([split view] the fresh page has no divider)
     tabStripGate.forget(rec); // (tabs restored while this page was still loading were sent to nowhere: the strip must still get its first state, even if it is the one the gate last recorded)
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label }); // the badge that says whose window this is
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed()) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); });
@@ -9238,7 +9388,7 @@ function armFreezeTimeout(rec, seq) {
   }, FREEZE_MAX_MS));
 }
 ipcMain.handle('view:freeze', async (_e, cssSize) => {
-  if (gpuHealth?.calmActive()) return null; // [gpu health] the GPU is recovering: no capture (the UI changes the sidebar without a snapshot). [software mode] the UI does not ask for one for the sidebar (app.js lumenSoftwareGfx); the tab search popup still does, it needs the still image to sit over
+  if (gpuHealth?.calmActive() || splitView()) return null; // [split view] a snapshot shows one page: with two on show the sidebar changes without one. // [gpu health] the GPU is recovering: no capture (the UI changes the sidebar without a snapshot). [software mode] the UI does not ask for one for the sidebar (app.js lumenSoftwareGfx); the tab search popup still does, it needs the still image to sit over
   const rec = curRec;
   const wc = activeTab()?.webContents;
   if (!rec || !wc || tabs.find((t) => t.id === activeId)?.fullscreen) return null;
