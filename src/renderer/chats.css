@@ -120,6 +120,19 @@
 .chat-item.has-unread:not(.current):not(:hover):not(:focus-within) { background: color-mix(in srgb, var(--success) 11%, transparent); }
 .chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
 /* High-contrast mode drops colours and shadows: the glyphs take the system colours and the unread bar becomes a border. */
+/* The "New in Lumen" card in the empty chat (renderer/offer-card.js): what is new and still off, one line each. */
+.offer-card { margin: 14px 0 0; padding: 10px 12px; border-radius: var(--r-lg); background: var(--field); text-align: left; }
+.offer-title { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.offer-row { display: flex; align-items: center; gap: 10px; }
+.offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.offer-name { font-weight: 500; }
+.offer-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.offer-go { flex: none; padding: 4px 10px; border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
+.offer-go:disabled { opacity: 0.6; }
+.offer-foot { margin-top: 8px; display: flex; gap: 14px; font-size: 12px; }
+.offer-foot .link-btn { color: var(--muted); }
+
 @media (forced-colors: active) {
   .chat-badge, .chat-badge.queued, .chat-badge.unread { color: CanvasText; forced-color-adjust: none; }
   .chat-badge.running, .chat-badge.needs-ok { color: Highlight; forced-color-adjust: none; }

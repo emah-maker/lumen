@@ -33,7 +33,9 @@ module.exports = [
   { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
-  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', providerUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },
+  // settings-sync.js is loaded before settings.js and uses its helpers (called later, from its builder).
+  { files: ['src/renderer/settings-sync.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', status: 'readonly', flash: 'readonly', armedButton: 'readonly', withKeywords: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
   { files: ['src/renderer/settings-skills.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly', toggle: 'readonly' } } },
   // settings-routines.js is loaded before settings.js and uses its helpers (called later, from its builder).
@@ -41,10 +43,12 @@ module.exports = [
   // settings-macros.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-macros.js'], languageOptions: { globals: { h: 'readonly', row: 'readonly', flash: 'readonly', tr: 'readonly' } } },
   // settings-providers.js is loaded before settings.js and uses its helpers (called later, from its builders).
-  { files: ['src/renderer/settings-providers.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', meterRow: 'readonly', tokens: 'readonly', dollars: 'readonly', tr: 'readonly', save: 'readonly', st: 'readonly', usageChip: 'readonly', syncCliAccess: 'readonly', ENGINE_NAMES: 'readonly', grokUsageRows: 'readonly', codexUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings-providers.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', meterRow: 'readonly', flash: 'readonly', tokens: 'readonly', dollars: 'readonly', tr: 'readonly', save: 'readonly', st: 'readonly', usageChip: 'readonly', syncCliAccess: 'readonly', ENGINE_NAMES: 'readonly', grokUsageRows: 'readonly', codexUsageRows: 'readonly' } } },
   // settings-unload.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-unload.js'], languageOptions: { globals: { S: 'readonly', st: 'readonly', h: 'readonly', tr: 'readonly', save: 'readonly', row: 'readonly', stackRow: 'readonly', toggle: 'readonly', select: 'readonly', flash: 'readonly', withKeywords: 'readonly', applyPageClasses: 'readonly' } } },
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
+  // settings-focus.js (Settings → General → Focus mode): loaded before settings.js; it also assigns the page's `st` after a change.
+  { files: ['src/renderer/settings-focus.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', withKeywords: 'readonly', S: 'readonly', st: 'writable' } } },
   { files: ['src/renderer/settings-external-apps.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', $: 'readonly' } } },
   { files: ['src/renderer/settings-mcp-servers.js', 'src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
@@ -67,8 +71,12 @@ module.exports = [
   { files: ['src/renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', resumeLive: 'readonly', shownChatId: 'writable' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },
+  // side-tabs.js (Tab layout: Side) is loaded after app.js and works on its tab list: the same globals, and it sets two of them.
+  { files: ['src/renderer/side-tabs.js'], languageOptions: { globals: { $: 'readonly', t: 'readonly', drag: 'readonly', lastTabState: 'readonly', selectedTabs: 'readonly', hideHoverCard: 'readonly', stripOrder: 'readonly', handOffTabDrag: 'readonly', indexBefore: 'readonly', expectMove: 'readonly', renderTabsNow: 'readonly', setSidebarWidth: 'readonly', sidebarWish: 'readonly', tabsRendered: 'writable', lastLayoutSig: 'writable' } } },
   // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
   { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
+  { files: ['src/renderer/command-bar.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly', lastTabState: 'readonly' } } }, // (app.js's, loaded on first use)
+  { files: ['test/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
     files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],

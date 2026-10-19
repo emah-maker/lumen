@@ -49,7 +49,7 @@ const PAGE_FIRST = [
   // Address bar, reload, zoom, history and developer tools: Chrome gives the page these first too (a page that calls preventDefault on
   // Ctrl+L, Ctrl+R or Alt+Left keeps it). Only the tab and window keys in BROWSER_ONLY are reserved.
   { combo: 'mod+l', does: 'Address bar' },
-  { combo: 'mod+k', does: 'Search from the address bar' },
+  { combo: 'mod+k', does: 'Command bar' },
   { combo: 'mod+e', does: 'Search from the address bar' },
   { combo: 'alt+d', does: 'Address bar', not: 'darwin' },
   { combo: 'f6', does: 'Address bar' },

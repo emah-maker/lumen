@@ -36,7 +36,8 @@ const SECTIONS = [
   {
     id: 'navigation',
     entries: [
-      ['shortcuts.focusAddress', ['mod+l', 'mod+k', 'mod+e', 'f6', { other: 'alt+d' }]],
+      ['shortcuts.focusAddress', ['mod+l', 'mod+e', 'f6', { other: 'alt+d' }]],
+      ['shortcuts.commandBar', ['mod+k']],
       ['shortcuts.back', [{ mac: 'mod+[' }, 'alt+left']],
       ['shortcuts.forward', [{ mac: 'mod+]' }, 'alt+right']],
       ['shortcuts.reload', ['mod+r', 'f5']],
