@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('downloadsPanel', {
   onOpen: (callback) => ipcRenderer.on('downloads:open', () => callback()),
   act: (action, id) => ipcRenderer.send('downloads:act', action, id),
   drag: (id) => ipcRenderer.send('downloads:drag', id),
+  menu: (id) => ipcRenderer.send('downloads:row-menu', id), // right-click: Open, Show in folder, Pin to Files
   clear: () => ipcRenderer.send('downloads:clear'),
   openFolder: () => ipcRenderer.send('downloads:folder'),
   showAll: () => ipcRenderer.send('downloads:all'),

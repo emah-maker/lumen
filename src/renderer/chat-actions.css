@@ -37,6 +37,7 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .msg.assistant:hover .reply-thumb, .reply-thumb:focus-visible, .reply-thumbs.rated .reply-thumb[aria-pressed="true"] { opacity: 1; }
 .reply-thumb:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
 .reply-thumb[aria-pressed="true"] { color: var(--accent); }
+.reply-note.done { opacity: 1; color: var(--accent); }
 .reply-thumb[aria-pressed="true"] svg { fill: currentColor; fill-opacity: 0.18; }
 
 /* ---- a long message of yours: cut short; its Show more sits in the row under it */
@@ -52,3 +53,16 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .step-group[open] > summary .step-detail::after { transform: rotate(-135deg); }
 .step-items { margin: 2px 0 4px 14px; }
 .notice-continue { margin-left: 4px; }
+
+/* [acting helpers] one compact card per helper that acts in a tab of its own (chat-core.js showHelperCard) */
+.helper-card { margin: 6px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12px; }
+.helper-card.ended { opacity: 0.8; }
+.helper-card-head { display: flex; gap: 8px; align-items: baseline; }
+.helper-card-name { font-weight: 600; }
+.helper-card-state { color: var(--muted); }
+.helper-card-task, .helper-card-step { margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.helper-card-step { color: var(--muted); }
+.helper-card-step:empty { display: none; }
+.helper-card-actions { display: flex; gap: 6px; margin-top: 4px; }
+.helper-card-tab { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: none; font: inherit; color: var(--accent-text); cursor: pointer; }
+.helper-card-tab:disabled { cursor: default; color: var(--muted); }

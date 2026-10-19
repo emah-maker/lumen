@@ -187,12 +187,19 @@
         const ext = /\.([a-z0-9]+)$/i.exec(f)?.[1]?.toLowerCase() || '';
         return { key: `Read|${dirOf(f)}`, kind: 'read', pages: /^(?:png|jpe?g|gif|webp|bmp|tiff?|pdf)$/.test(ext) };
       }
+      // Searches in a burst are one row: "Searching the web · 2 searches" (the queries are its members), whatever each one asked.
+      const bare = n.replace(/^mcp__lumen__/, '');
+      if (bare === 'web_search' || bare === 'WebSearch') return { key: 'search|web', kind: 'search', what: 'web' };
+      if (bare === 'find_sources') return { key: 'search|sources', kind: 'search', what: 'sources' };
+      if (bare === 'read_urls') return { key: 'search|urls', kind: 'search', what: 'urls' };
       if (SHELL.has(n) && !i.description && /^(?:Using |Running a command$)/.test(label || '')) return { key: `shell|${n}`, kind: 'shell', tool: shellName(n) };
       if (!label) return null;
       return { key: `${n}|${label}`, kind: 'same' };
     };
-    L.groupLabel = (info, count, label) => {
+    // `running`: some member is still going ("Searching…") or all are done ("Searched…").
+    L.groupLabel = (info, count, label, running = false) => {
       if (!info) return label;
+      if (info.kind === 'search') return t(`step.group.${info.what}.${running ? 'running' : 'done'}.${count === 1 ? 'one' : 'other'}`, { n: count });
       if (info.kind === 'read') return t(info.pages ? 'step.group.pages' : 'step.group.files', { count });
       if (info.kind === 'shell') return t('step.group.tool', { tool: info.tool, count });
       return t('step.group.same', { label, count });
@@ -267,6 +274,7 @@
       if (typeof v === 'string' && v) { const r = redact(v); out[k] = r.length > (k === 'command' ? 600 : 240) ? `${r.slice(0, k === 'command' ? 599 : 239)}…` : r; }
       else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
     }
+    for (const k of ['ids', 'tab_ids']) if (Array.isArray(input[k])) { const list = input[k].filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9).slice(0, 8); if (list.length) out[k] = list; } // (tabs a step names: shown as chips)
     return Object.keys(out).length ? out : null;
   }
 

@@ -19,24 +19,36 @@ function run(cmd, args, opts = {}) {
 const must = (r, what) => { if (r.status !== 0) throw new Stop(`${what} failed: ${(r.stderr || r.stdout || r.error?.message || `exit ${r.status}`).split('\n').slice(-4).join(' | ')}`); return r.stdout; };
 const git = (cwd, ...args) => run('git', args, { cwd });
 const gh = (cwd, ...args) => run('gh', args, { cwd });
-// A gh failure worth retrying: GitHub's GraphQL "Something went wrong", HTTP 502/503/504, timeouts and dropped connections.
-const TRANSIENT = /something went wrong|\bHTTP (502|503|504)\b|bad gateway|service unavailable|gateway time-?out|timed? ?out|ETIMEDOUT|ECONNRESET|EAI_AGAIN|connection reset/i;
-const isTransient = (r) => r.status !== 0 && TRANSIENT.test(`${r.stderr || ''} ${r.stdout || ''} ${r.error ? r.error.message : ''}`);
+// A network failure worth retrying, from gh (GitHub's GraphQL "Something went wrong", HTTP 502/503/504/429, timeouts, dropped connections)
+// or from git (DNS, TLS, "RPC failed", "the remote end hung up", early EOF). A permanent failure (auth, a rejected push, not found) never matches.
+const TRANSIENT = /something went wrong|\bHTTP (429|5\d\d)\b|bad gateway|service unavailable|gateway time-?out|timed? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|EAI_AGAIN|connection (reset|refused|was reset|closed)|could not resolve host|couldn't resolve host|unable to access|early eof|rpc failed|remote end hung up|failed to connect|unexpected disconnect|network is unreachable|temporary failure in name resolution|tls handshake|ssl_|schannel|broken pipe|could not read from remote repository|i\/o timeout|no such host/i;
+const PERMANENT = /authentication failed|permission denied|returned error: (401|403|404)|\[rejected\]|non-fast-forward|fetch first|already exists|not mergeable|repository not found|could not find|\bHTTP (401|403|404|422)\b|bad credentials/i;
+const isTransient = (r) => { if (r.status === 0) return false; const t = `${r.stderr || ''} ${r.stdout || ''} ${r.error ? r.error.message : ''}`; return TRANSIENT.test(t) && !PERMANENT.test(t); };
 
-// gh with up to `tries` attempts and a growing backoff on transient errors. Before each retry `recheck()` may return a finished result
-// ({ status: 0, stdout }) when the failed call actually went through (a merge that landed, a PR that was created): that counts as success.
-async function ghRetry(cwd, args, { tries = 3, backoffMs = 2000, runner = gh, recheck = null, nap = sleep, log = () => {} } = {}) {
+// The retry policy for network steps: NET_TRIES attempts, the wait before retry n is baseMs * 2^(n-1), capped (2 s, 4 s, 8 s, 16 s, 30 s ...).
+const NET_TRIES = 5;
+const backoffMs = (attempt, { baseMs = 2000, capMs = 30000 } = {}) => Math.min(capMs, baseMs * 2 ** (Math.max(1, attempt) - 1));
+
+// Calls `call()` (returns { status, ... }) up to `tries` times while it fails transiently. Before each retry `recheck()` may return a finished result
+// ({ status: 0, stdout }) when the failed call actually went through (a merge that landed, a PR that was created, a push that arrived): that counts as success.
+async function retryCmd(call, { tries = NET_TRIES, baseMs = 2000, capMs = 30000, recheck = null, nap = sleep, log = () => {}, label = 'command', classify = isTransient } = {}) {
   let r;
   for (let i = 1; i <= tries; i++) {
-    r = runner(cwd, ...args);
-    if (r.status === 0 || !isTransient(r) || i === tries) return r;
-    log(`gh ${args.slice(0, 2).join(' ')} hit a transient error (attempt ${i} of ${tries}); retrying`);
-    await nap(backoffMs * i);
+    r = call();
+    if (r.status === 0 || !classify(r) || i === tries) return r;
+    const wait = backoffMs(i, { baseMs, capMs });
+    log(`${label} hit a network error (attempt ${i} of ${tries}); retrying in ${Math.round(wait / 1000)}s`);
+    await nap(wait);
     const done = recheck ? await recheck() : null;
     if (done) return done;
   }
   return r;
 }
+
+// gh with retries on transient errors (3 attempts unless a caller asks for more).
+const ghRetry = (cwd, args, { tries = 3, backoffMs: baseMs = 2000, runner = gh, ...rest } = {}) => retryCmd(() => runner(cwd, ...args), { tries, baseMs, label: `gh ${args.slice(0, 2).join(' ')}`, ...rest });
+// git with retries (fetch, push, ls-remote): NET_TRIES attempts.
+const gitRetry = (cwd, args, { runner = git, ...rest } = {}) => retryCmd(() => runner(cwd, ...args), { label: `git ${args[0]}`, ...rest });
 async function ghJsonRetry(cwd, args, opts = {}) {
   const out = must(await ghRetry(cwd, args, opts), `gh ${args.slice(0, 2).join(' ')}`);
   try { return JSON.parse(out || 'null'); } catch { throw new Stop(`gh ${args.slice(0, 2).join(' ')} gave unreadable output`); }
@@ -91,8 +103,8 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 
 // CI for one commit: { state: 'none' | 'pending' | 'failed' | 'success', runs }. Polls gh's run list with status and conclusion
 // (not `gh run watch --exit-status`: that exits early when a run carries an annotation warning).
-function ciState(cwd, sha) {
-  const runs = ghJson(cwd, 'run', 'list', '--commit', sha, '--json', 'databaseId,status,conclusion,workflowName,url');
+async function ciState(cwd, sha, opts = {}) {
+  const runs = await ghJsonRetry(cwd, ['run', 'list', '--commit', sha, '--json', 'databaseId,status,conclusion,workflowName,url'], { tries: NET_TRIES, ...opts });
   if (!runs || !runs.length) return { state: 'none', runs: [] };
   const bad = runs.find((r) => r.status === 'completed' && r.conclusion !== 'success' && r.conclusion !== 'skipped');
   if (bad) return { state: 'failed', runs, bad };
@@ -103,8 +115,16 @@ function ciState(cwd, sha) {
 async function waitForCi(cwd, sha, { appearMs = 10 * 60000, timeoutMs = 40 * 60000, every = 20000, log = () => {} } = {}) {
   const t0 = Date.now();
   let last = '';
+  let blind = 0;
   for (;;) {
-    const s = ciState(cwd, sha);
+    let s;
+    try { s = await ciState(cwd, sha, { log }); blind = 0; } catch (err) {
+      // GitHub unreachable even after the retries (an outage): keep polling for a while instead of stopping the release.
+      if (++blind > 10) throw err;
+      log(`could not read CI state (${err.message.slice(0, 80)}); polling again (${blind} of 10)`);
+      await sleep(every);
+      continue;
+    }
     if (s.state === 'success') return s;
     if (s.state === 'failed') throw new Stop(`CI failed on ${sha.slice(0, 8)}: ${s.bad.workflowName} (${s.bad.conclusion}) ${s.bad.url}`);
     const waited = Date.now() - t0;
@@ -118,4 +138,4 @@ async function waitForCi(cwd, sha, { appearMs = 10 * 60000, timeoutMs = 40 * 600
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 
-module.exports = { Stop, sleep, say, run, must, git, gh, ghJson, ghRetry, ghJsonRetry, isTransient, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState, waitForCi, readJson };
+module.exports = { Stop, sleep, say, run, must, git, gh, ghJson, ghRetry, ghJsonRetry, gitRetry, retryCmd, backoffMs, NET_TRIES, isTransient, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState, waitForCi, readJson };

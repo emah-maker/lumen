@@ -37,13 +37,22 @@ function cleanMeta(raw) {
   if (Array.isArray(raw.tools)) {
     const tools = raw.tools.filter((t) => t && (typeof t.label === 'string' || typeof t.name === 'string')).slice(0, MAX_TOOLS).map((t) => {
       const input = t.input && typeof t.input === 'object' && JSON.stringify(t.input).length <= INPUT_CHARS ? t.input : null;
-      return { label: typeof t.label === 'string' ? t.label.slice(0, LABEL_CHARS) : '', ...(typeof t.name === 'string' ? { name: t.name.slice(0, 60) } : {}), ...(input ? { input } : {}), ok: t.ok !== false };
+      return { label: typeof t.label === 'string' ? t.label.slice(0, LABEL_CHARS) : '', ...(typeof t.name === 'string' ? { name: t.name.slice(0, 60) } : {}), ...(input ? { input } : {}), ...(Number.isInteger(t.tab) && t.tab >= 0 && t.tab < 1e9 ? { tab: t.tab } : {}), ok: t.ok !== false };
     });
     if (tools.length) out.tools = tools;
   }
+  if (raw.tabs && typeof raw.tabs === 'object' && !Array.isArray(raw.tabs)) { // [tab chips] the tabs a reply names, as they were: { id: { t: title, u: address, s: the run of the app whose ids they are } }
+    const tabs = {};
+    for (const [id, v] of Object.entries(raw.tabs).slice(0, 40)) {
+      if (!/^\d{1,9}$/.test(id) || !v || typeof v !== 'object') continue;
+      tabs[id] = { t: typeof v.t === 'string' ? v.t.slice(0, 200) : '', u: typeof v.u === 'string' ? v.u.slice(0, 1000) : '', s: typeof v.s === 'string' && /^[0-9a-f]{8}$/.test(v.s) ? v.s : '' };
+    }
+    if (Object.keys(tabs).length) out.tabs = tabs;
+  }
+  if (Array.isArray(raw.touched)) { const ids = [...new Set(raw.touched.filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9))].slice(0, 24); if (ids.length) out.touched = ids; } // [activity cards] the tabs the turn used
   if (raw.cards === true) out.cards = true;
   if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
-  if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };
+  if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };
   if (raw.auto && typeof raw.auto === 'object' && typeof raw.auto.label === 'string') out.auto = { label: raw.auto.label.slice(0, 120), ...(typeof raw.auto.reason === 'string' ? { reason: raw.auto.reason.slice(0, 300) } : {}) };
   if (raw.feedback === 'up' || raw.feedback === 'down') out.feedback = raw.feedback;
   return Object.keys(out).length ? out : null;

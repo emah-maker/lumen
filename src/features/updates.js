@@ -149,6 +149,38 @@ const run = (bin, args) => new Promise((resolve, reject) => {
   execFile(bin, args, { timeout: 5000 }, (err, out) => (err ? reject(err) : resolve(String(out))));
 });
 
+// Which programs run from inside `dir` (their exe is in the install folder: an AI assistant's Lumen.exe bridge, a bundled tool), as
+// [{ pid, exe }]. Only the process list is read (Win32_Process.ExecutablePath), never another process's memory; [] when it can't be told.
+// This runs here, in the running Lumen, after a swap failed: the swap helper itself runs no script host (test/units.js).
+// (A program that merely has its working directory in the install is not listed; Lumen no longer starts any such program: ai/cli-utils.js.)
+const HOLDERS_SCRIPT = '$d = $env:LUMEN_SWAP_DIR.TrimEnd([char]92) + [char]92; Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.ProcessId + [char]9 + $_.ExecutablePath }';
+async function holders(dir, { platform = process.platform, exec } = {}) {
+  if (platform !== 'win32') return [];
+  const go = exec || ((file, args, env) => new Promise((resolve, reject) => execFile(file, args, { timeout: 8000, env: { ...process.env, ...env }, cwd: require('os').homedir() }, (err, out) => (err ? reject(err) : resolve(String(out))))));
+  try {
+    const out = await go('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', HOLDERS_SCRIPT], { LUMEN_SWAP_DIR: dir });
+    return String(out).split(/\r?\n/).map((l) => l.split('\t')).filter((p) => /^\d+$/.test(p[0]) && p[1]).map((p) => ({ pid: Number(p[0]), exe: p[1].trim() }));
+  } catch { return []; }
+}
+
+const KNOWN_APPS = { 'ms-teams.exe': 'Microsoft Teams', 'teams.exe': 'Microsoft Teams', 'claude.exe': 'Claude Code', 'codex.exe': 'Codex', 'agy.exe': 'Antigravity', 'node.exe': 'Node.js', 'grok.exe': 'Grok Build' };
+// The cause for Settings and the pill when the swap found the install in use ("files were in use (...)"): names the programs found holding it
+// ("close Microsoft Teams and try again"), else null (the helper's general message stands). Lumen's own copies (Lumen.exe: an assistant's
+// connection, which that message already explains) and the pids in `self` are left out.
+function blockedMessage(found, { self = [] } = {}) {
+  const names = [];
+  for (const h of found || []) {
+    if (self.includes(h.pid)) continue;
+    const base = path.win32.basename(h.exe).toLowerCase();
+    if (base === 'lumen.exe') continue;
+    const n = KNOWN_APPS[base] || path.win32.basename(h.exe);
+    if (!names.includes(n)) names.push(n);
+  }
+  if (!names.length) return null;
+  const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+  return 'files were in use (close ' + list + ' and try again)';
+}
+
 // The version of the Lumen.app at `bundle`, or null when it can't be read (then the downgrade check
 // is skipped, with a warning). XML plist first; a binary one goes through plutil, then `defaults`.
 async function readBundleVersion(bundle, { readFile = fs.promises.readFile, exec = run, warn = console.warn } = {}) {
@@ -250,6 +282,9 @@ function createUpdates(deps) {
     override: Boolean(process.env.LUMEN_UPDATES_TEST),
   });
   const zipMod = () => (testStager || require('./zip-update'));
+  const REASONS = ['dropped', 'offline', 'timeout', 'server', 'refused', 'blocked', 'secure', 'failed'];
+  let updateNetHolder = null;
+  const updateNet = () => (updateNetHolder ||= (deps.updateNet || require('./update-net').createUpdateNet({ electron: require('electron'), proxy: () => deps.prefs?.().proxy })));
   let testStager = null;
   // The outside world, in one place so a test can stand in for it.
   const io = {
@@ -287,6 +322,7 @@ function createUpdates(deps) {
     version: null, // the newer version, once one is found
     progress: 0,
     error: '',
+    retrying: '', // a transient download failure is being retried: the reason, in words
     lastChecked: deps.readSettings().updatesCheckedAt || 0,
   };
   let info = null; // the updater's info for `version`
@@ -312,6 +348,14 @@ function createUpdates(deps) {
     'updates.moveDialog.later': 'Not now',
     'updates.moveDialog.message': 'Lumen {version} is available',
     'updates.moveDialog.detail': 'Move Lumen to Applications and update it now? Lumen restarts from there.',
+    'updates.reason.dropped': 'the connection dropped',
+    'updates.reason.offline': 'there is no internet connection',
+    'updates.reason.timeout': 'the connection timed out',
+    'updates.reason.server': 'the update server had a problem',
+    'updates.reason.refused': 'the update server refused the download',
+    'updates.reason.blocked': 'something on this computer blocked the download',
+    'updates.reason.secure': 'a secure connection couldn’t be made',
+    'updates.reason.failed': 'the connection failed',
   };
   const tr = (key, vars) => (deps.t ? deps.t(key, vars) : EN[key].replace(/\{(\w+)\}/g, (w, n) => (vars && n in vars ? String(vars[n]) : w)));
   const autoDownload = () => deps.prefs().autoDownloadUpdates !== false;
@@ -339,6 +383,10 @@ function createUpdates(deps) {
   const setState = (patch) => { if (patch.status && patch.status !== 'error') installFailed = false; Object.assign(state, patch); publish(); };
   const dismissKey = () => state.version || 'install-failed'; // a failed install with no known version still has a pill to close
   const short = (err) => String(err?.message || err).split('\n')[0].slice(0, 200);
+  // The plain-words reason for a download failure (locales: updates.reason.*), as a fragment for
+  // "Couldn’t update to Lumen X: <reason>"; a failure without one (a checksum, a disk error) says what it says.
+  const reasonText = (key) => tr(`updates.reason.${REASONS.includes(key) ? key : 'failed'}`);
+  const failText = (err) => (REASONS.includes(err?.reasonKey) ? reasonText(err.reasonKey) : short(err));
   const fail = (msg) => { moveError = msg; queued = false; publish(); return false; };
 
   function getUpdater() {
@@ -362,16 +410,22 @@ function createUpdates(deps) {
     const asset = stageAsset({ kind, version: state.version, arch, files: info?.files });
     if (!asset || state.status === 'downloading') return;
     const execPath = relocateTo ? `${relocateTo}/Contents/MacOS/${path.basename(process.execPath)}` : process.execPath;
-    setState({ status: 'downloading', progress: 0, error: '' });
-    const net = () => { try { return require('electron').net; } catch { return undefined; } };
-    const go = () => zipMod().stage({ net: net(), asset, version: state.version, files: info?.files, execPath, onProgress: (progress) => setState({ progress }) });
+    setState({ status: 'downloading', progress: 0, error: '', retrying: '' });
+    // The download's own session (features/update-net.js), not the browsing one the ad blocker and Safe Browsing watch.
+    const go = async () => zipMod().stage({
+      net: testStager ? undefined : await updateNet().get(), // (a test's stand-in stager downloads nothing)
+      asset, version: state.version, files: info?.files, execPath,
+      onProgress: (progress) => setState({ progress, retrying: '' }),
+      // A transient failure: the pill says "Retrying…" and Settings says why, until data flows again.
+      onRetry: (r) => setState({ retrying: reasonText(r.key) }),
+    });
     (cleaning ? cleaning.then(go) : Promise.resolve().then(go)) // not while an old staging folder is still being deleted
       .then((s) => {
         staged = s;
         setState({ status: 'downloaded', progress: 100 });
         if (queued) applyNow(); // the click that came while it downloaded
       })
-      .catch((err) => { queued = false; setState({ status: 'error', error: short(err) }); });
+      .catch((err) => { queued = false; setState({ status: 'error', error: failText(err), retrying: '' }); });
   }
 
   // Show the native dialog, e.g. to open the newer copy that is already installed.
@@ -619,10 +673,20 @@ function createUpdates(deps) {
       const msg = fs.readFileSync(errFile(), 'utf8').trim();
       fs.rmSync(errFile(), { force: true });
       if (msg) state.error = msg.slice(0, 200), state.status = 'error', lastSwapFailed = true;
+      // "files were in use": name the programs that hold the install (a moment later: the process list takes a second)
+      if (msg && /^files were in use/.test(msg) && (deps.platform || process.platform) === 'win32') {
+        const shown = state.error;
+        (deps.holders || holders)(path.dirname(process.execPath)).then((found) => {
+          const named = blockedMessage(found, { self: [process.pid] });
+          if (named && state.status === 'error' && state.error === shown) setState({ error: named.slice(0, 200) });
+        }).catch(() => {});
+      }
     } catch {}
     // An update that was unpacked but never applied leaves a big folder next to the install: use it
     // if it is complete and newer, else clear it (a relocating copy only clears it).
     if (canSelfUpdate() || relocate()) restoreStaged(lastSwapFailed);
+    // (an update swapped while another program had files open leaves the old install to delete once that program ended)
+    if (canSelfUpdate() && kind !== 'mac') setTimeout(() => { try { zipMod().clearOld?.(process.execPath)?.catch?.(() => {}); } catch {} }, 20e3).unref?.();
     // A standard user's stale copy hands over first; the move prompt and the checks only start when it didn't.
     openNewerUserCopy().catch(() => false).then((handedOff) => {
       if (handedOff) return;
@@ -657,7 +721,7 @@ function createUpdates(deps) {
     dismiss: () => dismiss(),
     setState: (patch) => setState(patch),
     willQuit: () => applyOnQuit(),
-    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
+    reset: () => { Object.assign(state, { status: 'idle', version: null, progress: 0, error: '', retrying: '' }); info = null; staged = null; dismissed = null; swapStarted = false; relaunchOnQuit = false; queued = false; relocateTo = null; moveError = ''; checkRunning = false; checkPromise = null; retrying = false; installFailed = false; publish(); },
   } : undefined;
 
   registerIpc();
@@ -666,5 +730,5 @@ function createUpdates(deps) {
 
 module.exports = {
   createUpdates, disabledReason, installKind, updateMode, macPlacement, isNewer, stageAsset, manualAsset,
-  plistVersion, readBundleVersion, readBundleVersionSync, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
+  plistVersion, holders, blockedMessage, readBundleVersion, readBundleVersionSync, keepExisting, runningFrom, pickAppsDir, keepMessage, clickAction, shouldOfferMove, RELEASES_URL,
 };

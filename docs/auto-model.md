@@ -23,7 +23,7 @@ Everything happens on your computer. The router (`src/ai/auto-model.js`) is a pu
 ## Where the choice is shown
 
 - The reply is labelled **Auto · Claude Haiku 5.5**; hover for the reason, which names the situation ("Auto: Sonnet 5.5 for a multi-step browsing task", "Auto: Haiku 5.5 for a quick reply").
-- The picker's Auto row says what Auto chose last in the open chat ("Auto · Haiku 5.5"), with the reason as its note. It stays selected.
+- The picker's Auto row reads just **Auto**. Once Auto has chosen a model in the open chat it adds **last used: Haiku 5.5** in muted text (only while that model is still connected), with the reason as its note. It stays selected. Settings → AI → Model shows the same menu and the same choice as the sidebar.
 - A quiet note appears when Auto changes model mid-message (see Escalation).
 - The usage log, the context bar, the chat's cost line and the AI status card all record the **concrete** model that ran, never "auto".
 

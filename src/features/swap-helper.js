@@ -20,7 +20,7 @@ const { spawn } = require('child_process');
 
 const MIN_EXE_BYTES = 10 * 1024 * 1024;
 // Only a short cause: Settings and the pill put it in their own sentence ("Couldn’t install Lumen X: <cause>. …").
-const MESSAGE = 'files were in use';
+const MESSAGE = 'files were in use (close any other program that runs Lumen, such as an AI assistant’s Lumen connection, then try again)';
 
 // null when `file` looks like a real Windows executable, else why not.
 function checkExe(file, minBytes = MIN_EXE_BYTES) {
@@ -75,6 +75,53 @@ function moveAside(old) {
   try { fs.renameSync(old, aside); return aside; } catch { rmQuick(old); return ''; }
 }
 
+// Renaming the whole install folder fails on Windows while ANY file inside it is in use, and one always is: an AI
+// assistant (Claude Code, Codex, ...) set up with "Let other apps use Lumen" keeps a copy of Lumen.exe running from the
+// install folder as long as it is open. A running exe can be renamed though (not overwritten), and so can a folder none
+// of whose files is open. So when the folder itself won't move, the install is swapped entry by entry: every entry goes
+// into `old` (a locked folder is split into its entries, one level at a time), then every entry of the new version goes
+// into place. Whatever moved is journaled, so a failure puts everything back. Files are only ever renamed.
+function moveTree(from, to, journal, merge) {
+  const st = fs.lstatSync(from);
+  if (!fs.existsSync(to)) {
+    try { fs.renameSync(from, to); journal.push([from, to]); return; } catch (err) { if (!st.isDirectory()) throw err; }
+  } else if (!(merge && st.isDirectory() && fs.lstatSync(to).isDirectory())) {
+    throw Object.assign(new Error(`${to} exists`), { code: 'EEXIST' });
+  }
+  // a folder that won't move whole (or one already in place, whose entries are merged in): its entries go one by one
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from)) moveTree(path.join(from, e), path.join(to, e), journal, merge);
+  try { fs.rmdirSync(from); } catch {}
+}
+
+function undo(journal) {
+  for (const [from, to] of journal.reverse()) {
+    try { fs.mkdirSync(path.dirname(from), { recursive: true }); fs.renameSync(to, from); } catch {}
+  }
+}
+
+// null when the install was swapped, else the error (everything is back where it was).
+function swapEntries(o, old) {
+  const journal = [];
+  try {
+    fs.mkdirSync(old, { recursive: true });
+    for (const e of fs.readdirSync(o.dir)) moveTree(path.join(o.dir, e), path.join(old, e), journal, false);
+    for (const e of fs.readdirSync(o.root)) moveTree(path.join(o.root, e), path.join(o.dir, e), journal, true);
+    return null;
+  } catch (err) {
+    undo(journal);
+    return err;
+  }
+}
+
+// Folders from earlier entry-by-entry swaps whose running exe could not be deleted then (older Windows).
+function sweepLeftovers(old) {
+  try {
+    const dir = path.dirname(old);
+    for (const n of fs.readdirSync(dir)) if (n.startsWith(`${path.basename(old)}-`)) rmQuick(path.join(dir, n));
+  } catch {}
+}
+
 // The swap itself. `o`: { pid, dir, root, old, staging, exe, exeArgs, errFile, relaunch (default true), waitMs, lockMs, retryMs, minBytes }.
 // Returns 'swapped', 'kept' or (relaunch false only) 'noop'. `start` launches an exe (injectable for tests).
 // Order matters for how long the user waits: nothing slow runs between Lumen exiting and the new Lumen starting
@@ -96,24 +143,39 @@ async function swap(o, start = launch) {
   const bad = checkExe(path.join(o.root, path.basename(o.exe)), o.minBytes);
   if (bad) return fail(`the update looked incomplete (${bad})`);
   const aside = moveAside(o.old);
+  let old = o.old;
+  let moved = false;
+  const deadline = Date.now() + lockMs; // (one bound for both ways of swapping)
   try {
-    await retry(() => fs.renameSync(o.dir, o.old), lockMs, retryMs);
-  } catch {
-    if (aside) rmQuick(aside);
-    return fail();
-  }
-  try {
-    await retry(() => fs.renameSync(o.root, o.dir), Math.min(lockMs, 2e3), retryMs);
-  } catch {
-    try { fs.renameSync(o.old, o.dir); } catch {}
-    if (aside) rmQuick(aside);
-    return fail();
+    // (a virus scan holding a file lets go within moments; a running exe never does)
+    await retry(() => fs.renameSync(o.dir, o.old), Math.min(lockMs, 1500), retryMs);
+    moved = true;
+  } catch {}
+  if (moved) {
+    try {
+      await retry(() => fs.renameSync(o.root, o.dir), Math.min(lockMs, 2e3), retryMs);
+    } catch {
+      try { fs.renameSync(o.old, o.dir); } catch {}
+      if (aside) rmQuick(aside);
+      return fail();
+    }
+  } else {
+    // something has files open in the install: swap it entry by entry (see swapEntries)
+    if (fs.existsSync(old)) old = `${o.old}-${process.pid}`; // (a leftover that could not be deleted)
+    while (swapEntries(o, old)) {
+      if (Date.now() + retryMs > deadline) {
+        if (aside) rmQuick(aside);
+        return fail();
+      }
+      await sleep(retryMs);
+    }
   }
   rmQuick(o.staging); // (what is left of it is small: the folder was renamed out)
   if (relaunch) start(o.exe, o.exeArgs);
   // The new Lumen is starting; the old install goes now, in this helper (detached, nobody waits for it).
-  rmQuick(o.old);
+  rmQuick(old);
   if (aside) rmQuick(aside);
+  sweepLeftovers(o.old);
   return 'swapped';
 }
 

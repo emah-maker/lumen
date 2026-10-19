@@ -261,6 +261,280 @@ function tdSend(id, action, extra = {}) {
   };
   next();
 }
+// ---- the Files card (features/files.js) ----
+// The card asks main for the list itself, through the page's own bridge (window.lumenFiles, preload/files-newtab-preload.js), and hears when it
+// changes: the list never travels through the page's hash. The bridge hands out ids; a click sends the id back and main opens the file, so
+// the page never names a path to open. Names and folders are only ever set with textContent. One list call serves every Files card on the page.
+const FILE_ICONS = { // constant markup; nothing from a file name goes in it
+  folder: '<path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/>',
+  page: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/>',
+  pdf: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 11.6c1.6-1.5 2.4-3.4 2.4-4.6 0 1.3 1.4 3 3 3.4-1.7-.1-3.6.4-5.4 1.2z"/>',
+  doc: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 8h5.4M5.3 10h5.4M5.3 12h3"/>',
+  slides: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><rect x="5.2" y="7.4" width="5.6" height="3.6" rx=".6"/>',
+  sheet: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.2 8.2h5.6M5.2 10.6h5.6M7.8 6.8v6"/>',
+  mail: '<rect x="1.8" y="3.4" width="12.4" height="9.2" rx="1.6"/><path d="m2.4 4.6 5.6 4.2 5.6-4.2"/>',
+  image: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><circle cx="5.6" cy="6.4" r="1.1"/><path d="m2.4 12 3.6-3.4 2.4 2.2 2-1.8 3.2 3"/>',
+  zip: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M7 5.6h1.4M7 7.4h1.4M7 9.2h1.4"/><rect x="6.5" y="10.4" width="2.4" height="2" rx=".5"/>',
+  code: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="m6.6 8-1.4 1.5 1.4 1.5M9.4 8l1.4 1.5L9.4 11"/>',
+};
+const FILE_KINDS = {
+  pdf: 'pdf', doc: 'doc', docx: 'doc', rtf: 'doc', odt: 'doc', txt: 'doc', md: 'doc', pages: 'doc',
+  ppt: 'slides', pptx: 'slides', key: 'slides', odp: 'slides', xls: 'sheet', xlsx: 'sheet', csv: 'sheet', tsv: 'sheet', numbers: 'sheet', ods: 'sheet',
+  eml: 'mail', msg: 'mail', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', heic: 'image', bmp: 'image',
+  zip: 'zip', rar: 'zip', '7z': 'zip', tar: 'zip', gz: 'zip', js: 'code', ts: 'code', py: 'code', json: 'code', html: 'code', css: 'code', java: 'code', c: 'code', cpp: 'code', rs: 'code', go: 'code',
+};
+const fileKind = (e) => (e.kind === 'folder' ? 'folder' : FILE_KINDS[/\.([A-Za-z0-9]{1,5})$/.exec(e.name)?.[1]?.toLowerCase()] || 'page');
+function fileIcon(e) {
+  const kind = fileKind(e);
+  const wrap = el('span', `fl-icon k-${kind}`);
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML = `<svg viewBox="0 0 16 16">${FILE_ICONS[kind]}</svg>`;
+  return wrap;
+}
+// The card's words: the main process hands over the files.card.* strings of the language (preload/files-newtab-preload.js, locales/en.json); the
+// English written here is what shows without them. {name}-style holes are filled from `vars`.
+function ft(key, english, vars) {
+  const own = globalThis.lumenFiles?.strings?.[key];
+  const raw = typeof own === 'string' ? own : english;
+  return vars ? raw.replace(/{(\w+)}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : raw;
+}
+// "just now", "5 min. ago", "3 hr. ago", "yesterday", "4 days ago" (Intl.RelativeTimeFormat, in the page's language), then the date.
+let fileRtf = null;
+function fileAgo(ms, now = Date.now()) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const sec = Math.max(0, (now - ms) / 1000);
+  if (sec < 45) return ft('files.card.justNow', 'just now');
+  try { fileRtf ||= new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto', style: 'short' }); } catch { fileRtf = null; }
+  if (fileRtf) {
+    if (sec < 3600) return fileRtf.format(-Math.max(1, Math.round(sec / 60)), 'minute');
+    if (sec < 86400) return fileRtf.format(-Math.round(sec / 3600), 'hour');
+    const startToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
+    const days = Math.ceil((startToday - ms) / 86400e3);
+    if (days < 7) return fileRtf.format(-Math.max(1, days), 'day');
+  }
+  return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', ...(new Date(ms).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
+}
+// The folder a file is in, as the last two folders of its path ("Documents › Chapter 4"); a folder shows the one above it.
+function fileWhere(e) {
+  const parts = String(e.path || '').split(/[\\/]+/).filter(Boolean);
+  parts.pop();
+  const tail = parts.slice(-2);
+  return tail.length ? tail.join(' › ') : '';
+}
+const fileSize = (n) => (!Number.isFinite(n) || n < 0 ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
+const cleanFile = (e) => (e && typeof e === 'object' && typeof e.id === 'string' && e.id.length > 0 && e.id.length < 100 && typeof e.name === 'string'
+  ? { id: e.id, name: text(e.name, 260) || 'Untitled', path: text(e.path, 1000), kind: e.kind === 'folder' ? 'folder' : 'file', size: Number.isFinite(e.size) ? e.size : null, mtime: Number.isFinite(e.mtime) ? e.mtime : 0, openedAt: Number.isFinite(e.openedAt) ? e.openedAt : 0, pinned: e.pinned === true, missing: e.missing === true }
+  : null);
+const FILES_PINNED_MAX = 20;
+const FILES_RECENT_MAX = 12;
+const filesCards = new Set(); // { el, draw }: the Files cards on this page
+const fileFinds = new Map(); // entry id -> { busy } | { list: [candidates] } | { none: true }: "Find it", kept across redraws
+let filesData = null; // { pinned, recent, remember } as last heard
+let filesAsking = null;
+let filesAskedAt = 0;
+let filesHooked = false;
+function filesLoad() {
+  const bridge = globalThis.lumenFiles;
+  if (!bridge) return Promise.resolve(filesData);
+  if (filesAsking) return filesAsking;
+  filesAskedAt = Date.now();
+  filesAsking = Promise.resolve().then(() => bridge.list()).then((d) => {
+    const all = (v, max) => (Array.isArray(v) ? v : []).map(cleanFile).filter(Boolean).slice(0, max);
+    filesData = d && typeof d === 'object' ? { pinned: all(d.pinned, FILES_PINNED_MAX), recent: all(d.recent, FILES_RECENT_MAX), remember: d.remember !== false } : filesData;
+    for (const id of [...fileFinds.keys()]) if (![...(filesData?.pinned || []), ...(filesData?.recent || [])].some((x) => x.id === id && x.missing)) fileFinds.delete(id);
+    return filesData;
+  }).catch(() => filesData).finally(() => { filesAsking = null; });
+  return filesAsking;
+}
+function filesRefresh() {
+  return filesLoad().then(() => {
+    for (const c of [...filesCards]) { if (c.el.isConnected || !c.seen) c.draw(); else filesCards.delete(c); }
+  });
+}
+function filesHook() {
+  if (filesHooked || !globalThis.lumenFiles) return;
+  filesHooked = true;
+  let timer = 0;
+  // (a burst of changes, such as a folder pinned and indexed, is one redraw)
+  globalThis.lumenFiles.onChanged(() => { clearTimeout(timer); timer = setTimeout(() => { if (!document.hidden) filesRefresh(); else filesData = null; }, 40); });
+  // A page that comes back to the front hears nothing it missed while hidden: it asks again (main also re-checks missing files then).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && filesCards.size) filesRefresh(); });
+}
+// The right-click (and "…") menu of a row. Closes on a click elsewhere, Esc, a change of the list, or the page losing focus.
+let fileMenu = null;
+function closeFileMenu(refocus = false) {
+  if (!fileMenu) return;
+  const { root, opener } = fileMenu;
+  fileMenu = null;
+  root.remove();
+  document.removeEventListener('pointerdown', fileMenuOutside, true);
+  document.removeEventListener('keydown', fileMenuKeys, true);
+  removeEventListener('blur', fileMenuBlur);
+  if (refocus && opener?.isConnected) opener.focus({ preventScroll: true });
+}
+const fileMenuOutside = (e) => { if (fileMenu && !fileMenu.root.contains(e.target)) closeFileMenu(); };
+const fileMenuBlur = () => closeFileMenu();
+function fileMenuKeys(e) {
+  if (!fileMenu) return;
+  const items = [...fileMenu.root.querySelectorAll('[role="menuitem"]')];
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFileMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1]?.focus(); }
+  else if (e.key === 'Tab') { e.preventDefault(); closeFileMenu(true); }
+}
+function openFileMenu(opener, x, y, entries) { // entries: [[label, run]]
+  closeFileMenu();
+  const root = el('div', 'w-stack-menu w-ui fl-menu');
+  root.setAttribute('role', 'menu');
+  for (const [label, run] of entries) {
+    const item = el('button', 'w-stack-menu-item', label);
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => { closeFileMenu(); run(); });
+    root.append(item);
+  }
+  document.body.append(root);
+  const r = root.getBoundingClientRect();
+  root.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  root.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+  fileMenu = { root, opener };
+  document.addEventListener('pointerdown', fileMenuOutside, true);
+  document.addEventListener('keydown', fileMenuKeys, true);
+  addEventListener('blur', fileMenuBlur);
+  root.querySelector('button')?.focus({ preventScroll: true });
+}
+// What a click, a menu item or a button does. Main answers { ok: false } when the file is gone: the list is read again and the row turns grey.
+const filesDo = (call) => Promise.resolve().then(call).catch((err) => console.error('files', err)).finally(() => { filesRefresh(); });
+const fileOpen = (e) => filesDo(() => globalThis.lumenFiles.open(e.id));
+const fileShow = (e) => filesDo(() => globalThis.lumenFiles.show(e.id));
+const filePick = (kind) => filesDo(() => globalThis.lumenFiles.pin({ pick: kind }));
+// Unpin and Remove from Files can be undone for a few seconds: a line at the foot of the card ("Removed lab3.pdf. Undo"); main keeps the entry
+// for 30 s (files.js restore).
+const FILE_UNDO_MS = 6000;
+let fileUndo = null; // { id, message, timer }
+function fileUndoClear() { if (fileUndo) { clearTimeout(fileUndo.timer); fileUndo = null; } }
+function fileUndoOffer(e, how) {
+  fileUndoClear();
+  const timer = setTimeout(() => { fileUndo = null; filesRefresh(); }, FILE_UNDO_MS);
+  fileUndo = { id: e.id, message: how === 'unpin' ? ft('files.card.unpinned', 'Unpinned {name}.', { name: e.name }) : ft('files.card.removed', 'Removed {name}.', { name: e.name }), timer };
+}
+const fileTakeOut = (e, how) => filesDo(() => Promise.resolve(globalThis.lumenFiles[how](e.id)).then((ok) => { if (ok !== false) fileUndoOffer(e, how); }));
+const fileTogglePin = (e) => (e.pinned ? fileTakeOut(e, 'unpin') : filesDo(() => globalThis.lumenFiles.pin({ id: e.id })));
+const fileRemove = (e) => fileTakeOut(e, 'remove');
+function fileUndoRun() {
+  const id = fileUndo?.id;
+  fileUndoClear();
+  if (id) filesDo(() => globalThis.lumenFiles.restore(id));
+  else filesRefresh();
+}
+let fileFocusAfter = null; // the entry whose Find it just answered: the next draw puts the focus on its first candidate
+function fileFind(e) {
+  if (fileFinds.get(e.id)?.busy) return;
+  fileFinds.set(e.id, { busy: true });
+  filesRefresh();
+  Promise.resolve().then(() => globalThis.lumenFiles.find(e.id)).then((r) => {
+    const list = (Array.isArray(r?.candidates) ? r.candidates : []).filter((c) => c && typeof c.path === 'string' && typeof c.name === 'string').slice(0, 6)
+      .map((c) => ({ path: text(c.path, 1000), name: text(c.name, 260), size: Number.isFinite(c.size) ? c.size : null, mtime: Number.isFinite(c.mtime) ? c.mtime : 0 }));
+    fileFinds.set(e.id, list.length ? { list } : { none: true });
+  }).catch(() => fileFinds.set(e.id, { none: true })).finally(() => { fileFocusAfter = e.id; filesRefresh(); });
+}
+// Pinned: Unpin (it stays in Recent if it was opened). Not pinned: Pin, or Remove from Files.
+function fileMenuFor(e) {
+  const items = [e.missing ? [ft('files.card.findIt', 'Find it'), () => fileFind(e)] : [e.kind === 'folder' ? ft('files.card.openFolder', 'Open folder') : ft('files.card.open', 'Open'), () => fileOpen(e)], [ft('files.card.show', 'Show in folder'), () => fileShow(e)]];
+  if (e.pinned) items.push([ft('files.card.unpin', 'Unpin'), () => fileTogglePin(e)]);
+  else items.push([ft('files.card.pin', 'Pin'), () => fileTogglePin(e)], [ft('files.card.remove', 'Remove from Files'), () => fileRemove(e)]);
+  return items;
+}
+const ICON_MORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6h.01M6 6h.01M9.6 6h.01"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.2v7.6M2.2 6h7.6"/></svg>';
+function fileRow(e, now) {
+  const row = el('div', `w-row fl-row${e.missing ? ' missing' : ''}${e.pinned ? ' pinned' : ''}`);
+  row.setAttribute('role', 'listitem');
+  row.dataset.id = e.id;
+  const main = el('button', 'fl-main');
+  main.type = 'button';
+  main.dataset.fid = e.id;
+  main.dataset.role = 'main';
+  main.title = e.path || e.name;
+  const words = el('span', 'w-main');
+  words.append(el('span', 'w-title', e.name));
+  const sub = el('span', 'w-sub');
+  if (e.missing) {
+    sub.textContent = ft('files.card.missing', 'moved or deleted');
+    sub.classList.add('late');
+    main.setAttribute('aria-label', ft('files.card.missingAria', '{name}, moved or deleted', { name: e.name }));
+  } else {
+    const when = e.pinned ? '' : fileAgo(e.openedAt, now);
+    const where = fileWhere(e);
+    sub.textContent = [where, when].filter(Boolean).join(' · ');
+    if (when) { sub.dataset.t = String(e.openedAt); sub.dataset.where = where; }
+  }
+  words.append(sub);
+  main.append(fileIcon(e), words);
+  // A missing file does not open: a click anywhere on its row (but its own buttons) is Find it, and the focus goes to the first match when there is one.
+  if (e.missing) row.addEventListener('click', (ev) => { if (!ev.target.closest?.('.fl-find, .fl-more')) fileFind(e); });
+  else main.addEventListener('click', () => fileOpen(e));
+  row.addEventListener('contextmenu', (ev) => {
+    if (!globalThis.lumenFiles) return;
+    ev.preventDefault();
+    ev.stopPropagation(); // (the card's own menu, newtab-stacks.js, is not for a row)
+    const keyboard = ev.clientX === 0 && ev.clientY === 0;
+    const r = main.getBoundingClientRect();
+    openFileMenu(main, keyboard ? r.left + 24 : ev.clientX, keyboard ? r.bottom : ev.clientY, fileMenuFor(e));
+  });
+  row.append(main);
+  if (e.missing) {
+    const find = el('button', 'w-btn fl-find', ft('files.card.findIt', 'Find it'));
+    find.type = 'button';
+    find.dataset.fid = e.id;
+    find.dataset.role = 'find';
+    find.title = ft('files.card.findItTitle', 'Look near the old place');
+    find.setAttribute('aria-label', ft('files.card.findAria', 'Find {name}', { name: e.name }));
+    const st = fileFinds.get(e.id);
+    if (st?.busy) { find.disabled = true; find.textContent = ft('files.card.looking', 'Looking…'); }
+    find.addEventListener('click', () => fileFind(e));
+    row.append(find);
+  }
+  const more = iconButton(ICON_MORE, ft('files.card.moreAria', 'More for {name}', { name: e.name }), () => { const r = more.getBoundingClientRect(); openFileMenu(more, r.left, r.bottom + 4, fileMenuFor(e)); });
+  more.classList.add('fl-more');
+  more.dataset.fid = e.id;
+  more.dataset.role = 'more';
+  more.setAttribute('aria-haspopup', 'menu');
+  row.append(more);
+  return row;
+}
+// What "Find it" found near the old place: pick one and the entry points at it again.
+function fileCandidates(e) {
+  const st = fileFinds.get(e.id);
+  if (!st || st.busy) return null;
+  const box = el('div', 'fl-cands');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', ft('files.card.candidates', 'Possible matches for {name}', { name: e.name }));
+  if (st.none) {
+    box.append(el('p', 'fl-none', ft('files.card.none', 'Nothing like it nearby.')));
+    const gone = el('button', 'w-btn', ft('files.card.remove', 'Remove from Files'));
+    gone.type = 'button';
+    gone.dataset.fid = e.id;
+    gone.dataset.role = 'cand';
+    gone.addEventListener('click', () => fileRemove(e));
+    box.append(gone);
+    return box;
+  }
+  for (const c of st.list) {
+    const b = el('button', 'fl-cand');
+    b.type = 'button';
+    b.dataset.fid = e.id;
+    b.dataset.role = 'cand';
+    b.title = c.path;
+    const where = fileWhere({ path: c.path });
+    b.append(el('span', 'w-title', c.name), el('span', 'w-sub', [where, fileSize(c.size), c.mtime ? fileAgo(c.mtime) : ''].filter(Boolean).join(' · ')));
+    b.setAttribute('aria-label', where ? ft('files.card.useIn', 'Use {name} in {where}', { name: c.name, where }) : ft('files.card.use', 'Use {name}', { name: c.name }));
+    b.addEventListener('click', () => { fileFinds.delete(e.id); filesDo(() => globalThis.lumenFiles.relocate(e.id, c.path)); });
+    box.append(b);
+  }
+  return box;
+}
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -1402,6 +1676,225 @@ const WIDGET_RENDERERS = {
     card.el.setAttribute('aria-label', `${text(w.title, 60) || 'AI status'}: ${text(d.summary, 90)}`);
   },
 
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last. Main shapes it from the runner's
+  // view and the page formats the times in its own language. Every row is a real button: a result opens that routine's page in the
+  // sidebar, the plus (and the empty card's button) opens its editor. Nothing here is a secret or markup: names and snippets are text.
+  // The words come from locales/en.json routines.card.* (ft, like the Files card); newtab.html decides how many rows the card's height has room for.
+  routines(w, card) {
+    const d = w.data;
+    card.el.classList.add('routines');
+    const STATUS = ['done', 'failed', 'stopped', 'interrupted', 'skipped'];
+    const now = Date.now();
+    const num = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+    const rows = (v) => (Array.isArray(v) ? v : []).filter((r) => r && typeof r === 'object' && typeof r.id === 'string' && /^[\w-]{1,60}$/.test(r.id)).slice(0, 3);
+    const upcoming = rows(d.upcoming).filter((r) => num(r.nextRun));
+    const latest = rows(d.latest).filter((r) => num(r.at));
+    const counts = d.counts && typeof d.counts === 'object' ? d.counts : {};
+    const total = Math.max(0, int(counts.total) || 0);
+    const on = Math.max(0, int(counts.on) || 0);
+    const paused = d.enabled === false;
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'Routines'}: ${ft('routines.card.summary', '{on} of {total} on', { on, total })}`);
+    const newRoutine = () => widgetAct(w.id, 'routine-new');
+    if (!paused) {
+      const add = iconButton(ICON_PLUS, ft('routines.card.newAria', 'Create a new routine'), newRoutine);
+      add.title = ft('routines.card.new', 'New routine');
+      add.classList.add('rt-add', 'always');
+      card.head.append(add);
+    }
+    const wrap = el('div', 'rt-wrap');
+    card.body.append(wrap);
+    const note = (title, hint) => { const n = el('div', 'rt-state'); n.append(el('p', 'rt-state-title', title), el('p', 'rt-state-hint', hint)); return n; };
+    if (paused) {
+      wrap.append(note(ft('routines.card.paused', 'Routines are paused'), ft('routines.card.pausedHint', 'Switch them back on in Settings.')));
+      return;
+    }
+    if (!total) {
+      const n = note(ft('routines.card.empty', 'No routines yet'), ft('routines.card.emptyHint', 'A routine runs a request on a schedule and keeps what it finds.'));
+      const b = el('button', 'w-btn rt-new', ft('routines.card.new', 'New routine'));
+      b.type = 'button';
+      b.setAttribute('aria-label', ft('routines.card.newAria', 'Create a new routine'));
+      b.addEventListener('click', newRoutine);
+      n.append(b);
+      wrap.append(n);
+      return;
+    }
+    // Times, in the page's language: "3:40 PM" today, "tomorrow 8:00 AM", "Fri 8:00 AM", else "Oct 9, 8:00 AM".
+    const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const when = (ms) => {
+      const day = (t) => new Date(t).setHours(0, 0, 0, 0);
+      const diff = Math.round((day(ms) - day(now)) / 864e5);
+      if (diff === 0) return clock(ms);
+      if (Math.abs(diff) === 1) {
+        let word = diff === 1 ? 'tomorrow' : 'yesterday';
+        try { word = new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto' }).format(diff, 'day'); } catch { /* the English word stays */ }
+        return `${word} ${clock(ms)}`;
+      }
+      if (Math.abs(diff) < 7) return `${new Date(ms).toLocaleDateString([], { weekday: 'short' })} ${clock(ms)}`;
+      return `${new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${clock(ms)}`;
+    };
+    const section = (cls, label) => { const s = el('section', `rt-sec ${cls}`); s.setAttribute('aria-label', label); s.append(el('h3', 'rt-h', label)); return s; };
+    const list = (s) => { const u = el('ul', 'rt-list'); s.append(u); return u; };
+    const row = (ul, r, mark, aria, parts) => {
+      const li = el('li', 'rt-item');
+      const b = el('button', 'rt-row');
+      b.type = 'button';
+      b.dataset.routine = r.id;
+      b.setAttribute('aria-label', aria);
+      b.addEventListener('click', () => widgetAct(w.id, 'routine-open', { id: r.id }));
+      b.append(mark, el('span', 'rt-title', text(r.title, 80)), el('span', 'rt-when', parts.when));
+      if (parts.sub) b.append(el('span', 'rt-sub', parts.sub));
+      li.append(b);
+      ul.append(li);
+    };
+    // Next runs.
+    const nextSec = section('rt-next', ft('routines.card.next', 'Next runs'));
+    if (!upcoming.length) nextSec.append(el('p', 'rt-none', ft('routines.card.nothingNext', 'Nothing is scheduled')));
+    else {
+      const ul = list(nextSec);
+      for (const r of upcoming) {
+        const mark = el('i', 'rt-mark rt-st-next');
+        mark.setAttribute('aria-hidden', 'true');
+        row(ul, r, mark, ft('routines.card.nextAria', '{title}, next run {when}. Open', { title: text(r.title, 80), when: when(r.nextRun) }), { when: when(r.nextRun) });
+      }
+    }
+    // Latest results.
+    const lastSec = section('rt-latest', ft('routines.card.latest', 'Latest results'));
+    if (!latest.length) lastSec.append(el('p', 'rt-none', ft('routines.card.noResults', 'No results yet')));
+    else {
+      const ul = list(lastSec);
+      const label = { done: ['routines.card.done', 'Done'], failed: ['routines.card.failed', 'Failed'], stopped: ['routines.card.stopped', 'Stopped'], interrupted: ['routines.card.interrupted', 'Interrupted'], skipped: ['routines.card.skipped', 'Skipped'] };
+      for (const r of latest) {
+        const status = STATUS.includes(r.status) ? r.status : 'done';
+        const waiting = r.waiting === true;
+        const mark = el('i', `rt-mark rt-st-${waiting ? 'wait' : status}`);
+        mark.setAttribute('aria-hidden', 'true');
+        const words = [];
+        if (waiting) words.push(ft('routines.card.needsOk', 'Needs your OK'));
+        else if (status !== 'done') words.push(ft(...label[status]));
+        if (r.trigger === 'catch-up') words.push(ft('routines.card.late', 'ran late'));
+        if (r.unseen === true && !waiting) words.push(ft('routines.card.unseen', 'New'));
+        const body = text(status === 'done' || status === 'skipped' ? r.snippet || r.error : r.error || r.snippet, 140);
+        const sub = [words.join(' · '), body].filter(Boolean).join(' — ');
+        const spoken = [words.join(', '), body].filter(Boolean).join('. ');
+        row(ul, r, mark, ft('routines.card.resultAria', '{title}: {status}, {when}. Open result', { title: text(r.title, 80), status: spoken || ft(...label[status]), when: when(r.at) }), { when: when(r.at), sub });
+        const li = ul.lastElementChild;
+        if (waiting) li.classList.add('rt-waiting');
+      }
+    }
+    wrap.append(nextSec, lastSec);
+    if (d.offline === true) wrap.append(el('p', 'rt-off', ft('routines.card.offline', 'Offline: runs wait for the connection.')));
+  },
+
+  // Files (features/files.js): pinned folders and files, then the ones opened lately. Rows are what fitLists trims, from the bottom, to the
+  // card's height ("+N more"); a missing file is grey, says "moved or deleted" and offers Find it. The list is read through the page's own
+  // bridge (see filesLoad above), so this card has no data of its own.
+  files(w, card) {
+    card.el.classList.add('files');
+    filesHook();
+    const add = iconButton(ICON_PLUS, ft('files.card.pinAria', 'Pin a file or folder'), () => {
+      const r = add.getBoundingClientRect();
+      openFileMenu(add, r.left, r.bottom + 4, [[ft('files.card.pinFile', 'Pin a file…'), () => filePick('file')], [ft('files.card.pinFolder', 'Pin a folder…'), () => filePick('folder')]]);
+    });
+    add.setAttribute('aria-haspopup', 'menu');
+    add.classList.add('fl-add');
+    card.head.append(add);
+    const wrap = el('div', 'fl-wrap');
+    card.body.append(wrap);
+    for (const c of [...filesCards]) if (c.id === w.id) filesCards.delete(c); // (a card drawn again replaces its old one)
+    const entry = { id: w.id, el: card.el, seen: false, draw: null };
+    const section = (label, list, empty, now) => {
+      const sec = el('section', 'fl-sec');
+      sec.setAttribute('aria-label', label);
+      sec.append(el('h3', 'fl-h', label));
+      if (!list.length) { sec.append(el('p', 'fl-empty', empty)); return sec; }
+      const rows = el('div', 'w-list');
+      rows.setAttribute('role', 'list');
+      for (const e of list) {
+        rows.append(fileRow(e, now));
+        const cands = e.missing ? fileCandidates(e) : null;
+        if (cands) rows.append(cands);
+      }
+      sec.append(rows);
+      return sec;
+    };
+    const paint = (now) => { // the times move on (a minute at a time) without asking main again
+      for (const s of card.el.querySelectorAll('.w-sub[data-t]')) s.textContent = [s.dataset.where, fileAgo(Number(s.dataset.t), now)].filter(Boolean).join(' · ');
+    };
+    // The ticker's minute: the times move on, and the list is asked for again if nothing has asked lately (main then re-checks the
+    // files that were missing or may have gone since; a minute apart, only while the page is in front).
+    const tick = (now) => { paint(now); if (Date.now() - filesAskedAt > 50e3 && !document.hidden) filesRefresh(); };
+    tick.coarse = true;
+    const draw = () => {
+      const t0 = performance.now();
+      entry.seen ||= card.el.isConnected;
+      const had = document.activeElement;
+      const key = had && card.el.contains(had) && had.dataset?.fid ? `${had.dataset.role}|${had.dataset.fid}` : null;
+      const now = Date.now();
+      wrap.replaceChildren();
+      const data = filesData;
+      if (!globalThis.lumenFiles) wrap.append(el('p', 'w-note', ft('files.card.unavailable', 'Files can’t be shown on this page.')));
+      else if (!data) {
+        const skel = el('div', 'w-skel');
+        skel.setAttribute('aria-label', ft('files.card.loading', 'Loading files'));
+        skel.setAttribute('role', 'status');
+        skel.append(el('i'), el('i'), el('i'));
+        wrap.append(skel);
+      } else if (!data.pinned.length && !data.recent.length) {
+        const empty = el('div', 'fl-first');
+        empty.append(el('p', 'w-note', data.remember ? ft('files.card.emptyOn', 'Pin a folder or open a file to see it here') : ft('files.card.emptyOff', 'Pin a folder or a file to see it here. Lumen isn’t remembering the files you open.')));
+        const acts = el('div', 'w-actions');
+        for (const [label, kind] of [[ft('files.card.pinFile', 'Pin a file…'), 'file'], [ft('files.card.pinFolder', 'Pin a folder…'), 'folder']]) {
+          const b = el('button', 'w-btn', label);
+          b.type = 'button';
+          b.addEventListener('click', () => filePick(kind));
+          acts.append(b);
+        }
+        if (!data.remember) { // Remember files I open is off: one click turns it on (Settings > General > Files has it too)
+          const on = el('button', 'w-btn fl-turn-on', ft('files.card.turnOn', 'Turn on'));
+          on.type = 'button';
+          on.addEventListener('click', () => filesDo(() => globalThis.lumenFiles.remember()));
+          acts.append(on);
+        }
+        empty.append(acts);
+        wrap.append(empty);
+      } else {
+        wrap.append(
+          section(ft('files.card.pinned', 'Pinned'), data.pinned, ft('files.card.pinnedEmpty', 'Nothing pinned yet. Use + to pin a file or a folder.'), now),
+          section(ft('files.card.recent', 'Recent'), data.recent, data.remember ? ft('files.card.recentEmpty', 'Files you open show up here.') : ft('files.card.recentEmptyOff', 'Not remembering files you open.'), now),
+        );
+      }
+      if (fileUndo && data) {
+        const strip = el('div', 'fl-undo');
+        strip.setAttribute('role', 'status');
+        strip.append(el('span', null, fileUndo.message));
+        const undo = el('button', 'w-btn', ft('files.card.undo', 'Undo'));
+        undo.type = 'button';
+        undo.addEventListener('click', fileUndoRun);
+        strip.append(undo);
+        wrap.append(strip);
+      }
+      if (key) {
+        const [role, fid] = key.split('|');
+        const again = [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid && n.dataset.role === role) || [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid);
+        again?.focus({ preventScroll: true });
+      }
+      if (fileFocusAfter) { // Find it answered: the first match (or, with none, the way to remove the entry) takes the focus
+        const first = wrap.querySelector(`[data-role="cand"][data-fid="${CSS.escape(fileFocusAfter)}"]`);
+        if (first) { first.focus({ preventScroll: true }); fileFocusAfter = null; }
+      }
+      paint(now);
+      requestAnimationFrame(() => { if (card.el.isConnected) window.settleWidgetCard?.(card.el); });
+      window.__filesPerf?.push(['card-draw', performance.now() - t0]); // (a test makes the array)
+    };
+    entry.draw = draw;
+    filesCards.add(entry);
+    liveTicks.set(card.el, tick);
+    wakeLive();
+    draw();
+    if (!filesData) filesLoad().then(() => draw());
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || ft('files.card.defaultTitle', 'Files')}`);
+  },
+
   embed(w, card) {
     const d = w.data;
     const url = safeUrl(d.url);
@@ -1752,8 +2245,10 @@ function renderWidgets(list) {
     updateFoot(card, w);
     setRefreshing(card, w);
     card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
+    if (w.react === true && (w.type === 'spotify' || w.type === 'applemusic')) card.dataset.mreact = '1'; else delete card.dataset.mreact; // [look] "React to music" (newtab-music-react.js)
     return card;
   });
+  window.musicCardsChanged?.();
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);
@@ -1868,7 +2363,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom', 'todoist'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'routines', 'custom', 'todoist'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {

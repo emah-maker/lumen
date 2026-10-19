@@ -9,12 +9,24 @@ function shortcutMod(input, platform = process.platform) {
   return Boolean(input.meta || (input.control && MAC_CTRL_KEYS.has(String(input.key || '').toLowerCase())));
 }
 
+// The key a shortcut means, lowercase. With Ctrl / Cmd / Alt held, a letter or digit key on a layout whose letters are not Latin (Russian,
+// Greek, Hebrew, Arabic, Thai...) reports its own letter in `key`, so Ctrl+W would read as Ctrl+ц and no shortcut matched. Chrome and
+// every other browser go by the physical key there: KeyW is W, Digit1 is 1. Plain typing never comes through here (no modifier: `key` as is).
+function shortcutKey(input) {
+  const key = String(input && input.key || '');
+  if (!input || !(input.control || input.meta || input.alt)) return key.toLowerCase();
+  if (/^[!-~]$/.test(key)) return key.toLowerCase(); // a Latin letter, digit or symbol: it is what it says
+  const code = String(input.code || '');
+  const m = /^Key([A-Z])$/.exec(code) || /^Digit([0-9])$/.exec(code);
+  return m ? m[1].toLowerCase() : key.toLowerCase();
+}
+
 // The browser keys Chrome has that handleShortcut (main.js) had no entry for, as an action name or null:
 // F6 and Alt+D (Windows / Linux) focus the address bar; F3 / Ctrl+G (Cmd+G) find the next match and Shift
 // adds the previous one; Ctrl+F4 closes the tab (Windows / Linux; Cmd+W does on macOS).
 function extraShortcut(input, platform = process.platform) {
   if (!input || input.type !== 'keyDown') return null;
-  const key = String(input.key || '').toLowerCase();
+  const key = shortcutKey(input);
   const mac = platform === 'darwin';
   const mod = shortcutMod(input, platform);
   if (key === 'f6' && !mod && !input.alt && !input.shift) return 'focus-address';
@@ -29,4 +41,4 @@ function extraShortcut(input, platform = process.platform) {
 const APP_COMMANDS = { 'browser-backward': 'back', 'browser-forward': 'forward', 'browser-refresh': 'reload', 'browser-stop': 'stop' };
 const appCommandAction = (command) => APP_COMMANDS[command] || null;
 
-module.exports = { shortcutMod, extraShortcut, appCommandAction };
+module.exports = { shortcutMod, shortcutKey, extraShortcut, appCommandAction };

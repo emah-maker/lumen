@@ -160,6 +160,10 @@ const STRINGS = {
   'newtab.edit.type.timer.hint': 'A timer or Pomodoro focus and break',
   'newtab.edit.type.aistatus': 'AI status',
   'newtab.edit.type.aistatus.hint': 'Which AIs are ready, working or at a limit',
+  'newtab.edit.type.routines': 'Routines',
+  'newtab.edit.type.routines.hint': 'What your routines run next and their latest results',
+  'newtab.edit.type.files': 'Files',
+  'newtab.edit.type.files.hint': 'Pinned and recent files, opened with a click',
   'newtab.edit.type.custom': 'Custom',
   'newtab.edit.type.custom.hint': 'Your own card from a JSON recipe',
   'newtab.edit.type.other.hint': 'Set up in Settings',
@@ -184,6 +188,8 @@ const TYPE_INFO = {
   countdown: ['newtab.edit.type.countdown', 'newtab.edit.type.countdown.hint'],
   timer: ['newtab.edit.type.timer', 'newtab.edit.type.timer.hint'],
   aistatus: ['newtab.edit.type.aistatus', 'newtab.edit.type.aistatus.hint'],
+  routines: ['newtab.edit.type.routines', 'newtab.edit.type.routines.hint'],
+  files: ['newtab.edit.type.files', 'newtab.edit.type.files.hint'],
   custom: ['newtab.edit.type.custom', 'newtab.edit.type.custom.hint'],
   embed: ['newtab.edit.type.embed', 'newtab.edit.type.embed.hint'],
 };
@@ -280,7 +286,7 @@ const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
 const PICKER_GROUPS = ['stack', 'time', 'work', 'music', 'news', 'other', 'section']; // the order the picker lists them in
 const TYPE_GROUP = {
   weather: 'time', worldclock: 'time', countdown: 'time', timer: 'time',
-  calendar: 'work', todoist: 'work', gmail: 'work', slack: 'work', github: 'work', notes: 'work',
+  calendar: 'work', todoist: 'work', gmail: 'work', slack: 'work', github: 'work', notes: 'work', files: 'work',
   spotify: 'music', applemusic: 'music',
   feed: 'news', stocks: 'news', crypto: 'news', tradingview: 'news',
 };

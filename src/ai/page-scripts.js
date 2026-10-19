@@ -44,6 +44,14 @@ const PAGE_TEXT = `
 `;
 
 const HELPERS = `
+  // Brings an element on screen for a click or typing. One that is already fully in view stays where it is: centring it every time moved
+  // the page under the user's eyes at each step of a task (a visible jump per click).
+  const bringIntoView = (el, inline) => {
+    const w = el.ownerDocument.defaultView;
+    const r = el.getBoundingClientRect();
+    if (r.top >= 0 && r.left >= 0 && r.bottom <= w.innerHeight && r.right <= w.innerWidth) return;
+    el.scrollIntoView(inline ? { block: 'center', inline: 'center', behavior: 'instant' } : { block: 'center', behavior: 'instant' });
+  };
   const isVisible = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return false;
@@ -189,7 +197,7 @@ function locate(id) {
     const entry = entryFor(${id});
     if (!entry) return null;
     const { el, chain } = entry;
-    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    bringIntoView(el, true);
     const r = el.getBoundingClientRect();
     let x = r.left + r.width / 2, y = r.top + r.height / 2;
     const root = el.getRootNode();
@@ -202,11 +210,12 @@ function locate(id) {
     }
     const ring = document.createElement('div');
     ring.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:28px;height:28px;margin:-14px 0 0 -14px;' +
-      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);transition:opacity .5s .3s;' +
+      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);' + (matchMedia('(prefers-reduced-motion: reduce)').matches ? '' : 'transition:opacity .5s .3s;') +
       'left:' + x + 'px;top:' + y + 'px';
     document.documentElement.appendChild(ring);
-    requestAnimationFrame(() => { ring.style.opacity = '0'; });
-    setTimeout(() => ring.remove(), 900);
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches; // (no fade: it stays a moment, then goes)
+    if (!still) requestAnimationFrame(() => { ring.style.opacity = '0'; });
+    setTimeout(() => ring.remove(), still ? 600 : 900);
     return { x: Math.round(x), y: Math.round(y), covered, tag: el.tagName.toLowerCase(), label: entry.label || accessibleName(el) };
   })()`;
 }
@@ -247,7 +256,7 @@ function focusForTyping(id) {
     const entry = entryFor(${id});
     if (!entry) return 'missing';
     const el = entry.el;
-    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    bringIntoView(el, false);
     if (el.tagName === 'SELECT') return 'setvalue';
     if (el.tagName === 'INPUT') {
       if (['checkbox', 'radio'].includes(el.type)) return 'toggle';

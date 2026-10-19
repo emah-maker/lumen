@@ -49,7 +49,7 @@ for (const typed of ['alp', 'github', 'weather today', 'what is 3.5', 'c++', 'no
 }
 
 // ---- menu labels are sentence case (one convention: first word capitalized, proper nouns as they are)
-const PROPER = new Set(['AI', 'Lumen', 'GitHub', 'QR', 'Google', 'Settings', 'Translate', 'OpenRouter', 'PNG']);
+const PROPER = new Set(['AI', 'Lumen', 'GitHub', 'QR', 'Google', 'Settings', 'Files', 'Translate', 'OpenRouter', 'PNG']);
 const menuKeys = Object.keys(EN).filter((k) => /^(menu\.|private\.menu\.|private\.download\.(show|cancel|clear|folder|open|none)$|macros\.menu\.|spelling\.)/.test(k));
 const titleCased = menuKeys.filter((k) => EN[k].split(/\s+/).slice(1).some((w, i, all) => /^[A-Z][a-z’']+$/.test(w) && !PROPER.has(w) && !(all[i - 1] === 'Google' && w === 'Translate') && !/^[“{(]/.test(w)));
 check('menus: no Title Case labels left (' + menuKeys.length + ' checked)', titleCased.length === 0, titleCased.map((k) => k + ': ' + EN[k]).join(' | '));

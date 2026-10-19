@@ -54,3 +54,22 @@
 .msg.assistant .reply-routine svg { width: 13px; height: 13px; }
 .msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
+
+/* One-click template cards, quiet hours and the "make this a routine?" offer above the message box. */
+.routine-template-list { list-style: none; margin: 0; padding: 0; flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
+.routine-template-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-md); background: var(--field); }
+.routine-template-card .task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.routine-template-add { flex: none; font-size: 12px; }
+.routine-template-conn { font-size: 11px; }
+.routine-template-conn.ready { color: var(--accent-text); }
+.routine-template-more { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.routine-quiet { margin: 4px 16px 6px; font-size: 12px; }
+.routine-quiet summary { cursor: default; color: var(--muted); }
+.routine-quiet summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
+.routine-quiet-times { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+.routine-quiet-times input[type="time"] { padding: 3px 6px; font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); }
+.routine-quiet-times input[type="time"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.routine-offer { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.routine-offer[hidden] { display: none; }
+.routine-offer-text { flex: 1 1 100%; }
+.routine-offer .btn { padding: 2px 8px; font-size: 12px; }

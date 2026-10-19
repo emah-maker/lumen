@@ -10,8 +10,8 @@
 // Limits, so a hostile file can't take the browser down: the file size, the total of everything
 // inflated (MAX_UNCOMPRESSED: a zip bomb stops there), the number of zip entries, slides, shapes per
 // slide, XML nodes and depth, and the bytes of pictures handed to the page.
-// Fidelity is "readable": text boxes, pictures, solid and gradient fills, simple shapes, lines and
-// tables in the right places. Equations, EMF/WMF pictures, animations and effects
+// Fidelity is "readable": text boxes, pictures, solid and gradient fills, shapes (preset and custom geometry, from pptx-geom.js), lines and
+// connectors with arrowheads, tables in the right places. Equations, animations and effects
 // are not drawn. Charts are read from their cached values (bar, line, area, pie, doughnut, scatter; other
 // types keep a labelled box), SmartArt from the drawing PowerPoint saved with it (or its data model's text).
 const zlib = require('zlib');
@@ -27,6 +27,7 @@ const MAX_SHAPES = 3000; // per slide, layout and master shapes included
 const MAX_NODES = 1500000; // per XML part
 const MAX_DEPTH = 256;
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024; // one picture
+const MAX_VECTOR_BYTES = 8 * 1024 * 1024; // one EMF or WMF (a drawing, not a photograph)
 const MAX_MEDIA_BYTES = 150 * 1024 * 1024; // all pictures handed to the page
 const EMU_PER_PT = 12700;
 const DEFAULT_SIZE = { width: 12192000, height: 6858000 }; // 16:9, 13.333 x 7.5 in
@@ -355,7 +356,28 @@ function lineIn(spPr, ctx) {
   const width = num(ln.attrs.w, null);
   if (!col && width === null) return null;
   const dash = kid(ln, 'prstDash')?.attrs.val;
-  return { type: 'line', ...(col || {}), width: width === null ? null : Math.max(0.25, width / EMU_PER_PT), dash: dash && dash !== 'solid' ? 'dashed' : null, head: kid(ln, 'headEnd')?.attrs.type || null, tail: kid(ln, 'tailEnd')?.attrs.type || null };
+  const head = kid(ln, 'headEnd')?.attrs; const tail = kid(ln, 'tailEnd')?.attrs;
+  const join = kid(ln, 'round') ? 'round' : kid(ln, 'bevel') ? 'bevel' : kid(ln, 'miter') ? 'miter' : null;
+  const out = { type: 'line', ...(col || {}), width: width === null ? null : Math.max(0.25, width / EMU_PER_PT), dash: dash && dash !== 'solid' ? 'dashed' : null, head: head?.type || null, tail: tail?.type || null };
+  const dashArray = dashArrayOf(ln, dash);
+  if (dashArray) out.dashArray = dashArray;
+  if (head?.w) out.headW = head.w;
+  if (head?.len) out.headLen = head.len;
+  if (tail?.w) out.tailW = tail.w;
+  if (tail?.len) out.tailLen = tail.len;
+  if (ln.attrs.cap === 'rnd') out.cap = 'round'; else if (ln.attrs.cap === 'sq') out.cap = 'square';
+  if (join) out.join = join;
+  return out;
+}
+// A dash pattern as lengths in line widths (dash, gap, dash, gap, ...), or null for a solid line.
+const DASHES = { dot: [1, 1], sysDot: [1, 1], dash: [4, 3], sysDash: [3, 1], lgDash: [8, 3], dashDot: [4, 3, 1, 3], sysDashDot: [3, 1, 1, 1], lgDashDot: [8, 3, 1, 3], lgDashDotDot: [8, 3, 1, 3, 1, 3], sysDashDotDot: [3, 1, 1, 1, 1, 1] };
+function dashArrayOf(ln, preset) {
+  const cust = kid(ln, 'custDash');
+  if (cust) {
+    const out = kids(cust, 'ds').slice(0, 8).flatMap((d) => [Math.max(0.1, num(d.attrs.d, 100000) / 100000), Math.max(0.1, num(d.attrs.sp, 100000) / 100000)]);
+    return out.length ? out : null;
+  }
+  return DASHES[preset] || null;
 }
 // The fill and line a shape's p:style gives when its spPr says nothing (fillRef / lnRef idx 0 means none).
 function styleRefs(styleNode, ctx) {
@@ -410,28 +432,46 @@ function applyT(m, b) {
   rot = ((rot % 360) + 360) % 360;
   return { ...b, x: nx - w / 2, y: ny - h / 2, w, h, rot: Math.round(rot * 1000) / 1000, flipH: mirrored ? !b.flipH : b.flipH };
 }
-const LINE_GEOMS = new Set(['line', 'straightConnector1', 'bentConnector2', 'bentConnector3', 'curvedConnector3']);
-// Preset shapes drawn as a clip-path polygon (percent points); the rest are rectangles.
-const POLYGONS = {
-  triangle: '50% 0,100% 100%,0 100%', rtTriangle: '0 0,100% 100%,0 100%', diamond: '50% 0,100% 50%,50% 100%,0 50%',
-  parallelogram: '25% 0,100% 0,75% 100%,0 100%', trapezoid: '25% 0,75% 0,100% 100%,0 100%', pentagon: '50% 0,100% 38%,82% 100%,18% 100%,0 38%',
-  hexagon: '25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%', octagon: '29% 0,71% 0,100% 29%,100% 71%,71% 100%,29% 100%,0 71%,0 29%',
-  rightArrow: '0 25%,70% 25%,70% 0,100% 50%,70% 100%,70% 75%,0 75%', leftArrow: '100% 25%,30% 25%,30% 0,0 50%,30% 100%,30% 75%,100% 75%',
-  upArrow: '25% 100%,25% 30%,0 30%,50% 0,100% 30%,75% 30%,75% 100%', downArrow: '25% 0,75% 0,75% 70%,100% 70%,50% 100%,0 70%,25% 70%',
-  chevron: '0 0,75% 0,100% 50%,75% 100%,0 100%,25% 50%', homePlate: '0 0,80% 0,100% 50%,80% 100%,0 100%',
-  plus: '33% 0,67% 0,67% 33%,100% 33%,100% 67%,67% 67%,67% 100%,33% 100%,33% 67%,0 67%,0 33%,33% 33%',
-  star5: '50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%',
-};
+const LINE_GEOMS = new Set(['line', 'straightConnector1', 'bentConnector2', 'bentConnector3', 'bentConnector4', 'bentConnector5', 'curvedConnector2', 'curvedConnector3', 'curvedConnector4', 'curvedConnector5']);
+// Preset and custom geometry are drawn from pptx-geom.js (loaded on the first shape that needs it); rectangles, ellipses and rounded
+// rectangles stay plain CSS boxes. The result of geometryOf keeps the shape's recipe in `geo`; finishGeometry turns it into path data once the
+// shape's final size is known (a group can scale it).
+const geomLib = () => require('./pptx-geom');
 function geometryOf(spPr) {
-  const prst = kid(spPr, 'prstGeom')?.attrs.prst || (kid(spPr, 'custGeom') ? 'custom' : 'rect');
-  if (prst === 'ellipse' || prst === 'circle' || prst === 'donut' || prst === 'pie' || prst === 'chord') return { geom: 'ellipse' };
-  if (prst === 'roundRect' || prst === 'round2SameRect' || prst === 'snipRoundRect' || prst === 'flowChartAlternateProcess') {
-    const adj = num(kid(kid(kid(spPr, 'prstGeom'), 'avLst'), 'gd')?.attrs.fmla?.replace(/^val\s+/, ''), 16667);
+  const prstNode = kid(spPr, 'prstGeom');
+  const prst = prstNode?.attrs.prst || (kid(spPr, 'custGeom') ? 'custom' : 'rect');
+  if (prst === 'rect' || prst === 'flowChartProcess') return { geom: 'rect' };
+  if (prst === 'ellipse' || prst === 'flowChartConnector') return { geom: 'ellipse' };
+  if (prst === 'roundRect' || prst === 'flowChartAlternateProcess') {
+    const adj = num(kid(kid(prstNode, 'avLst'), 'gd')?.attrs.fmla?.replace(/^vals+/, ''), 16667);
     return { geom: 'roundRect', radius: Math.max(0, Math.min(50000, adj)) / 100000 };
   }
-  if (POLYGONS[prst]) return { geom: 'polygon', points: POLYGONS[prst] };
-  if (LINE_GEOMS.has(prst)) return { geom: 'line' };
-  return { geom: 'rect' };
+  const isLine = LINE_GEOMS.has(prst);
+  if (prst === 'custom') {
+    const cust = geomLib().readCustom(kid(spPr, 'custGeom'), { kid, kids, num });
+    return cust ? { geom: 'path', geo: { cust } } : { geom: 'rect' };
+  }
+  if (!isLine && !geomLib().has(prst)) { geomLib().unknownPreset(prst); return { geom: 'rect' }; }
+  const av = {};
+  for (const g of kids(kid(prstNode, 'avLst'), 'gd')) { const m = /^vals+(-?d+(?:.d+)?)$/.exec(g.attrs.fmla || ''); if (g.attrs.name && m) av[g.attrs.name] = Number(m[1]); }
+  return { geom: isLine ? 'line' : 'path', geo: { prst, av } };
+}
+// A shape's path data, now that its size is final: shape.paths ([{ d, fill, stroke }], in points, in the shape's own box), and for a line the
+// arrowheads (shape.ends). A geometry that cannot be drawn leaves a plain box (a line: the straight line).
+function finishGeometry(shape) {
+  const geo = shape.geo;
+  if (!geo) return shape;
+  delete shape.geo;
+  const g = geomLib().shapeGeometry(geo, shape.w, shape.h);
+  if (!g) { if (shape.geom === 'path') shape.geom = 'rect'; return shape; }
+  if (shape.type === 'line') {
+    shape.paths = g.paths.filter((p) => p.stroke);
+    const ends = [geomLib().arrowhead(g.start, shape, 'head'), geomLib().arrowhead(g.end, shape, 'tail')].filter(Boolean);
+    if (ends.length) shape.ends = ends;
+  } else {
+    shape.paths = g.paths;
+  }
+  return shape;
 }
 
 // ---- text ----
@@ -592,7 +632,7 @@ function drawTree(spTree, ctx, out, t = IDENTITY) {
       drawTree(el, ctx, out, g ? groupMatrix(t, g) : t);
     } else if (el.name === 'sp' || el.name === 'cxnSp' || el.name === 'pic' || el.name === 'graphicFrame') {
       const shape = drawShape(el, ctx);
-      if (shape) out.push(applyT(t, shape));
+      if (shape) out.push(finishGeometry(applyT(t, shape)));
     }
   }
 }
@@ -619,7 +659,7 @@ function drawShape(node, ctx) {
     const format = !fill ? pictureFormat(kid(node, 'blipFill'), ctx) : null;
     return {
       type: 'pic', ...base, image: fill ? fill.image : null, svg: fill ? fill.svg : null, crop: fill ? fill.crop : null, fillRect: fill ? fill.fillRect : null, fx: fill ? fill.fx : null,
-      geom: geom.geom === 'rect' || geom.geom === 'line' ? null : geom.geom, radius: geom.radius, points: geom.points, link, format,
+      geom: geom.geom === 'rect' || geom.geom === 'line' ? null : geom.geom, radius: geom.radius, geo: geom.geo, link, format,
       alt: String(at(nv, 'cNvPr')?.attrs.descr || '').slice(0, 300), line: lineIn(spPr, ctx), placeholder: ph?.type || null,
     };
   }
@@ -659,7 +699,9 @@ function drawShape(node, ctx) {
   let line = lineIn(spPr, ctx);
   if ((!line || !line.color) && line?.type !== 'none' && style.line && style.line.idx > 0 && style.line.color) line = { type: 'line', width: 0.75, ...(line || {}), color: style.line.color, alpha: style.line.alpha };
   if (node.name === 'cxnSp' || geometry.geom === 'line') {
-    return line && line.type !== 'none' && line.color ? { type: 'line', ...base, color: line.color, alpha: line.alpha ?? 1, width: line.width || 0.75, dash: line.dash, head: line.head, tail: line.tail } : null;
+    if (!line || line.type === 'none' || !line.color) return null;
+    const { type: _t, ...ln } = line;
+    return { type: 'line', ...base, ...ln, alpha: line.alpha ?? 1, width: line.width || 0.75, geo: geometry.geo || { prst: 'line', av: {} } };
   }
 
   const shape = { type: 'shape', ...base, ...geometry, fill: fill && fill.type !== 'none' ? fill : null, line: line && line.type !== 'none' && line.color ? line : null, text: null, placeholder: ph?.type || null };
@@ -996,7 +1038,16 @@ function sniffImage(b) {
   if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
   const head = b.toString('utf8', 0, Math.min(b.length, 1024)).replace(/^\uFEFF/, '').trimStart();
   if (head.startsWith('<') && /<svg[\s>]/i.test(head)) return 'image/svg+xml';
-  return null; // EMF, WMF, TIFF, …: Chromium can't show them
+  return null; // EMF, WMF, TIFF, …: Chromium can't show them (EMF and WMF: sniffVector, drawn by the viewer page)
+}
+// 'emf' | 'wmf' | null, from the header alone (never parsed here: the slides page, which is sandboxed, draws them).
+// EMF: record type 1 first and the " EMF" signature at byte 40. WMF: the placeable key, or a plain header (type 1 or 2, 9 header words, version 0x100 or 0x300).
+function sniffVector(b) {
+  if (!b || b.length < 18) return null;
+  if (b.length >= 44 && b.readUInt32LE(0) === 1 && b.readUInt32LE(40) === 0x464d4520) return 'emf';
+  if (b.readUInt32LE(0) === 0x9ac6cdd7) return 'wmf';
+  if ((b.readUInt16LE(0) === 1 || b.readUInt16LE(0) === 2) && b.readUInt16LE(2) === 9 && (b.readUInt16LE(4) === 0x100 || b.readUInt16LE(4) === 0x300)) return 'wmf';
+  return null;
 }
 // A picture's size in pixels from its header (PNG, GIF, JPEG, WebP, BMP): { w, h } or null. Never decodes the picture.
 function imageSize(b, type) {
@@ -1113,13 +1164,19 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
       await turn();
       let b;
       try { b = zip.has(part) ? await zip.bytes(part) : null; } catch (err) { if (err instanceof PptxError && /too large/.test(err.message)) { warnings.add('Some pictures were left out: the presentation is too large.'); media[part] = null; continue; } throw err; }
-      const type = sniffImage(b);
+      let type = sniffImage(b);
+      const vector = !type && b ? sniffVector(b) : null;
+      if (vector) {
+        if (b.length > MAX_VECTOR_BYTES) { media[part] = null; mediaInfo[part] = { missing: vector }; warnings.add('Some pictures were left out: they are too large.'); continue; }
+        type = `image/x-${vector}`;
+      }
       if (!b || !type) { media[part] = null; mediaInfo[part] = { missing: (/.([a-z0-9]{2,5})$/i.exec(part)?.[1] || 'unknown').toLowerCase() }; if (b) warnings.add('Some pictures are in a format Lumen cannot show (such as EMF or WMF).'); continue; }
       const digest = `${type}|${b.length}|${require('crypto').createHash('sha1').update(b).digest('hex')}`;
       if (seen.has(digest)) { mediaAlias[part] = seen.get(digest); continue; }
       seen.set(digest, part);
       const size = imageSize(b, type);
       if (size) mediaInfo[part] = size;
+      else if (vector) mediaInfo[part] = { vector };
       if (b.length > MAX_IMAGE_BYTES || mediaBytes + b.length > MAX_MEDIA_BYTES) { media[part] = null; warnings.add('Some pictures were left out: they are too large.'); continue; }
       mediaBytes += b.length;
       media[part] = `data:${type};base64,${b.toString('base64')}`;
@@ -1138,6 +1195,6 @@ async function extractSlideTexts(buf) {
 const isPptxName = (name) => /\.pptx$/i.test(String(name || '').split(/[?#]/)[0]);
 
 module.exports = {
-  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, imageSize, PptxError,
+  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, sniffVector, imageSize, PptxError,
   MAX_UNCOMPRESSED, MAX_FILE_BYTES, MAX_SLIDES, EMU_PER_PT, MAX_CHART_POINTS,
 };

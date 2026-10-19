@@ -146,7 +146,14 @@ async function open() {
   let doc;
   try { doc = await task.promise; } catch (err) {
     docOpened(null);
-    say(err && err.name === 'PasswordException' ? 'This PDF needs its password.' : err && err.name === 'MissingPDFException' ? 'The PDF could not be found. It may have been moved or deleted.' : 'This PDF could not be opened. It may be damaged, or not a PDF.');
+    const why = `${(err && err.name) || 'Error'}: ${(err && err.message) || ''}`;
+    console.warn('pdf: could not open', why);
+    if (err && err.name === 'PasswordException') { say('This PDF needs its password.'); return; }
+    if (err && err.name === 'MissingPDFException') { say('The PDF could not be found. It may have been moved or deleted.'); return; }
+    // pdf.js can refuse a file Chromium's own viewer shows (and a one-time link fetched a second time returns a page, not the PDF):
+    // the same address goes to Chrome's viewer instead of ending on an error.
+    if (window.lumenPdfHost?.openInChrome) { say('Opening in Chrome’s PDF viewer…'); window.lumenPdfHost.openInChrome(why); return; }
+    say(`This PDF could not be opened (${why.slice(0, 160)}).`);
     return;
   }
   say('');

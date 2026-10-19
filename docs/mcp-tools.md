@@ -5,6 +5,7 @@ Lumen's MCP server (see [Use Lumen from Claude Code, Codex, Antigravity](../READ
 A few things apply to every tool:
 
 - **The active tab.** An agent works in a Lumen window of its own, opened on its first call that needs a tab; `list_tabs` shows only that window's tabs (an empty list before it has one), and you never see or reach the user's tabs. Page tools (`read_page`, `click`, `type_text`, `find`, `batch`, `screenshot`, …) work on the tab in front in that window. Use `list_tabs` and `switch_tab` to pick another of its tabs.
+- **Several tabs at once (`tab_id`).** The page tools that act on the current tab (`read_page`, `find`, `click`, `click_at`, `hover`, `type_text`, `press_key`, `scroll`, `drag`, `fill_form`, `navigate`, `go_back`, `go_forward`, `reload`, `wait`, `wait_for`, `run_script`, `upload_file`, `batch`, `verify_changes`, `annotate`, `analyze_posts`, `document`, `clipboard`) also take an optional integer `tab_id`, a tab of the agent's own window from `list_tabs` or `open_tab`. The call runs on that tab without switching the window's front tab. Calls on different tabs run at the same time; acting calls (clicks, typing, navigation) on one tab run one after another, while reads never wait. A `tab_id` that is not an integer, or not a tab of the agent's window, is an error. Tools that already named a tab (`screenshot`, `read_pdf`, `get_console`, `get_network`, `handle_dialog`, `video_*`, `switch_tab`, `close_tab`) are unchanged. `tools/list` shows `tab_id` on `read_page` only (to keep the list small) and the server instructions say the others take it; all of them accept it.
 - **Element ids.** `read_page` and `find` number the page's links, buttons and fields. `click`, `type_text`, `hover`, `upload_file`, `fill_form` and `batch` (`ref`) take those numbers. They stay valid until the page changes; read again after a navigation.
 - **Other apps.** Claude Desktop, Cursor, VS Code and Claude Code can connect with a token of their own; see [Let other apps use Lumen](external-apps.md). Their calls are paused or refused after Take over, Stop or Revoke, and show a toolbar pill.
 - **Approvals.** The first time an agent acts on a site in a chat, Lumen asks you in the sidebar. Once it has read page content, opening, fetching or searching a site not yet approved asks too. See [Asking before it acts](../README.md#asking-before-it-acts). A refused call returns an error that says so.
@@ -42,7 +43,7 @@ Screenshot the visible part of the active tab (for visual layout, images, charts
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `max_width` | integer |  | Output width in px (default 1024, max 1600). Smaller is cheaper. |
+| `max_width` | integer |  | Output width in px (default 720, max 1600). Smaller is cheaper, and a default-size capture keeps Lumen's main process responsive (a 1024 px capture stalled it for about 30 ms); ask for a larger `max_width` or a `region` when you need the detail. |
 | `quality` | integer |  | JPEG quality 30–90 (default 60). |
 | `region` | object |  | Crop to this rectangle in page CSS pixels (not usable with click_at). |
 | `region.x` | number | yes |  |
@@ -74,7 +75,7 @@ Full-size frames of the same video at chosen moments (`at`: up to 8 timestamps i
 
 ### `navigate`
 
-Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.
+Load a URL in the active tab. The reply is the `Loaded <url> — "<title>"` line and the top of the page (without repeating the title and address); read:true returns the whole outline instead, read:false nothing; wait_for waits for that text first.
 
 | Parameter | Type | Required |
 |---|---|---|
@@ -150,12 +151,12 @@ Read the text of a PDF open in a tab (the active tab, or `tab_id`). Lumen asks y
 
 ### `read_tabs`
 
-Read the text of several open tabs at once, without switching to them (`ids` from `list_tabs`). Only web and file pages of the same window; Lumen's own pages, sites where you turned AI off, and tabs of other windows (or of private windows) are named and skipped, and a sleeping tab returns only its address. Each tab is cut to `max_chars_each` (default 6,000, at most 12,000) and the total is capped at 40,000 characters, split evenly; the result says when a tab was cut. Each tab comes back under a `[Tab: title — host]` line. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule.
+Read the text of several open tabs at once, without switching to them (`ids` from `list_tabs`). Only web and file pages of the same window; Lumen's own pages, sites where you turned AI off, and tabs of other windows (or of private windows) are named and skipped, and a sleeping tab returns only its address. Each tab is cut to `max_chars_each` (default 3,000, at most 12,000) and the total is capped at 40,000 characters, split evenly; the result says when a tab was cut. Each tab comes back under a `[Tab: title — host]` line. The text is untrusted page content and counts as page content for the leaving-with-what-it-read rule.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
 | `ids` | integer[] | yes | Tab ids from `list_tabs` (at most 20). |
-| `max_chars_each` | integer |  | Characters per tab. Default 6000. |
+| `max_chars_each` | integer |  | Characters per tab. Default 3000. |
 
 ### `run_script`
 
@@ -285,6 +286,9 @@ List a folder on this computer, newest first, with sizes and dates (folders end 
 | `folder` | string |  |
 | `match` | string |  |
 | `limit` | integer (1–200, default 50) |  |
+| `find` | string |  |
+
+`find` looks a file up by name or description ("chapter 4 slides") instead of listing a folder. It answers from the user's Files list first (what they pinned and opened lately, and the files inside their pinned folders: Lumen's own list and index, no disk search, so it answers at once and needs no setting). Only when none of those matches, and the setting above is on, one bounded search of Desktop, Documents and Downloads runs; the file it finds that way is added to the Files list, so the next lookup is instant. It returns names, paths and dates, never contents.
 
 ### `clipboard`
 
@@ -350,7 +354,7 @@ No parameters.
 
 ### `list_tabs`
 
-List open tabs with their ids, titles, and URLs.
+List open tabs: a JSON array of `{id, title, url}` (title cut to 60 characters, address to 120), plus `active`, `group`, `in_front` or `off_limits` only on a tab where they apply.
 
 No parameters.
 

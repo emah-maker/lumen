@@ -22,7 +22,9 @@ const KINDS = ['song', 'album', 'playlist', 'artist']; // what playItem takes
 // What the card may offer from this engine (features/music-card-features.js has the same table by name). `has` in every state message narrows
 // like / shuffle / repeat / volume further: only the controls the page really shows are drawn.
 const CAPS = { search: true, searchMore: true, lists: true, seek: true, queue: true, playNext: false, playLater: true, like: true, shuffle: true, repeat: true, volume: true, tracks: true, lyrics: true, devices: 'browser' };
-const LIST_KINDS = ['search', 'queue', 'playlists', 'recent', 'tracks']; // the lists the page can send ('recent': always empty here, Spotify's page has no such list)
+const LIST_KINDS = ['search', 'queue', 'playlists', 'recent', 'tracks', 'page']; // the lists the page can send ('recent': always empty here, Spotify's page has no such list; 'page': a playlist's or album's own page, read in full)
+const PAGE_PATH_RE = /^\/(playlist|album)\/[A-Za-z0-9._-]{1,64}$/; // the pages 'page' may open
+const MAX_PAGE_ROWS = 400; // songs read from one page (the whole answer must stay under MAX_MESSAGE)
 const REPEAT_MODES = ['off', 'all', 'one'];
 const MAX_TRACKS = 100; // a context's songs, an album or a playlist's first rows
 const ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -122,11 +124,11 @@ const SELECTORS = {
   rowPlayButton: ['button[data-testid="play-button"]', 'button[aria-label^="Play "]'],
 };
 // Words the page shows for states with no element of their own (lower case, matched in the page's main text).
-const TEXT = { noResults: ['no results found'], emptyQueue: ['your queue is empty', 'queue is empty'], nextHeading: '^next (from|in queue)', emptyLibrary: ['create your first playlist', 'nothing in your library', 'your library is empty', 'find some podcasts to follow', 'start building your library'] };
+const TEXT = { noResults: ['no results found'], emptyQueue: ['your queue is empty', 'queue is empty'], nextHeading: '^next (from|in queue)', emptyPlaylist: ['find something for your playlist', 'this playlist is empty'], notFound: ['find that playlist', 'find that page', 'page not found'], emptyLibrary: ['create your first playlist', 'nothing in your library', 'your library is empty', 'find some podcasts to follow', 'start building your library'] };
 // What the script needs to see to say "the player is there".
 const REQUIRED = ['playPause'];
 const NO_PLAYER = 'Spotify’s player controls weren’t found. Is the web player signed in?';
-const SEARCH_WHY = ['signedOut', 'noPlayer', 'timeout', 'page', 'noPanel', 'collapsed']; // (noPanel, collapsed: the library's side panel is not on the page / could not be opened)
+const SEARCH_WHY = ['signedOut', 'noPlayer', 'timeout', 'page', 'noPanel', 'collapsed', 'missing']; // (noPanel, collapsed: the library's side panel is not on the page / could not be opened; missing: the page says there is no such playlist)
 
 const clip = (v, max = 200) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const num = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : 0);
@@ -181,7 +183,7 @@ function parseMessage(raw) {
   }
   if (m.t === 'list') {
     if (!LIST_KINDS.includes(m.kind)) return null;
-    const max = m.kind === 'tracks' ? MAX_TRACKS : MAX_ITEMS;
+    const max = m.kind === 'tracks' ? MAX_TRACKS : m.kind === 'page' ? MAX_PAGE_ROWS : MAX_ITEMS;
     const ok = m.ok === true;
     return {
       t: 'list', kind: m.kind, rid: Math.round(num(m.rid, 0, 1e9)), ok, partial: m.partial === true, more: m.more === true, signedOut: m.signedOut === true, why: ok ? '' : (SEARCH_WHY.includes(m.why) ? m.why : 'page'), detail: ok ? '' : clip(m.detail, 120),
@@ -234,6 +236,7 @@ function cleanCommand(c) {
       return JSON.stringify({ cmd: 'volume', level: Math.round(c.level * 100) / 100 });
     }
     case 'list': {
+      if (c.kind === 'page') return typeof c.path === 'string' && PAGE_PATH_RE.test(c.path) ? JSON.stringify({ cmd: 'list', kind: 'page', path: c.path, rid: Math.round(num(c.rid, 0, 1e9)) }) : null;
       if (!['queue', 'playlists', 'recent', 'tracks'].includes(c.kind)) return null;
       return JSON.stringify({ cmd: 'list', kind: c.kind, rid: Math.round(num(c.rid, 0, 1e9)) });
     }
@@ -821,6 +824,55 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
       });
     });
   }
+  // A playlist's or album's own page read in full (the card's Library opens one it cannot read from the Web API). The page draws only the rows in view, so the list is scrolled
+  // a screen at a time and the rows seen are kept in order, up to PAGE_ROWS. One answer (kind 'page'): ok with the rows (`partial` when time ran out first), or not ok with why:
+  // signedOut, noPlayer (the controls are gone), missing (the page says there is no such list), page (its header is there and no rows were found: it changed), timeout (nothing showed).
+  var PAGE_ROWS = 400, PAGE_MS = 30000, PAGE_STILL_MS = 150, PAGE_SCROLL_MS = 450;
+  function readPage(rid, path) {
+    if (!q('playPause') || signedOutNow() === true) { failList('page', rid, q('loginButton') ? 'signedOut' : 'noPlayer'); return; }
+    var st = arriving(path), all = [], seen = {}, sig = '', at = 0, scroller = null, scrolls = 0, scrolledAt = 0, titleAt = 0;
+    function collect() {
+      rowsOf().forEach(function (row) {
+        var it = rowItem(row);
+        if (!it || !it.id) return;
+        var ri = row.getAttribute('aria-rowindex'), k = ri ? 'r' + ri : it.id;
+        if (!seen[k] && all.length < PAGE_ROWS) { seen[k] = true; all.push(it); }
+      });
+    }
+    function words(list) { var m = q('main'), t = m ? text(m).toLowerCase() : ''; return list.some(function (w) { return t.indexOf(w) >= 0; }); }
+    function toTop() { if (scroller) { try { scroller.scrollTop = 0; } catch (e) { /* gone */ } } }
+    nav(path);
+    startTask(function () {
+      return watch(function (poke) {
+        if (!all.length && signedOutNow() === true) return { signedOut: true };
+        if (!onPath(path) || (!st.here && pageKey() === st.before)) return null;
+        collect();
+        if (!all.length) {
+          if (words(TEXT.notFound)) return { missing: true };
+          if (q('entityTitle')) { titleAt = titleAt || Date.now(); if (Date.now() - titleAt >= 2500 && words(TEXT.emptyPlaylist)) return { items: [] }; poke(300); }
+          return null;
+        }
+        var now = Date.now(), s = sigOf(all) + ':' + all.length;
+        if (s !== sig) { sig = s; at = now; poke(PAGE_STILL_MS + 20); return null; }
+        if (now - at < PAGE_STILL_MS) { poke(PAGE_STILL_MS - (now - at) + 20); return null; }
+        if (scrolledAt && now - scrolledAt < PAGE_SCROLL_MS) { poke(PAGE_SCROLL_MS - (now - scrolledAt) + 20); return null; } // (the rows scrolled to may still be on their way)
+        if (all.length < PAGE_ROWS && scrolls < 200) {
+          if (!scroller || scroller.isConnected === false) scroller = scrollerOf(rowsOf()[0]);
+          if (scroller && scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 4) { scrolls++; scrolledAt = now; scroller.scrollTop = scroller.scrollTop + Math.max(120, scroller.clientHeight * 0.9); poke(PAGE_SCROLL_MS + 20); return null; }
+        }
+        return { items: all };
+      }, PAGE_MS, function (found) {
+        toTop();
+        if (!found && all.length) found = { items: all, partial: true };
+        if (!found) { failList('page', rid, q('loginButton') ? 'signedOut' : !q('playPause') ? 'noPlayer' : (q('entityTitle') && onPath(path)) ? 'page' : 'timeout', diag() + (q('entityTitle') ? ', header' : ', no header')); return; }
+        if (found.signedOut) { failList('page', rid, 'signedOut', diag()); return; }
+        if (found.missing) { failList('page', rid, 'missing', diag()); return; }
+        var keep = [], size = 0;
+        for (var i = 0; i < found.items.length; i++) { size += JSON.stringify(found.items[i]).length + 1; if (size > 170000) break; keep.push(found.items[i]); }
+        out({ t: 'list', kind: 'page', rid: rid, ok: true, title: text(q('entityTitle')), partial: found.partial === true || keep.length < found.items.length, items: keep });
+      });
+    });
+  }
   // Click the play button of the n-th row of a page (the queue's, an album's): once the page's rows have stood still.
   function playRow(path, n, skipFirst, id) {
     var st = arriving(path), want = n + (skipFirst ? 1 : 0);
@@ -993,7 +1045,7 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
         case 'volume': if (typeof c.level === 'number' && c.level >= 0 && c.level <= 1) setVolume(c.level); break;
         case 'list': {
           var rid = Number(c.rid) || 0;
-          if (c.kind === 'queue') readQueue(rid); else if (c.kind === 'tracks') readTracks(rid); else if (c.kind === 'playlists' || c.kind === 'recent') readLibrary(c.kind, rid);
+          if (c.kind === 'page') { if (typeof c.path === 'string' && /^\/(playlist|album)\/[A-Za-z0-9._-]{1,64}$/.test(c.path)) readPage(rid, c.path); } else if (c.kind === 'queue') readQueue(rid); else if (c.kind === 'tracks') readTracks(rid); else if (c.kind === 'playlists' || c.kind === 'recent') readLibrary(c.kind, rid);
           break;
         }
         case 'lyrics': readLyrics(Number(c.rid) || 0); break;
@@ -1024,4 +1076,4 @@ function bridgeMain(SEL, REQUIRED, TEXT, NO_PLAYER) {
 }
 const BRIDGE_SOURCE = `(${bridgeMain.toString()})(${JSON.stringify(SELECTORS)}, ${JSON.stringify(REQUIRED)}, ${JSON.stringify(TEXT)}, ${JSON.stringify(NO_PLAYER)});`;
 
-module.exports = { MAX_MESSAGE, KINDS, CAPS, LIST_KINDS, REPEAT_MODES, MAX_TRACKS, ID_RE, SELECTORS, TEXT, REQUIRED, NO_PLAYER, SEARCH_WHY, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };
+module.exports = { MAX_MESSAGE, MAX_PAGE_ROWS, PAGE_PATH_RE, KINDS, CAPS, LIST_KINDS, REPEAT_MODES, MAX_TRACKS, ID_RE, SELECTORS, TEXT, REQUIRED, NO_PLAYER, SEARCH_WHY, BRIDGE_SOURCE, clip, playbackKind, artUrl, kindOf, cleanItem, parseMessage, cleanCommand, toCard };

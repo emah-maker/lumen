@@ -103,7 +103,7 @@ function createDownloads(deps) {
   }
 
   // A finished file opens in the system's program, except the kinds Lumen shows itself in a tab (deps.openLocal: an .eml).
-  const openFile = (file) => (deps.openLocal?.(file) ? true : deps.shell.openPath(file));
+  const openFile = (file) => { deps.onOpened?.(file); return deps.openLocal?.(file) ? true : deps.shell.openPath(file); }; // (onOpened: the Files list)
 
   function progress() {
     const active = downloads.filter((d) => d.state === 'progressing' && d.total > 0);
@@ -297,6 +297,7 @@ function createDownloads(deps) {
     if (!d) return false;
     if (action === 'open' && d.state === 'completed' && exists(d)) { openFile(d.path); return true; }
     if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
+    if (action === 'pin' && d.state === 'completed' && exists(d)) { deps.onPin?.(d.path); return true; } // Pin to Files (the panel's right-click menu)
     if (action === 'pause' && d.state === 'progressing' && d.item && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
     if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
     if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item?.cancel(); return true; }
@@ -328,7 +329,20 @@ function createDownloads(deps) {
     sender.startDrag({ file: d.path, icon });
   }
 
-  return { list: downloads, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
+  // A file Lumen wrote itself (a screen recording): listed as a finished download, with Open and Show in folder like any other.
+  function addFile(file, name = path.basename(file)) {
+    let size;
+    try { size = fs.statSync(file).size; } catch { return null; }
+    const entry = { id: ++downloadSeq, name, path: file, state: 'completed', received: size, total: size, paused: false, awaitingOk: false, speed: 0, url: '', started: Date.now(), endedAt: Date.now() };
+    Object.defineProperties(entry, { item: { value: null, writable: true }, contents: { value: null } });
+    downloads.unshift(entry);
+    trim();
+    loadIcon(entry);
+    sendDownloads();
+    return entry.id;
+  }
+
+  return { list: downloads, addFile, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads, RISKY_TYPES };

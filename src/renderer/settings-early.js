@@ -40,6 +40,7 @@
       prefetch('ai.mcpInfo', () => S.ai.mcpInfo());
       prefetch('ai.automationInfo', () => S.ai.automationInfo());
     }
+    S.ai.onModelsUpdated?.(stop); // the model changed elsewhere (the sidebar) in this first moment: the answer fetched at load is stale, and the page's own refresh must read afresh
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
   }
 })();

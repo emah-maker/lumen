@@ -20,7 +20,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen),
+    ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts),
     dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
     uploads: {
       stash: (file) => ipcRenderer.invoke('uploads:stash', file),
@@ -50,6 +50,12 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     files: {
       preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
       open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
+    },
+    notes: { act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg) }, // [notes] "Add to notes" under a reply (features/notes-hub.js)
+    memory: { // [memory] the chat's "Remembered" row (Undo / Forget) and /memory (ai/memory.js)
+      list: () => ipcRenderer.invoke('memory:list'),
+      undo: (token) => ipcRenderer.invoke('memory:undo', token),
+      forget: (id) => ipcRenderer.invoke('memory:forget', id),
     },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
@@ -88,6 +94,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
     desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps]
     hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [activity cards] the card's "Hide tabs the AI opened" (no argument: read it)
+    tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') }, // [tab chips] a tab the chat names, as a chip
     openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
     thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
     undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
@@ -96,6 +103,10 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
     helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
+    stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers]
+    routines: { preview: (text) => ipcRenderer.invoke('chat:routine-preview', { text }), create: (spec) => ipcRenderer.invoke('chat:routine-create', spec) }, // [routines] "Schedule this" (renderer/chat-routines.js)
+    dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js)
+    offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
@@ -117,6 +128,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     context: (options) => ipcRenderer.invoke('skills:context', options),
     prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
     draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+    offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token),
+    offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
     onChanged: on('skills:changed'),
   });
   contextBridge.exposeInMainWorld('lumenExtras', {

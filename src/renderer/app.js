@@ -14,7 +14,7 @@ let heldRect = null;
 let boundsHeld = false;
 function currentBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
-  const inset = document.body.classList.contains('agent-active') ? 2 : 0;
+  const inset = 0; // (the page meets the sidebar, the toolbar and the window edge, and is the same size before, during and after a run: an inset that came and went with a run resized and reflowed the page at its start and end, and a constant one left a gap at the sidebar. The AI's frame, behind the page, is covered; the tab mark and the toolbar pill show the run)
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
   // The page area's width with the sidebar closed: the new-tab page keeps laying itself out at this
   // width while the sidebar covers its right side (main.js layout(), features/sidebar-overlay.js).
@@ -109,6 +109,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
   // A tab that shows a file with no icon of its own (tab.fileKind: features/file-tabs.js iconKind): a page with a folded corner, marked by what the file is.
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
@@ -224,12 +225,14 @@ let selectedTabs = new Set();
 
 // A strip still sliding (a tab just closed, opened or dropped): finish that first, so what is measured is where
 // the tabs actually are, and the drag's own transform isn't overridden by an animation.
+// [side tabs] Tab layout: Side: the list (#tabs) sits in a column on the left (renderer/side-tabs.js). Its drag is vertical and is worked out there.
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch { /* infinite: leave it */ } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
   // Losing the pointer (another app or the system took it) cancels the drag: nothing moves on a guess.
@@ -252,6 +255,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -825,13 +829,15 @@ function handOffTabDrag(e) {
   // x, y: the cursor in this window (it holds its place if the whole window is dragged). pressY:
   // where the tab was grabbed. layout: where that point will sit in the new strip, so the window
   // opens with it under the cursor even when this strip is scrolled or other tabs travel along.
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+  // (the side list: the new window's list starts where this one's does, so the grab point is the tab's offset into it)
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; } // main moves the card (or window) with it
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -962,6 +968,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped); // (a drop in the side list is worked out there; a tab taken out of it ends below as any other)
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
   // A single tab released over a different slot lands there. The same slot it already occupied is
@@ -1096,8 +1103,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0; // (the side list moves tabs up and down)
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
       // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
       // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
@@ -1251,11 +1260,13 @@ function updateTabEl(el, tab, group, activeId) {
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
-  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
+  el.classList.toggle('split-left', tab.split === 'left'); // [split view] a pair is drawn as joined tabs
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -1441,7 +1452,8 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key]; // (the side list also steps with Up and Down)
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
@@ -1581,6 +1593,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return; // (the list shows the titles; a card would sit under the page view)
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -1643,6 +1656,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return; // (rows are the list's full width: nothing widens into a gap)
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -1780,7 +1794,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -1891,7 +1905,7 @@ function renderTabsNow(state) {
   // strip scrolls). It collapses to a bare dot only when the chips themselves would take most of the strip: so many groups that names cannot all be shown.
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6; // (an estimate: the text, the padding and the gap beside it)
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
   // Shown when Organize would do something: 4+ tabs it may regroup (main counts them: not pinned, not in the user's own
   // groups; automatic groups' tabs count). 4 is the bar automatic by-topic grouping uses: fewer is easy to do by hand.
@@ -2453,22 +2467,21 @@ let snapshot = null;
 let freezeToken = 0;
 let earlyFreeze = null; // a snapshot started on pointerdown
 
-// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers.
+// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers. Async: only the 2 px strip is decoded, off the
+// main thread (drawing the whole decoded snapshot and reading it back cost ~9 ms inside the frame that shows a freeze).
 function edgeColor(img) {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 24;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, 0, 0, 1, 24);
+  return createImageBitmap(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, { resizeWidth: 1, resizeHeight: 24, resizeQuality: 'low' }).then((bitmap) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.canvas.width = 1;
+    ctx.canvas.height = 24;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
     const d = ctx.getImageData(0, 0, 1, 24).data;
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
     const n = d.length / 4;
     return `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
-  } catch {
-    return '';
-  }
+  }).catch(() => '');
 }
 
 // fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
@@ -2498,8 +2511,7 @@ async function freezePage() {
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  lastSnapshotEdge = edgeColor(img);
-  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
+  edgeColor(img).then((colour) => { if (!colour || img !== snapshot) return; lastSnapshotEdge = colour; viewport.style.setProperty('--snapshot-edge', colour); });
   viewport.append(img);
   // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
   // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
@@ -2704,7 +2716,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null; // the width the user chose; a narrow window may hold it smaller for now
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420)); // the page keeps 420px
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0))); // the page keeps 420px (the side list, if there is one, comes out of the rest)
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
@@ -2874,6 +2886,49 @@ window.browser.onAttachImage?.(async (base64) => {
   } catch { /* an unreadable image is skipped, as with a pasted one */ }
 });
 
+// [files] The quick picker (Ctrl+Shift+F; files-picker.js and .css, 19 KB) is loaded in an idle moment after start, or by the first key that
+// asks for it, instead of being part of the bundle every window parses: the key opens it once it is there.
+let filesPickerLoad = null;
+function loadFilesPicker() {
+  filesPickerLoad ||= new Promise((resolve) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
+    document.head.append(css);
+    document.body.append(js);
+  });
+  return filesPickerLoad;
+}
+window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
+setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
+
+// The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
+// "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
+
+// [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
+window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
+  showSidebar(true);
+  try {
+    await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);
+    prompt.focus();
+  } catch { /* an unreadable file is skipped, as with a dropped one */ }
+});
+
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
 
 window.assistant.onSearchEngine?.((engine) => { searchEngine = engine; });
@@ -2936,6 +2991,7 @@ window.browser.onDownloads?.((list) => {
     : latest.state === 'completed' ? t('downloads.done') : ['cancelled', 'interrupted'].includes(latest.state) ? t(`downloads.${latest.state}`) : latest.state;
   downloadsBtn.title = `${latest.name} — ${status}`;
 });
+for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });

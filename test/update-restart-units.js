@@ -56,7 +56,7 @@ const swap = (o, start) => H.swap(o, start);
 
   // ---- a locked install folder (a child process still has files open): short retries, so the swap goes ahead right after it lets go
   const realRename = fs.renameSync;
-  const lockedUntil = (ms, onlyFrom) => { const end = Date.now() + ms; fs.renameSync = (a, b) => { if (a === onlyFrom && Date.now() < end) { const e = new Error('EBUSY: resource busy or locked'); e.code = 'EBUSY'; throw e; } return realRename(a, b); }; return end; };
+  const lockedUntil = (ms, onlyFrom) => { const end = Date.now() + ms; fs.renameSync = (a, b) => { if ((a === onlyFrom || String(a).startsWith(onlyFrom + path.sep)) && Date.now() < end) { const e = new Error('EBUSY: resource busy or locked'); e.code = 'EBUSY'; throw e; } return realRename(a, b); }; return end; };
   try {
     fixture();
     const end = lockedUntil(1300, path.join(d, 'Lumen'));

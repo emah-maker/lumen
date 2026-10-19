@@ -21,7 +21,6 @@ const inlined = {
     };
     var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-    // src/browser-action.ts
     var browser_action_exports = {};
     __export(browser_action_exports, {
       injectBrowserAction: () => injectBrowserAction
@@ -29,8 +28,8 @@ const inlined = {
     module.exports = __toCommonJS(browser_action_exports);
     var import_electron = require("electron");
     var injectBrowserAction = () => {
-      const actionMap = /* @__PURE__ */ new Map();
-      const observerCounts = /* @__PURE__ */ new Map();
+      const actionMap =  new Map();
+      const observerCounts =  new Map();
       const internalEmitter = process;
       const invoke = (name, partition, ...args) => {
         return import_electron.ipcRenderer.invoke("crx-msg-remote", partition, name, ...args);
@@ -425,63 +424,57 @@ const load = (id) => {
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const { injectBrowserAction } = require('electron-chrome-extensions/browser-action');
 
-// Before any page script runs: tells main this view has the UI's preload, so main.js's backstop
-// holds it to renderer/index.html (it can only make the view more restricted).
 ipcRenderer.sendSync('ui-preload:loaded');
 
-// The UI's strings in the system's language (features/i18n.js; renderer/i18n.js looks them up).
-// Asked only from renderer/index.html: the window's first about:blank runs this preload too, and
-// main's gate (rightly) refuses it there.
 const isUiPage = location.protocol === 'file:' && /\/renderer\/index\.html$/.test(location.pathname);
 contextBridge.exposeInMainWorld('lumenI18n', (isUiPage && ipcRenderer.sendSync('ui:strings')) || { locale: 'en', strings: {} });
 
-// Defines <browser-action-list>, the row of extension buttons in the toolbar.
 injectBrowserAction();
 
 const on = (channel) => (callback) => ipcRenderer.on(channel, (_e, payload) => callback(payload));
 
-// `platform-darwin` / `platform-win32` on <html>: macOS has traffic lights on the left, Windows
-// has window controls on the right.
 window.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add(`platform-${process.platform}`));
 
 contextBridge.exposeInMainWorld('browser', {
   setContentBounds: (bounds) => ipcRenderer.send('content-bounds', bounds),
-  setContentBoundsAck: (bounds) => ipcRenderer.invoke('content-bounds:ack', bounds), // resolves once the page view has its new size
+  setContentBoundsAck: (bounds) => ipcRenderer.invoke('content-bounds:ack', bounds),
   freezeView: (size) => ipcRenderer.invoke('view:freeze', size),
   thawView: () => ipcRenderer.send('view:thaw'),
-  freezeShown: () => ipcRenderer.send('view:frozen'), // the snapshot is on screen: main may hide the live page under it
+  freezeShown: () => ipcRenderer.send('view:frozen'),
   freezeAlive: () => ipcRenderer.send('view:freeze-alive'),
   setChatFull: (on) => ipcRenderer.send('chat:full', on),
   warmView: () => ipcRenderer.invoke('view:warm'),
   newTab: (url) => ipcRenderer.send('tab:new', url),
-  // Dropped files: the page can't see paths, so they're resolved here (webUtils) and main.js opens them.
+
   openFiles: (files) => ipcRenderer.send('files:open', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   closeTab: (id) => ipcRenderer.send('tab:close', id),
-  switchTab: (id) => ipcRenderer.send('tab:switch', id, performance.timeOrigin + performance.now()), // (the click's own time: Settings > Advanced > Record tab-switch timings)
-  switchStripDrawn: (id, at) => ipcRenderer.send('tab:switch-strip', id, at), // the strip drew this tab active (only while recording)
-  tabHover: (id, on) => ipcRenderer.send('tab:hover', id, on), // the pointer rests on / leaves a tab: main wakes a sleeping one ahead of the click
-  tabDown: (id) => ipcRenderer.send('tab:down', id), // the button went down on a tab (the click follows)
-  moveTab: (id, toIndex, done) => ipcRenderer.send('tab:move', id, toIndex, Boolean(done)), // done: the strip is waiting to show the tab in its slot
-  moveTabs: (ids, beforeId, groupId, join) => ipcRenderer.send('tab:move-block', ids, beforeId, groupId, join), // several tabs (a selection, a group) as one block
-  // A tab dragged out of the strip: main.js moves it into a window that follows the cursor.
-  dragTabPrep: (id) => ipcRenderer.send('tab:dragprep', id), // a tab is heading out of the strip: a tear-off may follow
-  onTabDragDone: on('tab:dragdone'), // a dropped tab has been placed: show it again if it stayed here
+  switchTab: (id) => ipcRenderer.send('tab:switch', id, performance.timeOrigin + performance.now()),
+  switchStripDrawn: (id, at) => ipcRenderer.send('tab:switch-strip', id, at),
+  tabHover: (id, on) => ipcRenderer.send('tab:hover', id, on),
+  tabDown: (id) => ipcRenderer.send('tab:down', id),
+  moveTab: (id, toIndex, done) => ipcRenderer.send('tab:move', id, toIndex, Boolean(done)),
+  moveTabs: (ids, beforeId, groupId, join) => ipcRenderer.send('tab:move-block', ids, beforeId, groupId, join),
+
+  dragTabPrep: (id) => ipcRenderer.send('tab:dragprep', id),
+  onTabDragDone: on('tab:dragdone'),
   dragTabStart: (id, grab) => ipcRenderer.send('tab:dragstart', id, grab),
-  dragTabEnd: () => ipcRenderer.send('tab:dragend'), // the button came up
-  dragTabCancel: () => ipcRenderer.send('tab:dragcancel'), // Escape
-  onTabArriving: on('tab:arriving'), // { ids }: tabs about to land here stay invisible until the chip that carries them arrives
-  onTabLanded: on('tab:landed'), // the chip has landed: they show
-  onTabDropAt: on('tab:dropat'), // { beforeId } while a dragged window hovers this strip, null when it leaves
-  onTabDragAbort: on('tab:dragabort'), // main gave up on a drag whose release never came
+  dragTabEnd: () => ipcRenderer.send('tab:dragend'),
+  dragTabCancel: () => ipcRenderer.send('tab:dragcancel'),
+  onTabArriving: on('tab:arriving'),
+  onTabLanded: on('tab:landed'),
+  onTabDropAt: on('tab:dropat'),
+  onTabDragAbort: on('tab:dragabort'),
   onTabArrived: on('tab:arrived'),
-  onTabMovedHere: on('tab:moved-here'), // tabs moved into this window from the tab menu: { ids, title } // this new window was just given dragged tabs ({ count }): announced
-  dragTabMove: () => ipcRenderer.send('tab:dragmove'), // the pointer moved during a drag main.js drives
-  setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
-  hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
-  hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at), // right-click on the toggle: hide or close the AI's tabs
+  onTabMovedHere: on('tab:moved-here'),
+  dragTabMove: () => ipcRenderer.send('tab:dragmove'),
+  setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids),
+  hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on),
+  hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at),
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at),
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o),
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
-  navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point), // right-click on Back / Forward: the pages behind / ahead
-  addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go
+  navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point),
+  addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection),
   groupMenu: (id, point) => ipcRenderer.send('group:context-menu', id, point),
   toggleGroup: (id) => ipcRenderer.send('group:toggle', id),
   renameGroup: (id, name) => ipcRenderer.send('group:rename', id, name),
@@ -489,19 +482,20 @@ contextBridge.exposeInMainWorld('browser', {
   organizeTabs: () => ipcRenderer.send('tabs:organize'),
   onOrganizing: on('tabs:organizing'),
   onOrganizeNote: on('tabs:organize-note'),
-  onGpuCalm: on('gpu:calm'), // [gpu health] true while the GPU recovers from a reset
-  onGpuNote: on('gpu:software-note'), // drawing fell to software after a reset: offer a restart
-  onGpuLost: on('gpu:lost'), // the GPU process died: a page snapshot on screen is put away
+  onGpuCalm: on('gpu:calm'),
+  onGpuNote: on('gpu:software-note'),
+  onGpuLost: on('gpu:lost'),
   gpuRestart: (safe) => ipcRenderer.send('gpu:restart', safe === true),
-  undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
+  undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token),
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
-  translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
-  passwordsAct: (action) => ipcRenderer.send('passwords:act', action), // [passwords] the save bar and the key button: no password ever passes here
+  translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg),
+  passwordsAct: (action) => ipcRenderer.send('passwords:act', action),
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
+  warmDownloads: () => ipcRenderer.send('downloads:warm'),
   go: (text) => ipcRenderer.send('nav:go', text),
   back: () => ipcRenderer.send('nav:back'),
   forward: () => ipcRenderer.send('nav:forward'),
@@ -511,42 +505,47 @@ contextBridge.exposeInMainWorld('browser', {
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
+  onSplit: on('split:layout'),
+  setSplitRatio: (ratio) => ipcRenderer.send('split:ratio', ratio),
+  closeSplit: () => ipcRenderer.send('split:close'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onNewSidebarChat: on('new-sidebar-chat'),
   onAskSelection: on('ask-selection'),
-  onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
+  onAttachImage: on('attach-image'),
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
-  onAgentsPending: on('agents:pending'), // how many outside-agent approvals wait in agent windows (toolbar badge)
+  onAgentsPending: on('agents:pending'),
   focusPendingAgent: () => ipcRenderer.send('agents:focus-pending'),
-  onAgentWindow: on('agent-window'), // this window belongs to an outside agent (or no longer does: null)
+  onAgentWindow: on('agent-window'),
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
-  openPageInfo: (point) => ipcRenderer.send('page-info:open', point), // the lock next to the address (features/page-info.js)
-  openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
+  openPageInfo: (point) => ipcRenderer.send('page-info:open', point),
+  openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items),
   onActionsOverflowPick: on('actions:overflow-pick'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
   addressTouched: () => ipcRenderer.send('address:touched'),
-  prepareSettings: () => ipcRenderer.send('prepare-settings'), // [settings intent] the menu button was pressed: Settings starts loading
+  prepareSettings: () => ipcRenderer.send('prepare-settings'),
   onSuggestionPicked: on('suggest:picked'),
-  // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
+
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
-  toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id), // [ai off-tab]
+  toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id),
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
+  onOpenFilesPicker: on('files:picker'),
+  onOpenCommandBar: on('cmdbar:open'),
+  commandData: () => ipcRenderer.invoke('cmdbar:data'),
+  commandRun: (id) => ipcRenderer.invoke('cmdbar:run', id),
 });
 
-// [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).
 contextBridge.exposeInMainWorld('lumenPrefs', {
   openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
   get: () => ipcRenderer.invoke('prefs:ui'),
   onChange: on('prefs:ui'),
 });
 
-// The toolbar's update prompt (renderer/updates.js, features/updates.js).
 contextBridge.exposeInMainWorld('lumenUpdates', {
   state: () => ipcRenderer.invoke('settings:updates-state'),
   apply: () => ipcRenderer.invoke('settings:updates-apply'),
@@ -554,9 +553,6 @@ contextBridge.exposeInMainWorld('lumenUpdates', {
   onState: on('updates:state'),
 });
 
-// Only what the browser UI itself uses. Keys, MCP, automation and import are set in lumen://settings
-// (settings-preload.js); the tests still reach a few of those calls through here. main.js adds
-// this switch only in test mode, which a packaged build never is (test-mode.js).
 const testOnly = process.argv.includes('--lumen-test-mode') ? {
   mcpInfo: () => ipcRenderer.invoke('mcp:info'),
   setMcpEnabled: (on) => ipcRenderer.invoke('mcp:set-enabled', on),
@@ -566,76 +562,87 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds, files, screen) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen), // screen: 'on' | 'off' (the camera button), else the words decide
-  dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id), // the screenshot chip's x
-  // Files attached to a message (renderer/chat-core.js): kept by main until it is sent, named to the AI by ref only; and the
-  // "Choose file…" card's picker. See features/upload-files.js.
+  ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts),
+  dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
+
   uploads: {
     stash: (file) => ipcRenderer.invoke('uploads:stash', file),
     discard: (ref) => ipcRenderer.send('uploads:discard', ref),
     choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
   },
-  askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
+  askTabs: () => ipcRenderer.invoke('tabs:ask-list'),
   stop: () => ipcRenderer.send('agent:stop'),
-  sidebarTarget: () => ipcRenderer.invoke('chat:sidebar-target'), // the sidebar is about to open: the chat on this tab that works, waits for an OK or finished unread ({ id, reason, view }), or null
-  resync: () => ipcRenderer.invoke('chat:resync'), // the chat this window's front tab shows, with its own run state
-  prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
+  sidebarTarget: () => ipcRenderer.invoke('chat:sidebar-target'),
+  resync: () => ipcRenderer.invoke('chat:resync'),
+  prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''),
   reset: () => ipcRenderer.send('agent:reset'),
-  rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected), // Retry / Regenerate: the last exchange taken back
-  rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected), // Regenerate / Edit of any message, kept as a version
-  switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target), // the version switch
-  feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value), // thumbs up / down under a reply
-  btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task (features/btw-side.js); streamed through onBtw
+  rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
+  rewindUser: (ordinal, expected) => ipcRenderer.invoke('agent:rewind-user', ordinal, expected),
+  switchVersion: (at, target) => ipcRenderer.invoke('agent:version', at, target),
+  feedback: (ordinal, value) => ipcRenderer.invoke('agent:feedback', ordinal, value),
+  btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text),
   btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
   onBtw: on('agent:btw-event'),
-  // The chat history list (renderer/chats.js)
-  // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
+
   images: {
     data: (id) => ipcRenderer.invoke('images:data', id),
     save: (id) => ipcRenderer.invoke('images:save', id),
     copy: (id) => ipcRenderer.invoke('images:copy', id),
     remote: (url) => ipcRenderer.invoke('images:remote', url),
-    openTab: (dataUrl) => ipcRenderer.invoke('images:open-tab', dataUrl), // the chat picture viewer's "Open in a tab"
+    openTab: (dataUrl) => ipcRenderer.invoke('images:open-tab', dataUrl),
   },
-  // Files the AI made (renderer/ai-files.js): the file card's preview, and Open in a tab / the system app / Show in folder. By card id only.
+
   files: {
     preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
     open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
   },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
-    open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
-    showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
-    share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
-    runNow: () => ipcRenderer.invoke('chats:run-now'), // "Run now" on the open chat that waits for a slot
-    stopChat: (id) => ipcRenderer.invoke('chats:stop', id), // "Stop waiting" (or stop) any chat, not only the open one
+    open: (id) => ipcRenderer.invoke('chats:open', id),
+    showTab: (id) => ipcRenderer.invoke('chats:show-tab', id),
+    share: (id) => ipcRenderer.invoke('chats:share', id),
+    runNow: () => ipcRenderer.invoke('chats:run-now'),
+    stopChat: (id) => ipcRenderer.invoke('chats:stop', id),
     rename: (id, title) => ipcRenderer.invoke('chats:rename', id, title),
-    remove: (id) => ipcRenderer.invoke('chats:delete', id), // hides the chat for a few seconds (undoRemove), then erases it
+    remove: (id) => ipcRenderer.invoke('chats:delete', id),
     undoRemove: (id) => ipcRenderer.invoke('chats:undo-delete', id),
     pin: (id, on) => ipcRenderer.invoke('chats:pin', id, on),
     archive: (id, on) => ipcRenderer.invoke('chats:archive', id, on),
-    search: (query) => ipcRenderer.invoke('chats:search', query), // chats whose title or messages match: [{ id, snippet }]
+    search: (query) => ipcRenderer.invoke('chats:search', query),
     exportChat: (id) => ipcRenderer.invoke('chats:export', id),
-    closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id), // [ai manners] "Close this chat's tabs"
-    workFolder: (action, arg, confirmed) => ipcRenderer.invoke('chats:work-folder', action, arg, confirmed), // [work folder] the open chat's folder: get / pick / set / clear / open
+    closeTabs: (id) => ipcRenderer.invoke('chats:close-tabs', id),
+    workFolder: (action, arg, confirmed) => ipcRenderer.invoke('chats:work-folder', action, arg, confirmed),
     onUsage: on('chats:usage'),
-    onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
-    onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
+    onContext: on('chats:context'),
+    onChanged: on('chats:changed'),
   },
-  // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
+
+  memory: {
+    list: () => ipcRenderer.invoke('memory:list'),
+    undo: (token) => ipcRenderer.invoke('memory:undo', token),
+    forget: (id) => ipcRenderer.invoke('memory:forget', id),
+  },
+
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
+
   research: {
     get: () => ipcRenderer.invoke('research:get'),
-    addPage: () => ipcRenderer.invoke('research:add-page'), // "Add this page": metadata of the tab in front
-    update: (n, patch) => ipcRenderer.invoke('research:update', n, patch), // { starred, note, title }
+    addPage: () => ipcRenderer.invoke('research:add-page'),
+    update: (n, patch) => ipcRenderer.invoke('research:update', n, patch),
     remove: (n) => ipcRenderer.invoke('research:remove', n),
     pin: (n, text, page) => ipcRenderer.invoke('research:pin', n, text, page),
-    pinSelection: (n) => ipcRenderer.invoke('research:pin-selection', n), // the text selected in the tab in front
+    pinSelection: (n) => ipcRenderer.invoke('research:pin-selection', n),
     unpin: (n, q) => ipcRenderer.invoke('research:unpin', n, q),
-    cite: (n, style) => ipcRenderer.invoke('research:cite', n, style), // n null: the whole bibliography; copies to the clipboard
-    open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
+    cite: (n, style) => ipcRenderer.invoke('research:cite', n, style),
+    open: (url) => ipcRenderer.invoke('research:open', url),
     onChanged: on('research:changed'),
   },
-  // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
+  offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) },
+  dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) },
+
   meeting: {
     getState: () => ipcRenderer.invoke('meeting:state'),
     getContext: () => ipcRenderer.invoke('meeting:context-get'),
@@ -650,12 +657,12 @@ contextBridge.exposeInMainWorld('assistant', {
     onToggle: on('meeting:toggle'),
     onEvent: on('meeting:event'),
   },
-  // The sidebar working on its own: whether it is open, the mark on its button, a notification clicked
+
   sidebarState: (open) => ipcRenderer.send('chat:sidebar-state', open),
-  setSidebarOpen: (tabId, open) => ipcRenderer.invoke('sidebar:set', tabId ?? null, Boolean(open)), // [sidebar per tab] the sidebar is open or closed on this tab
-  onAttention: on('agent:attention'), // { state: 'approval' | 'unread' | null, approvals, unread }
-  onOpenChat: on('agent:open-chat'), // { id }: show the sidebar on that chat
-  // Background tasks (renderer/tasks.js, features/background-runner.js)
+  setSidebarOpen: (tabId, open) => ipcRenderer.invoke('sidebar:set', tabId ?? null, Boolean(open)),
+  onAttention: on('agent:attention'),
+  onOpenChat: on('agent:open-chat'),
+
   tasks: {
     state: () => ipcRenderer.invoke('tasks:state'),
     preview: (spec) => ipcRenderer.invoke('tasks:preview', spec),
@@ -670,50 +677,55 @@ contextBridge.exposeInMainWorld('assistant', {
     enable: (id, on) => ipcRenderer.invoke('tasks:enable', id, on),
     openPage: (id) => ipcRenderer.invoke('tasks:open-page', id),
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
-    saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
+    saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec),
     routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
+    routineWebhookKey: (id) => ipcRenderer.invoke('routines:webhook-key', id),
+
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),
     onPropose: on('tasks:propose'),
   },
   onEvent: on('agent:event'),
-  // AI agents over MCP
+
   onMcpEvent: on('mcp:event'),
   stopMcp: () => ipcRenderer.send('mcp:stop'),
-  // Other apps using Lumen (external-apps.js): pills and prompt; mcp:external-<state|answer> / -<stop|takeover|resume>
+
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') },
   onHistory: on('agent:history'),
-  // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
+
   openFullPage: () => ipcRenderer.send('chat:open-page'),
-  onRunStart: on('chat:run-start'), // a turn started in the chat page
-  onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
-  onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null
+  onRunStart: on('chat:run-start'),
+  onSync: on('chat:sync'),
+  onAgentTarget: on('agent:target'),
   showAgentTarget: () => ipcRenderer.send('agent:show-target'),
-  openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
-  thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
-  onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
+  tabChips: { info: (keys, snaps) => ipcRenderer.invoke('chips:info', keys, snaps), watch: (keys) => ipcRenderer.invoke('chips:watch', keys), open: (request) => ipcRenderer.invoke('chips:open', request), onUpdate: on('chips:update') },
+  openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target),
+  thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)),
+  onSidebar: on('chat:sidebar'),
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
-  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop
-  undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
-  undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId), // [content guard]
-  annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab
-  closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners] { runId } | { chatId }: close the tabs the AI opened
+  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what),
+  undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
+  undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId),
+  annotate: (action) => ipcRenderer.invoke('agent:annotate', action),
+  closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts),
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
-  autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
-  permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions] 'ask' | 'auto' | 'bypass'; no argument: just read it
-  helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents] true | false; no argument: just read it
+  autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
+  permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode),
+  helpers: (on) => ipcRenderer.invoke('agent:helpers', on),
+  stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
-  useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
-  useCodex: () => ipcRenderer.invoke('settings:use-codex'), // the setup card (Codex, once found)
-  useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'), // the setup card (Antigravity replaces Gemini CLI)
+  useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'),
+  useCodex: () => ipcRenderer.invoke('settings:use-codex'),
+  useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'),
   openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
   openRouterSignIn: () => ipcRenderer.invoke('openrouter:sign-in'),
   cancelOpenRouterSignIn: () => ipcRenderer.invoke('openrouter:cancel'),
   onSearchEngine: on('search-engine'),
   onModelsUpdated: on('models-updated'),
-  // The first-run welcome (features/setup.js): its state, import without a dialog, the default browser.
+
   setup: {
     state: () => ipcRenderer.invoke('settings:setup-state'),
     done: () => ipcRenderer.invoke('settings:setup-done'),
@@ -725,19 +737,22 @@ contextBridge.exposeInMainWorld('assistant', {
   ...testOnly,
 });
 
-// Skills (features/skills.js): the composer's "/" menu. Running one is a normal chat message; managing
-// them is in lumen://settings (settings-preload.js).
 contextBridge.exposeInMainWorld('skillsApi', {
   menu: () => ipcRenderer.invoke('skills:menu'),
   context: (options) => ipcRenderer.invoke('skills:context', options),
   prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
   draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token),
+  offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
   onChanged: on('skills:changed'),
-  onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
+  onRun: on('skill:run'),
 });
 
-// Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing
-// them is in lumen://settings (settings-preload.js).
+contextBridge.exposeInMainWorld('lumenFiles', {
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
+  open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
+});
+
 contextBridge.exposeInMainWorld('macrosApi', {
   menu: () => ipcRenderer.invoke('macros:menu'),
   run: (request) => ipcRenderer.invoke('macros:run', request),
@@ -752,19 +767,17 @@ contextBridge.exposeInMainWorld('macrosApi', {
   onSidebar: on('macros:sidebar'),
 });
 
-// ---- [claude code engine] + [page context]
 contextBridge.exposeInMainWorld('lumenExtras', {
   getPageContext: () => ipcRenderer.invoke('pagecontext:get'),
   setPageContext: (on) => ipcRenderer.invoke('pagecontext:set', on),
-  // { installed, signedIn: true|false|'unknown', accountType: 'subscription'|'apiKey'|null, detail }
+
   claudeCodeStatus: (refresh) => ipcRenderer.invoke('claudecode:status', refresh),
-  // [ai controls] sites where the user turned AI off (features/ai-sites.js)
-  aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url), // { site, off }
+
+  aiSiteState: (url) => ipcRenderer.invoke('settings:ai-site-state', url),
   setAiSite: (site, off) => ipcRenderer.invoke('settings:set-ai-site', site, off),
-  // [usage] the plan's limits and Lumen's share (features/usage.js)
+
   usage: (refresh, cached) => ipcRenderer.invoke('usage:get', { refresh: Boolean(refresh), cached: Boolean(cached) }),
   openUsage: () => ipcRenderer.send('settings-page:open', 'usage'),
 });
-// ---- [/claude code engine] + [/page context]
 })(load);
 })();

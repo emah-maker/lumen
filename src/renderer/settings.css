@@ -132,8 +132,11 @@ optgroup { color: var(--muted); }
   display: inline-flex; align-items: center; gap: 8px; min-width: 200px; max-width: 320px; justify-content: space-between;
   background: var(--field); text-align: left;
 }
-.picker-button::after { content: ""; flex: none; width: 6px; height: 6px; margin: -3px 2px 0 0; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); }
-.picker-button .picker-text { flex: 1; }
+/* picker.css (loaded after this file) says align-items: baseline; the Settings button is one centre line (text and chevron),
+   with the size, radius and padding of the other Settings dropdowns. */
+.picker-host > .picker-button { align-items: center; justify-content: space-between; min-width: 200px; max-width: 320px; height: 30px; padding: 0 10px; border-radius: var(--r-md); gap: 8px; }
+.picker-host > .picker-button .picker-text { flex: 1 1 auto; line-height: 1.2; }
+.picker-host > .picker-button .picker-chevron { flex: none; width: 10px; height: 6px; color: var(--muted); }
 input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
   box-shadow: var(--focus-ring); outline: none;
 }
@@ -197,7 +200,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 
 mark { background: var(--accent-soft); color: inherit; border-radius: var(--r-xs); }
 
-.pane { animation: rise var(--t-base) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+/* backwards, not both: a finished animation that holds its last frame leaves transform: matrix(identity) on the pane, and that makes the pane the containing block of every position: fixed menu inside it (the model menu opened far to the right and scrolled the page). */
+.pane { animation: rise var(--t-base) cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
 .reduce-motion *, .reduce-motion *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) { .pane { animation: none; } }
@@ -589,3 +593,6 @@ details.disclosure > summary:focus-visible, details.adv-rows > summary:focus-vis
 details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px solid var(--hairline); }
 .card > details.adv-rows { border-top: 1px solid var(--hairline); }
 .card > details.adv-rows:first-child { border-top: none; }
+.mr-preview { display: block; width: 100%; height: 140px; margin-top: 8px; border-radius: 10px; background: var(--card); box-shadow: 0 0 0 0.5px var(--border); }
+.mr-preview[hidden] { display: none; }
+.mr-preview-row { margin-top: 6px; }

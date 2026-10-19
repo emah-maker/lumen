@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "productName": "Lumen",
-  "version": "0.5.35",
+  "version": "0.5.56",
   "description": "Lumen: an AI browser that works with Claude, ChatGPT, Grok and Gemini, and with any AI agent through MCP",
   "main": "src/main.js",
   "type": "commonjs",
@@ -24,7 +24,7 @@
   "license": "GPL-3.0-or-later",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
-    "@ghostery/adblocker-electron": "^2.18.2",
+    "@ghostery/adblocker-electron": "^2.20.1",
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.10",
@@ -37,6 +37,7 @@
   "devDependencies": {
     "@electron/fuses": "^2.1.3",
     "@eslint/js": "^10.0.1",
+    "acorn": "8.18.0",
     "electron": "github:castlabs/electron-releases#v44.1.0+wvcus",
     "electron-builder": "^26.15.3",
     "eslint": "^10.12.0",
@@ -219,7 +220,7 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "extendInfo": {
         "NSCameraUsageDescription": "Websites you allow can use your camera.",
-        "NSMicrophoneUsageDescription": "Websites you allow can use your microphone.",
+        "NSMicrophoneUsageDescription": "Websites you allow can use your microphone, and so can Lumen's voice input in the chat box.",
         "NSLocationUsageDescription": "Websites you allow can know your location."
       }
     },

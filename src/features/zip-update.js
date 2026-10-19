@@ -184,25 +184,118 @@ function readStaged(execPath, platform = process.platform, checkExe = helper.che
   return { version: m.version, sha512: m.sha512 || '', staged: { ...paths, root } };
 }
 
-// Download `url` to `file`, hashing as it goes. net is electron's `net` (or anything with fetch).
-async function download({ net, url, file, onProgress }) {
-  const res = await net.fetch(url);
-  if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
-  const total = Number(res.headers.get('content-length')) || 0;
-  const hash = crypto.createHash('sha512');
-  const out = fs.createWriteStream(file);
+// ---------- the download: retried, resumed, and its checksum checked at the end ----------
+// A release zip is ~250 MB, so a dropped connection part-way is likely on a poor link. A transient failure
+// (see classifyError) is retried after a growing pause; an interrupted download continues from the bytes
+// already on disk with an HTTP Range request when the server allows it (else it starts over). Every attempt
+// asks for the ORIGINAL url again, never the address it redirected to last time: GitHub redirects release
+// downloads to a signed release-assets URL that expires. The sha512 is taken over exactly the bytes in the
+// file, whatever the number of attempts, and stage() compares it with latest.yml before anything is unpacked.
+const RETRY_DELAYS = [3000, 10000, 30000, 60000]; // 5 tries in all, ~100 s of waiting between them
+const STALL_MS = 30000; // no response, or no data, for this long counts as a dropped connection
+const OFFLINE_POLL_MS = 2000;
+const OFFLINE_MAX_MS = 5 * 60000; // how long to wait for the network to come back before giving up
+const TRANSIENT_NET = /ERR_(FAILED|NETWORK_CHANGED|INTERNET_DISCONNECTED|CONNECTION_(RESET|TIMED_OUT|CLOSED|ABORTED|REFUSED)|TIMED_OUT|NAME_NOT_RESOLVED|NETWORK_IO_SUSPENDED|EMPTY_RESPONSE|SOCKET_NOT_CONNECTED|ADDRESS_UNREACHABLE|TUNNEL_CONNECTION_FAILED|PROXY_CONNECTION_FAILED|CONTENT_LENGTH_MISMATCH|INCOMPLETE_CHUNKED_ENCODING|HTTP2_[A-Z_]+|QUIC_[A-Z_]+)\b/;
+
+// { retry, key } for a failed attempt. `key` names the plain-words reason (locales: updates.reason.<key>).
+// Fatal: a checksum mismatch, a 4xx (the file is gone or refused), a request something on this computer cancelled,
+// a certificate problem, a full disk. Everything else that looks like the network is transient.
+function classifyError(err) {
+  if (err?.fatal) return { retry: false, key: err.reasonKey || 'failed' };
+  const status = Number(err?.status) || 0;
+  if (status) return status >= 500 || status === 408 || status === 429 ? { retry: true, key: 'server' } : { retry: false, key: 'refused' };
+  const msg = String(err?.message || err);
+  if (err?.timedOut || /ERR_TIMED_OUT|ERR_CONNECTION_TIMED_OUT/.test(msg)) return { retry: true, key: 'timeout' };
+  if (/ERR_INTERNET_DISCONNECTED|ERR_NETWORK_IO_SUSPENDED/.test(msg)) return { retry: true, key: 'offline' };
+  if (/ERR_BLOCKED_BY_/.test(msg)) return { retry: false, key: 'blocked' };
+  if (/ERR_CERT_|ERR_SSL_|ERR_BAD_SSL/.test(msg)) return { retry: false, key: 'secure' };
+  if (TRANSIENT_NET.test(msg)) return { retry: true, key: 'dropped' };
+  if (err?.name === 'AbortError' || /^(terminated|fetch failed|aborted)$/i.test(msg) || /\b(ECONNRESET|ETIMEDOUT|ECONNABORTED|EPIPE)\b/.test(`${err?.code} ${msg}`)) return { retry: true, key: 'dropped' };
+  if (/^net::/.test(msg)) return { retry: false, key: 'failed' }; // some other network error: not worth hammering
+  return { retry: false, key: '' }; // a disk error, a bug: its own message says it
+}
+
+const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Download `url` to `file`; resolves { hash (sha512, base64), resumed, attempts }. `net` is anything with
+// fetch(url, { headers, signal }) (electron's session.fetch, or a test's stand-in) and optionally `online`.
+// onRetry({ key, attempt, waitMs, offline }) is called before each pause; onProgress(percent) as data arrives.
+async function download({ net, url, file, onProgress, onRetry, sleep = defaultSleep, delays = RETRY_DELAYS, stallMs = STALL_MS, offlineMaxMs = OFFLINE_MAX_MS, offlinePollMs = OFFLINE_POLL_MS }) {
+  let hash = crypto.createHash('sha512');
   let got = 0;
-  try {
-    for await (const chunk of res.body) {
-      hash.update(chunk);
-      got += chunk.length;
-      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
-      if (total) onProgress?.(Math.round((got / total) * 100));
+  let total = 0;
+  let etag = '';
+  let resumed = false;
+  const start = () => { hash = crypto.createHash('sha512'); got = 0; total = 0; fs.writeFileSync(file, ''); };
+  start();
+
+  async function attempt() {
+    for (let again = 0; ; again++) {
+      const controller = new AbortController();
+      let timedOut = false;
+      let timer = null;
+      const arm = () => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; controller.abort(); }, stallMs); };
+      let fh = null;
+      try {
+        arm();
+        const headers = got ? { Range: `bytes=${got}-`, ...(etag ? { 'If-Range': etag } : {}) } : {};
+        // no-store: a 250 MB zip is never worth the HTTP cache, and a cached piece of an earlier try must not answer this one
+        const res = await net.fetch(url, { headers, signal: controller.signal, cache: 'no-store' });
+        if (res.status === 416 && got && !again) { start(); continue; } // what we hold doesn't fit the file: begin again
+        if (!res.ok || !res.body) throw Object.assign(new Error(`download failed (${res.status})`), { status: res.status });
+        const range = /^bytes (\d+)-\d+\/(\d+|\*)$/.exec(res.headers.get('content-range') || '');
+        if (got && res.status === 206 && range && Number(range[1]) === got) {
+          resumed = true;
+          total = range[2] !== '*' ? Number(range[2]) : 0;
+        } else if (res.status === 206) {
+          start(); // a piece that isn't the one asked for: drop what we hold and ask for the whole file
+          throw new Error('net::ERR_FAILED');
+        } else {
+          if (got) start(); // the server sent the whole file again: use it from the top
+          total = Number(res.headers.get('content-length')) || 0;
+        }
+        const tag = res.headers.get('etag') || '';
+        etag = tag && !tag.startsWith('W/') ? tag : '';
+        fh = await fs.promises.open(file, 'a');
+        for await (const chunk of res.body) {
+          arm();
+          await fh.write(chunk);
+          hash.update(chunk);
+          got += chunk.length;
+          if (total) onProgress?.(Math.min(100, Math.round((got / total) * 100)));
+        }
+        if (total && got !== total) throw new Error('net::ERR_CONTENT_LENGTH_MISMATCH');
+        return;
+      } catch (err) {
+        if (timedOut) throw Object.assign(new Error('net::ERR_TIMED_OUT'), { timedOut: true });
+        throw err;
+      } finally {
+        clearTimeout(timer);
+        await fh?.close().catch(() => {});
+      }
     }
-  } finally {
-    await new Promise((r) => out.end(r));
   }
-  return hash.digest('base64');
+
+  const online = () => (typeof net.online === 'function' ? net.online() : typeof net.online === 'boolean' ? net.online : true);
+  for (let tries = 1; ; tries++) {
+    if (!online()) {
+      // No network at all: wait for it to come back (this doesn't use up a try), up to a limit.
+      onRetry?.({ key: 'offline', attempt: tries, waitMs: offlinePollMs, offline: true });
+      for (let waited = 0; !online(); waited += offlinePollMs) {
+        if (waited >= offlineMaxMs) throw Object.assign(new Error('offline'), { fatal: true, reasonKey: 'offline' });
+        await sleep(offlinePollMs);
+      }
+    }
+    try {
+      await attempt();
+      return { hash: hash.digest('base64'), resumed, attempts: tries };
+    } catch (err) {
+      const c = classifyError(err);
+      if (!c.retry || tries > delays.length) throw Object.assign(err instanceof Error ? err : new Error(String(err)), { reasonKey: c.key, retried: tries > 1 });
+      onRetry?.({ key: c.key, attempt: tries, waitMs: delays[tries - 1], offline: false });
+      await sleep(delays[tries - 1]);
+    }
+  }
 }
 
 // Windows 10+ ships bsdtar (a Microsoft-signed system binary), which reads zips. macOS: `ditto`
@@ -272,12 +365,23 @@ async function prepareHelperAsync(execPath, base = os.tmpdir()) {
   return { exe, script, dir: tmp };
 }
 
+// What an update that swapped entry by entry (some program had files of the install open) could not delete while that
+// program still ran: the old install folder and its numbered siblings. Cleared at the next start, off the main thread.
+// (The swap itself is features/swap-helper.js.) Windows only; the old folder is never the running one.
+async function clearOld(execPath, platform = process.platform) {
+  if (platform === 'darwin') return;
+  const { old } = swapPaths(execPath, platform);
+  const dir = path.dirname(old);
+  const names = (await fs.promises.readdir(dir).catch(() => [])).filter((n) => n === path.basename(old) || n.startsWith(`${path.basename(old)}-`) || n.startsWith(`${path.basename(old)}.stale-`));
+  await Promise.all(names.map((n) => fs.promises.rm(path.join(dir, n), { recursive: true, force: true }).catch(() => {})));
+}
+
 // A prepared helper whose files are still there (a temp cleaner may have removed them since).
 const helperReady = (h) => Boolean(h) && fs.existsSync(h.exe) && fs.existsSync(h.script);
 
 // Fetch, verify and unpack into paths.staging. Returns what launchSwap needs. `platform` is
 // injectable for tests.
-async function stage({ net, asset, version, files, execPath, onProgress, platform = process.platform }) {
+async function stage({ net, asset, version, files, execPath, onProgress, onRetry, platform = process.platform, retry = {} }) {
   const paths = swapPaths(execPath, platform);
   const mac = platform === 'darwin';
   const want = expectedHash(files, asset.name);
@@ -285,8 +389,10 @@ async function stage({ net, asset, version, files, execPath, onProgress, platfor
   fs.rmSync(paths.staging, { recursive: true, force: true });
   fs.mkdirSync(paths.staging, { recursive: true });
   const zip = path.join(paths.staging, asset.name);
-  const got = await download({ net, url: asset.url, file: zip, onProgress });
-  if (!hashMatches(got, want)) throw new Error('the download failed its checksum');
+  let done = await download({ net, url: asset.url, file: zip, onProgress, onRetry, ...retry });
+  // A download put together from several pieces that doesn't match gets one clean try from the top.
+  if (!hashMatches(done.hash, want) && done.resumed) done = await download({ net, url: asset.url, file: zip, onProgress, onRetry, ...retry });
+  if (!hashMatches(done.hash, want)) throw Object.assign(new Error('the download failed its checksum'), { fatal: true, reasonKey: 'checksum' });
   const unpacked = path.join(paths.staging, 'files');
   await extract(zip, unpacked, platform);
   fs.rmSync(zip, { force: true });
@@ -324,4 +430,4 @@ function launchSwap({ staged, execPath, errFile, relaunch = true, platform = pro
   spawnFn(c.command, c.args, c.options).unref();
 }
 
-module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, prepareHelperAsync, helperReady, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap };
+module.exports = { swapPaths, macBundle, canReplace, canWriteDir, expectedHash, hashMatches, findRoot, findApp, macSwapScript, carryOver, prepareHelper, prepareHelperAsync, helperReady, clearOld, helperCommand, readMarker, readStaged, HELPER_FILES, stage, launchSwap, download, classifyError, RETRY_DELAYS };

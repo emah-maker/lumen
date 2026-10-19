@@ -12,6 +12,7 @@
 const policy = require('./policy');
 const treeLib = require('./tree');
 const keysLib = require('./keys');
+const liveLib = require('./live');
 
 const THUMB_MS = 1500;
 const POLL_MS = 200;
@@ -150,6 +151,7 @@ function createDesktop(deps = {}) {
       lastCursor: w?.cursor?.() || null, escSince: 0, timers: [], thumbBusy: false, thumbSig: '', resume: [], once: ctx.once, lastCall: now(),
     };
     const s = session;
+    if (deps.live) startLive(s);
     s.timers.push(setInterval(() => poll(s), POLL_MS), setInterval(() => thumb(s), THUMB_MS), setInterval(() => { if (now() - s.lastCall > IDLE_END_MS) endSession(s, 'completed'); }, 5000));
     for (const t of s.timers) t.unref?.();
     try { deps.shortcut?.register('Ctrl+Alt+Esc', () => stop('shortcut')); } catch { /* taken by another program: Esc held and the banner still work */ }
@@ -171,7 +173,11 @@ function createDesktop(deps = {}) {
     const s = session;
     s.lastCall = now();
     s.label = label;
+    const moved = !s.target || s.target.hwnd !== win.hwnd || s.target.pid !== win.pid;
     s.target = { hwnd: win.hwnd, pid: win.pid, hpid: win.hpid || 0, start: win.start || 0, app: win.app, name: win.name, title: win.title, exe: win.exe };
+    s.win = win; // (everything the policy looks at; the live picture asks it again with the window's current title)
+    if (moved) s.approvedTitle = null;
+    s.live?.kick({ fresh: moved });
     if (!s.card || s.card.app !== win.app) {
       if (s.card) cardEvent(s, 'completed');
       const id = `desk-${s.id}-${win.app}`;
@@ -186,13 +192,15 @@ function createDesktop(deps = {}) {
     return s;
   }
 
-  function endSession(s, status = 'completed') {
+  function endSession(s, status = 'completed', extra = {}) {
     if (!s || session !== s) return;
     if (status === 'stopped') { try { client?.abort?.('Stopped by the user.'); } catch { /* gone */ } }
     for (const t of s.timers) clearInterval(t);
+    s.live?.stop();
+    if (extra.blocked && s.card) s.card.thumb = null; // a window that turned into something blocked: its picture is not kept, the card shows the placeholder
     try { deps.shortcut?.unregister('Ctrl+Alt+Esc'); } catch { /* gone */ }
     try { deps.banner?.hide(); } catch { /* gone */ }
-    if (s.card) cardEvent(s, status);
+    if (s.card) cardEvent(s, status, extra.blocked ? { blocked: true } : {});
     s.stopped = status === 'stopped';
     for (const r of s.resume.splice(0)) r(false);
     session = null;
@@ -252,15 +260,36 @@ function createDesktop(deps = {}) {
     } catch { /* a failed check never stops the run */ }
   }
 
-  // The card's live picture: asked of the helper (async: the main process only handles the small answer), skipped while a call is running.
+  // The card's live picture (live.js): the helper makes the frames; this only supplies the checks and shows what comes back.
+  function startLive(s) {
+    const L = deps.live;
+    const winNow = () => ({ ...(s.win || s.target || {}), title: s.approvedTitle ?? s.target?.title ?? '' });
+    s.live = liveLib.createLive({
+      now, setTimeout: L.setTimeout, clearTimeout: L.clearTimeout, visible: () => L.visible?.() !== false, light: () => Boolean(L.light?.()), dpr: () => L.dpr?.() || 1,
+      canRun: () => session === s && !s.stopped && !s.paused && !s.busy && now() >= s.busyUntil && Boolean(s.target && s.card),
+      target: () => (s.target ? targetOf(s.target) : null),
+      allowed: () => { if (!s.target) return false; const d = policy.decide(winNow(), policyOpts({ once: s.once })); return d.status === 'allow'; },
+      judge: (title) => policy.decide({ ...winNow(), title }, policyOpts({ once: s.once })).status === 'allow',
+      approved: () => s.approvedTitle ?? null,
+      approve: (title) => { s.approvedTitle = title; if (s.target) s.target.title = title; },
+      frame: (args) => getClient().call('frame', args, { timeoutMs: 4000 }),
+      onFrame: (image, info) => { if (session !== s || s.stopped || !s.card) return; s.card.thumb = `data:image/jpeg;base64,${image}`; s.thumbSig = ''; cardEvent(s, s.paused ? 'paused' : 'working', { frame: true }); deps.hooks?.onFrame?.(info); }, // (frame: only the picture changed; the run's other bookkeeping and the card's text are left alone)
+      onEnd: (reason) => { if (session !== s || reason === 'failed') return; endSession(s, 'stopped', reason === 'gone' ? {} : { blocked: true }); },
+    });
+    s.live.start();
+  }
+
+  // The card's picture, one shot (the first one, and the one when live is off): asked of the helper (async: the main process only handles the small answer), skipped while a call is running.
   async function thumb(s) {
     if (session !== s || s.stopped || s.thumbBusy || s.busy || !s.target || !s.card) return;
+    if (s.live?.active()) return; // (the live picture keeps it fresh; this one stays for when live is off or gave up)
+    if (s.card.thumb && deps.live?.visible?.() === false) return; // the card is off screen: no capture
     s.thumbBusy = true;
     try {
       const fresh = (await apps(true)).find((w) => w.hwnd === s.target.hwnd);
       const dec = fresh ? policy.decide(fresh, policyOpts({ once: s.once })) : null;
       if (session !== s) return;
-      if (!fresh || fresh.pid !== s.target.pid || (fresh.start || 0) !== (s.target.start || 0) || !dec || dec.status === 'blocked' || dec.status === 'off') { endSession(s, 'stopped'); return; } // it changed into something else (or something blocked): no more pictures
+      if (!fresh || fresh.pid !== s.target.pid || (fresh.start || 0) !== (s.target.start || 0) || !dec || dec.status === 'blocked' || dec.status === 'off') { endSession(s, 'stopped', { blocked: true }); return; } // it changed into something else (or something blocked): no more pictures
       s.target.title = fresh.title;
       const r = await getClient().call('shot', { ...targetOf(fresh), w: 420, q: 55 }, { timeoutMs: 6000 });
       if (session !== s || !r.image) return;
@@ -286,7 +315,7 @@ function createDesktop(deps = {}) {
     try { return await fn(); } catch (err) {
       if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
       throw err;
-    } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s && !s.card?.thumb) setImmediate(() => thumb(s)); }
+    } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s) { if (s.live?.active()) s.live.kick(); else if (!s.card?.thumb) setImmediate(() => thumb(s)); } }
   }
 
   // ---- the actions
@@ -446,6 +475,8 @@ function createDesktop(deps = {}) {
     // tests
     _poll: () => session && poll(session),
     _thumb: () => (session ? thumb(session) : null),
+    liveStats: () => session?.live?.stats() || null,
+    _live: () => session?.live || null, // (tests)
   };
 }
 

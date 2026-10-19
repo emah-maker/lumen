@@ -500,8 +500,51 @@
   }
 
   function render(source) {
-    const { text, maths } = liftMath(String(source ?? ''));
+    const { text, maths } = liftMath(liftRawSvg(String(source ?? '')));
     return dropMath(renderText(text, maths), maths);
+  }
+
+  // A raw <svg …>…</svg> a model wrote in its reply (outside code) becomes a ```svg block of its own, so it takes the same road as a
+  // fenced one: drawn as a picture once it is complete, shown as code while it streams. Only an <svg> with attributes counts (prose
+  // that says "the <svg> element" is left alone), and one that has not closed yet counts only when it starts its line.
+  const svgScan = (line, depth) => {
+    const tok = /<svg\s+[\w:-]+\s*=|<\/svg\s*>/gi;
+    let open = -1;
+    let close = -1;
+    let m;
+    while ((m = tok.exec(line))) {
+      if (m[0][1] === '/') { if (depth > 0 && --depth === 0) { close = m.index + m[0].length; break; } continue; }
+      if (depth > 0) { depth++; continue; }
+      const before = line.slice(0, m.index);
+      if ((before.split('`').length - 1) % 2 === 0 && (!before.trim() || /<\/svg\s*>/i.test(line.slice(m.index)))) { depth = 1; open = m.index; }
+    }
+    return { depth, open, close };
+  };
+  function liftRawSvg(source) {
+    if (!/<svg\s/i.test(source)) return source;
+    const out = [];
+    let fenced = false;
+    let depth = 0;
+    for (const line of source.split('\n')) {
+      if (depth === 0 && /^```/.test(line)) { fenced = !fenced; out.push(line); continue; }
+      if (fenced) { out.push(line); continue; }
+      let rest = line;
+      for (;;) {
+        const r = svgScan(rest, depth);
+        if (depth === 0) {
+          if (r.open === -1) { out.push(rest); break; }
+          const before = rest.slice(0, r.open);
+          if (before.trim()) out.push(before);
+          out.push('```svg', r.close === -1 ? rest.slice(r.open) : rest.slice(r.open, r.close));
+        } else out.push(r.close === -1 ? rest : rest.slice(0, r.close));
+        depth = r.depth;
+        if (r.close === -1) break;
+        out.push('```');
+        rest = rest.slice(r.close);
+        if (!rest.trim()) break;
+      }
+    }
+    return out.join('\n');
   }
 
   const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
@@ -688,23 +731,25 @@
     let dollars = st ? st.dollars : 0; // $$ seen outside code (odd: inside a display formula)
     let brackets = st ? st.brackets : 0; // \[ minus \]
     let envs = st ? st.envs : 0; // \begin minus \end
+    let svg = st ? st.svg || 0 : 0; // inside a raw <svg> (liftRawSvg): its blank lines are not block ends
     let stable = st ? st.stable : 0;
     let pos = st ? st.pos : 0;
     while (pos < source.length) {
       const end = source.indexOf('\n', pos);
       if (end === -1) break; // an unfinished last line is never stable
       const line = source.slice(pos, end);
-      if (/^```/.test(line)) fenced = !fenced;
+      if (svg === 0 && /^```/.test(line)) fenced = !fenced;
       else if (!fenced) {
+        if (/<\/?svg/i.test(line)) for (let rest = line; ;) { const r = svgScan(rest, svg); svg = r.depth; if (r.close === -1) break; rest = rest.slice(r.close); }
         const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
         if (/^\s*\$\$|\$\$\s*$/.test(plain)) dollars += (plain.match(/\$\$/g) || []).length; // "($$)" mid-line is a price tier
         if (/^\s*\\\[|\\\]\s*$/.test(plain)) brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length; // (a \[ mid-line is a path or a citation)
         envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
-        if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
+        if (line.trim() === '' && pos > 0 && svg === 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
       }
       pos = end + 1;
     }
-    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, stable, head: source.slice(0, 64) });
+    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, svg, stable, head: source.slice(0, 64) });
     return stable;
   }
 
@@ -716,5 +761,5 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();

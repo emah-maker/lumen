@@ -806,6 +806,28 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const set = require('../scripts/bundle-renderer').bundle('settings');
   check('settings bundle: settings.html, settings.bundle.js and settings.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('settings.html') === set.html && committed('settings.bundle.js') === set.js && committed('settings.bundle.css') === set.css, '');
   check('settings bundle: no inline script (the CSP allows none)', !/<script>/.test(set.html), '');
+
+  // JS comments are stripped from the bundles: only comments go, never text that looks like one.
+  const { stripJsComments } = require('../scripts/bundle-renderer');
+  const acorn = require('acorn');
+  const BT = '`';
+  const strip = (c) => stripJsComments(c, 'case');
+  const ast = (c) => JSON.stringify(acorn.parse(c, { ecmaVersion: 'latest', sourceType: 'script' }), (k, v) => (k === 'start' || k === 'end' || k === 'raw' ? undefined : v));
+  const same = (c) => ast(strip(c)) === ast(c);
+  const eq = (label, input, want) => { const got = strip(input); check(`strip js: ${label}`, got === want, JSON.stringify(got)); };
+  eq('line and block comments go', 'var a = 1; // one\n/* two */ var b = 2;\n', 'var a = 1;\n var b = 2;\n');
+  eq('"//" and "/*" inside strings stay', "var u = 'http://x.test/a'; var v = \"/* not */\"; // c\n", "var u = 'http://x.test/a'; var v = \"/* not */\";\n");
+  eq('regex literals (/\\/\\*/, /[/*]/, /\\//) stay', 'var r = /\\/\\*/; var q = /[/*]/g; var p = /\\//; // c\n', 'var r = /\\/\\*/; var q = /[/*]/g; var p = /\\//;\n');
+  eq('a template literal keeps its text and a comment inside ${} goes', `var t = ${BT}a // b /* c */ \${x /* gone */ + 1} d${BT}; // c\n`, `var t = ${BT}a // b /* c */ \${x  + 1} d${BT};\n`);
+  eq('a template inside a ${} inside a template', `var t = ${BT}\${${BT}// \${1 /* x */}${BT}}${BT};`, `var t = ${BT}\${${BT}// \${1 }${BT}}${BT};`);
+  eq('"*/" inside a string after a block comment, and "*/" in a line comment', "/* a */ var s = '*/'; // x */ y\nvar z;\n", " var s = '*/';\nvar z;\n");
+  eq('a multi-line block comment keeps its line breaks (ASI, line numbers)', 'var a = 1 /* x\ny */ var b = 2\n', 'var a = 1\n var b = 2\n');
+  check('strip js: a/**/b keeps its tokens apart', strip('var a = 1 +/**/+ 2;').includes('+ +') && same('function f() { return/**/1; }'), strip('var a = 1 +/**/+ 2;'));
+  check('strip js: /*! and @license comments stay', strip('/*! keep */ var a; /** @license MIT */ var b; /* drop */\n').includes('/*! keep */') && strip('/** @license MIT */ var b;').includes('@license') && !strip('/* drop */ var c;').includes('drop'), '');
+  check('strip js: no trailing blanks where a comment ended a line', !/[ \t]\n/.test(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')), JSON.stringify(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')));
+  check('strip js: a tricky file parses to the same program', same(`var a = '//'; /* c */ var b = /\\/\\*/.test('x'); var c = a // d\n + b; var d = ${BT}\${'/*'}\${/* e */ 1}${BT};\nfunction g() { return // x\n}\n`), '');
+  const srcLen = out.scripts.reduce((n, f) => n + fs.readFileSync(path.join(dir, f), 'utf8').length, 0);
+  check('strip js: the ui bundle is well under its sources (no comments)', out.js.length < srcLen * 0.85, `${out.js.length} of ${srcLen}`);
 }
 
 // ---- launcher.js: the first process hands over to the launcher (macOS: with the links it was sent)
