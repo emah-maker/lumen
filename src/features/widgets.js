@@ -1355,7 +1355,7 @@ async function statusSearch(c, action, x, cached) {
   }
   if (action.do === 'elib' || action.do === 'edetail' || action.do === 'eplay') { // the Library (Web API, when connected): lists, opened lists, a row played in its list on Lumen's own player
     if (!apiConnected(c, x)) return { local: true };
-    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
+    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), pageRead: x.spotifyEngine?.readItem ? (kind, id) => x.spotifyEngine.readItem(kind, id) : undefined, onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
     const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, lx);
     Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {});
     return done;
