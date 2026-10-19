@@ -1,0 +1,36 @@
+{
+  "threeSessionsOverIdleMb": 2000,
+  "sixSessionsOverIdleMb": 3850,
+  "afterCloseOverIdleMb": 150,
+  "afterCloseExtraProcesses": 0,
+  "extraProcessesPerSession": 3,
+  "bridgeProcesses": 1,
+  "bridgeMb": 130,
+  "maxGapMs": 20,
+  "gapOver": {
+    "s1": 4,
+    "s3": 10,
+    "s6": 30,
+    "five": 20,
+    "tabs": 8
+  },
+  "p95Ms": {
+    "navigate": 1400,
+    "read_page": 60,
+    "screenshot": 250,
+    "find": 100,
+    "click": 800
+  },
+  "readPageBytes": 20000,
+  "screenshotBytes": 700000,
+  "fiveTabsOneSessionOverIdleMb": 2300,
+  "fiveTabsOneSessionProcesses": 17,
+  "fiveTabsOneSessionMaxWindows": 2,
+  "fiveTabsP95Ms": 800,
+  "fiveTabsWallMs": 16000,
+  "fiveTabsSavingMb": 500,
+  "unloadedTabs": 4,
+  "unloadFreedProcesses": 3,
+  "unloadFreedMb": 300,
+  "quietIdleGapMs": 12
+}
