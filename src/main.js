@@ -268,7 +268,7 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
-  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'page:reader', 'files:open',
+  'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
@@ -1867,6 +1867,24 @@ function placeDownloadsPanel(height) {
   const [width] = win.getContentSize();
   const x = Math.max(8, Math.min(downloadsAnchor.right - PANEL_WIDTH + 16, width - PANEL_WIDTH - 8));
   downloadsView.setBounds({ x: Math.round(x), y: Math.round(downloadsAnchor.bottom), width: PANEL_WIDTH, height: Math.round(Math.min(height, win.getContentSize()[1] - downloadsAnchor.bottom - 8)) });
+}
+// The panel's page made ahead (hidden), so the first click on the button does not wait for a renderer to start and load (about 100 ms). Asked for when the
+// pointer or the keyboard reaches the button (a click follows) and shortly after a download starts, and only then: a window that never downloads never has one.
+// A new view takes the focus while its first page loads (see createSuggestView), so a view that is not on screen gives the focus back to where it was.
+function warmDownloadsPanel() {
+  if (!win || win.isDestroyed() || (downloadsView && !downloadsView.webContents.isDestroyed())) return;
+  const had = [ui(), activeTab()?.webContents].find((wc) => wc && !wc.isDestroyed() && wc.isFocused());
+  createDownloadsView();
+  const view = downloadsView;
+  const giveBack = () => { if (!view.getVisible() && had && !had.isDestroyed()) had.focus(); };
+  view.webContents.on('focus', giveBack);
+  view.webContents.once('did-finish-load', () => { giveBack(); setTimeout(() => { if (!view.webContents.isDestroyed()) view.webContents.removeListener('focus', giveBack); }, 500); });
+}
+let downloadWarmTimer = null;
+function warmDownloadsPanelSoon() {
+  if (downloadWarmTimer || (downloadsView && !downloadsView.webContents.isDestroyed())) return;
+  downloadWarmTimer = setTimeout(() => { downloadWarmTimer = null; warmDownloadsPanel(); }, 1500);
+  downloadWarmTimer.unref?.();
 }
 function showDownloadsPanel(anchor) {
   if (!win || win.isDestroyed()) return;
@@ -5048,7 +5066,7 @@ const downloads = createDownloads({
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
-  onChange: () => managers?.pushDownloads(),
+  onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
   onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
   // A local .pptx opened in a tab (typed path, File > Open, drag and drop, a file: link) shows in the slide viewer instead of downloading;
@@ -9911,6 +9929,7 @@ ipcMain.on('downloads:menu', (_e, anchor) => {
   const n = (v) => (Number.isFinite(v) ? v : 0);
   showDownloadsPanel({ right: n(anchor?.right ?? anchor?.x), bottom: n(anchor?.bottom ?? anchor?.y) });
 });
+ipcMain.on('downloads:warm', warmDownloadsPanel);
 ipcMain.on('zoom:reset', () => zoomBy(activeTab()?.webContents, 0));
 function goFromAddress(text) {
   const wc = activeTab()?.webContents;
