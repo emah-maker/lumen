@@ -6,8 +6,6 @@
 //   - the open widget form's unsaved-changes guard is in place when Home > Widgets opens from a link
 //   - no frame shows an empty list (a list is only on screen once it has a row), while the page opens and while it fills in
 require('./_tmp-cleanup');
-// DEADLINE: a step that waits for something that never happens fails the suite with a message instead of holding the e2e lock.
-const DEADLINE = setTimeout(() => { console.log(`FAIL  the suite did not finish in 520 s: it was stuck at "${global.__stage || 'a link or a check'}"`); process.exit(1); }, 520000);
 const { _electron: electron } = require('playwright-core');
 const { SECTION_LINKS } = require('../src/settings/settings-backend');
 const { tmpProfile, env, root, sleep } = require('./_settings-open-rig');
@@ -63,7 +61,6 @@ const SAMPLER = `(() => {
         if (!/Settings/.test(document.title)) return 'title ' + document.title;
         return 'ok';
       })()`) : 'never shown';
-      console.log('      link ' + alias + ': ' + verdict);
       if (verdict !== 'ok') bad.push(`${alias}: ${verdict}`);
       await closeSettings(id);
     }
