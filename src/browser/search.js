@@ -53,9 +53,9 @@ function resolveInput(text, engineId) {
   return TLDS.has(tld) ? `https://${value}` : search();
 }
 
-// lumen://history, lumen://bookmarks, lumen://downloads and lumen://about (chrome:// too, as people type it) name Lumen's own
+// lumen://history, lumen://bookmarks, lumen://readinglist, lumen://downloads, lumen://tasks and lumen://about (chrome:// too, as people type it) name Lumen's own
 // pages, which aren't web addresses: the page to open, or null. (lumen://settings and lumen://chat have their own parsers.)
-const INTERNAL_PAGES = { history: 'history', bookmarks: 'bookmarks', downloads: 'downloads', about: 'updates', version: 'updates', update: 'updates', updates: 'updates' };
+const INTERNAL_PAGES = { history: 'history', bookmarks: 'bookmarks', downloads: 'downloads', readinglist: 'readinglist', tasks: 'tasks', about: 'updates', version: 'updates', update: 'updates', updates: 'updates' };
 function internalPage(text) {
   const m = /^(?:lumen|chrome):\/\/([a-z]+)\/?$/i.exec(String(text || '').trim());
   return (m && INTERNAL_PAGES[m[1].toLowerCase()]) || null;

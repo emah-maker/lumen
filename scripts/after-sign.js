@@ -1,4 +1,5 @@
-// electron-builder afterSign hook (macOS only): re-sign the app with Lumen's own certificate.
+// electron-builder afterSign hook. Windows: only the deferred Widevine VMP signing of an Azure-signed
+// build (see the end of this file). macOS: re-sign the app with Lumen's own certificate.
 //
 // Builds are ad-hoc signed, which gives every build a different code identity. macOS ties an
 // "Always Allow" on the "Lumen Safe Storage" Keychain item to that identity, so it asked again after
@@ -69,6 +70,13 @@ async function signWithLumenCert(appPath) {
 const isAdHocBuild = (identity) => identity === '-';
 
 exports.default = async (context) => {
+  if (context.electronPlatformName === 'win32') {
+    // Only runs once electron-builder has Authenticode-signed Lumen.exe (an Azure-signed build). VMP
+    // signing was deferred to here by scripts/after-pack.js; it writes .sig files and leaves the exe alone.
+    const pack = require('./after-pack');
+    if (pack.deferVmp(process.env)) pack.vmpSign(context.appOutDir);
+    return;
+  }
   if (context.electronPlatformName !== 'darwin') return;
   const identity = context.packager && context.packager.platformSpecificBuildOptions && context.packager.platformSpecificBuildOptions.identity;
   if (!isAdHocBuild(identity)) return console.log('after-sign: Developer ID build; leaving the Apple signature (and notarization) untouched.');

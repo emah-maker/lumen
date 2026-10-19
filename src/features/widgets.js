@@ -51,6 +51,7 @@ const FEED = lazy(() => require('./feed'));
 const WL = require('./widget-layout');
 const TV = lazy(() => require('./todoist-view'));
 const GH = lazy(() => require('./github-view'));
+const GHA = lazy(() => require('./github-auth')); // "Sign in with GitHub": device flow, the gh CLI or a pasted token; one stored token for the card and the connector
 const WX = lazy(() => require('./weather-view'));
 const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
@@ -92,6 +93,7 @@ const ENDPOINTS = {
   gmail: 'https://gmail.googleapis.com/gmail/v1',
   slack: 'https://slack.com/api', // Web API; sign-in is oauth.v2.access here and slack.com/oauth/v2/authorize (features/slack-view.js)
   github: 'https://api.github.com',
+  githubLogin: 'https://github.com', // the device flow's endpoints: /login/device/code and /login/oauth/access_token (features/github-auth.js)
   muse: 'https://api.meta.ai/v1', // Meta Model API (OpenAI-style), bearer key
   twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
@@ -216,6 +218,9 @@ function netError(err) {
   // (Not "check your internet": the connection is often fine and the trouble is on the way; the card keeps trying by itself.)
   return Object.assign(new Error('Couldn’t connect. Lumen keeps trying in the background.'), { transient: true, why: bits.slice(0, 80) });
 }
+// Network failures that happen before a request leaves the computer (the name didn't resolve, the connection was refused, no network):
+// a POST that failed this way certainly never reached the server.
+const NOT_SENT_NET = /ERR_NAME_NOT_RESOLVED|ERR_NAME_RESOLUTION_FAILED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH/;
 const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
 const FRESH_NET_MS = 5 * 60e3; // after the browser's session failed and a fresh one worked: the cards stay on the fresh one this long
 const FETCH_CAP_MS = 45e3; // a card's whole fetch (several requests) is given up on after this, so a press of Refresh always ends
@@ -765,8 +770,8 @@ const CONNECTORS = {
   },
 
   // Review requests, assigned issues and pull requests, and the unread notification count (settings in
-  // c.gh, features/github-view.js). The token (a fine-grained read-only personal access token) is the
-  // encrypted `github` secret and goes only to api.github.com, from this process.
+  // c.gh, features/github-view.js). The token is the encrypted `github` secret (features/github-auth.js: signed in with
+  // GitHub, taken from the gh CLI, or pasted) and goes only to api.github.com, from this process.
   github: {
     label: 'GitHub',
     ttl: 5 * 60e3,
@@ -775,9 +780,10 @@ const CONNECTORS = {
     async resolve(input, x) {
       const token = typeof input.token === 'string' ? input.token.trim() : '';
       if (token && !GH.looksLikeToken(token)) throw new Error('That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.');
-      if (!token && !x.secret()) throw new Error('Paste your GitHub token.');
+      const stored = GHA.unpack(x.secret());
+      if (!token && !stored) throw new Error('Paste your GitHub token, or sign in with GitHub first.');
       const gh = GH.cleanConfig(input.gh);
-      const data = await githubData(x, token || x.secret(), gh);
+      const data = await githubData(x, token || stored.token, gh);
       const parts = [];
       if (data.reviews) parts.push(data.reviews.error ? 'review requests unavailable' : `${data.reviews.total} review request${data.reviews.total === 1 ? '' : 's'}`);
       if (data.assigned) parts.push(data.assigned.error ? 'assigned items unavailable' : `${data.assigned.total} assigned`);
@@ -787,8 +793,28 @@ const CONNECTORS = {
     title: (c) => GH.nameFor(c.gh),
     summary: (c) => GH.summaryFor(c.gh),
     async fetch(c, x) {
-      if (!x.secret()) throw new Error('Add your GitHub token in Settings.');
-      return GH.shape(await githubData(x, x.secret(), c.gh), c.gh);
+      const auth = GHA.unpack(x.secret());
+      if (!auth) {
+        await x.github.checkCli().catch(() => {});
+        const can = x.github.status();
+        if (!can.device && !can.cli) throw new Error('Add your GitHub token in Settings.'); // nothing to sign in with here (no client id, no signed-in gh): the old setup card
+        return { reconnect: true, reason: 'signedout' };
+      }
+      try {
+        const data = GH.shape(await githubData(x, auth.token, c.gh), c.gh);
+        x.github.markGood();
+        return data;
+      } catch (err) {
+        // A revoked or expired token is a state the card shows ("Sign in again"), not a raw error.
+        if (err?.kind === 'auth') { x.github.markBad(); return { reconnect: true, reason: 'expired' }; }
+        throw err;
+      }
+    },
+    // The sign-in card: while a code waits it shows the code; the buttons come from what can sign in right now.
+    present(c, d, ctx) {
+      if (!d.reconnect) return d;
+      const s = ctx.github;
+      return { reconnect: true, reason: d.reason, device: s.device, cli: s.cli, pending: s.pending, last: s.last, copy: ctx.githubCopy };
     },
   },
 
@@ -1355,7 +1381,7 @@ async function statusSearch(c, action, x, cached) {
   }
   if (action.do === 'elib' || action.do === 'edetail' || action.do === 'eplay') { // the Library (Web API, when connected): lists, opened lists, a row played in its list on Lumen's own player
     if (!apiConnected(c, x)) return { local: true };
-    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
+    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), pageRead: x.spotifyEngine?.readItem ? (kind, id) => x.spotifyEngine.readItem(kind, id) : undefined, onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
     const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, lx);
     Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {});
     return done;
@@ -1648,6 +1674,7 @@ function createWidgets(deps) {
 
   // ---- network helpers handed to connectors (x) ----
   function spend(budget) {
+    if (budget === 'auth') return; // a sign-in's own requests (the device flow's polling): not the cards' budget, and not held back by it
     const t = now();
     if (budget === 'pictures') { // (not the API: neither its 429 pause nor its budget)
       while (recentPictures.length && t - recentPictures[0] > PICTURE_RATE.window) recentPictures.shift();
@@ -1663,9 +1690,11 @@ function createWidgets(deps) {
     bucket.push(t);
   }
   let freshUntil = 0; // while now() < this, the cards' requests go through deps.freshFetch (see request())
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget } = {}) {
-    if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
-    spend(budget);
+  // retry: false (a Gmail draft, which must never be made twice): no second try through a fresh session after a failed send.
+  // An error thrown before anything was sent (not https, over the rate budget) carries notSent: true.
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget, retry = true } = {}) {
+    if (!/^https:\/\//.test(url)) throw Object.assign(new Error('Only https addresses are allowed.'), { notSent: true });
+    try { spend(budget); } catch (err) { err.notSent = true; throw err; }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
@@ -1679,7 +1708,7 @@ function createWidgets(deps) {
       res = await (viaFresh ? deps.freshFetch(url, init, { renew: false }) : deps.fetch(url, init));
     } catch (err) {
       const why = netError(err);
-      if (!deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
+      if (!retry || !deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
       try {
         res = await deps.freshFetch(url, init, { renew: viaFresh }); // already on it and it failed too: a new one
         freshUntil = now() + FRESH_NET_MS;
@@ -1690,7 +1719,7 @@ function createWidgets(deps) {
     }
     try {
       if (res.url && !/^https:\/\//.test(res.url)) throw new Error('The address redirected away from https.');
-      if (res.status === 429) {
+      if (res.status === 429 && budget !== 'auth') {
         const wait = Number(res.headers.get('retry-after'));
         backoffUntil = now() + Math.min(120e3, Math.max(5e3, Number.isFinite(wait) && wait > 0 ? wait * 1000 : 60e3));
       }
@@ -1828,6 +1857,7 @@ function createWidgets(deps) {
       keep(key, value) { lastGood.set(key, value); if (lastGood.size > 40) lastGood.delete(lastGood.keys().next().value); },
       kept: (key) => lastGood.get(key) || null,
       get slack() { return (this._slack ||= slackHelpers(x)); },
+      get github() { return gh(); }, // the GitHub sign-in (features/github-auth.js)
       projects: () => todoistProjects(x, x.secret() || ''),
       // The user's TradingView watchlists, { signedIn, lists }: one read a minute at most, shared by every card.
       tvLists: () => memo('tv:lists', 60e3, async () => {
@@ -2034,7 +2064,7 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()), routines: () => RC.shape(deps.routines ? deps.routines() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()), routines: () => RC.shape(deps.routines ? deps.routines() : {}, now()), get github() { return gh().status(); }, get githubCopy() { return githubCopy(); } });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
@@ -2094,6 +2124,7 @@ function createWidgets(deps) {
       Object.assign(widget, WL.firstFit(widgets.map(WL.rectOf), size), size);
     }
     if (secret && CONNECTORS[widget.type].secret) deps.setSecret(CONNECTORS[widget.type].secret, secret);
+    if (secret && widget.type === 'github') { gh().markGood(); deps.onGithubChange?.(); } // a pasted token is the connector's too
     if (widget.type === 'weather') rememberPlaces(widget.wx.places);
     const next = id ? widgets.map((w) => (w.id === id ? widget : w)) : [...widgets, widget];
     save(next);
@@ -2111,7 +2142,7 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) {
+    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret) && !(secret === 'github' && deps.githubInUse?.())) { // (the GitHub connector shares the sign-in: removing the card keeps it)
       if (secret === 'gmail') revokeGoogle(OA.decodeCreds(deps.getSecret(secret)));
       deps.setSecret(secret, null);
       spotifyTokens.delete(secret);
@@ -2204,8 +2235,11 @@ function createWidgets(deps) {
   const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
   // input: { clientId, clientSecret } from Settings' Advanced fields; both empty means Lumen's built-in
   // client ("Sign in with Google"). An own Client ID always wins over the built-in one.
-  async function gmailConnect(input) {
-    const { clientId, clientSecret } = gmailClient(input, OA.decodeCreds(deps.getSecret('gmail')), googleClient());
+  // compose: the connector's "Allow drafts" (gmailAllowDrafts): the same sign-in, asking Google to add gmail.compose.
+  async function gmailConnect(input, { compose = false } = {}) {
+    const before = OA.decodeCreds(deps.getSecret('gmail'));
+    const { clientId, clientSecret } = gmailClient(input, before, googleClient());
+    const ask = GV.signInParams({ compose, email: before?.refresh ? before.email : '' });
     if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
     // Checked before the consent page opens: finding out after the user has already said yes loses the sign-in.
     if (deps.canKeepSecrets && !deps.canKeepSecrets()) throw new Error('This computer has no secure place for Lumen to keep the sign-in (the system keyring is off), so Gmail can’t be connected.');
@@ -2214,7 +2248,7 @@ function createWidgets(deps) {
     if (signIn) signIn.userCancelled = true; // (replaced: no need to come back for it)
     signIn?.cancel(); // one sign-in at a time
     const flow = await OA.beginSignIn({
-      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
+      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: ask.scope, extra: ask.extra, post: formPost, now, timeoutMs: deps.signInMs,
       openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
       messages: { title: 'Lumen', done: tt('gmail.signin.done', 'You can close this tab and go back to Lumen, which finishes connecting Gmail.'), denied: tt('gmail.signin.denied', 'Gmail was not connected. You can close this tab.') },
     });
@@ -2237,11 +2271,23 @@ function createWidgets(deps) {
         const res = await deps.fetch(`${deps.endpoints?.().gmail || ENDPOINTS.gmail}/users/me/profile`, { headers: { Authorization: `Bearer ${t.access}` } });
         if (res.ok) email = String((await res.json())?.emailAddress || '').slice(0, 320);
       } catch { /* shown as "a Google account" */ }
-      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email }));
+      // Allow drafts is for the account already signed in. Google's page lets the user pick another one: then the sign-in Lumen had
+      // stays as it was (not replaced, not revoked), and the new grant, for a different account, is given back to Google. When Google
+      // didn't say which account it was, nothing is kept or revoked either (revoking a grant the same account shares would end both).
+      if (compose && before?.refresh && before.email) {
+        const same = email && email.toLowerCase() === before.email.toLowerCase();
+        if (!same) {
+          if (email) revokeGoogle({ refresh: t.refresh });
+          throw new Error(email ? `Choose ${before.email} to allow drafts for it.` : `Lumen couldn’t check which account Google used. Press Allow drafts again and choose ${before.email}.`);
+        }
+      }
+      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email, scope: t.scope })); // (scope: what Google says the token has)
       // Signed in again as someone else (or with another client): the grant it replaces is given back to Google. The
       // same account and client share one grant, so revoking its old token would end the new sign-in too.
       if (old?.refresh && old.refresh !== t.refresh && (old.clientId !== clientId || (old.email && email && old.email.toLowerCase() !== email.toLowerCase()))) revokeGoogle(old);
       staleGmail();
+      // Google's consent page lets the user untick a permission: then the sign-in worked, but drafts still can't be made.
+      if (compose && !GV.hasScope(t.scope, GV.COMPOSE_SCOPE)) throw new Error('Google didn’t give Lumen permission to make drafts. Press Allow drafts again and leave the box for making drafts ticked.');
       return { message: email ? `Gmail is connected as ${email}.` : 'Gmail is connected.' };
     } finally {
       if (signIn === flow) signIn = null;
@@ -2335,7 +2381,7 @@ function createWidgets(deps) {
   async function gmailDisconnect() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
     signIn?.cancel();
-    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '', email: '' }));
+    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '', email: '', scope: '' }));
     staleGmail();
     lastRevoke = await revokeGoogle(creds);
     return true;
@@ -2423,6 +2469,65 @@ function createWidgets(deps) {
     deps.onUpdate?.();
     return true;
   }
+  // ---- GitHub: sign in (features/github-auth.js) ----
+  // One stored token (the `github` secret) serves the card and the connector. Signing in, out or switching account redraws the
+  // cards at once and tells main.js, which sets the connector up (or takes it down) to match (deps.onGithubChange).
+  let ghAuth = null;
+  const gh = () => (ghAuth ||= GHA.create({
+    post: (url, body) => request(url, { method: 'POST', max: 65536, body, budget: 'auth', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } }),
+    get: (url, token) => request(url, { max: 65536, budget: 'auth', headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' } }),
+    getSecret: () => deps.getSecret('github'),
+    setSecret: (v) => deps.setSecret('github', v),
+    canKeepSecrets: deps.canKeepSecrets,
+    loginBase: () => deps.endpoints?.().githubLogin || ENDPOINTS.githubLogin,
+    apiBase: () => deps.endpoints?.().github || ENDPOINTS.github,
+    clientId: deps.githubClientId,
+    getPrivate: () => deps.readSettings().githubPrivateRepos === true,
+    setPrivate: (v) => { if ((deps.readSettings().githubPrivateRepos === true) !== v) deps.writeSettings({ ...deps.readSettings(), githubPrivateRepos: v }); },
+    openUrl: (url) => deps.openGithubSignIn?.(url),
+    scale: Number(deps.githubPollScale?.()) || 1,
+    now,
+    onChange: (what) => githubChanged(what),
+  }));
+  const githubCopy = () => ({
+    signedout: tt('github.card.signedout', 'Sign in to GitHub to see your review requests, assigned issues and notifications.'),
+    expired: tt('github.card.expired', 'GitHub signed Lumen out (the sign-in was revoked or ran out).'),
+    signin: tt('github.card.signin', 'Sign in with GitHub'),
+    again: tt('github.card.again', 'Sign in again'),
+    cli: tt('github.card.cli', 'Use GitHub CLI sign-in'),
+    settings: tt('github.card.settings', 'Other ways to sign in'),
+    waiting: tt('github.card.waiting', 'Enter this code on github.com/login/device, in the tab Lumen opened. This card fills in when you approve it.'),
+    open: tt('github.card.open', 'Open github.com/login/device'),
+  });
+  // Redraw everything that shows the sign-in; with a token now, the cards fill in right away.
+  function githubChanged(what) {
+    forget('gh:');
+    deps.onUpdate?.();
+    if (what && 'signedIn' in what) {
+      if (!what.signedIn) { for (const w of list()) if (w.type === 'github') cache.delete(w.id); }
+      else Promise.all(list().filter((w) => w.type === 'github').map((w) => refresh(w, { force: true, user: true }).catch(() => {}))).then(() => deps.onUpdate?.());
+      try { deps.onGithubChange?.(what); } catch { /* the connector looks again next time */ }
+    }
+  }
+  const githubStatus = () => gh().status();
+  // The card's "Sign in with GitHub" (do=signin): the device flow with the remembered choice about private repositories. The
+  // code appears on the card (present) and the sign-in page opens in a Lumen tab. Without a client id it opens Settings instead.
+  async function githubSignInFromPage(w) {
+    if (!gh().status().device) { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
+    try { await gh().start({}); } catch (err) { githubFailed(err); }
+    return true;
+  }
+  async function githubCliFromPage() {
+    try { await gh().useCli(); } catch (err) { githubFailed(err); }
+    return true;
+  }
+  // A sign-in that could not even start (no network, device flow off): the card says why, under its buttons.
+  function githubFailed(err) { gh().fail(String(err?.message || err)); }
+  // Settings' calls: start returns { code, url } at once (the rest happens in the background and arrives as widgets:changed).
+  async function githubStart(opts) { const r = await gh().start({ privateRepos: opts && typeof opts === 'object' ? opts.privateRepos === true : undefined }); return { ...r, state: state() }; }
+  async function githubCli() { await gh().useCli(); return state(); }
+  function githubCancel() { gh().cancel(); return state(); }
+  function githubSignOut() { gh().signOut(); return state(); }
   // ---- Slack: sign-in (Settings calls these; settings-backend.js opens the approval page) ----
   const slackReset = () => { slackBad = false; slackRefreshing = null; forget('slack:'); for (const w of list()) if (w.type === 'slack') cache.delete(w.id); deps.onUpdate?.(); };
   // For Settings: what is stored, never its values (the client id is not secret, so it prefills the form).
@@ -2580,6 +2685,7 @@ function createWidgets(deps) {
       gmailGoogle: { signedIn: googleFeed.signedIn, email: googleFeed.email, available: Boolean(deps.googleMail) }, // Settings: is the Google sign-in in Lumen readable, and as whom (the default mode)
       gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
+      github: githubStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
       feedPresets: FEED.PRESETS.map(({ id, name }) => ({ id, name })),
       recipeExamples: CW.EXAMPLES,
@@ -2602,7 +2708,7 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|elib|edetail|eplay|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|elib|edetail|eplay|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open|ghcli)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
     if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
     if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
       action.routine = params.get('id');
@@ -2898,7 +3004,8 @@ function createWidgets(deps) {
     if (action.do === 'consent') return setLocationConsent(action.arg);
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
-    if (action.do === 'signin') return gmailSignInFromPage(w);
+    if (action.do === 'signin') return w.type === 'github' ? githubSignInFromPage(w) : gmailSignInFromPage(w);
+    if (action.do === 'ghcli') return w.type === 'github' ? githubCliFromPage() : false;
     if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
       // The players load in the normal session: a dead socket or stale DNS answer from a network glitch would fail the reload too.
       if (w.type === 'applemusic' || w.type === 'spotify') await freshNetwork();
@@ -3014,12 +3121,63 @@ function createWidgets(deps) {
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
   // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
   // connected (and as whom, and whether one click can start it), and one read-only Gmail API request with its token. Nothing else leaves here.
+  // compose: the token has Google's gmail.compose permission (the user pressed Allow drafts), so the connector may make a draft.
   function gmailAuthState() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
-    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
+    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick, compose: Boolean(creds?.refresh) && GV.hasScope(creds.scope, GV.COMPOSE_SCOPE) };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  // "Allow drafts" (Settings → You and AI → Connectors → Gmail): the signed-in account's sign-in again, with the same client,
+  // asking Google to add gmail.compose to what it already allows. Only ever started by that button.
+  async function gmailAllowDrafts() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    if (!creds?.refresh) throw new Error('Sign in to Gmail with Google first (Connect on the Gmail card).');
+    return gmailConnect({ clientId: creds.clientId }, { compose: true });
+  }
+  // One draft: POST /users/me/drafts with { message: { raw, threadId? } }, with the token, and nothing else. The path is checked by
+  // features/gmail-drafts.js composePath (no send, ever). A token without gmail.compose is told "Allow drafts first" (kind 'scope').
+  async function gmailCompose(body) {
+    const GD = require('./gmail-drafts');
+    const path = GD.composePath(GD.DRAFTS_PATH);
+    if (!gmailAuthState().compose) throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
+    const x = helpers('gmail');
+    const session = sessionFor('gmail');
+    // Errors that certainly made nothing carry nothingMade: true (not sent, or Google's 400, 401, 403 or 429). Every other failure after
+    // the request went out may have made the draft (kind 'maybe').
+    const certain = (err) => Object.assign(err, { nothingMade: true });
+    const maybe = () => new OA.OAuthError('The draft may have been made; check Drafts before trying again.', { kind: 'maybe' });
+    for (let attempt = 0; ; attempt++) {
+      let access;
+      try { access = await session.access({ force: attempt > 0 }); } catch (err) { throw certain(err); } // (no token: nothing was sent)
+      let res;
+      try {
+        // Sent once: no retry through a fresh session (retry: false). Only a failure that certainly happened before the request reached
+        // Google (not sent at all, no such host, connection refused, offline) says nothing was made; any other (a timeout, a connection
+        // dropped after sending, an unreadable answer) may have made the draft, and says so (kind 'maybe').
+        res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search', retry: false }); // (one the user allowed: the search budget, not the cards' polling one)
+      } catch (err) {
+        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw certain(new OA.OAuthError(`Couldn’t reach Gmail, so no draft was made. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' }));
+        throw maybe();
+      }
+      // (A 401 is Google's answer that the token was refused: nothing was made, so the one try with a new token is safe.)
+      if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
+      if (res.ok) {
+        try { return JSON.parse(res.body); } catch { throw maybe(); } // (Google said yes, but what it made can't be read)
+      }
+      if (![400, 401, 403, 429].includes(res.status)) throw maybe(); // a 5xx, a 408 or anything else: it may have gone through
+      let reason = '';
+      try { const b = JSON.parse(res.body); reason = String(b?.error?.errors?.[0]?.reason || b?.error?.details?.[0]?.reason || b?.error?.status || ''); } catch { /* not JSON */ }
+      if (res.status === 403 && /insufficient|scope/i.test(reason)) { // the permission was taken back at Google: Settings offers Allow drafts again
+        const c = OA.decodeCreds(deps.getSecret('gmail'));
+        if (c?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...c, scope: String(c.scope || '').split(/\s+/).filter((sc) => sc !== GV.COMPOSE_SCOPE).join(' ') }));
+        throw certain(new OA.OAuthError('Allow drafts first.', { kind: 'scope' }));
+      }
+      if (res.status === 400) throw certain(new Error(`Gmail didn’t accept the draft (${str(reason, 60) || 'bad request'}).`));
+      const e = GV.apiError(res.status, res.body);
+      throw certain(new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' }));
+    }
+  }
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

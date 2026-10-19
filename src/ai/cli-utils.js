@@ -72,7 +72,7 @@ function spawnSync(file, args, options) { return real().spawnSync(file, args || 
 // A hidden test copy of Lumen (electron . with CLAUDE_BROWSER_TEST) must not run the user's real claude / codex / grok / agy / ant for its
 // status and version checks: agy self-updates when run, and a console it makes can surface on the user's screen. Only a program inside the
 // test's own temp folder (a stub) runs; LUMEN_TEST_REAL_CLIS=1 lets a manual suite that needs the real CLI through.
-const REAL_CLI = /^(claude|codex|grok|agy|ant|antigravity)$/i;
+const REAL_CLI = /^(claude|codex|grok|agy|ant|antigravity|gh)$/i;
 function testBlocksRealCli(file) {
   if (!process.versions.electron || !process.defaultApp || process.env.CLAUDE_BROWSER_TEST !== '1' || process.env.LUMEN_TEST_REAL_CLIS === '1') return false;
   const path = require('path');

@@ -765,6 +765,125 @@ module.exports = async function spotifyDomUnits(check) {
   check('engine: when the page shows the player again (signed in in that window) the sign-in window closes by itself', e.signInOpen() === false && (await e.read()).signedIn === true, '');
   e.onMessage(stateMsg({ signedOut: null }));
   check('engine: an unknown (null) says nothing: the cookie decides again', (await e.read()).signedIn === true, '');
+  {
+  // ================= a playlist's own page, read in full (kind 'page': the card's Library, for a playlist the Web API will not give) =================
+  // The page draws only the rows in view, so the list is scrolled and the rows seen are kept. The rows are the saved playlist page's tracklist rows (test/fixtures/spotify/playlist.json),
+  // made again for other songs; the scrolling list is a stand-in that draws a window of rows for the scroll position (the real list is virtualised the same way).
+  const plRowSrc = (() => { let found = null; const walk = (n) => { if (typeof n === 'string' || found) return; if (n.a && n.a['data-testid'] === 'tracklist-row') { found = n; return; } (n.c || []).forEach(walk); }; walk(TREES.playlist); return found; })();
+  const plRow = (n, extra = {}) => {
+    let s = JSON.stringify(plRowSrc);
+    s = s.replace(/2hxV5yGCr1nIp5bQBxXL13/g, `TRK${String(n).padStart(4, '0')}`).replace(/"Maps"/g, `"Song ${n}"`).replace(/Play Maps by/g, `Play Song ${n} by`).replace(/ab67616d000048515da288bfe0c2611d76bb11b8/g, `art${n}`);
+    const row = JSON.parse(s);
+    row.a = { ...row.a, 'aria-rowindex': String(n + 2), ...extra };
+    return row;
+  };
+  const PL = 'PLAYLISTTESTID0000001';
+  const ROW_H = 56, VIEW_H = 560;
+  // total rows, `window`: how many rows the list draws around the scroll position; scroll.h: the content height (set apart to make a list that never ends)
+  const plTree = (total, top = 0, { title = 'Best of Fakemink', header = true, window = 14, h = total * ROW_H, words = '' } = {}) => {
+    const first = Math.max(0, Math.floor(top / ROW_H) - 2);
+    const rows = Array.from({ length: Math.max(0, Math.min(window, total - first)) }, (_, i) => plRow(first + i));
+    return { t: 'body', c: [
+      { t: 'main', c: [...(header ? [{ t: 'h1', a: { 'data-testid': 'entityTitle' }, c: [title] }] : []), ...(words ? [{ t: 'p', c: [words] }] : []), { t: 'div', a: { 'data-overlayscrollbars-viewport': 'scrollbarHidden' }, scroll: { h, ch: VIEW_H }, c: [{ t: 'div', a: { 'data-testid': 'playlist-tracklist' }, c: rows }] }] },
+      { t: 'footer', c: [{ t: 'button', a: { 'data-testid': 'control-button-playpause', 'aria-label': 'Play' }, c: [] }] },
+    ] };
+  };
+  const plPage = (total, o = {}) => {
+    const pg = page({ tree: { t: 'body', c: [{ t: 'main', c: ['Home'] }, { t: 'footer', c: [{ t: 'button', a: { 'data-testid': 'control-button-playpause', 'aria-label': 'Play' }, c: [] }] }] }, route: (p, h) => { if (p === `/playlist/${PL}`) h.after(o.arriveMs ?? 400, plTree(total, 0, o)); } });
+    pg.log.onScroll = (el, v) => { if (o.draw !== false) pg.swap(plTree(total, v, o)); };
+    return pg;
+  };
+  const pageAnswer = (pg) => pg.lists().find((l) => l.kind === 'page');
+  const readIt = (pg, rid = 31, ms = 40000) => { pg.advance(1000); pg.send({ cmd: 'list', kind: 'page', path: `/playlist/${PL}`, rid }); for (let i = 0; i < ms / 500 && !pageAnswer(pg); i++) pg.advance(500); return pageAnswer(pg); };
+
+  const big = plPage(76);
+  const bigAns = readIt(big);
+  check('dom (playlist page): 76 songs in a list that draws 14 rows at a time are all read, in order, each once, by scrolling it (ids from the rows\' own links)', bigAns && bigAns.ok === true && bigAns.items.length === 76 && bigAns.items.every((it, i) => it.id === `TRK${String(i).padStart(4, '0')}` && it.title === `Song ${i}`) && bigAns.partial === false && bigAns.title === 'Best of Fakemink', JSON.stringify([bigAns && bigAns.ok, bigAns && bigAns.items.length, bigAns && bigAns.items.slice(0, 2), bigAns && bigAns.why, bigAns && bigAns.detail]));
+  check('dom (playlist page): the page was opened by its own router (no reload) and only that one route', big.pushed.length === 1 && big.pushed[0] === `/playlist/${PL}` && big.errors().length === 0, JSON.stringify(big.pushed));
+  const bigMsg = SPB.parseMessage(JSON.stringify(bigAns));
+  check('dom (playlist page): the answer passes the message check with all 76 songs, titles, artists, lengths and pictures', bigMsg && bigMsg.kind === 'page' && bigMsg.ok === true && bigMsg.items.length === 76 && bigMsg.items[5].sub === 'Yeah Yeah Yeahs' && bigMsg.items[5].ms === 219000 && /^https:\/\/i\.scdn\.co\//.test(bigMsg.items[5].art) && bigMsg.title === 'Best of Fakemink', JSON.stringify(bigMsg && bigMsg.items[5]));
+  const slowDraw = plPage(76, { arriveMs: 4000 });
+  const slowAns = readIt(slowDraw);
+  check('dom (playlist page): a page that takes four seconds to show its first rows is waited for (no short timeout)', slowAns && slowAns.ok === true && slowAns.items.length === 76, JSON.stringify([slowAns && slowAns.ok, slowAns && slowAns.items && slowAns.items.length, slowAns && slowAns.why]));
+  const endless = plPage(1e6, { h: 1e9, draw: false });
+  const endlessAns = readIt(endless, 32, 45000);
+  check('dom (playlist page): a list that never draws more rows (the end cannot be scrolled to) is cut at the deadline with the rows read so far, marked partial (an answer, not a failure)', endlessAns && endlessAns.ok === true && endlessAns.partial === true && endlessAns.items.length === 14 && endlessAns.items[0].id === 'TRK0000', JSON.stringify([endlessAns && endlessAns.ok, endlessAns && endlessAns.partial, endlessAns && endlessAns.items && endlessAns.items.length]));
+  const huge = plPage(900);
+  const hugeAns = readIt(huge, 33, 60000);
+  check('dom (playlist page): at most 400 songs are read of a very long list (the whole answer must fit one message), and the answer is marked partial or full of 400', hugeAns && hugeAns.ok === true && hugeAns.items.length === 400 && JSON.stringify(hugeAns).length < SPB.MAX_MESSAGE && SPB.parseMessage(JSON.stringify(hugeAns)).items.length === 400, JSON.stringify([hugeAns && hugeAns.items && hugeAns.items.length, hugeAns && JSON.stringify(hugeAns).length]));
+  // duplicates: the same song twice in a playlist stays twice (rows have their own place)
+  const dupTree = () => { const t = plTree(3, 0); const rows = t.c[0].c[1].c[0].c; rows[1] = plRow(0, { 'aria-rowindex': '9' }); return t; };
+  const dup = page({ tree: { t: 'body', c: [{ t: 'main', c: ['Home'] }, { t: 'footer', c: [{ t: 'button', a: { 'data-testid': 'control-button-playpause', 'aria-label': 'Play' }, c: [] }] }] }, route: (p, h) => { if (p === `/playlist/${PL}`) h.after(300, dupTree()); } });
+  const dupAns = readIt(dup, 34);
+  check('dom (playlist page): the same song listed twice is read twice (rows are told apart by their own place on the page)', dupAns && dupAns.ok === true && dupAns.items.map((i) => i.id).join() === 'TRK0000,TRK0000,TRK0002', JSON.stringify(dupAns && dupAns.items.map((i) => i.id)));
+
+  // failures, each with its own cause
+  const noRows = plPage(0, { header: true });
+  const noRowsAns = readIt(noRows, 35);
+  check('dom (playlist page): the header there but no rows ever (and no empty-playlist words): why "page" (Spotify changed its page), with what the page showed for the log', noRowsAns && noRowsAns.ok === false && noRowsAns.why === 'page' && /header/.test(noRowsAns.detail) && /0 song rows/.test(noRowsAns.detail) && SPB.parseMessage(JSON.stringify(noRowsAns)).why === 'page', JSON.stringify(noRowsAns));
+  const nothing = plPage(0, { header: false });
+  const nothingAns = readIt(nothing, 36);
+  check('dom (playlist page): nothing shown at all in 30 s: why "timeout" (too slow)', nothingAns && nothingAns.ok === false && nothingAns.why === 'timeout' && /no header/.test(nothingAns.detail), JSON.stringify(nothingAns));
+  const emptyList = plPage(0, { header: true, words: 'Let’s find something for your playlist' });
+  const emptyAns = readIt(emptyList, 37);
+  check('dom (playlist page): a playlist that says "find something for your playlist" is an ok, empty list (not a failure)', emptyAns && emptyAns.ok === true && emptyAns.items.length === 0, JSON.stringify(emptyAns));
+  const gone = plPage(0, { header: false, words: 'Couldn’t find that playlist' });
+  const goneAns = readIt(gone, 38);
+  check('dom (playlist page): "Couldn\'t find that playlist": why "missing"', goneAns && goneAns.ok === false && goneAns.why === 'missing' && SPB.parseMessage(JSON.stringify(goneAns)).why === 'missing', JSON.stringify(goneAns));
+  const outPg = page({ tree: TREES.home });
+  outPg.advance(3000);
+  outPg.send({ cmd: 'list', kind: 'page', path: `/playlist/${PL}`, rid: 39 });
+  const outAns = pageAnswer(outPg);
+  check('dom (playlist page): signed out (the page shows its Log in button): why "signedOut" at once, told apart from a changed page', outAns && outAns.ok === false && outAns.why === 'signedOut' && outPg.pushed.length === 0, JSON.stringify(outAns));
+  const noPl = page({ tree: { t: 'body', c: [{ t: 'main', c: ['Something else'] }] } });
+  noPl.advance(1000);
+  noPl.send({ cmd: 'list', kind: 'page', path: `/playlist/${PL}`, rid: 40 });
+  check('dom (playlist page): a page without the player\'s controls: why "noPlayer" at once (Spotify changed its page), nothing opened', pageAnswer(noPl) && pageAnswer(noPl).why === 'noPlayer' && noPl.pushed.length === 0, JSON.stringify(pageAnswer(noPl)));
+  // the commands: only a playlist or album page, with a safe id
+  const cc2 = SPB.cleanCommand;
+  check('bridge commands: kind "page" takes only /playlist/<id> or /album/<id> (an id of the safe alphabet); anything else is refused', cc2({ cmd: 'list', kind: 'page', path: `/playlist/${PL}`, rid: 5 }) === JSON.stringify({ cmd: 'list', kind: 'page', path: `/playlist/${PL}`, rid: 5 }) && cc2({ cmd: 'list', kind: 'page', path: '/album/AL1', rid: 1 }) !== null && [{ path: '/artist/x' }, { path: '/playlist/' }, { path: '/playlist/a/b' }, { path: '/playlist/a?x=1' }, { path: 'https://evil.example/playlist/a' }, { path: '//evil.example' }, { path: '/playlist/a b' }, { path: 5 }, {}].every((c) => cc2({ cmd: 'list', kind: 'page', rid: 1, ...c }) === null), '');
+  check('bridge messages: a page answer keeps up to 400 songs (and no more), its title, partial and why (missing is a cause the card knows)', SPB.parseMessage(JSON.stringify({ t: 'list', kind: 'page', rid: 1, ok: true, title: 'T', partial: true, items: Array.from({ length: 450 }, (_, i) => ({ id: `S${i}`, kind: 'song', title: `s${i}` })) })).items.length === 400 && SPB.parseMessage(JSON.stringify({ t: 'list', kind: 'page', rid: 1, ok: true, title: 'T', partial: true, items: [] })).partial === true && SPB.parseMessage(JSON.stringify({ t: 'list', kind: 'page', rid: 1, ok: false, why: 'missing', items: [] })).why === 'missing' && SPB.parseMessage(JSON.stringify({ t: 'list', kind: 'page', rid: 1, ok: false, why: 'nonsense', items: [] })).why === 'page', '');
+
+  // ---- the engine asks the page and hands the answer to the card's call ----
+  {
+    const pl = fakePlayer();
+    const eng = createEngine({ player: pl, now: () => 1e12, fetchBytes: async () => null, resizeArt: (b) => b, hasCard: () => true, onChange: () => {}, setInterval: () => ({ unref() {} }), setTimeout: (f, ms) => setTimeout(f, Math.min(ms, 60)), itemReadMs: () => 80 });
+    await eng.read();
+    eng.onMessage('{"t":"ready"}');
+    const sentCmds = () => (pl.wc ? pl.wc.sent : []);
+    const p1 = eng.readItem('playlist', PL);
+    const cmd = sentCmds().find((c) => c.cmd === 'list' && c.kind === 'page');
+    check('engine: readItem sends the page the playlist\'s own path, with a request number', cmd && cmd.path === `/playlist/${PL}` && Number.isInteger(cmd.rid), JSON.stringify(sentCmds()));
+    eng.onMessage(JSON.stringify({ t: 'list', kind: 'page', rid: cmd.rid + 1, ok: true, items: [{ id: 'OLD', kind: 'song', title: 'Older ask' }] }));
+    eng.onMessage(JSON.stringify({ t: 'list', kind: 'page', rid: cmd.rid, ok: true, title: 'Best of', partial: false, items: [{ id: 'S1', kind: 'song', title: 'One', sub: 'A', ms: 1000 }, { id: 'S2', kind: 'song', title: 'Two' }] }));
+    const r1 = await p1;
+    check('engine: the answer with the asked number resolves it (an answer to another ask is ignored): the songs, the title, nothing partial', r1.ok === true && r1.items.length === 2 && r1.items[0].id === 'S1' && r1.title === 'Best of' && r1.partial === false, JSON.stringify(r1));
+    const p2 = eng.readItem('playlist', PL);
+    const cmd2 = sentCmds().filter((c) => c.kind === 'page').at(-1);
+    eng.onMessage(JSON.stringify({ t: 'list', kind: 'page', rid: cmd2.rid, ok: false, why: 'page', detail: 'path /x, 0 song rows', items: [] }));
+    const r2 = await p2;
+    check('engine: a failed read hands over the page\'s cause and what it showed', r2.ok === false && r2.why === 'page' && /0 song rows/.test(r2.detail) && r2.items.length === 0, JSON.stringify(r2));
+    const p3 = eng.readItem('playlist', PL);
+    const r3 = await p3;
+    check('engine: a page that never answers ends as "timeout" (never a promise left hanging), and a second ask replaces an unanswered first', r3.ok === false && r3.why === 'timeout', JSON.stringify(r3));
+    const p4 = eng.readItem('playlist', PL);
+    const p5 = eng.readItem('album', 'ALB1');
+    const r4 = await p4;
+    check('engine: a newer read replaces an unanswered one (the page does one at a time): the first ends as a failure at once', r4.ok === false && /newer/.test(r4.detail), JSON.stringify(r4));
+    check('engine: not a playlist or album, or an unsafe id: refused without touching the page', (await eng.readItem('artist', 'x')).ok === false && (await eng.readItem('playlist', '../x')).ok === false && sentCmds().filter((c) => c.kind === 'page').length === 5, '');
+    await p5;
+    {
+      pl.signed = false;
+      const r6 = await eng.readItem('playlist', PL);
+      check('engine: signed out (Spotify\'s own cookie says so): why "signedOut" at once, without asking the page', r6.ok === false && r6.why === 'signedOut', JSON.stringify(r6));
+      pl.signed = true;
+    }
+    const slowPl = fakePlayer();
+    const slowEng = createEngine({ player: slowPl, now: () => 1e12, fetchBytes: async () => null, resizeArt: (b) => b, hasCard: () => true, onChange: () => {}, setInterval: () => ({ unref() {} }), setTimeout: (f, ms) => setTimeout(f, Math.min(ms, 60)), itemReadMs: () => 150 });
+    const r7 = await slowEng.readItem('playlist', PL);
+    check('engine: a player page that never started (no ready) ends as "noPlayer" after the wait, not silence', r7.ok === false && r7.why === 'noPlayer', JSON.stringify(r7));
+  }
+  }
 };
 
 if (require.main === module) {

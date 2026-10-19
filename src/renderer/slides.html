@@ -14,7 +14,12 @@
     body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
     header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--hairline); }
     #name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
-    #counter { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #pager { display: flex; align-items: center; gap: 4px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #slideNumber { width: 4ch; box-sizing: content-box; padding: 3px 6px; font: inherit; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); background: var(--field); border: 0; border-radius: var(--r-sm); }
+    #slideNumber:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    #slideNumber:disabled { opacity: 0.4; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    button[aria-pressed="true"] { background: var(--hover); color: var(--accent-text); }
     button { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: 4px 10px; cursor: default; transition: background var(--t-fast); }
     button:hover { background: var(--hover); }
     button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
@@ -22,6 +27,18 @@
     #notes { padding: 8px 16px; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--hairline); }
     #notes:empty { display: none; }
     main { display: flex; flex-direction: column; align-items: center; gap: 28px; padding: 28px 16px 64px; }
+    body.thumbs-open main { margin-left: 184px; }
+
+    /* The slide chooser: small previews down the left, drawn when they come near the view (the same drawing as the slides, scaled down). */
+    #thumbs { position: fixed; left: 0; bottom: 0; top: var(--hdr, 45px); z-index: 1; display: none; width: 184px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 24px; background: var(--bg); border-right: 1px solid var(--hairline); }
+    body.thumbs-open #thumbs { display: block; }
+    .thumb { display: block; width: 100%; margin: 0 0 12px; padding: 4px; background: transparent; border-radius: var(--r-md); text-align: center; }
+    .thumb:hover { background: var(--hover); }
+    .thumb .tslide { position: relative; overflow: hidden; background: var(--paper); border-radius: var(--r-xs); box-shadow: var(--shadow); outline: 2px solid transparent; outline-offset: 2px; pointer-events: none; }
+    .thumb.current .tslide { outline-color: var(--accent); }
+    .thumb.current .tnum { color: var(--accent-text); font-weight: 600; }
+    .thumb.hidden-slide .tslide { opacity: 0.6; }
+    .thumb .tnum { display: block; margin-top: 4px; color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
     .frame { width: min(1100px, 100%); }
     .slide { position: relative; overflow: hidden; background: #fff; box-shadow: var(--shadow); border-radius: 4px; outline: 2px solid transparent; outline-offset: 3px; transition: outline-color var(--t-base); }
     .frame.current .slide { outline-color: var(--accent); }
@@ -52,6 +69,7 @@
     .tbl table { width: 100%; height: 100%; border-collapse: collapse; table-layout: fixed; }
     .tbl td { border: 1px solid #bfbfbf; padding: 3.6pt 7.2pt; vertical-align: top; overflow: hidden; font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; line-height: 1.2; overflow-wrap: break-word; }
     svg.line { position: absolute; overflow: visible; }
+    svg.geo { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
     .chartbox { position: absolute; overflow: hidden; }
     .chartbox svg { display: block; }
     .dialist { position: absolute; box-sizing: border-box; overflow: hidden; padding: 8pt 12pt; border: 1px solid rgba(0, 0, 0, 0.25); background: rgba(0, 0, 0, 0.03); font: 14pt/1.35 Calibri, Carlito, "Segoe UI", Arial, sans-serif; color: #222; }
@@ -68,15 +86,19 @@
 <body>
   <header>
     <div id="name">Loading presentation…</div>
-    <div id="counter" aria-live="polite"></div>
+    <button id="thumbsBtn" type="button" title="Show slide thumbnails (F4)" aria-label="Slide thumbnails" aria-pressed="false" aria-controls="thumbs" disabled>Slides</button>
+    <div id="pager"><input id="slideNumber" type="text" inputmode="numeric" autocomplete="off" value="" size="3" aria-label="Slide number" disabled /><span id="slideCount"></span></div>
+    <div id="counter" class="sr-only" aria-live="polite"></div>
     <button id="prev" type="button" title="Previous slide (Page Up)" aria-label="Previous slide" disabled>‹</button>
     <button id="next" type="button" title="Next slide (Page Down)" aria-label="Next slide" disabled>›</button>
     <button id="presentBtn" type="button" title="Present full screen (F5)" disabled>Present</button>
   </header>
   <div id="notes"></div>
+  <nav id="thumbs" aria-label="Slide thumbnails"></nav>
   <main id="slides"></main>
   <div id="present" role="dialog" aria-label="Presentation"><div class="hint" id="presentHint"></div></div>
   <script src="slides-chart.js"></script>
+  <script src="slides-nav.js"></script>
   <script src="slides.js"></script>
 </body>
 </html>

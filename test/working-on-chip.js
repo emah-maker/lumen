@@ -28,7 +28,7 @@ const measure = `(() => {
   const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cy: (r.top + r.bottom) / 2 }; };
   const ids = ['cp-export', 'cp-home', 'auto-allow', 'cp-more'];
   const actions = ids.map((id) => ({ id, ...box(document.getElementById(id)) }));
-  const named = [['model', '.model-picker'], ['title', '.cp-title-wrap'], ['chip', '#cp-target'], ...ids.map((id) => [id, '#' + id])].map(([n, sel]) => ({ n, ...box(document.querySelector(sel)) })).filter((x) => x.w > 0);
+  const named = [['title', '.cp-title-wrap'], ['chip', '#cp-target'], ...ids.map((id) => [id, '#' + id])].map(([n, sel]) => ({ n, ...box(document.querySelector(sel)) })).filter((x) => x.w > 0);
   const overlaps = [];
   for (let i = 0; i < named.length; i++) for (let j = i + 1; j < named.length; j++) if (named[i].l < named[j].r - 0.5 && named[j].l < named[i].r - 0.5) overlaps.push(named[i].n + '/' + named[j].n);
   const chip = document.getElementById('cp-target'); const text = document.getElementById('cp-target-text'); const cs = getComputedStyle(text);

@@ -428,6 +428,8 @@ $('model').addEventListener('change', async (e) => {
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title'); // the row already says it
   const full = optional('open-chat-page');
   if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
+  const mission = optional('mission-btn'); // lumen://tasks
+  if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘X' : t('shortcut.ctrlShiftX');
 })();
 // ---------- chat ----------
 
@@ -996,7 +998,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
@@ -1023,10 +1025,11 @@ async function askInNewChat(text, files = []) {
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
-function ask(text, images = [], tabs = null, screen) {
+// `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry; // (for Send now)
@@ -1051,7 +1054,8 @@ function ask(text, images = [], tabs = null, screen) {
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined; // [plan mode] (/plan sends opts.plan)
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
@@ -1254,7 +1258,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -1361,8 +1365,10 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'), // [plan mode]
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }), // [acting helpers]
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
@@ -1459,6 +1465,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+  // [skills] After a run ended (opt-in, Settings → Skills): "Save how I did this as a skill?" or "Update the skill?" (skills.js)
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
   // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
   // text): drawn under that reply, not dropped with the finished turn.
@@ -1550,6 +1558,7 @@ window.assistant.onEvent((event) => {
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
+      if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') })); // [connectors] what a write made, with its link
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
       if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
@@ -1611,13 +1620,44 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached': // main read the picked tabs: what actually went along (a sleeping tab only by address)
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
+      showHelperCard(event);
+      break;
+    case 'plan': { // [plan mode] propose_plan: the plan as a card with Run plan / Edit / Keep planning (renderer/plan-mode.js)
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
-      announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel });
+      announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'memory': { // [memory] the AI saved, changed or forgot a memory (ai/memory.js): said in the chat, with Undo, and Forget for what it kept
+      const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
+      if (!key || !window.assistant.memory) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note', textContent: t(key, { text: event.text || '' }) }));
+      const action = (label, done, run) => {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: label });
+        button.onclick = async () => {
+          for (const b of note.querySelectorAll('button')) b.disabled = true;
+          const ok = await run().catch(() => false);
+          for (const b of note.querySelectorAll('button')) b.remove();
+          note.append(` ${ok ? done : t('memory.changedSince')}`);
+        };
+        note.append(' ', button);
+      };
+      if (event.token) action(t('memory.undo'), t('memory.undone'), () => window.assistant.memory.undo(event.token));
+      if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
       // A chain of "couldn't reach X, switched to Y" lines in a row says one thing: keep the newest only.
@@ -1917,6 +1957,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source); // "Add to notes" (renderer/chat-actions.js)
 }
 
 // ---------- permissions: how much the sidebar's AI asks (the bolt in the sidebar head) ----------
@@ -1987,10 +2028,12 @@ permBadge.className = 'bypass-badge';
 permBadge.id = 'bypass-badge';
 permBadge.hidden = true;
 permBadge.title = t('composer.bypass.title');
-permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text"></span></span>';
-permBadge.querySelector('.bb-text').textContent = t('composer.bypass');
+permBadge.innerHTML = '<span class="bb-pill"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/></svg><span class="bb-text" aria-hidden="true"></span><span class="bb-full"></span></span>';
+permBadge.querySelector('.bb-text').textContent = t('composer.bypass.short'); // compact on screen; the full words are read aloud
+permBadge.querySelector('.bb-full').textContent = t('composer.bypass');
 permBadge.addEventListener('click', () => cycleMode()); // [mode cycle] the same click as the header's button (Settings: right-click the button, or the Settings row of its menu)
-$('hands-off')?.after(permBadge);
+if ($('composer-status')) $('composer-status').append(permBadge); // the quiet status line above the box (usage on the left, this on the right)
+else $('hands-off')?.after(permBadge);
 
 function disarmPerm() {
   if (permArmed) clearTimeout(permArmed.timer);
@@ -2087,10 +2130,63 @@ const approvals = new Map(); // approvalId -> { card, host }
 // `action: 'open'`: the AI has read page content in this chat and wants to open a new site (which
 // could carry that content there), or search for `query`; `action: 'script'`: it wants to run a
 // script on a site after reading page content; anything else is the usual "interact with this site" card.
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
+function showApproval(approvalId, host, opts = {}) {
+  showApprovalCard(approvalId, host, opts);
+  if (opts.helper) markHelperApproval(approvalId, opts.helper);
+}
+
+// [acting helpers] A card a helper is waiting on says which one: "Helper 2: Allow Claude to interact with shop.example?"
+function markHelperApproval(approvalId, n) {
+  const card = approvals.get(approvalId)?.card;
+  const title = card?.querySelector('.approval-title');
+  if (!title) return;
+  const tag = t('approval.helper', { n });
+  title.textContent = `${tag} ${title.textContent}`;
+  card.setAttribute('aria-label', `${tag} ${card.getAttribute('aria-label') || title.textContent}`);
+  card.dataset.helper = String(n);
+}
+
+// ---------- [acting helpers] helper cards: one per helper that acts in a background tab of its own (parallel_tasks) ----------
+// Its number and job, what it is doing now, a chip for its tab (a click shows the tab, in the sidebar) and Stop (that helper only;
+// Stop in the chat stops them all). The card stays after the helper is done, with how it ended.
+const helperCards = new Map(); // event.key -> card
+function showHelperCard(e) {
+  let card = helperCards.get(e.key);
+  if (!card || !card.isConnected) {
+    card = Object.assign(document.createElement('div'), { className: 'helper-card' });
+    card.setAttribute('role', 'group');
+    const head = Object.assign(document.createElement('div'), { className: 'helper-card-head' });
+    const name = Object.assign(document.createElement('span'), { className: 'helper-card-name', textContent: t('helper.name', { n: e.n }) });
+    const state = Object.assign(document.createElement('span'), { className: 'helper-card-state' });
+    head.append(name, state);
+    const task = Object.assign(document.createElement('p'), { className: 'helper-card-task', textContent: e.task || '' });
+    const step = Object.assign(document.createElement('p'), { className: 'helper-card-step' });
+    const actions = Object.assign(document.createElement('div'), { className: 'helper-card-actions' });
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'helper-card-tab', textContent: t('helper.tab'), hidden: true });
+    chip.title = t('helper.tabTitle');
+    chip.onclick = () => { const id = Number(card.dataset.tab); if (Number.isInteger(id)) window.browser?.switchTab?.(id); };
+    if (!window.browser?.switchTab) chip.disabled = true; // (the full-page chat has no tab strip to switch in)
+    const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'btn helper-card-stop', textContent: t('helper.stop') });
+    stop.onclick = () => { stop.disabled = true; window.assistant.stopHelper?.(e.key); };
+    actions.append(chip, stop);
+    card.append(head, task, step, actions);
+    appendToTurn(card);
+    helperCards.set(e.key, card);
+  }
+  const ended = ['done', 'timeout', 'failed', 'stopped'].includes(e.status);
+  const label = t(`helper.status.${ended ? e.status : 'working'}`);
+  card.querySelector('.helper-card-state').textContent = label;
+  card.querySelector('.helper-card-step').textContent = ended ? '' : e.step || '';
+  card.setAttribute('aria-label', `${t('helper.name', { n: e.n })}: ${label}`);
+  card.classList.toggle('ended', ended);
+  if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.querySelector('.helper-card-tab').hidden = false; }
+  if (ended) card.querySelector('.helper-card-stop').hidden = true;
+}
+
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
@@ -2195,12 +2291,15 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
+// [connectors] A write in a connected service (note 'connector') with `fields`: where it goes, then its text in boxes the user can
+// edit; Allow sends what the boxes hold. Only a real click allows it (no Enter, no scripted click).
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '', fields = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || t('approval.tool.use', { host }));
+  const editing = note === 'connector' && Array.isArray(fields?.list) && fields.list.length > 0;
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
@@ -2209,9 +2308,18 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
-        : note === 'connector' ? t('approval.connector.details') : t('approval.tool.details'), // (a connected service: the change it would make, in the user's own account)
+        : note === 'connector' ? `${t('approval.connector.details')}${editing ? ` ${t('approval.connector.edit')}` : ''}` : t('approval.tool.details'), // (a connected service: the change it would make, in the user's own account)
   });
-  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
+  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: editing ? String(fields.fixed || '') : args || '{}' });
+  const boxes = editing ? fields.list.filter((f) => f && typeof f.key === 'string').map((f) => {
+    const box = Object.assign(document.createElement(f.multiline ? 'textarea' : 'input'), { className: 'approval-edit', value: String(f.value ?? ''), maxLength: Number(f.max) || 200, spellcheck: true });
+    if (f.multiline) box.rows = Math.min(12, Math.max(3, String(f.value ?? '').split('\n').length + 1)); else box.type = 'text';
+    box.dataset.key = f.key;
+    box.setAttribute('aria-label', String(f.label || f.key));
+    const label = Object.assign(document.createElement('label'), { className: 'approval-edit-label' });
+    label.append(Object.assign(document.createElement('span'), { textContent: String(f.label || f.key) }), box);
+    return { key: f.key, box, label };
+  }) : [];
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
@@ -2224,14 +2332,16 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     window.assistant.approve?.(approvalId, ok);
   };
   deny.onclick = () => answer(false);
-  allow.onclick = () => answer(true);
+  allow.onclick = note === 'connector'
+    ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])) } : true); } // (a real click only)
+    : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); } // (Escape in a box being edited keeps the card and its edits)
   });
   actions.append(...[deny, always, allow].filter(Boolean));
-  card.append(title, detail, pre, actions);
+  card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
   append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();
@@ -2468,6 +2578,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) { // [plan mode] a proposed plan: its card again, after any words that came with it
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -2625,6 +2740,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
@@ -2771,6 +2887,13 @@ sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  if (typed && attachments.length === 0 && pastes.length === 0 && window.focusPhrase?.parseStart(typed) && window.focusUi) { // [focus] "focus for 90 minutes" starts focus mode here (renderer/focus.js)
+    prompt.value = '';
+    renderAttachments();
+    autosize();
+    await window.focusUi.tryStart(typed);
+    return;
+  }
   const text = window.chatDrafts.withPastes(typed, pastes);
   const hadPastes = pastes.length > 0; // (a pasted block is the message's subject, not the words of a new topic)
   const images = attachments;
@@ -2860,6 +2983,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false); // [plan mode] a new chat starts as Settings says
   window.chatList?.refreshUsage('');
   prompt.focus();
 };

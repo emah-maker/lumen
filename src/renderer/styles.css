@@ -639,13 +639,8 @@ body.sidebar-hidden .sidebar { visibility: hidden; width: 0; border-left-width: 
 .sidebar-resize:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
 
-.sidebar-head { position: relative; z-index: var(--z-head); display: flex; align-items: center; justify-content: space-between; height: 46px; padding: 0 8px 0 20px; }
+.sidebar-head { position: relative; z-index: var(--z-head); display: flex; align-items: center; justify-content: flex-end; height: 46px; padding: 0 8px 0 20px; }
 .sidebar-actions { display: flex; gap: 2px; flex: none; }
-/* The model name gives way to the buttons, not the other way round: at the 300px minimum width six
-   buttons take ~190px, and a long name (up to 220px) used to push Settings and New chat out of the
-   sidebar, which clips. The picker button ellipsizes (styles below). */
-.sidebar-head .model-picker { min-width: 78px; margin-right: 8px; } /* the name keeps room to be read, and the buttons still fit at 300 px */
-.sidebar-head .model-picker .picker-button { max-width: min(220px, 100%); }
 #dock-to-side { display: none; } /* only meaningful, and only shown, while chat-full (below) */
 
 /* ---------- full-page chat: homepage "Ask AI" fills the whole content area ---------- */
@@ -685,6 +680,14 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant .code-block .mermaid-view { padding: 10px; overflow-x: auto; text-align: center; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .msg.assistant .code-block.show-source .mermaid-view { display: none; }
 .msg.assistant .mermaid-view svg { max-width: 100%; height: auto; }
+/* A ```svg block drawn as a picture (svg-view.js): a light panel (a model's dark strokes stay readable in dark mode), the code behind Code. */
+.msg.assistant .code-block.svg-ok:not(.show-source) pre { display: none; }
+.msg.assistant .code-block.svg-ok:not(.show-source) .code-wrap { display: none; }
+.msg.assistant .code-block .svg-view { padding: 10px; overflow-x: auto; text-align: center; background: var(--svg-panel); color-scheme: light; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.msg.assistant .code-block.show-source .svg-view { display: none; }
+.msg.assistant .svg-pic { display: block; max-width: 100%; margin: 0 auto; padding: 0; border: none; background: transparent; cursor: zoom-in; }
+.msg.assistant .svg-pic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.msg.assistant .svg-pic img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .tk-add { color: var(--tk-str); } .tk-del { color: var(--tk-key); } .tk-hunk { color: var(--tk-fn); } .tk-meta { color: var(--tk-com); font-weight: 600; }
 /* Regenerate, beside Copy on the latest reply. */
 .msg.assistant .reply-regen { position: absolute; bottom: -24px; right: 24px; width: 28px; height: 26px; display: grid; place-items: center; border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
@@ -888,7 +891,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 
 .composer {
   position: absolute; z-index: var(--z-composer); bottom: 16px; right: 16px; width: calc(var(--sidebar-width) - 33px) !important;
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding: 6px 6px 6px 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 8px 8px 14px;
   border-radius: var(--r-xl);
   background: color-mix(in srgb, var(--surface-raised) 82%, transparent);
   backdrop-filter: blur(18px) saturate(150%);
@@ -899,10 +902,10 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
    blur behind the composer resample each frame; the glass is a flat veil for those few hundred milliseconds. */
 body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; }
 .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
-.composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; overflow-y: auto; scrollbar-width: thin; padding: 4px 0;
+.composer textarea { flex: 1 1 100%; min-width: 0; resize: none; border: none; outline: none; background: transparent; color: var(--text); font: inherit; overflow-y: auto; scrollbar-width: thin; padding: 4px 2px; line-height: 1.5;
   /* The browser sizes the box to its text, at any width, hidden or shown, with no script to measure it: one line when empty (the
      placeholder stays on one line too), growing to 40% of the window, then scrolling. */
-  field-sizing: content; min-height: calc(1lh + 8px); max-height: min(240px, 40vh); }
+  field-sizing: content; min-height: 60px; max-height: max(60px, 40vh); } /* roomy: two or three lines from the start, growing to about 40% of the height, then it scrolls */
 .composer textarea::placeholder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
@@ -927,6 +930,52 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 }
 .send-now:hover { background: var(--accent-deep); color: var(--on-accent); }
 .send-now[hidden] { display: none; }
+
+/* ---------- the toolbar under the box (renderer/composer-bar.js): "+" menu and the picker on the left, mic and Send on the right ---------- */
+.composer-bar { flex: 1 1 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.cb-start { flex: 1 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.cb-end { flex: none; display: flex; align-items: center; gap: 4px; }
+.cm-wrap, .send-split { position: relative; display: flex; align-items: center; flex: none; }
+.plus-btn, .send-more {
+  position: relative; flex: none; display: grid; place-items: center; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; align-self: center;
+  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
+}
+.plus-btn { width: 28px; height: 28px; border-radius: 50%; }
+.plus-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.plus-btn:hover, .plus-btn[aria-expanded="true"], .send-more:hover, .send-more[aria-expanded="true"] { color: var(--text); background: var(--hover); }
+.plus-btn[data-lit="1"] { color: var(--accent); }
+.plus-btn:focus-visible, .send-more:focus-visible, .plan-tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.plus-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); }
+.plus-dot[hidden], .send-more[hidden], .plan-tag[hidden] { display: none; }
+.send-more { width: 20px; height: 26px; border-radius: var(--r-sm); }
+.send-more svg { display: block; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.plan-tag { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: none; border-radius: var(--r-xl); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.plan-tag svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.composer-menu {
+  position: absolute; z-index: var(--z-menu); left: 0; bottom: calc(100% + 8px); min-width: 224px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 4px;
+  border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text);
+  box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+}
+.composer-menu[hidden] { display: none; }
+.composer-menu.send-menu { left: auto; right: 0; }
+.cm-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 32px; box-sizing: border-box; padding: 0 10px; border: none; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cm-item svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; color: var(--muted); }
+.cm-item:hover:not(:disabled), .cm-item:focus-visible { background: var(--hover); }
+.cm-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cm-item:disabled { opacity: 0.45; cursor: default; }
+.cm-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-state { flex: none; color: var(--muted); font-size: 12px; }
+.cm-item[aria-checked="true"] svg { color: var(--accent); }
+.cm-item[aria-checked="true"]:not(#screen-btn)::after { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* the picker on the toolbar: its whole short name first, a long one ends in an ellipsis; the provider tag and "last used" stay in the list */
+.composer-bar .model-picker { flex: 0 1 auto; min-width: 0; margin: 0; align-items: center; }
+.composer-bar .model-picker .picker-button { max-width: 100%; min-width: 0; padding: 4px 2px 4px 8px; font-size: 13px; font-weight: 500; color: var(--text); }
+.composer-bar .picker-provider, .composer-bar .picker-last { display: none; }
+.composer-bar .model-picker svg { position: static; flex: none; margin: 0 6px 0 0; } /* the caret follows the name directly */
+.composer-status { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 0 2px; container-type: inline-size; }
+@container (max-width: 280px) { .composer-status .usage-meter .um-bar { display: none; } } /* the minimum sidebar: the words first, so "resets Oct 19, 1:50pm" is not cut off beside the badge */
+.composer-status:not(:has(> :not([hidden]))) { display: none; }
+.composer-status > .meter-strip { flex: 1 1 0; margin: 0; }
 
 /* ---------- "@" tabs: chips above the composer, the picker, the once-per-chat confirm ---------- */
 .tab-chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px; }
@@ -955,31 +1004,27 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .msg-tabs { margin-top: 6px; font-size: 11px; opacity: 0.8; }
 .msg-tabs:first-child { margin-top: 0; }
 
-/* The attach button (a file picker) sits left of Send, like the background button. */
-.attach-btn {
+/* [dictation] The mic (renderer/dictation.js) right of the paperclip: red while it records, dimmed while the words are on their way.
+   Over the box while it records: a dot, the microphone's level, the time out of two minutes, and "Esc to cancel". */
+.mic-btn {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: transparent; color: var(--muted);
+  background: transparent; color: var(--muted); touch-action: none;
   transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
 }
-.attach-btn svg { width: 15px; height: 15px; stroke-width: 1.5; }
-.attach-btn:not(:disabled):hover { color: var(--text); background: var(--hover); }
-.attach-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.attach-btn:disabled { opacity: 0.4; }
-/* The screen button (a camera) left of the paperclip: lit when the next message will carry a screenshot of the tab, by the words
-   (auto: a soft ring, so it reads as "decided for you") or because the user switched it on; crossed when switched off. */
-.screen-btn {
-  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
-  background: transparent; color: var(--muted);
-  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out, box-shadow var(--t-base) ease-out;
-}
-.screen-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
-.screen-btn:hover { color: var(--text); background: var(--hover); }
-.screen-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.screen-btn[data-state="auto"], .screen-btn[data-state="on"] { color: var(--accent); background: var(--accent-soft); }
-.screen-btn[data-state="auto"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
-.screen-btn[data-state="on"] { box-shadow: inset 0 0 0 1px var(--accent); }
-.screen-btn[data-state="off"] svg { opacity: 0.55; }
-.screen-btn[data-state="off"]::after { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 1.5px; background: currentColor; transform: rotate(-40deg); border-radius: 1px; }
+.mic-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.mic-btn:hover { color: var(--text); background: var(--hover); }
+.mic-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mic-btn[data-state="recording"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.mic-btn[data-state="sending"], .mic-btn[data-state="starting"] { opacity: 0.55; }
+.dictation-bar { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dictation-bar[hidden] { display: none; }
+.dictation-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--danger); animation: dictation-pulse 1.2s ease-in-out infinite; }
+.dictation-bar[data-state="sending"] .dictation-dot { background: var(--muted); }
+.dictation-meter { flex: 1 1 auto; max-width: 120px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.dictation-meter i { display: block; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform 80ms linear; }
+.dictation-hint { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes dictation-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dictation-dot { animation: none; } .dictation-meter i { transition: none; } }
 /* "Included a screenshot of <tab>" under the message that carried one: × takes it out of the chat, hover shows it. */
 .msg-screen { position: relative; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin-top: 6px; padding: 1px 3px 1px 8px; border-radius: var(--r-pill); font-size: 11px; line-height: 1.5; background: color-mix(in srgb, currentColor 12%, transparent); }
 .msg-screen:first-child { margin-top: 0; }
@@ -1128,6 +1173,11 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .approval-problem { margin: 0 0 10px; font-size: 12px; color: var(--danger); }
 .approval-problem[hidden] { display: none; }
 .approval-args { margin: -4px 0 12px; padding: 8px; max-height: 180px; overflow: auto; border-radius: var(--r-sm); background: var(--hover, rgba(127,127,127,.12)); font: 11px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+/* [connectors] a write's text, editable on its card before Allow */
+.approval-edit-label { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; font-size: 11px; color: var(--muted, inherit); }
+.approval-edit { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: var(--r-sm); background: var(--bg, transparent); color: var(--text, inherit); font: 12px/1.45 inherit; resize: vertical; }
+textarea.approval-edit { font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 260px; }
+.step-link { margin-left: 4px; }
 .approval-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .approval-actions .btn { height: 28px; font-size: 12px; }
 .approval-actions .btn:disabled { opacity: 0.5; }
@@ -1402,3 +1452,18 @@ body.agent-active .msg-user-actions, .msg.user[data-skill] + .msg-user-actions {
   .omnibox { border: 1px solid CanvasText; }
   :focus-visible { outline: 2px solid Highlight; outline-offset: 1px; }
 }
+
+/* [split view] The divider between two pages shown side by side (renderer/split.js). It sits in the gap main.js leaves between the two page views;
+   a joined pair in the tab strip shares one tinted surface. */
+.split-divider { position: absolute; top: 0; bottom: 0; z-index: 2; cursor: col-resize; display: flex; align-items: center; justify-content: center; touch-action: none; outline: none; }
+.split-divider::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--hairline); transition: background-color var(--t-fast) ease-out; }
+.split-divider:hover::before, .split-divider.dragging::before, .split-divider:focus-visible::before { background: var(--accent); }
+.split-divider[hidden] { display: none; }
+.split-close { position: relative; width: 12px; height: 28px; padding: 0; border: 0; border-radius: 6px; display: grid; place-items: center; cursor: default; color: var(--muted); background: var(--surface-raised); box-shadow: 0 0 0 0.5px var(--hairline); }
+.split-close svg { width: 8px; height: 8px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; }
+.split-close:hover { color: var(--text); background: var(--field); }
+.split-close:focus-visible { outline: 2px solid var(--accent); }
+body.split-dragging { user-select: none; cursor: col-resize; }
+.tab.split-left, .tab.split-right { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
+.tab.split-left:has(+ .tab.split-right) { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.tab.split-left + .tab.split-right { margin-left: -3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }

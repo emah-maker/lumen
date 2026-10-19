@@ -86,8 +86,9 @@ function tokenForm(kind, { clientId, clientSecret, code, verifier, redirectUri, 
   if (clientSecret) p.client_secret = clientSecret;
   return new URLSearchParams(p).toString();
 }
-// A token answer -> { access, refresh, exp } (exp: when to stop using the access token, a little
-// early). A refresh answer usually has no new refresh token; then the old one stays valid.
+// A token answer -> { access, refresh, exp, scope } (exp: when to stop using the access token, a little
+// early; scope: the space-separated scopes the token really has, '' when the answer doesn't say). A refresh
+// answer usually has no new refresh token; then the old one stays valid.
 function parseToken(text, now, previousRefresh = '') {
   let body;
   try { body = JSON.parse(text); } catch { body = null; }
@@ -95,7 +96,8 @@ function parseToken(text, now, previousRefresh = '') {
   const refresh = typeof body.refresh_token === 'string' && body.refresh_token.length <= 4096 ? body.refresh_token : previousRefresh;
   if (!refresh) throw new OAuthError('The sign-in service sent no refresh token. Connect again.', { reconnect: true });
   const seconds = Number.isFinite(body.expires_in) ? Math.min(3600, Math.max(60, body.expires_in)) : 3600;
-  return { access: body.access_token, refresh, exp: now + (seconds - 30) * 1000 };
+  const scope = typeof body.scope === 'string' ? flat(body.scope, 2000) : '';
+  return { access: body.access_token, refresh, exp: now + (seconds - 30) * 1000, scope };
 }
 // A failed token request -> what happened. invalid_grant is a revoked, expired (Google's testing mode
 // expires refresh tokens after 7 days) or replaced grant; invalid_client / unauthorized_client is a
@@ -119,9 +121,10 @@ function classifyTokenFailure(status, text, retryAfterHeader) {
 }
 
 // ---- stored credentials: one small JSON blob per account, encrypted by the caller ----
+// scope: what the last token answer said the grant covers (Gmail's "Allow drafts" checks it for gmail.compose).
 function encodeCreds(c) {
   const out = {};
-  for (const k of ['clientId', 'clientSecret', 'refresh', 'email']) if (typeof c?.[k] === 'string' && c[k]) out[k] = c[k].slice(0, 4096);
+  for (const k of ['clientId', 'clientSecret', 'refresh', 'email', 'scope']) if (typeof c?.[k] === 'string' && c[k]) out[k] = c[k].slice(0, 4096);
   return JSON.stringify(out);
 }
 function decodeCreds(text) {
@@ -132,6 +135,7 @@ function decodeCreds(text) {
     const out = {};
     for (const k of ['clientId', 'clientSecret', 'refresh']) out[k] = typeof c[k] === 'string' ? c[k].slice(0, 4096) : '';
     if (typeof c.email === 'string' && c.email) out.email = c.email.slice(0, 320); // the account's address, when known
+    if (typeof c.scope === 'string' && c.scope) out.scope = c.scope.slice(0, 2000); // the scopes the grant has, when known
     return out;
   } catch { return null; }
 }
@@ -235,16 +239,27 @@ function createSession({ tokenUrl, post, load, save, now = Date.now, messages = 
     const creds = load();
     if (!creds?.clientId || !creds.refresh) throw new OAuthError(msg.reconnect, { reconnect: true, kind: 'revoked' });
     const res = await post(typeof tokenUrl === 'function' ? tokenUrl() : tokenUrl, tokenForm('refresh', { clientId: creds.clientId, clientSecret: creds.clientSecret, refresh: creds.refresh }));
+    // The stored sign-in may have changed while the request was out (a new sign-in such as Gmail's Allow drafts, or a Disconnect):
+    // then this answer belongs to a grant that is no longer the one kept: nothing of it is saved over the new state, and the
+    // token comes from the grant stored now instead.
+    const current = load();
+    if (current?.refresh !== creds.refresh) {
+      token = null;
+      if (!current?.refresh) throw new OAuthError(msg.reconnect, { reconnect: true, kind: 'revoked' }); // disconnected meanwhile
+      return refreshNow(); // (signed in again meanwhile: a token from the grant stored now, with its own scopes)
+    }
     if (res.ok) {
       const t = parseToken(res.body, now(), creds.refresh);
       token = { access: t.access, exp: t.exp };
-      if (t.refresh !== creds.refresh) save({ ...creds, refresh: t.refresh });
+      // A new refresh token, or a scope list that changed (the user took a permission back at Google): kept, so a check
+      // like "may this make drafts" reads what Google says now.
+      if (t.refresh !== current.refresh || (t.scope && t.scope !== (current.scope || ''))) save({ ...current, refresh: t.refresh, ...(t.scope ? { scope: t.scope } : {}) });
       return token.access;
     }
     const f = classifyTokenFailure(res.status, res.body, res.retryAfter);
     if (f.kind === 'revoked' || f.kind === 'client') {
       token = null;
-      save({ ...creds, refresh: '' }); // keep the client id and secret: connecting again is one click
+      save({ ...current, refresh: '' }); // keep the client id and secret: connecting again is one click
       throw new OAuthError(f.kind === 'client' ? msg.client : msg.reconnect, { reconnect: true, kind: f.kind });
     }
     if (f.kind === 'rate') throw new OAuthError(msg.rate, { kind: 'rate', retryAfter: f.retryAfter });

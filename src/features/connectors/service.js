@@ -9,7 +9,12 @@
 //    with no redirect followed. A 'session' connector sends the user's signed-in Lumen cookies there and nowhere else; the
 //    others send their token there. Tests point a connector at 127.0.0.1 through `endpoints` (main.js allows that only in test mode).
 //  - Disconnecting forgets the entry and the sealed secret and drops cached answers.
+//  - Gmail's drafts need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, only when the
+//    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts).
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
+//  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
+//    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
+//    sign-in applies here at once, and nothing is copied. syncShared() makes the entry match the owner's sign-in.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -31,7 +36,7 @@ const provider = (id) => require(`./providers/${id}`); // loaded when a connecto
 
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
-  google = null, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false,
+  google = null, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
   let connected = load();
@@ -72,13 +77,14 @@ function create({
 
   function makeCtx(def, entry, signal) {
     const base = baseOf(def, entry);
-    const secret = open(entry.secret);
+    const secret = entry.config?.shared ? String(shared[def.id]?.info?.()?.token || '') : open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
       const signIn = def.kind === 'session' || def.id === 'gmail';
       state(signIn ? 'needs-signin' : 'bad-token');
       return new ConnectorError(signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
+        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → You and AI → Connectors.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
@@ -94,6 +100,7 @@ function create({
         const h = { Accept: accept, ...headers };
         if (def.kind === 'token' && def.id !== 'gcal') h.Authorization = `Bearer ${secret}`;
         if (json !== undefined) h['Content-Type'] = 'application/json';
+        if (signal?.aborted) throw new ConnectorError('Stopped.', 'other'); // (stopped before it began: nothing is sent)
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const onAbort = () => controller.abort();
@@ -140,12 +147,15 @@ function create({
     if (live === 'needs-signin' || live === 'bad-token') status = live;
     const e = connected[def.id];
     const account = e?.account || '';
+    // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
+    let drafts = null;
+    if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}` : STATUS_TEXT[status],
+      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
-      reads: def.reads, does: def.does,
+      reads: def.reads, does: def.does, drafts,
       actions: Object.entries(def.actions).map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
     };
   }
@@ -244,6 +254,19 @@ function create({
     return list();
   }
 
+  // Settings' Allow drafts on the Gmail card: the Google sign-in again, asking Google to add gmail.compose (to make drafts; Lumen never
+  // sends). Only for a Gmail connected with the full sign-in; never started by the AI.
+  async function allowDrafts(id) {
+    const entry = connected[id];
+    if (id !== 'gmail' || !entry) throw new Error('Connect Gmail first.');
+    if (entry.config?.mode !== 'oauth' || !google?.allowDrafts) throw new Error('Drafts need the full Google sign-in. Disconnect Gmail, then connect it again and finish the Google sign-in.');
+    await google.allowDrafts();
+    runtime.set(id, 'ok');
+    cache.clear();
+    changed();
+    return list();
+  }
+
   async function disconnect(id) {
     const def = registry.get(id);
     const entry = connected[id];
@@ -252,25 +275,68 @@ function create({
     runtime.delete(id);
     for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
     persist();
+    if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
     if (def.kind === 'mcp' && entry.config?.mcpId) { try { mcp?.remove(entry.config.mcpId); } catch { /* already gone */ } }
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
     changed();
     return list();
   }
 
+  // Make a shared connector's entry match its owner's sign-in: signed in -> connected (as that account); signed out -> gone.
+  // A connector connected with its own token is left alone either way.
+  function syncShared(id) {
+    const def = registry.get(id);
+    const src = shared[id];
+    if (!def || !src) return list();
+    if (connected[id] && !connected[id].config?.shared) return list(); // connected with its own token: it keeps it (never swapped for the card's broader sign-in)
+    const info = src.info();
+    if (info) connected[id] = { at: now(), account: flat(info.account, 60), config: { shared: true } };
+    else if (connected[id]?.config?.shared) delete connected[id];
+    else return list();
+    runtime.delete(id);
+    for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
+    persist();
+    changed();
+    if (info && !info.account) { // a pasted token knows no name: ask the service who it is, once
+      const entry = connected[id];
+      const ctx = makeCtx(def, entry, null);
+      provider(id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }).then((probe) => {
+        if (connected[id] === entry && probe.status === 200 && probe.account) { entry.account = probe.account; persist(); changed(); }
+      }).catch(() => {});
+    }
+    return list();
+  }
+  const usesShared = (id) => connected[id]?.config?.shared === true;
+
   // ---- the AI's tool
-  const defs = () => { const d = registry.toolDef(); return d ? [d] : []; };
+  const defs = ({ readOnly = false } = {}) => { const d = registry.toolDef({ readOnly }); return d ? [d] : []; }; // readOnly: background tasks and routines
   const validate = (input) => registry.validate(input);
   const label = (input) => registry.stepLabel(input);
   const isWrite = (input) => Boolean(registry.get(input?.app)?.actions?.[input?.action]?.write);
   const hasAny = () => registry.connectedIds().length > 0;
   const connectedIds = () => registry.connectedIds();
 
-  // What the confirm card says before a write.
-  function describeWrite(input) {
+  // What the confirm card says before a write: `detail` is everything it will send, `fixed` the part the user can't change
+  // (where it goes) and `fields` the text the user can edit there (registry.editable). A provider may look up a name for
+  // the card (Notion: the page's title), which is a read; when that fails the card shows the id instead.
+  async function describeWrite(input, { signal } = {}) { // signal: the run's, so Stop also stops the title lookup
     const def = registry.get(input.app);
-    const text = provider(def.id).describeWrite?.(input.action, input.args || {});
-    return { title: `Use ${def.name}: ${def.actions[input.action].label}`, detail: text || JSON.stringify(input.args || {}, null, 2) };
+    const args = input.args || {};
+    const p = provider(def.id);
+    const entry = connected[def.id];
+    if (entry && p.beforeCard) { // a write that can't happen yet says why, and no card is shown for it
+      try { await p.beforeCard(makeCtx(def, entry, signal), input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
+    }
+    let names = {};
+    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
+    const text = p.describeWrite?.(input.action, args, names);
+    const fields = registry.editable(input);
+    return {
+      title: `Use ${def.name}: ${def.actions[input.action].label}`,
+      detail: text || JSON.stringify(args, null, 2),
+      fixed: p.describeWhere?.(input.action, args, names) || '',
+      fields,
+    };
   }
 
   const wrap = (source, text) => {
@@ -278,7 +344,9 @@ function create({
     return `<untrusted_page_content source="${source}">\n${body.replace(/<(\/?)untrusted_page_content/gi, '‹$1untrusted_page_content')}\n</untrusted_page_content>`;
   };
 
-  async function call(input, { signal } = {}) {
+  // A write's provider answers { text, link?, done }: `done` and `link` go to onWritten (the chat's step: "Gmail · Draft created", with
+  // the link), the text to the AI. readOnly (a background task or routine) refuses a write before anything is sent.
+  async function call(input, { signal, readOnly = false, onWritten = null } = {}) {
     const problem = validate(input);
     if (problem) throw new Error(problem);
     const def = registry.get(input.app);
@@ -288,6 +356,7 @@ function create({
     const args = input.args || {};
     const key = `${def.id}:${input.action}:${JSON.stringify(args)}`;
     const write = def.actions[input.action].write === true;
+    if (write && readOnly) throw new Error(`Background tasks and routines can only read from ${def.name}. Tell the user what you would have changed.`);
     const hit = !write && cache.get(key);
     if (hit && now() - hit.at < CACHE_MS) return hit.text;
     let text;
@@ -296,6 +365,11 @@ function create({
     } catch (err) {
       if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; }
       throw err;
+    }
+    if (text && typeof text === 'object') {
+      const link = /^https:\/\//.test(String(text.link || '')) ? String(text.link) : '';
+      if (write && onWritten) { try { onWritten({ label: `${def.name} · ${flat(text.done || def.actions[input.action].label, 80)}`, link }); } catch { /* the step is extra; the result still goes back */ } }
+      text = `${text.text}${link ? `\nLink: ${link}` : ''}`;
     }
     const out = wrap(`connector:${def.id}/${input.action}`, text);
     if (write) { for (const k of [...cache.keys()]) if (k.startsWith(`${def.id}:`)) cache.delete(k); } else cache.set(key, { at: now(), text: out });
@@ -309,7 +383,7 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
-  return { list, detect, connect, disconnect, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

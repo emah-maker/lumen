@@ -1107,11 +1107,24 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const above = b.top - 12;
     const up = below < 260 && above > below;
     menu.style.width = `${width}px`;
-    menu.style.left = `${Math.max(left0, Math.min(b.left, right0 - width))}px`;
+    const wantLeft = Math.max(left0, Math.min(b.left, right0 - width));
+    menu.style.left = `${wantLeft}px`;
     menu.style.maxHeight = `${Math.max(180, Math.min(460, up ? above : below))}px`;
     menu.style.top = up ? '' : `${b.bottom + 6}px`;
     menu.style.bottom = up ? `${window.innerHeight - b.top + 6}px` : '';
     menu.classList.toggle('up', up);
+
+
+    const at = menu.getBoundingClientRect();
+    const dx = at.left - wantLeft;
+    if (Math.abs(dx) > 0.5) menu.style.left = `${wantLeft - dx}px`;
+    if (up) {
+      const dy = at.bottom - b.top + 6;
+      if (Math.abs(dy) > 0.5) menu.style.bottom = `${window.innerHeight - b.top + 6 + dy}px`;
+    } else {
+      const dy = at.top - (b.bottom + 6);
+      if (Math.abs(dy) > 0.5) menu.style.top = `${b.bottom + 6 - dy}px`;
+    }
   }
   function close(refocus = true) {
     if (menu.hidden) return;
@@ -1716,6 +1729,195 @@ async function buildUpdates(card) {
   card.append(r, auto, notes, notesRow);
 }
 ;
+// ---- settings-sync.js
+
+
+
+
+
+const SYNC_KINDS = ['bookmarks', 'history', 'chats', 'widgets', 'settings'];
+const syncKindText = (kind) => ({
+  bookmarks: [tr('settings.sync.kind.bookmarks', 'Bookmarks'), tr('settings.sync.kind.bookmarksDesc', 'Your bookmarks and their folders.')],
+  history: [tr('settings.sync.kind.history', 'History'), tr('settings.sync.kind.historyDesc', 'The pages you visited, for the address bar’s suggestions and the History page.')],
+  chats: [tr('settings.sync.kind.chats', 'Chats'), tr('settings.sync.kind.chatsDesc', 'Your saved AI chats, with their titles, pins and archive. A chat that is open on a computer waits until you leave it.')],
+  widgets: [tr('settings.sync.kind.widgets', 'Home page widgets'), tr('settings.sync.kind.widgetsDesc', 'Which cards are on the new tab page, and where. Sign-ins and keys of a card stay on the computer.')],
+  settings: [tr('settings.sync.kind.settings', 'Settings'), tr('settings.sync.kind.settingsDesc', 'Look and feel and everyday choices: theme, accent color, search engine, privacy switches. Never API keys, sign-ins, folders or what the AI may do.')],
+}[kind]);
+
+function syncAgo(ms) {
+  if (!ms) return tr('settings.sync.never', 'not yet');
+  const sec = Math.round((Date.now() - ms) / 1000);
+  if (sec < 45) return tr('settings.sync.justNow', 'just now');
+  try {
+    const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+    if (sec < 3600) return rtf.format(-Math.round(sec / 60), 'minute');
+    if (sec < 86400) return rtf.format(-Math.round(sec / 3600), 'hour');
+    return rtf.format(-Math.round(sec / 86400), 'day');
+  } catch { return new Date(ms).toLocaleString(); }
+}
+
+
+function syncError(err) {
+  const code = err?.code || 'error';
+  const known = {
+    'no-folder': tr('settings.sync.err.noFolder', 'That folder isn’t there. Choose it again, or check that your cloud drive is running.'),
+    'not-writable': tr('settings.sync.err.notWritable', 'Lumen can’t write in that folder.'),
+    'bad-folder': tr('settings.sync.err.badFolder', 'Choose a folder outside Lumen’s own data.'),
+    'wrong-passphrase': tr('settings.sync.err.wrongPassphrase', 'That isn’t the passphrase this folder was set up with. Use the one you chose on your first computer.'),
+    'short-passphrase': tr('settings.sync.err.shortPassphrase', 'Use a passphrase of at least 8 characters.'),
+    'bad-meta': tr('settings.sync.err.badMeta', 'The setup file in that folder is damaged. Move the “Lumen Sync” folder away to start again.'),
+    newer: tr('settings.sync.err.newer', 'That folder was set up by a newer Lumen. Update Lumen first.'),
+    'no-keychain': tr('settings.sync.err.noKeychain', 'This computer has no secure storage to keep the passphrase in, so sync can’t be turned on.'),
+    'no-passphrase': tr('settings.sync.err.noPassphrase', 'The passphrase isn’t saved on this computer any more. Enter it again below.'),
+    'passwords-off': tr('settings.sync.err.passwordsOff', 'Turn on Save passwords first (Privacy and security), then come back to this switch.'),
+  }[code];
+  return known || err?.message || tr('settings.sync.err.other', 'Something went wrong.');
+}
+
+async function buildSync(card) {
+  const slot = card.at('sync');
+  const box = h('div', { class: 'sync-box', id: 'sync-box' });
+  slot.append(box);
+  let state = await S.sync.state();
+  let formOpen = false;
+  let busy = false;
+  const draft = { folder: '', kinds: Object.fromEntries(SYNC_KINDS.map((k) => [k, true])), passwords: false };
+
+  const switchRow = (id, label, desc, checked, onchange, disabled = false) => {
+    const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
+    input.checked = checked;
+    input.disabled = disabled;
+    input.addEventListener('change', () => onchange(input));
+    const el = row(label, desc, input);
+    el.classList.add('sub-row');
+    el.querySelector('.label').addEventListener('click', () => { if (!input.disabled) input.click(); });
+    return el;
+  };
+
+
+  const passwordsRow = (checked, onchange, id) => {
+    const canUse = state.passwordsOn;
+    const el = switchRow(id, tr('settings.sync.passwords', 'Also sync saved passwords'),
+      tr('settings.sync.passwordsDesc', 'Off unless you turn it on. Passwords go into the folder only inside the passphrase-encrypted files, like everything else, but anyone who gets your passphrase and your cloud drive could read them, so use a strong passphrase. A password changed on one computer replaces the one on the others.'),
+      checked && canUse, onchange, !canUse);
+    if (!canUse) el.querySelector('.text').append(h('span', { class: 'note', text: tr('settings.sync.passwordsNeedOn', 'Turn on Save passwords (Privacy and security) to use this.') }));
+    return el;
+  };
+
+
+  function setupForm({ again } = {}) {
+    const folder = h('input', { type: 'text', class: 'grow', id: 'sync-folder-path', readonly: true, placeholder: tr('settings.sync.noFolder', 'No folder chosen'), 'aria-label': tr('settings.sync.folder', 'Folder'), value: draft.folder || state.path || '' });
+    const pick = h('button', { id: 'sync-pick', type: 'button', text: tr('settings.sync.choose', 'Choose folder…'), onclick: async () => { const p = await S.sync.pick().catch(() => null); if (p) { draft.folder = p; folder.value = p; } } });
+    const pass = h('input', { type: 'password', class: 'grow', id: 'sync-passphrase', autocomplete: 'off', spellcheck: 'false', placeholder: tr('settings.sync.passphrasePlaceholder', 'Sync passphrase'), 'aria-label': tr('settings.sync.passphrase', 'Sync passphrase') });
+    const note = status('sync-form-status');
+    note.setAttribute('role', 'status');
+    const go = h('button', { id: 'sync-enable', type: 'button', class: 'primary', text: again ? tr('settings.sync.save', 'Save passphrase') : tr('settings.sync.turnOn', 'Turn on sync') });
+    go.addEventListener('click', async () => {
+      const folderPath = draft.folder || state.path;
+      if (!folderPath) { flash(note, tr('settings.sync.err.noFolder', 'That folder isn’t there. Choose it again, or check that your cloud drive is running.'), 'err'); return; }
+      go.disabled = true;
+      flash(note, tr('settings.sync.working', 'Connecting to the folder…'), '');
+      const r = await S.sync.enable({ folder: folderPath, passphrase: pass.value, kinds: draft.kinds, passwords: draft.passwords }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      go.disabled = false;
+      if (!r.ok) { flash(note, syncError(r), 'err'); return; }
+      pass.value = '';
+      formOpen = false;
+      state = r.state;
+      render();
+    });
+    const cancel = h('button', { id: 'sync-cancel', type: 'button', text: tr('settings.sync.cancel', 'Cancel'), onclick: () => { formOpen = false; render(); } });
+    const wrap = h('div', { class: 'stack sync-form', id: 'sync-form' },
+      h('div', { class: 'controls' }, folder, pick),
+      h('div', { class: 'controls' }, pass),
+      h('span', { class: 'note', text: tr('settings.sync.passphraseHelp', 'Use the same passphrase on every computer. Lumen keeps it on this computer only (in your system’s secure storage) and can’t recover it for you. At least 8 characters when you set up a new folder.') }),
+      again ? null : h('div', { class: 'sync-kinds' },
+        ...SYNC_KINDS.map((k) => switchRow(`sync-new-${k}`, syncKindText(k)[0], syncKindText(k)[1], draft.kinds[k], (i) => { draft.kinds[k] = i.checked; })),
+        passwordsRow(draft.passwords, (i) => { draft.passwords = i.checked; }, 'sync-new-passwords')),
+      h('div', { class: 'controls' }, go, again ? null : cancel), note);
+    return wrap;
+  }
+
+
+  function onView() {
+    const parts = [];
+    const err = state.error;
+    const statusNote = status('sync-status');
+    statusNote.setAttribute('role', 'status');
+    if (err) flash(statusNote, syncError(err), 'err');
+    else if (state.running) flash(statusNote, tr('settings.sync.syncing', 'Syncing…'), '');
+    else flash(statusNote, tr('settings.sync.last', 'Last synced {when}.', { when: syncAgo(state.lastSynced) }), state.lastSynced ? 'ok' : '');
+    const others = (state.devices || []).filter((d) => !d.self);
+    const devices = h('span', { class: 'note', id: 'sync-devices', text: others.length
+      ? tr('settings.sync.devices', 'Other computers seen in this folder: {names}.', { names: others.map((d) => `${d.name || tr('settings.sync.unnamed', 'a computer')} (${syncAgo(d.seen)})`).join(', ') })
+      : tr('settings.sync.noDevices', 'No other computer has used this folder yet.') });
+    const extra = [];
+    if (state.damaged) extra.push(h('span', { class: 'note warn', id: 'sync-damaged', text: tr(state.damaged === 1 ? 'settings.sync.damagedOne' : 'settings.sync.damagedMany', state.damaged === 1 ? '1 file in the folder couldn’t be read (damaged, still downloading, or made with another passphrase). Lumen skips it.' : '{n} files in the folder couldn’t be read (damaged, still downloading, or made with another passphrase). Lumen skips them.', { n: state.damaged }) }));
+    if (state.newer) extra.push(h('span', { class: 'note warn', text: tr('settings.sync.newerFiles', 'Some files were written by a newer Lumen and are skipped until you update.') }));
+    for (const s of state.skipped || []) {
+      const text = s.reason === 'mass-delete'
+        ? tr('settings.sync.massDelete', 'Many {what} went missing at once, so Lumen did not copy those deletions to your other computers. If you meant that, press Sync now.', { what: s.provider })
+        : tr('settings.sync.skipped', '{what} could not be read just now and was left alone.', { what: s.provider });
+      extra.push(h('span', { class: 'note warn', text }));
+    }
+    const nowBtn = h('button', { id: 'sync-now', type: 'button', class: 'primary', text: tr('settings.sync.now', 'Sync now'), disabled: state.running || busy || err?.code === 'no-passphrase' });
+    nowBtn.addEventListener('click', async () => {
+      busy = true; nowBtn.disabled = true; flash(statusNote, tr('settings.sync.syncing', 'Syncing…'), '');
+      const r = await S.sync.now().catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      busy = false;
+      if (r.state) state = r.state; else if (!r.ok) flash(statusNote, syncError(r), 'err');
+      render();
+    });
+    const off = armedButton(tr('settings.sync.off', 'Turn off'), tr('settings.sync.offSure', 'Turn off? Click again'), async () => {
+      const r = await S.sync.off().catch(() => null);
+      if (r?.state) state = r.state; else state = await S.sync.state();
+      formOpen = false;
+      render();
+    }, 'danger', 'sync-off');
+    const head = row(tr('settings.sync.on', 'Sync is on'),
+      tr('settings.sync.onDesc', 'Folder: {path}', { path: state.folderName || state.path }),
+      nowBtn, off);
+    head.id = 'sync-head';
+    head.querySelector('.text').append(statusNote, devices, ...extra);
+    parts.push(head);
+    if (err?.code === 'no-passphrase') parts.push(setupForm({ again: true }));
+    parts.push(...SYNC_KINDS.map((k) => switchRow(`sync-kind-${k}`, syncKindText(k)[0], syncKindText(k)[1], state.kinds[k] !== false, async (input) => {
+      input.disabled = true;
+      const r = await S.sync.set({ kinds: { [k]: input.checked } }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      if (r.state) state = r.state; else { input.checked = !input.checked; flash(statusNote, syncError(r), 'err'); }
+      render();
+    })));
+    const pw = passwordsRow(state.passwords, async (input) => {
+      input.disabled = true;
+      const r = await S.sync.set({ passwords: input.checked }).catch((e) => ({ ok: false, message: String(e?.message || e) }));
+      if (r.state) state = r.state; else { input.checked = !input.checked; flash(statusNote, syncError(r), 'err'); }
+      render();
+    }, 'sync-passwords');
+    parts.push(pw);
+    parts.push(h('div', { class: 'row sub-row sync-note' }, h('div', { class: 'text' }, h('span', { class: 'desc', text: tr('settings.sync.offHelp', 'Turning sync off stops this computer and forgets the passphrase here. Your data stays on every computer, and the files stay in the folder: delete the “Lumen Sync” folder yourself if you want them gone.') }))));
+    return parts;
+  }
+
+  function offView() {
+    const setup = h('button', { id: 'sync-setup', type: 'button', class: 'primary', text: tr('settings.sync.setup', 'Set up…'), onclick: () => { formOpen = !formOpen; render(); } });
+    const head = row(tr('settings.sync.title', 'Sync through a folder'),
+      tr('settings.sync.desc', 'Keep your bookmarks, history, chats, home page widgets and settings the same on your computers. Choose a folder that your own cloud drive (OneDrive, Dropbox, Google Drive, iCloud Drive) already syncs. Lumen has no server and no account: nothing leaves this computer except into that folder, and everything in it is encrypted with a passphrase only you know. Off by default.'),
+      setup);
+    head.id = 'sync-head';
+    withKeywords(head, 'sync syncing account devices phone cloud backup transfer move onedrive dropbox google drive icloud computers share');
+    if (!state.keychain) head.querySelector('.text').append(h('span', { class: 'note warn', id: 'sync-nokeychain', text: syncError({ code: 'no-keychain' }) }));
+    return [head, ...(formOpen ? [setupForm()] : [])];
+  }
+
+  function render() {
+    box.replaceChildren(...(state.on ? onView() : offView()));
+    for (const el of box.querySelectorAll('.row')) { if (!el.dataset.search) el.dataset.search = (el.textContent || '').toLowerCase(); }
+  }
+  render();
+  if (S.sync.onChanged) S.sync.onChanged(async () => { if (busy || document.activeElement?.id === 'sync-passphrase') return; state = await S.sync.state().catch(() => state); if (!(formOpen && !state.on)) render(); });
+
+  setInterval(() => { if (state.on && !busy && !document.hidden) S.sync.state().then((s) => { state = s; if (!box.querySelector('#sync-passphrase')) render(); }).catch(() => {}); }, 60000).unref?.();
+}
+;
 // ---- settings-unload.js
 
 
@@ -2191,6 +2393,141 @@ function buildExternalApps() {
   return root;
 }
 ;
+// ---- settings-focus.js
+
+
+
+
+
+async function buildFocus(card) {
+  const F = window.lumenSettings.focus;
+  const DEFAULT_SITES = ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'];
+  let info = await F.get();
+  const lengths = [25, 45, 60, 90, 120, 180];
+  const lengthLabel = (m) => (m % 60 === 0 ? tr(m === 60 ? 'focus.dur.hour' : 'focus.dur.hours', m === 60 ? '1 hour' : '{n} hours', { n: m / 60 }) : tr('focus.dur.minutes', '{n} minutes', { n: m }));
+  const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dayName = (d) => new Intl.DateTimeFormat(undefined, { weekday: 'short' }).format(new Date(2026, 0, 4 + d));
+  const timeName = (hhmm) => { const [hh, mm] = hhmm.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  const daysName = (days) => {
+    const key = days.join(',');
+    return key === '1,2,3,4,5' ? tr('focus.days.weekdays', 'Weekdays') : key === '0,1,2,3,4,5,6' ? tr('focus.days.every', 'Every day') : key === '0,6' ? tr('focus.days.weekends', 'Weekends') : days.map(dayName).join(', ');
+  };
+  const failText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  const locked = () => Boolean(info.state.active);
+
+
+  const statusLine = h('span', { class: 'note', id: 'focus-status', role: 'status' });
+  const lengthSelect = h('select', { id: 'focus-length', 'aria-label': tr('settings.focus.length', 'How long') }, lengths.map((m) => h('option', { value: String(m), text: lengthLabel(m) })));
+  lengthSelect.value = '60';
+  const startButton = h('button', { class: 'primary', id: 'focus-start', type: 'button', text: tr('settings.focus.start', 'Start'), onclick: async () => {
+    startButton.disabled = true;
+    try { await F.start(Number(lengthSelect.value)); await reload(); } catch (err) { flash(statusLine, failText(err), 'err'); }
+    startButton.disabled = false;
+  } });
+  const drawStatus = () => {
+    const s = info.state;
+    statusLine.className = 'note';
+    statusLine.textContent = s.active
+      ? tr(s.source === 'schedule' ? 'settings.focus.onSchedule' : 'settings.focus.on', s.source === 'schedule' ? 'On until {time} (a schedule). Change the lists when it ends.' : 'On until {time}. Change the lists when it ends.', { time: clock(s.until) })
+      : s.next ? tr('settings.focus.nextStart', 'Off. The next schedule starts {time}.', { time: `${dayName(new Date(s.next).getDay())} ${clock(s.next)}` }) : tr('settings.focus.off', 'Off. Nothing is blocked until you start it.');
+    startButton.disabled = s.active;
+    lengthSelect.disabled = s.active;
+  };
+
+
+  const siteList = h('div', { class: 'list', id: 'focus-sites' });
+  const siteInput = h('input', { type: 'text', class: 'grow', id: 'focus-site-add', placeholder: 'example.com', 'aria-label': tr('settings.focus.addSite', 'Site to block') });
+  const siteNote = h('span', { class: 'note', id: 'focus-sites-note', role: 'status' });
+  const setSites = async (list) => {
+    try { st = await S.set('focusSites', list); siteNote.textContent = ''; } catch (err) { flash(siteNote, failText(err), 'err'); }
+    drawSites();
+  };
+  const sites = () => st.prefs.focusSites || [];
+  function drawSites() {
+    const list = sites();
+    siteList.replaceChildren(...(list.length ? list.map((host) => h('div', { class: 'item', 'data-site': host },
+      h('span', { class: 'grow', text: host }),
+      h('button', { text: tr('settings.focus.remove', 'Remove'), disabled: locked(), onclick: () => setSites(list.filter((x) => x !== host)) })))
+      : [h('span', { class: 'note', text: tr('settings.focus.noSites', 'No sites: focus mode blocks nothing.') })]));
+    siteInput.disabled = locked();
+    addSiteButton.disabled = locked();
+    resetSites.disabled = locked();
+  }
+  const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
+  const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
+  siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addSite(); } });
+  const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });
+
+
+  const scheduleList = h('div', { class: 'list', id: 'focus-schedules' });
+  const scheduleNote = h('span', { class: 'note', id: 'focus-schedules-note', role: 'status' });
+  const schedules = () => st.prefs.focusSchedules || [];
+  const setSchedules = async (list) => {
+    try { st = await S.set('focusSchedules', list); scheduleNote.textContent = ''; } catch (err) { flash(scheduleNote, failText(err), 'err'); }
+    await reload();
+  };
+  function drawSchedules() {
+    const list = schedules();
+    scheduleList.replaceChildren(...(list.length ? list.map((s) => {
+      const on = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `${daysName(s.days)} ${timeName(s.from)}`, checked: s.on !== false, disabled: locked(), onchange: (e) => setSchedules(list.map((x) => (x.id === s.id ? { ...x, on: e.target.checked } : x))) });
+      return h('div', { class: 'item', 'data-schedule': s.id },
+        h('span', { class: 'grow', text: `${daysName(s.days)}, ${timeName(s.from)} – ${timeName(s.to)}` }), on,
+        h('button', { text: tr('settings.focus.remove', 'Remove'), disabled: locked(), onclick: () => setSchedules(list.filter((x) => x.id !== s.id)) }));
+    }) : [h('span', { class: 'note', text: tr('settings.focus.noSchedules', 'No schedules.') })]));
+    for (const el of scheduleForm.querySelectorAll('input, button')) el.disabled = locked();
+  }
+  const phraseInput = h('input', { type: 'text', class: 'grow', id: 'focus-phrase', placeholder: tr('settings.focus.phrasePlaceholder', 'weekdays 7–9 pm'), 'aria-label': tr('settings.focus.phrase', 'Schedule in words') });
+  const addPhrase = async () => {
+    const text = phraseInput.value.trim();
+    if (!text) return;
+    const parsed = await F.phrase(text).catch(() => null);
+    if (!parsed) { flash(scheduleNote, tr('settings.focus.phraseBad', 'Try something like “weekdays 7–9 pm” or “mon, wed 4:30–6 pm”.'), 'err'); return; }
+    phraseInput.value = '';
+    setSchedules([...schedules(), { ...parsed, on: true }]);
+  };
+  phraseInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPhrase(); } });
+  const dayBoxes = [1, 2, 3, 4, 5, 6, 0].map((d) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: String(d), 'data-day': String(d), checked: d >= 1 && d <= 5 }), dayName(d)));
+  const fromInput = h('input', { type: 'time', id: 'focus-from', value: '19:00', 'aria-label': tr('settings.focus.from', 'From') });
+  const toInput = h('input', { type: 'time', id: 'focus-to', value: '21:00', 'aria-label': tr('settings.focus.to', 'Until') });
+  const scheduleForm = h('div', { class: 'controls start', id: 'focus-schedule-form' },
+    ...dayBoxes, fromInput, h('span', { class: 'note', text: tr('settings.focus.until', 'until') }), toInput,
+    h('button', { id: 'focus-schedule-add', type: 'button', text: tr('settings.focus.addSchedule', 'Add schedule'), onclick: () => {
+      const days = dayBoxes.map((l) => l.querySelector('input')).filter((i) => i.checked).map((i) => Number(i.value));
+      if (!days.length || !fromInput.value || !toInput.value || fromInput.value === toInput.value) { flash(scheduleNote, tr('settings.focus.scheduleBad', 'Pick at least one day and two different times.'), 'err'); return; }
+      setSchedules([...schedules(), { days, from: fromInput.value, to: toInput.value, on: true }]);
+    } }));
+
+
+  const logList = h('div', { class: 'list', id: 'focus-log' });
+  function drawLog() {
+    const rows = info.log.filter((e) => e && e.type).slice(0, 12).map((e) => {
+      const when = new Date(e.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      const text = e.type === 'start' ? tr('settings.focus.log.start', 'Started, {n} min', { n: e.minutes })
+        : e.type === 'allow' ? tr('settings.focus.log.allow', 'Allowed {site} for {n} min', { site: e.site, n: e.minutes })
+          : e.how === 'early' ? tr('settings.focus.log.early', 'Ended early after {n} min', { n: e.minutes }) : tr('settings.focus.log.end', 'Ended');
+      return h('div', { class: 'item', 'data-type': e.type }, h('span', { class: 'grow', text: text }), h('span', { class: 'note', text: when }));
+    });
+    logList.replaceChildren(...(rows.length ? rows : [h('span', { class: 'note', text: tr('settings.focus.log.none', 'Nothing yet.') })]));
+  }
+
+  async function reload() {
+    info = await F.get();
+    drawStatus(); drawSites(); drawSchedules(); drawLog();
+  }
+
+  card.append(
+    withKeywords(stackRow(tr('settings.focus.title', 'Focus mode'), tr('settings.focus.desc', 'For a homework session: sites that pull you away are blocked until the timer ends. Start it here, from the toolbar button, or by typing “focus for 90 minutes” in the chat. Nothing is blocked until you start it.'),
+      h('div', { class: 'controls start' }, lengthSelect, startButton), statusLine), 'focus homework study distraction block timer pomodoro youtube reddit'),
+    withKeywords(stackRow(tr('settings.focus.sites', 'Blocked sites'), tr('settings.focus.sitesDesc', 'These sites, and their subdomains, show a calm page instead while focus mode is on. “I need this for school” opens one for 10 minutes and is noted in the log below.'),
+      siteList, h('div', { class: 'controls start' }, siteInput, addSiteButton, resetSites), siteNote), 'focus block sites list youtube reddit tiktok instagram twitter facebook twitch netflix'),
+    withKeywords(stackRow(tr('settings.focus.schedules', 'Schedules'), tr('settings.focus.schedulesDesc', 'Focus mode starts by itself at these times and ends when they do. Type one in words, or pick the days and times.'),
+      scheduleList, h('div', { class: 'controls start' }, phraseInput, h('button', { id: 'focus-phrase-add', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addPhrase })), scheduleForm, scheduleNote), 'focus schedule recurring weekdays evening study time'),
+    stackRow(tr('settings.focus.log', 'Focus log'), tr('settings.focus.logDesc', 'When focus mode started and ended, and every time you used “I need this for school”. It stays on this computer.'), logList),
+  );
+  drawStatus(); drawSites(); drawSchedules(); drawLog();
+  setInterval(() => { F.get().then((next) => { if (JSON.stringify(next.state) !== JSON.stringify(info.state) || next.log.length !== info.log.length) { info = next; drawStatus(); drawSites(); drawSchedules(); drawLog(); } }).catch(() => {}); }, 10000);
+}
+;
 // ---- settings-connectors.js
 
 
@@ -2270,6 +2607,16 @@ function buildConnectors() {
     if (c.status === 'needs-signin') {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
+
+    if (c.drafts === 'off') {
+      const allow = h('button', { class: 'primary', id: `conn-${c.id}-drafts`, text: 'Allow drafts', 'aria-label': `Allow ${c.name} drafts`, onclick: async () => {
+        allow.disabled = true;
+        allow.textContent = 'Waiting for Google…';
+        flash(note, 'Google asks in your browser for permission to make drafts. Lumen only makes drafts; it never sends email.', 'ok');
+        try { render(await C.allowDrafts(c.id)); flash(note, 'Drafts allowed. The AI can now put emails in your Gmail Drafts, after you allow each one. It never sends.', 'ok'); } catch (err) { allow.disabled = false; allow.textContent = 'Allow drafts'; flash(note, clean(err), 'error'); }
+      } });
+      buttons.push(allow);
+    }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
         if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
@@ -2280,6 +2627,7 @@ function buildConnectors() {
     return h('div', { class: `conn-card ${c.status}`, 'data-connector': c.id, 'data-status': c.status },
       h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
       h('p', { class: 'conn-summary', text: c.summary }),
+      c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
       showing ? form(c, render) : (c.status !== 'soon' ? h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)) : null),
       showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
   }
@@ -2305,6 +2653,9 @@ function buildConnectors() {
 }
 ;
 // ---- settings-skills.js
+
+
+
 
 
 
@@ -2346,13 +2697,14 @@ async function buildSkills(card) {
     list.replaceChildren(...shown.map((s) => {
       const edit = h('button', { text: say('edit', 'Edit'), 'aria-label': say('editNamed', 'Edit {title}', { title: s.title }), onclick: () => openEditor(s) });
       const dup = h('button', { text: say('duplicate', 'Duplicate'), 'aria-label': say('duplicateNamed', 'Duplicate {title}', { title: s.title }), onclick: () => openEditor({ ...s, id: undefined, name: `${s.name}-copy`.slice(0, 32), title: `${s.title} copy`.slice(0, 60), source: 'user' }) });
+      const exportMd = h('button', { text: say('exportMd', 'Export SKILL.md…'), title: say('exportMdTitle', 'Save this skill as a SKILL.md folder for Claude Code and other agents'), 'aria-label': say('exportMdNamed', 'Export {title} as SKILL.md', { title: s.title }), onclick: async () => { const r = await K.exportMd(s.id).catch((err) => ({ ok: false, error: errText(err) })); if (r.ok) flash(note, say('exportedMd', 'Saved {path}', { path: r.filePath }), 'ok'); else if (!r.canceled) flash(note, r.error, 'err'); } });
       const reset = s.source === 'builtin' ? h('button', { text: say('reset', 'Reset'), title: say('resetOne', 'Put this built-in skill back to its original text'), onclick: async () => { const r = await K.reset(s.id); skills = r.skills; render(); flash(note, say('resetDone', 'Reset.'), 'ok'); } }) : null;
       const del = h('button', { class: 'danger', text: say('delete', 'Delete'), 'aria-label': say('deleteNamed', 'Delete {title}', { title: s.title }), onclick: async () => { if (!confirm(say('confirmDelete', 'Delete the skill “{title}”?', { title: s.title }))) return; skills = (await K.remove(s.id)).skills; render(); } });
       const line = h('div', { class: 'skill-row', 'data-skill': s.name },
         h('div', { class: 'skill-text' },
-          h('span', { class: 'skill-title' }, s.icon ? `${s.icon} ` : '', s.title, h('span', { class: 'skill-slash', text: ` /${s.name}` }), s.source !== 'user' ? h('span', { class: 'skill-source', text: s.source === 'builtin' ? say('builtin', 'built-in') : say('imported', 'imported') }) : null),
+          h('span', { class: 'skill-title' }, s.icon ? `${s.icon} ` : '', s.title, h('span', { class: 'skill-slash', text: ` /${s.name}` }), s.source !== 'user' ? h('span', { class: 'skill-source', text: s.source === 'builtin' ? say('builtin', 'built-in') : say('imported', 'imported') }) : null, s.autoUse ? h('span', { class: 'skill-source', text: say('autoUseBadge', 'AI can use') }) : null),
           s.description ? h('span', { class: 'note', text: s.description }) : null),
-        h('div', { class: 'skill-actions' }, edit, dup, reset, del));
+        h('div', { class: 'skill-actions' }, edit, dup, exportMd, reset, del));
       return line;
     }));
     if (!shown.length) list.append(h('p', { class: 'note skills-empty', text: skills.length ? say('none', 'No skill matches.') : say('empty', 'No skills yet.') }));
@@ -2360,7 +2712,7 @@ async function buildSkills(card) {
 
 
   function openEditor(s) {
-    const draft = { id: s?.id, name: s?.name || '', title: s?.title || '', description: s?.description || '', prompt: s?.prompt || '', inputs: s?.inputs || [], inputRequired: Boolean(s?.inputRequired), mode: s?.mode || 'no-tools', model: s?.model || '', icon: s?.icon || '' };
+    const draft = { id: s?.id, name: s?.name || '', title: s?.title || '', description: s?.description || '', prompt: s?.prompt || '', inputs: s?.inputs || [], inputRequired: Boolean(s?.inputRequired), mode: s?.mode || 'no-tools', model: s?.model || '', icon: s?.icon || '', autoUse: Boolean(s?.autoUse) };
     const field = (id, label, control) => h('label', { class: 'skills-field', for: id }, h('span', { class: 'skills-label', text: label }), control);
     const name = h('input', { type: 'text', id: 'skill-name', value: draft.name, maxlength: 32, spellcheck: 'false', autocomplete: 'off', placeholder: 'summarize' });
     const title = h('input', { type: 'text', id: 'skill-title', value: draft.title, maxlength: 60, placeholder: 'Summarize' });
@@ -2378,6 +2730,7 @@ async function buildSkills(card) {
       if (model.value !== draft.model && draft.model) { model.append(h('option', { value: draft.model, text: draft.model })); model.value = draft.model; }
     }).catch(() => {});
     const required = h('input', { type: 'checkbox', id: 'skill-required', checked: draft.inputRequired });
+    const autoUse = h('input', { type: 'checkbox', id: 'skill-auto-use', checked: draft.autoUse });
     const contexts = ['page', 'selection', 'tabs', 'clipboard'].map((c) => {
       const box = h('input', { type: 'checkbox', 'data-context': c, id: `skill-ctx-${c}`, checked: draft.inputs.includes(c) });
       const names = { page: say('ctx.page', 'Page text'), selection: say('ctx.selection', 'Selected text'), tabs: say('ctx.tabs', 'Picked tabs (@)'), clipboard: say('ctx.clipboard', 'Clipboard') };
@@ -2391,7 +2744,7 @@ async function buildSkills(card) {
     const formNote = h('span', { class: 'note', id: 'skill-error', role: 'alert' });
 
     const read = () => ({
-      ...draft, name: name.value, title: title.value, description: description.value, prompt: prompt.value, mode: mode.value, model: model.value, inputRequired: required.checked,
+      ...draft, name: name.value, title: title.value, description: description.value, prompt: prompt.value, mode: mode.value, model: model.value, inputRequired: required.checked, autoUse: autoUse.checked,
       inputs: contexts.map((l) => l.firstChild).filter((b) => b.checked).map((b) => b.dataset.context),
     });
     let timer = null;
@@ -2427,6 +2780,8 @@ async function buildSkills(card) {
       cheat,
       h('div', { class: 'skills-field' }, h('span', { class: 'skills-label', text: say('context', 'Also include') }), h('div', { class: 'skills-checks' }, contexts,
         h('label', { class: 'skills-check' }, required, say('inputRequired', 'It needs text after the command')))),
+      h('div', { class: 'skills-field' }, h('label', { class: 'skills-check' }, autoUse, say('autoUse', 'AI can use this on its own')),
+        h('span', { class: 'note', text: say('autoUseNote', 'The AI sees its name and description in every chat and loads it when your request matches, without a /command. It still asks before acting on a site.') })),
       h('div', { class: 'skills-two' }, field('skill-mode', say('mode', 'What it may do'), mode), field('skill-model', say('model', 'Model (optional)'), model)),
       h('div', { class: 'skills-field' }, h('span', { class: 'skills-label', text: say('preview', 'Preview, with sample values') }), previewBox),
       h('div', { class: 'item' }, saveBtn, h('button', { text: say('cancel', 'Cancel'), onclick: close }), formNote));
@@ -2448,6 +2803,7 @@ async function buildSkills(card) {
         h('label', { class: 'skills-check' }, box, h('strong', { text: c.skill.title }), h('span', { class: 'skill-slash', text: ` /${c.skill.name}` }), c.renamedFrom ? h('span', { class: 'note', text: ` ${say('renamed', '(renamed: /{name} is taken)', { name: c.renamedFrom })}` }) : null),
         c.skill.description ? h('p', { class: 'note', text: c.skill.description }) : null,
         h('p', { class: 'note', text: say('reviewMode', 'May do: {mode}. Reads: {inputs}.', { mode: modeText(c.skill.mode), inputs: c.skill.inputs.join(', ') || say('nothing', 'nothing from the page') }) }),
+        c.ignoredCount ? h('p', { class: 'note skills-ignored', text: say('ignoredFiles', 'Left out of the folder ({n} files{scripts}): {names}. Lumen skills are instructions only; nothing in a skill folder is ever run.', { n: c.ignoredCount, scripts: c.scripts ? say('ignoredScripts', ', {n} of them scripts', { n: c.scripts }) : '', names: c.ignored.slice(0, 8).join(', ') + (c.ignoredCount > 8 ? ', …' : '') }) }) : null,
         h('pre', { class: 'code skills-review-prompt', tabindex: 0, text: c.skill.prompt }));
     });
     const rejects = result.rejected.map((r) => h('p', { class: 'err skills-rejected', text: say('rejected', 'Not imported: {name} {reason}', { name: r.name ? `“${r.name}”:` : `#${r.index + 1}:`, reason: r.reason }) }));
@@ -2463,6 +2819,7 @@ async function buildSkills(card) {
     dlg.append(
       h('h3', { id: 'skills-review-title', text: say('reviewTitle', 'Review before importing') }),
       h('p', { class: 'note', text: say('reviewNote', 'These skills come from a file. Read each prompt: it is sent to your AI when you run the skill. Nothing runs until you use it.') }),
+      h('p', { class: 'note', text: say('reviewAutoUse', 'Imported skills start with “AI can use this on its own” off. Turn it on in the editor if you want it.') }),
       ...boxes, ...rejects,
       h('div', { class: 'item' }, importBtn, h('button', { text: say('cancel', 'Cancel'), onclick: () => dlg.close() })));
     dlg.addEventListener('close', () => dlg.remove());
@@ -2474,14 +2831,60 @@ async function buildSkills(card) {
   const toolbar = h('div', { class: 'item skills-toolbar' },
     h('button', { class: 'primary', id: 'skill-new', text: say('newSkill', 'New skill'), onclick: () => openEditor(null) }),
     h('button', { id: 'skills-import', text: say('import', 'Import…'), onclick: async () => { const r = await K.importPick().catch((err) => ({ ok: false, error: errText(err) })); if (!r.canceled) review(r); } }),
+    h('button', { id: 'skills-import-md', text: say('importMd', 'Import SKILL.md…'), title: say('importMdTitle', 'Pick a skill folder (Claude Code, Agent Skills) or its SKILL.md'), onclick: async () => { const r = await K.importMdPick().catch((err) => ({ ok: false, error: errText(err) })); if (!r.canceled) review(r); } }),
     h('button', { id: 'skills-export', text: say('export', 'Export all…'), onclick: async () => { const r = await K.exportAll().catch((err) => ({ ok: false, error: errText(err) })); if (r.ok) flash(note, say('exported', 'Exported {n} skills.', { n: r.count }), 'ok'); else if (!r.canceled) flash(note, r.error, 'err'); } }),
     h('button', { id: 'skills-reset', text: say('resetAll', 'Reset built-ins'), title: say('resetAllTitle', 'Put every built-in skill back to its original text, and bring back any you deleted. Your own skills are not touched.'), onclick: async () => { if (!confirm(say('confirmReset', 'Reset the built-in skills to their original text? Skills you made are not touched.'))) return; const r = await K.reset(); skills = r.skills; render(); flash(note, r.skipped.length ? say('resetSkipped', 'Reset {n}. Left alone because you made a skill with the same name: {names}.', { n: r.reset, names: r.skipped.join(', ') }) : say('resetAllDone', 'Reset {n} built-in skills.', { n: r.reset }), 'ok'); } }),
     note);
 
   const intro = row(say('introTitle', 'Skills'), say('intro', 'Saved prompts. Type / in the chat (or right-click selected text on a page → Run skill) to use one. A skill only sends a message: it cannot change what Lumen may do, and it still asks before acting on a site.'));
   intro.dataset.search += ' skills slash command prompt reusable summarize translate';
-  card.append(intro, h('div', { class: 'skills-section' }, toolbar, h('div', { class: 'skills-search' }, search), list, editor));
+
+  const ccBox = h('div', { class: 'skills-list skills-cc', id: 'skills-cc' });
+  async function renderClaudeCode() {
+    const r = await K.claudeCode().catch(() => ({ on: false, skills: [] }));
+    if (!r.on) { ccBox.replaceChildren(); ccBox.hidden = true; return; }
+    ccBox.hidden = false;
+    const rows = r.skills.map((c) => (c.error
+      ? h('div', { class: 'skill-row' }, h('div', { class: 'skill-text' }, h('span', { class: 'skill-title', text: c.folder }), h('span', { class: 'note err', text: c.error })))
+      : h('div', { class: 'skill-row', 'data-skill': c.name }, h('div', { class: 'skill-text' },
+        h('span', { class: 'skill-title' }, c.title, h('span', { class: 'skill-slash', text: ` /${c.name}` }), h('span', { class: 'skill-source', text: say('claudeCode', 'Claude Code, read-only') })),
+        h('span', { class: 'note', text: c.hidden ? say('ccHidden', 'Not used: a Lumen skill or command already has this name.') : c.description })))));
+    ccBox.replaceChildren(h('p', { class: 'note', text: say('ccFolder', 'From {folder}. Edit them in Claude Code.', { folder: r.folder }) }), ...(rows.length ? rows : [h('p', { class: 'note', text: say('ccNone', 'No skills found there.') })]));
+  }
+  const switches = h('div', { class: 'skills-switches' },
+    toggle('skillsAutoUse', say('autoUseSetting', 'Let the AI use skills on its own'), say('autoUseSettingDesc', 'Skills marked “AI can use this on its own” are listed (name and one line) in each new chat, and the AI loads one when your request matches. Off: skills run only when you type their /command. Applies from the next new chat.'), undefined, { fallback: true }),
+    toggle('skillsFromClaudeCode', say('fromClaudeCode', 'Use my Claude Code skills'), say('fromClaudeCodeDesc', 'Also offer the skills in ~/.claude/skills as /commands, and to the AI on its own. Read-only: Lumen reads only each SKILL.md and never runs the scripts beside it.'), () => renderClaudeCode()),
+    toggle('skillsSuggest', say('suggest', 'Offer to save and improve skills'), say('suggestDesc', 'After a task that took many steps, a card under the reply offers “Save how I did this as a skill?”. After you correct a skill’s result, it offers to update the skill and shows the change first. Nothing is saved without your click.')),
+    row(say('scriptsTitle', 'Instructions only'), say('scriptsNote', 'A Lumen skill is text for the AI. Scripts and other files in a skill folder are left out when you import it and are never run.')));
+
+
+  function showUpdate(u) {
+    if (!u || typeof u !== 'object' || !Array.isArray(u.diff)) return;
+    const dlg = h('dialog', { class: 'skills-review skills-update', id: 'skills-update', 'aria-labelledby': 'skills-update-title' });
+    const lines = u.diff.map((d) => h('div', { class: `diff-line diff-${d.op === '+' ? 'add' : d.op === '-' ? 'del' : 'same'}`, text: `${d.op} ${d.text}` }));
+    const accept = h('button', {
+      class: 'primary', id: 'skills-update-accept', text: say('updateAccept', 'Accept the change'),
+      onclick: async () => {
+        const r = await K.applyUpdate(u.token).catch((err) => ({ ok: false, error: errText(err) }));
+        dlg.close();
+        if (r.ok) { skills = r.skills; render(); flash(note, say('updated', 'Updated /{name}.', { name: u.name }), 'ok'); } else flash(note, r.error, 'err');
+      },
+    });
+    dlg.append(
+      h('h3', { id: 'skills-update-title', text: say('updateTitle', 'Update /{name}?', { name: u.name }) }),
+      u.summary ? h('p', { class: 'note', text: u.summary }) : null,
+      h('pre', { class: 'code skills-diff', tabindex: 0 }, lines),
+      h('div', { class: 'item' }, accept, h('button', { text: say('updateKeep', 'Keep it as it is'), onclick: () => dlg.close() })));
+    dlg.addEventListener('close', () => dlg.remove());
+    document.body.append(dlg);
+    dlg.showModal();
+  }
+
+  card.append(intro, switches, h('div', { class: 'skills-section' }, toolbar, h('div', { class: 'skills-search' }, search), list, editor, ccBox));
   render();
+  renderClaudeCode();
+  window.lumenSettings.skills.onUpdate(showUpdate);
+  window.lumenSettings.skills.takeUpdate().then(showUpdate).catch(() => {});
 
   window.lumenSettings.skills.onChanged((next) => { if (Array.isArray(next)) { skills = next; render(); } });
 
@@ -2865,9 +3268,12 @@ async function buildMacros(card) {
 
   function scheduleText(s, T) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -2891,7 +3297,7 @@ async function buildMacros(card) {
       next: !r.enabled ? T('settings.routines.off') : (r.nextRun ? T('settings.routines.next', { time: clock(r.nextRun) }) : ''),
       last: lastText,
       late,
-      snippet: !active && last ? (last.error || last.snippet || '') : '',
+      snippet: !active && last ? (last.error || last.snippet || r.emailError || '') : (r.emailError || ''),
       failed: !active && Boolean(last && (last.status === 'failed' || last.error)),
       needsOk: r.pending > 0,
       active,
@@ -2914,7 +3320,15 @@ async function buildMacros(card) {
     return { have, ready, connectorText: ready === null ? '' : T(ready ? 'routines.template.ready' : 'routines.template.needs', { app }) };
   }
 
-  const api = { scheduleText, rowModel, historyLine, templateModel, clock, timeText, dayName };
+
+  function webhookStatus(w, T) {
+    if (!w || !w.on) return '';
+    if (w.listening) return T('settings.routines.webhookStatus.listening', { port: w.port });
+    if (w.error === 'in-use') return T('settings.routines.webhookStatus.inUse', { port: w.port });
+    return w.error ? T('settings.routines.webhookStatus.error', { port: w.port, error: w.error }) : '';
+  }
+
+  const api = { scheduleText, rowModel, historyLine, templateModel, webhookStatus, clock, timeText, dayName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.settingsRoutinesText = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -2934,6 +3348,9 @@ async function buildRoutines(card) {
   const quietOn = h('input', { type: 'checkbox', class: 'switch', id: 'routines-quiet-on', role: 'switch', 'aria-label': T('routines.quiet.on'), onchange: () => saveQuiet() });
   const quietFrom = h('input', { type: 'time', id: 'routines-quiet-from', 'aria-label': T('routines.quiet.from'), onchange: () => saveQuiet() });
   const quietTo = h('input', { type: 'time', id: 'routines-quiet-to', 'aria-label': T('routines.quiet.to'), onchange: () => saveQuiet() });
+  const hooksOn = h('input', { type: 'checkbox', class: 'switch', id: 'routines-webhooks-on', role: 'switch', 'aria-label': T('settings.routines.webhooks'), onchange: () => saveHooks('routineWebhooks', hooksOn.checked) });
+  const hooksPort = h('input', { type: 'number', min: '1024', max: '65535', id: 'routines-webhooks-port', 'aria-label': T('settings.routines.webhookPort'), onchange: () => saveHooks('routineWebhookPort', Number(hooksPort.value)) });
+  const hooksStatus = h('p', { class: 'note', id: 'routines-webhooks-status', role: 'status', 'aria-live': 'polite' });
   const openHistory = new Set();
   let view = null;
   let shown = '';
@@ -2949,6 +3366,12 @@ async function buildRoutines(card) {
   async function saveQuiet() {
     if (!quietFrom.value || !quietTo.value) return;
     await act({ act: 'settings', patch: { quiet: { on: quietOn.checked, from: quietFrom.value, to: quietTo.value } } });
+  }
+
+
+  async function saveHooks(key, value) {
+    try { await window.lumenSettings.set(key, value); } catch (err) { flash(hooksStatus, clean(err), 'error'); return; }
+    await refresh();
   }
 
   function rowFor(r) {
@@ -3018,6 +3441,13 @@ async function buildRoutines(card) {
     if (document.activeElement !== quietOn) quietOn.checked = Boolean(view.quiet?.on);
     if (document.activeElement !== quietFrom && view.quiet?.from) quietFrom.value = view.quiet.from;
     if (document.activeElement !== quietTo && view.quiet?.to) quietTo.value = view.quiet.to;
+    if (view.webhooks) {
+      hooksOn.checked = Boolean(view.webhooks.on);
+      if (document.activeElement !== hooksPort) hooksPort.value = String(view.webhooks.port);
+      const line = X.webhookStatus(view.webhooks, T);
+      hooksStatus.textContent = line;
+      hooksStatus.classList.toggle('error', Boolean(view.webhooks.on && !view.webhooks.listening));
+    }
     if (focused) card.el.querySelector(`[data-focus="${focused}"]:not(:disabled)`)?.focus();
     const titles = view.routines.map((r) => r.title).join(' ');
     for (const el of [listRow, tplRow]) el.dataset.search = `${el.dataset.base} ${titles}`.toLowerCase();
@@ -3045,6 +3475,12 @@ async function buildRoutines(card) {
   quietRow.dataset.search += ' quiet hours night do not disturb sleep routine routines schedule';
   quietRow.querySelector('.label').addEventListener('click', () => quietOn.click());
   card.append(quietRow, row(T('routines.quiet.from'), '', quietFrom), row(T('routines.quiet.to'), '', quietTo));
+  card.group(T('settings.routines.webhooks'));
+  const hooksRow = row(T('settings.routines.webhooks'), T('settings.routines.webhooksDesc'), hooksOn);
+  hooksRow.dataset.search += ' web link webhook trigger shortcuts cron curl api local port routine routines';
+  hooksRow.querySelector('.label').addEventListener('click', () => hooksOn.click());
+  hooksRow.querySelector('.text').append(hooksStatus);
+  card.append(hooksRow, row(T('settings.routines.webhookPort'), T('settings.routines.webhookPortDesc'), hooksPort));
   listRow.dataset.search = KEYWORDS;
   tplRow.dataset.search = `${KEYWORDS} email canvas news calendar gmail`;
 
@@ -3065,7 +3501,7 @@ async function buildRoutines(card) {
 
 
 
-const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter'];
+const PROVIDER_ORDER = ['claudecode', 'grokbuild', 'codex', 'antigravity', 'anthropic', 'openai', 'xai', 'gemini', 'openrouter', 'local'];
 const PROVIDER_CLI = { claudecode: true, grokbuild: true, codex: true, antigravity: true };
 
 const MENU_PREF = { claudecode: ['claudeCodeSidebar', true], grokbuild: ['grokSidebar', false], codex: ['codexSidebar', true], antigravity: ['antigravitySidebar', false] };
@@ -3165,6 +3601,63 @@ function providerUsageRows(u, refresh) {
 
 
 
+
+async function localRows() {
+  const L = S.ai.local;
+  let state = await L.get();
+  const flavor = h('select', { id: 'local-flavor', 'aria-label': tr('settings.local.server', 'Server') }, h('option', { value: 'ollama', text: 'Ollama' }), h('option', { value: 'lmstudio', text: 'LM Studio' }));
+  const url = h('input', { type: 'text', id: 'local-url', class: 'grow', autocomplete: 'off', spellcheck: 'false', 'aria-label': tr('settings.local.address', 'Server address') });
+  const sw = h('input', { type: 'checkbox', class: 'switch', id: 'local-enabled', role: 'switch', 'aria-label': tr('settings.local.use', 'Use local models') });
+  const note = h('span', { class: 'note', id: 'local-status', role: 'status' });
+  const ask = h('span', { id: 'local-confirm-box' });
+  const list = h('div', { class: 'list', id: 'local-models' });
+  const toolsText = (m) => (m.tools === true ? tr('settings.local.tools', 'Can use tools') : m.tools === false ? tr('settings.local.chatOnly', 'Chat only') : tr('settings.local.toolsUnknown', 'Tools not known yet'));
+  const draw = () => {
+    flavor.value = state.flavor;
+    url.value = state.url;
+    url.placeholder = state.defaults[state.flavor];
+    sw.checked = state.enabled;
+    list.replaceChildren(...(state.models.length
+      ? state.models.map((m) => h('div', { class: 'item', 'data-model': m.id }, h('span', { class: 'grow', text: m.id }), h('span', { class: 'note', text: toolsText(m) })))
+      : [h('span', { class: 'note', text: tr('settings.local.none', 'No models yet. Start the server, then press Detect.') })]));
+  };
+  const entered = () => ({ enabled: sw.checked, flavor: flavor.value, url: url.value.trim() });
+  const run = async (kind, extra = {}) => {
+    ask.replaceChildren();
+    flash(note, kind === 'detect' ? tr('settings.local.looking', 'Looking for models…') : '', '');
+    let r;
+    try { r = await L[kind]({ ...entered(), ...extra }); } catch (err) { r = { ok: false, error: String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }; }
+    if (r.needsConfirm) {
+      flash(note, r.error, 'warn');
+      ask.replaceChildren(h('button', { id: 'local-confirm', text: tr('settings.local.confirm', 'Use this address anyway'), onclick: () => run(kind, { confirmRemote: true }) }));
+      return;
+    }
+    if (!r.ok) { flash(note, r.error, 'err'); return; }
+    state = { ...state, enabled: r.enabled, flavor: r.flavor, url: r.url, confirmedHost: r.confirmedHost, models: r.models };
+    draw();
+    flash(note, kind === 'detect' ? (r.note || tr('settings.local.found', 'Found {n} on {server}.', { n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }), server: state.names[state.flavor] })) : tr('settings.local.saved', 'Saved.'), 'ok');
+  };
+  sw.addEventListener('change', () => run('save'));
+  url.addEventListener('keydown', (e) => { if (e.key === 'Enter') run('save'); });
+  url.addEventListener('change', () => run('save'));
+  flavor.addEventListener('change', () => {
+    const other = state.defaults[state.flavor];
+    if (!url.value.trim() || url.value.trim() === other) url.value = state.defaults[flavor.value];
+    state = { ...state, flavor: flavor.value };
+    run('save');
+  });
+  draw();
+  const detect = h('button', { id: 'local-detect', text: tr('settings.local.detect', 'Detect'), onclick: () => run('detect') });
+  return [
+    row(tr('settings.local.use', 'Use local models'), tr('settings.local.useDesc', 'Chat with models that run on this computer through Ollama or LM Studio. No key, and nothing leaves this computer.'), sw),
+    row(tr('settings.local.server', 'Server'), tr('settings.local.serverDesc', 'The program that runs your models.'), flavor),
+    row(tr('settings.local.address', 'Server address'), tr('settings.local.addressDesc', 'Ollama is usually http://127.0.0.1:11434 and LM Studio http://127.0.0.1:1234/v1. Only addresses on this computer work unless you confirm another.'), url, detect),
+    stackRow(tr('settings.local.models', 'Installed models'), tr('settings.local.modelsDesc', 'Models that can use tools can click and type in your tabs. The others answer as plain chat: browser actions need a tool-capable model.'), list, h('div', { class: 'controls' }, note, ask)),
+  ];
+}
+
+
+
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
   const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
@@ -3209,7 +3702,7 @@ async function buildProviders(page) {
   };
   for (const key of PROVIDER_ORDER) {
     page.group(providerName(key));
-    page.append(...rowsFor(key));
+    page.append(...(key === 'local' ? await localRows() : rowsFor(key)));
   }
 }
 ;
@@ -3574,7 +4067,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -3602,14 +4095,14 @@ const CATEGORY_ICONS = {
 
 
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map();
@@ -3687,6 +4180,8 @@ function collapsible(title, rows) {
 let gmailWatchOn = false;
 let slackWatch = null;
 let slackWatchOn = false;
+let githubWatch = null;
+let githubWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
 
@@ -3789,6 +4284,8 @@ async function buildAi(card) {
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
 
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
+
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
   showProjectsDir();
@@ -3804,18 +4301,25 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
   );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append(
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')),
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
+    toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')),
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
 
@@ -4099,6 +4603,7 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps());
 
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -4143,7 +4648,6 @@ async function buildAi(card) {
 function buildImport(card) {
 
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -4208,7 +4712,11 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
 
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
@@ -5160,18 +5668,59 @@ async function buildWidgets(card) {
 
     function githubFields(same) {
       const g = same?.gh || {};
-      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.github ? tr('settings.widgets.github.tokenSaved', 'Saved. Paste a new token to replace it.') : tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
+      const gs = () => ws.github || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
       inputs.reviews = tog('widget-gh-reviews', tr('settings.widgets.github.reviews', 'Review requests'), g.reviews !== false);
       inputs.assigned = tog('widget-gh-assigned', tr('settings.widgets.github.assigned', 'Assigned issues and pull requests'), g.assigned !== false);
-      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, 'Needs a classic token with the notifications scope.');
+      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, tr('settings.widgets.github.notificationsHelp', 'Needs the notifications permission, which signing in with GitHub asks for.'));
       inputs.hideDrafts = tog('widget-gh-drafts', tr('settings.widgets.github.hideDrafts', 'Hide draft pull requests in review requests'), g.hideDrafts);
       inputs.max = segment('widget-gh-max', tr('settings.widgets.github.max', 'Items per list'), [[5, '5'], [10, '10'], [20, '20']], g.max ?? 10);
-      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, ws.secrets.github ? 'Connected: a token is saved. Paste a new one only to replace it.' : 'Not connected yet. Create a token with read-only access to Issues and Pull requests.'), 'github', 'Create a token on GitHub');
+      const status = h('span', { class: 'note', role: 'status', id: 'github-status' });
+      const code = h('div', { class: 'row stack', id: 'github-code-row', hidden: '' });
+      const codeText = h('strong', { id: 'github-code', class: 'gh-user-code', text: '', style: 'font-size:1.6em;letter-spacing:.12em;font-variant-numeric:tabular-nums;user-select:all' });
+      const codeNote = h('span', { class: 'note', text: tr('settings.widgets.github.codeNote', 'Enter this code on github.com/login/device, in the tab Lumen opened, then approve. This fills in when you do.') });
+      const openDevice = h('button', { type: 'button', id: 'github-open', text: tr('settings.widgets.github.openDevice', 'Open github.com/login/device'), onclick: () => { const u = gs().pending?.url; if (u) S.openUrl(u); } });
+      const cancel = h('button', { type: 'button', id: 'github-cancel', text: tr('settings.widgets.github.cancel', 'Cancel'), onclick: () => run(() => S.widgets.githubCancel()) });
+      code.append(codeText, codeNote, h('div', { class: 'sp-actions' }, openDevice, cancel));
+      const priv = tog('github-private', tr('settings.widgets.github.private', 'Include private repositories'), gs().wantPrivate, tr('settings.widgets.github.privateHelp', 'Without this, Lumen asks GitHub only to read who you are and your notifications, so the card shows public repositories. Turning it on also asks for GitHub’s “repo” permission, which GitHub offers only as read and write. The card only reads; with it the AI’s GitHub connector can also comment and open issues, each only after you allow it.'));
+      const privBox = () => priv.querySelector('input');
+      const signin = h('button', { type: 'button', id: 'github-signin', class: 'primary big', text: tr('settings.widgets.github.signIn', 'Sign in with GitHub'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const switchBtn = h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const cliBtn = h('button', { type: 'button', id: 'github-cli', text: tr('settings.widgets.github.cli', 'Use GitHub CLI sign-in'), onclick: () => run(() => S.widgets.githubCli()) });
+      const signout = h('button', { type: 'button', id: 'github-signout', class: 'danger', text: tr('settings.widgets.github.signOut', 'Sign out'), onclick: () => run(() => S.widgets.githubSignOut()) });
+      const via = { device: tr('settings.widgets.github.viaDevice', 'with GitHub'), cli: tr('settings.widgets.github.viaCli', 'through the GitHub CLI'), paste: tr('settings.widgets.github.viaPaste', 'with a pasted token') };
+      const draw = () => {
+        const s = gs();
+        const waiting = Boolean(s.pending);
+        code.hidden = !waiting;
+        codeText.textContent = s.pending?.code || '';
+        if (waiting) flash(status, tr('settings.widgets.github.waiting', 'Waiting for you to approve it on GitHub…'), 'note');
+        else if (s.signedIn && s.expired) flash(status, tr('settings.widgets.github.expired', 'GitHub no longer accepts this sign-in. Sign in again.'), 'warn');
+        else if (s.last && !s.last.ok) flash(status, s.last.message, 'err');
+        else if (s.signedIn) flash(status, tr('settings.widgets.github.signedInAs', 'Signed in as {login} {how}.', { login: s.login ? '@' + s.login : tr('settings.widgets.github.you', 'you'), how: via[s.via] || '' }) + (s.notifications === false ? ' ' + tr('settings.widgets.github.noNotifications', 'Unread notifications aren’t included: sign in with GitHub to add them.') : ''), 'ok');
+        else if (!s.device && !s.cli) flash(status, tr('settings.widgets.github.noDevice', 'GitHub sign-in isn’t set up in this build yet. Paste a token under Advanced for now.'), 'note');
+        else { status.textContent = tr('settings.widgets.github.notSignedIn', 'Not signed in.'); status.className = 'note'; }
+        signin.hidden = waiting || !s.device || (s.signedIn && !s.expired);
+        signin.textContent = s.expired ? tr('settings.widgets.github.signInAgain', 'Sign in again') : tr('settings.widgets.github.signIn', 'Sign in with GitHub');
+        switchBtn.hidden = waiting || !s.device || !s.signedIn || s.expired;
+        cliBtn.hidden = waiting || !s.cli || (s.signedIn && s.via === 'cli' && !s.expired);
+        signout.hidden = !s.signedIn || waiting;
+        priv.hidden = !s.device;
+      };
+      const run = async (fn) => {
+        try { const r = await fn(); if (r?.state) ws = r.state; else if (r?.github) ws = r; draw(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; }
+      };
+      githubWatch = async () => { ws = await S.widgets.state(); draw(); };
+      if (!githubWatchOn) { githubWatchOn = true; S.widgets.onChanged?.(() => githubWatch?.()); }
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, signin, cliBtn, switchBtn, signout), status, priv, code);
+      draw();
+      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHint', 'Only if you can’t sign in above. Saving replaces the current sign-in.')), 'github', tr('settings.widgets.github.createToken', 'Create a token on GitHub'));
       fields.replaceChildren(
-        section('Account', [tokenRow], 'Stored encrypted by your system. It is sent only to api.github.com and never reaches the new-tab page.'),
+        section(tr('settings.widgets.github.account', 'Account'), [accountRow], tr('settings.widgets.github.accountFoot', 'One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page. A GitHub connector connected with its own token keeps that token.')),
         section(tr('settings.widgets.github.show', 'Show'), [inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts, setting(tr('settings.widgets.github.max', 'Items per list'), inputs.max)], tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
         advanced([
-          block('Token permissions', null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
+          tokenRow,
+          block(tr('settings.widgets.github.tokenPermsLabel', 'Token permissions'), null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
           block(tr('settings.widgets.github.privacyLabel', 'Private repositories'), null, h('span', { class: 'note', text: tr('settings.widgets.github.privacy', 'Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.') })),
         ]));
     }
@@ -5924,6 +6473,51 @@ async function buildPasswords(card) {
 
 
 
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open));
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
+}
+
+
+
 function buildAntigravity(slot, refreshModels) {
   const agyNote = status('ai-agy-status');
   const agyCommand = h('pre', { class: 'mono code', id: 'ai-agy-command', text: '' });
@@ -5957,6 +6551,57 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
 }
 
 
@@ -6003,7 +6648,7 @@ async function buildDownloads(card) {
 
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -6722,7 +7367,7 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -6730,7 +7375,7 @@ async function init() {
 
 
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
     search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'],
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };

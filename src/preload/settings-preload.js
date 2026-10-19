@@ -42,6 +42,10 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       slackCancel: call('prefs:slack-cancel'),
       slackDisconnect: call('prefs:slack-disconnect'),
       slackChannels: call('prefs:slack-channels'),
+      githubStart: call('prefs:github-start'), // device-flow sign-in: the one-time code comes back, never a token
+      githubCli: call('prefs:github-cli'),
+      githubCancel: call('prefs:github-cancel'),
+      githubSignOut: call('prefs:github-signout'),
       search: call('prefs:widget-search'),
       help: call('prefs:widget-help'), // opens a fixed "where do I get this" page by name
       savedPlaces: call('prefs:widget-saved-places'),
@@ -81,6 +85,24 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       removeAll: call('settings:passwords-delete-all'),
       importCsv: call('settings:passwords-import'),
       removeNever: call('settings:passwords-never-remove'),
+    },
+    // [memory] Settings → AI and agents → Memory (ai/memory.js): the saved entries, edited and deleted here
+    memory: {
+      list: call('settings:memory-list'),
+      update: call('settings:memory-update'),
+      remove: call('settings:memory-delete'),
+      removeAll: call('settings:memory-delete-all'),
+      startOver: call('settings:memory-start-over'),
+    },
+    // [sync] Settings → General → Sync (features/sync-folder.js). The passphrase goes in once and never comes back out.
+    sync: {
+      state: call('settings:sync-state'),
+      pick: call('settings:sync-pick'),
+      enable: call('settings:sync-enable'),
+      set: call('settings:sync-set'),
+      now: call('settings:sync-now'),
+      off: call('settings:sync-off'),
+      onChanged: (cb) => ipcRenderer.on('settings:sync-changed', () => cb()),
     },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
@@ -135,6 +157,12 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCommit: call('skills:import-commit'),
       takeDraft: call('skills:take-draft'),
       onDraft: (cb) => ipcRenderer.on('skills:draft', (_e, draft) => cb(draft)),
+      importMdPick: call('skills:import-md-pick'), // a SKILL.md folder (features/skill-md.js)
+      exportMd: call('skills:export-md'),
+      claudeCode: call('skills:claude-code'),
+      takeUpdate: call('skills:take-update'), // "Update the skill with what changed?": the diff to accept
+      applyUpdate: call('skills:apply-update'),
+      onUpdate: (cb) => ipcRenderer.on('skills:update', (_e, update) => cb(update)),
       onChanged: (cb) => ipcRenderer.on('skills:changed', (_e, list) => cb(list)),
     },
     // Macros (features/macros-runtime.js)
@@ -160,14 +188,25 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       onChanged: (cb) => ipcRenderer.on('macros:changed', (_e, list) => cb(list)),
       onProgress: (cb) => ipcRenderer.on('macros:progress', (_e, e) => cb(e)),
     },
+    focus: { get: call('settings:focus'), start: call('settings:focus-start'), phrase: call('settings:focus-phrase') }, // [focus] Settings > General > Focus mode (features/focus.js)
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
       onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
+      local: { get: call('settings:local-get'), save: call('settings:local-save'), detect: call('settings:local-detect') }, // Ollama / LM Studio on this computer
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
+      // [telegram] Phone (Telegram): the token goes in, never comes back
+      telegram: {
+        status: call('settings:telegram'),
+        setToken: call('settings:telegram-token'),
+        pair: call('settings:telegram-pair'),
+        cancelPair: call('settings:telegram-pair-cancel'),
+        unpair: call('settings:telegram-unpair'),
+        remove: call('settings:telegram-remove'),
+      },
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),
@@ -232,6 +271,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         detect: call('connectors:detect'),
         connect: call('connectors:connect'),
         disconnect: call('connectors:disconnect'),
+        allowDrafts: call('connectors:allow-drafts'),
         signIn: call('connectors:sign-in'),
       },
       setAutomation: call('automation:set'),

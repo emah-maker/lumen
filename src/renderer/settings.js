@@ -203,7 +203,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -231,14 +231,14 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -316,6 +316,8 @@ function collapsible(title, rows) {
 let gmailWatchOn = false;
 let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
 let slackWatchOn = false;
+let githubWatch = null; // the open GitHub editor's redraw when a sign-in finishes by itself (see githubFields)
+let githubWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
@@ -417,6 +419,8 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [memory] Saved memory across chats (ai/memory.js; docs/memory.md): the switch, past-chat search, and the entries with Edit / Delete.
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
   // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
@@ -433,18 +437,25 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
   );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append( // [dictation] the chat box's mic (ai/dictation.js)
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')), // [plan mode]
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
+    toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')), // [desktop apps]
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
@@ -728,6 +739,7 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -772,7 +784,6 @@ async function buildAi(card) {
 function buildImport(card) {
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -837,7 +848,11 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
   // Expert: Chromium's forced dark mode for pages.
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
@@ -1786,21 +1801,62 @@ async function buildWidgets(card) {
         section('Channels', [block('Channels to follow', 'Up to 4 channels you are in; their recent messages show on the card.', h('div', { class: 'widget-inline' }, load), chBox)]),
         adv);
     }
-    // ---- github: token and which lists ----
+    // ---- github: sign in (device flow, the GitHub CLI, or a pasted token) and which lists ----
     function githubFields(same) {
       const g = same?.gh || {};
-      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: ws.secrets.github ? tr('settings.widgets.github.tokenSaved', 'Saved. Paste a new token to replace it.') : tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
+      const gs = () => ws.github || {};
+      inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: tr('settings.widgets.github.tokenPlaceholder', 'Paste your GitHub token'), 'aria-label': tr('settings.widgets.github.tokenLabel', 'GitHub access token') });
       inputs.reviews = tog('widget-gh-reviews', tr('settings.widgets.github.reviews', 'Review requests'), g.reviews !== false);
       inputs.assigned = tog('widget-gh-assigned', tr('settings.widgets.github.assigned', 'Assigned issues and pull requests'), g.assigned !== false);
-      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, 'Needs a classic token with the notifications scope.');
+      inputs.notifications = tog('widget-gh-notifications', tr('settings.widgets.github.notifications', 'Unread notification count'), g.notifications !== false, tr('settings.widgets.github.notificationsHelp', 'Needs the notifications permission, which signing in with GitHub asks for.'));
       inputs.hideDrafts = tog('widget-gh-drafts', tr('settings.widgets.github.hideDrafts', 'Hide draft pull requests in review requests'), g.hideDrafts);
       inputs.max = segment('widget-gh-max', tr('settings.widgets.github.max', 'Items per list'), [[5, '5'], [10, '10'], [20, '20']], g.max ?? 10);
-      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, ws.secrets.github ? 'Connected: a token is saved. Paste a new one only to replace it.' : 'Not connected yet. Create a token with read-only access to Issues and Pull requests.'), 'github', 'Create a token on GitHub');
+      const status = h('span', { class: 'note', role: 'status', id: 'github-status' });
+      const code = h('div', { class: 'row stack', id: 'github-code-row', hidden: '' });
+      const codeText = h('strong', { id: 'github-code', class: 'gh-user-code', text: '', style: 'font-size:1.6em;letter-spacing:.12em;font-variant-numeric:tabular-nums;user-select:all' });
+      const codeNote = h('span', { class: 'note', text: tr('settings.widgets.github.codeNote', 'Enter this code on github.com/login/device, in the tab Lumen opened, then approve. This fills in when you do.') });
+      const openDevice = h('button', { type: 'button', id: 'github-open', text: tr('settings.widgets.github.openDevice', 'Open github.com/login/device'), onclick: () => { const u = gs().pending?.url; if (u) S.openUrl(u); } });
+      const cancel = h('button', { type: 'button', id: 'github-cancel', text: tr('settings.widgets.github.cancel', 'Cancel'), onclick: () => run(() => S.widgets.githubCancel()) });
+      code.append(codeText, codeNote, h('div', { class: 'sp-actions' }, openDevice, cancel));
+      const priv = tog('github-private', tr('settings.widgets.github.private', 'Include private repositories'), gs().wantPrivate, tr('settings.widgets.github.privateHelp', 'Without this, Lumen asks GitHub only to read who you are and your notifications, so the card shows public repositories. Turning it on also asks for GitHub’s “repo” permission, which GitHub offers only as read and write. The card only reads; with it the AI’s GitHub connector can also comment and open issues, each only after you allow it.'));
+      const privBox = () => priv.querySelector('input');
+      const signin = h('button', { type: 'button', id: 'github-signin', class: 'primary big', text: tr('settings.widgets.github.signIn', 'Sign in with GitHub'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const switchBtn = h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), onclick: () => run(() => S.widgets.githubStart({ privateRepos: privBox().checked })) });
+      const cliBtn = h('button', { type: 'button', id: 'github-cli', text: tr('settings.widgets.github.cli', 'Use GitHub CLI sign-in'), onclick: () => run(() => S.widgets.githubCli()) });
+      const signout = h('button', { type: 'button', id: 'github-signout', class: 'danger', text: tr('settings.widgets.github.signOut', 'Sign out'), onclick: () => run(() => S.widgets.githubSignOut()) });
+      const via = { device: tr('settings.widgets.github.viaDevice', 'with GitHub'), cli: tr('settings.widgets.github.viaCli', 'through the GitHub CLI'), paste: tr('settings.widgets.github.viaPaste', 'with a pasted token') };
+      const draw = () => {
+        const s = gs();
+        const waiting = Boolean(s.pending);
+        code.hidden = !waiting;
+        codeText.textContent = s.pending?.code || '';
+        if (waiting) flash(status, tr('settings.widgets.github.waiting', 'Waiting for you to approve it on GitHub…'), 'note');
+        else if (s.signedIn && s.expired) flash(status, tr('settings.widgets.github.expired', 'GitHub no longer accepts this sign-in. Sign in again.'), 'warn');
+        else if (s.last && !s.last.ok) flash(status, s.last.message, 'err');
+        else if (s.signedIn) flash(status, tr('settings.widgets.github.signedInAs', 'Signed in as {login} {how}.', { login: s.login ? '@' + s.login : tr('settings.widgets.github.you', 'you'), how: via[s.via] || '' }) + (s.notifications === false ? ' ' + tr('settings.widgets.github.noNotifications', 'Unread notifications aren’t included: sign in with GitHub to add them.') : ''), 'ok');
+        else if (!s.device && !s.cli) flash(status, tr('settings.widgets.github.noDevice', 'GitHub sign-in isn’t set up in this build yet. Paste a token under Advanced for now.'), 'note');
+        else { status.textContent = tr('settings.widgets.github.notSignedIn', 'Not signed in.'); status.className = 'note'; }
+        signin.hidden = waiting || !s.device || (s.signedIn && !s.expired);
+        signin.textContent = s.expired ? tr('settings.widgets.github.signInAgain', 'Sign in again') : tr('settings.widgets.github.signIn', 'Sign in with GitHub');
+        switchBtn.hidden = waiting || !s.device || !s.signedIn || s.expired;
+        cliBtn.hidden = waiting || !s.cli || (s.signedIn && s.via === 'cli' && !s.expired);
+        signout.hidden = !s.signedIn || waiting;
+        priv.hidden = !s.device;
+      };
+      const run = async (fn) => {
+        try { const r = await fn(); if (r?.state) ws = r.state; else if (r?.github) ws = r; draw(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; }
+      };
+      githubWatch = async () => { ws = await S.widgets.state(); draw(); }; // a sign-in that finished by itself (or ended) shows here at once
+      if (!githubWatchOn) { githubWatchOn = true; S.widgets.onChanged?.(() => githubWatch?.()); }
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, signin, cliBtn, switchBtn, signout), status, priv, code);
+      draw();
+      const tokenRow = helpLink(setting(tr('settings.widgets.github.token', 'Access token'), inputs.token, tr('settings.widgets.github.tokenHint', 'Only if you can’t sign in above. Saving replaces the current sign-in.')), 'github', tr('settings.widgets.github.createToken', 'Create a token on GitHub'));
       fields.replaceChildren(
-        section('Account', [tokenRow], 'Stored encrypted by your system. It is sent only to api.github.com and never reaches the new-tab page.'),
+        section(tr('settings.widgets.github.account', 'Account'), [accountRow], tr('settings.widgets.github.accountFoot', 'One sign-in covers this card and the GitHub connector for the AI. Stored encrypted by your system. It is sent only to GitHub and never reaches the new-tab page. A GitHub connector connected with its own token keeps that token.')),
         section(tr('settings.widgets.github.show', 'Show'), [inputs.reviews, inputs.assigned, inputs.notifications, inputs.hideDrafts, setting(tr('settings.widgets.github.max', 'Items per list'), inputs.max)], tr('settings.widgets.github.showHelp', 'Lists are refreshed every few minutes. If GitHub’s rate limit is reached, Lumen waits until it resets.')),
         advanced([
-          block('Token permissions', null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
+          tokenRow,
+          block(tr('settings.widgets.github.tokenPermsLabel', 'Token permissions'), null, h('span', { class: 'note', text: tr('settings.widgets.github.tokenHelp', 'Create a fine-grained personal access token at github.com/settings/personal-access-tokens: pick the repositories to include (or All repositories) and grant read-only Issues and Pull requests (Metadata: read is added automatically). No write permissions are needed. Unread notifications work only with a classic token that has the notifications scope, because GitHub doesn’t offer notifications to fine-grained tokens; without one, the card shows the two lists and says so. Stored encrypted by your system; it never reaches the new-tab page and is sent only to api.github.com.') })),
           block(tr('settings.widgets.github.privacyLabel', 'Private repositories'), null, h('span', { class: 'note', text: tr('settings.widgets.github.privacy', 'Titles of issues and pull requests from private repositories are fetched too, and Lumen keeps them in memory (they are not written to settings.json) and passes them to your new-tab pages to show them, so they can appear in a new tab’s history on this device. To keep a repository off the card, don’t give the token access to it.') })),
         ]));
     }
@@ -2551,6 +2607,51 @@ async function buildPasswords(card) {
   renderLogins();
 }
 
+// [memory] Settings → AI and agents → Memory. The entries live in memory.json in the profile (encrypted); this page lists them, edits
+// and deletes them. The AI adds them only in chats, from what you tell it.
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+  // [memory] Shown only while the file can't be read: it is renamed memory.json.bad (kept) and memory starts empty.
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open)); // (read again when opened: the AI may have saved something since)
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
+}
+
 // Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
 // command is shown, and runs only on the click.
 function buildAntigravity(slot, refreshModels) {
@@ -2586,6 +2687,57 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+// [telegram] AI and agents > Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+      // A paired chat is unpaired first: a new pairing never replaces it on its own.
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+    // While a code is shown, look again every 2 s so "Paired with …" appears as soon as the phone sends it.
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
 }
 
 // [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
@@ -2632,7 +2784,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -3351,7 +3503,7 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -3359,7 +3511,7 @@ async function init() {
   // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
   // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
     search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };
