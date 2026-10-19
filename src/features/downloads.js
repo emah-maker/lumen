@@ -329,7 +329,20 @@ function createDownloads(deps) {
     sender.startDrag({ file: d.path, icon });
   }
 
-  return { list: downloads, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
+  // A file Lumen wrote itself (a screen recording): listed as a finished download, with Open and Show in folder like any other.
+  function addFile(file, name = path.basename(file)) {
+    let size;
+    try { size = fs.statSync(file).size; } catch { return null; }
+    const entry = { id: ++downloadSeq, name, path: file, state: 'completed', received: size, total: size, paused: false, awaitingOk: false, speed: 0, url: '', started: Date.now(), endedAt: Date.now() };
+    Object.defineProperties(entry, { item: { value: null, writable: true }, contents: { value: null } });
+    downloads.unshift(entry);
+    trim();
+    loadIcon(entry);
+    sendDownloads();
+    return entry.id;
+  }
+
+  return { list: downloads, addFile, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads, RISKY_TYPES };

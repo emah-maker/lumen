@@ -73,7 +73,7 @@ function create({ file, fs = nodeFs, now = () => Date.now(), cap = 1000, delay =
         await fs.promises.rename(tmp, file); // atomic on one volume: a reader sees the old file or the new one, never a part
       } catch {
         dirty = true; // try again at the next change; the list in memory is still right
-        fs.promises.unlink(tmp).catch(() => {});
+        await fs.promises.unlink(tmp).catch(() => {}); // (awaited: flush() resolves with no temp file left behind)
       }
     });
     await writing;

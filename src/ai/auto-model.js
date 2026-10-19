@@ -167,6 +167,7 @@ function candidatesOf(options, need, { exclude = [], denied = null, cooldowns = 
   }
   return list.filter((o) => {
     const p = providerOf(o.id);
+    if (p === 'local') return false; // Auto never picks a model on this computer: its name says nothing about what it can do
     // (a provider turned off for Auto is still chosen by its own Auto: that is asking for it by name)
     if (off.has(o.id) || (off.has(p) && scope !== p) || (denied && denied.has(o.id)) || o.gated === true || o.available === false) return false;
     if (scope && p !== scope) return false;

@@ -120,6 +120,27 @@ function harness(over = {}) {
     await pending.catch(() => { failed = true; });
     check('a window finished after its session ended is closed at once', failed && h.closed.length === 1, JSON.stringify(h.closed));
   }
+  // windows are made one at a time, with the main process let alone for a moment after each
+  {
+    const log = [];
+    let running = 0; let overlap = false;
+    const h = harness({ spacingMs: 30, open: async (label) => { running++; if (running > 1) overlap = true; log.push(['start', label, Date.now()]); await new Promise((r) => setTimeout(r, 20)); log.push(['end', label, Date.now()]); running--; return { label }; } });
+    await Promise.all([h.windows.ensure({}, 'A'), h.windows.ensure({}, 'B'), h.windows.ensure({}, 'C')]);
+    const starts = log.filter((e) => e[0] === 'start').map((e) => e[2]);
+    const ends = log.filter((e) => e[0] === 'end').map((e) => e[2]);
+    check('three sessions starting together get their windows one after the other', !overlap && log.length === 6, JSON.stringify(log));
+    check('...with a pause after each before the next is made', starts[1] - ends[0] >= 25 && starts[2] - ends[1] >= 25, JSON.stringify({ starts, ends }));
+  }
+  // a window that fails to open does not stop the next one
+  {
+    let n = 0;
+    const h = harness({ spacingMs: 0, open: async (label) => { if (n++ === 0) throw new Error('no window'); return { label }; } });
+    let failed = false;
+    const first = h.windows.ensure({}, 'A').catch(() => { failed = true; });
+    const second = await h.windows.ensure({}, 'B');
+    await first;
+    check('a window that could not open does not hold up the next', failed && second.label === 'B', '');
+  }
   // releaseAll
   {
     const h = harness();
