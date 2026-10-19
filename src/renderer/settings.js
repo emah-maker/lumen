@@ -231,7 +231,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -417,6 +417,8 @@ async function buildAi(card) {
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
+  // [memory] Saved memory across chats (ai/memory.js; docs/memory.md): the switch, past-chat search, and the entries with Edit / Delete.
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
   // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
@@ -433,9 +435,15 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
   );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append( // [dictation] the chat box's mic (ai/dictation.js)
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')), // [plan mode]
     toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
@@ -728,6 +736,7 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -2551,6 +2560,51 @@ async function buildPasswords(card) {
   renderLogins();
 }
 
+// [memory] Settings → AI and agents → Memory. The entries live in memory.json in the profile (encrypted); this page lists them, edits
+// and deletes them. The AI adds them only in chats, from what you tell it.
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+  // [memory] Shown only while the file can't be read: it is renamed memory.json.bad (kept) and memory starts empty.
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open)); // (read again when opened: the AI may have saved something since)
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
+}
+
 // Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
 // command is shown, and runs only on the click.
 function buildAntigravity(slot, refreshModels) {
@@ -2586,6 +2640,57 @@ function buildAntigravity(slot, refreshModels) {
   agyRow.querySelector('.text').append(agyCommand, agyNote);
   later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
+}
+
+// [telegram] AI and agents > Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+      // A paired chat is unpaired first: a new pairing never replaces it on its own.
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+    // While a code is shown, look again every 2 s so "Paired with …" appears as soon as the phone sends it.
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
 }
 
 // [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.

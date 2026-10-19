@@ -82,6 +82,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCsv: call('settings:passwords-import'),
       removeNever: call('settings:passwords-never-remove'),
     },
+    // [memory] Settings → AI and agents → Memory (ai/memory.js): the saved entries, edited and deleted here
+    memory: {
+      list: call('settings:memory-list'),
+      update: call('settings:memory-update'),
+      remove: call('settings:memory-delete'),
+      removeAll: call('settings:memory-delete-all'),
+      startOver: call('settings:memory-start-over'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     deviceGrants: call('prefs:device-grants'),
@@ -135,6 +143,12 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCommit: call('skills:import-commit'),
       takeDraft: call('skills:take-draft'),
       onDraft: (cb) => ipcRenderer.on('skills:draft', (_e, draft) => cb(draft)),
+      importMdPick: call('skills:import-md-pick'), // a SKILL.md folder (features/skill-md.js)
+      exportMd: call('skills:export-md'),
+      claudeCode: call('skills:claude-code'),
+      takeUpdate: call('skills:take-update'), // "Update the skill with what changed?": the diff to accept
+      applyUpdate: call('skills:apply-update'),
+      onUpdate: (cb) => ipcRenderer.on('skills:update', (_e, update) => cb(update)),
       onChanged: (cb) => ipcRenderer.on('skills:changed', (_e, list) => cb(list)),
     },
     // Macros (features/macros-runtime.js)
@@ -168,6 +182,15 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       setProviderKey: call('settings:set-provider-key'),
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
+      // [telegram] Phone (Telegram): the token goes in, never comes back
+      telegram: {
+        status: call('settings:telegram'),
+        setToken: call('settings:telegram-token'),
+        pair: call('settings:telegram-pair'),
+        cancelPair: call('settings:telegram-pair-cancel'),
+        unpair: call('settings:telegram-unpair'),
+        remove: call('settings:telegram-remove'),
+      },
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),
       setModel: call('settings:set-model'),
