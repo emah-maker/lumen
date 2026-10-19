@@ -1297,6 +1297,8 @@ function create(deps) {
   }
 
   return {
+    warmTranslatePacks: () => { try { return Promise.resolve(deps.translateLocal().overview(translate.LANG_CODES)).catch(() => null); } catch { return null; } }, // (the language-pack index, read once after start-up: Settings > Languages asks for it when it opens)
+    warmGpuInfo: () => gpuInfoOnce(), // (asked once after start-up, so Settings > Internals finds it: asking costs the main process 20-40 ms)
     prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
