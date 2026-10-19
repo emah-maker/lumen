@@ -184,6 +184,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       onChanged: (cb) => ipcRenderer.on('macros:changed', (_e, list) => cb(list)),
       onProgress: (cb) => ipcRenderer.on('macros:progress', (_e, e) => cb(e)),
     },
+    focus: { get: call('settings:focus'), start: call('settings:focus-start'), phrase: call('settings:focus-phrase') }, // [focus] Settings > General > Focus mode (features/focus.js)
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
