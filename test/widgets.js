@@ -332,7 +332,7 @@ function server(opts) {
     rects() { return [...document.querySelectorAll('.w-card')].map((c) => { const r = c.getBoundingClientRect(); return { id: c.dataset.id, cell: c.dataset.cell, snap: c.dataset.snap || '', left: r.left, right: r.right, top: r.top + scrollY, bottom: r.bottom + scrollY }; }); },
   }; 1`);
   await sleep(1500);
-  const cardsNow = () => page('window.__t.rects()');
+  const cardsNow = async () => { await settled(); return page('window.__t.rects()'); }; // (rects are screen positions: measured once the cards have stopped sliding)
   const info = () => page('window.__t.info()');
   const disjoint = (a, b) => a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5;
   const clearOfMain = (c, i) => c.right <= i.mainLeft + 0.5 || c.left >= i.mainRight - 0.5 || c.top >= i.mainBottom - 0.5 || c.bottom <= i.mainTop + 0.5;
