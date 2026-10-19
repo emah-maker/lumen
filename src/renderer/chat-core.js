@@ -428,6 +428,8 @@ $('model').addEventListener('change', async (e) => {
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title'); // the row already says it
   const full = optional('open-chat-page');
   if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
+  const mission = optional('mission-btn'); // lumen://tasks
+  if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘X' : t('shortcut.ctrlShiftX');
 })();
 // ---------- chat ----------
 
