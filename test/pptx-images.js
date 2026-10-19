@@ -167,6 +167,8 @@ const LONG_TASK_MS = 100;
       check('an EMF picture is a clean labelled placeholder (no broken image)', /Picture not shown/.test(label) && /EMF/.test(label), label);
       check('...and no <img> was made for it', (await run(cases, `document.querySelectorAll('.slide')[${at('emf')}].querySelectorAll('img').length`)) === 0);
 
+      check('the vector renderer script is loaded only for decks that have EMF or WMF (not in the case deck)', (await run(cases, "!document.querySelector('script[src*=\"slides-vector\"]')")) === true);
+
       // alpha 50% red over white
       r = await show(cases, at('alpha'));
       c = await colors(cases, r, [[200, 200], [700, 400]]);
@@ -278,6 +280,109 @@ const LONG_TASK_MS = 100;
       check('every picture shares a blob URL per distinct picture (100 pictures, at most 100 blobs)', total.blobs <= 100 && total.images >= 100, JSON.stringify(total));
       const lazy = await run(vp, "[...document.querySelectorAll('.stage img')].every((m) => m.loading === 'lazy' && m.decoding === 'async')");
       check('pictures are loading=lazy and decoding=async', lazy === true, lazy);
+    }
+    {
+      let r; let c;
+      // EMF and WMF drawn by the viewer (EMFJS and WMFJS): a deck of their own, with no picture the viewer cannot draw, so the banner must be gone
+      const vecFile = path.join(docs, 'vector.pptx');
+      const VEC = [
+        { shapes: F.pic({ rid: 'e', box: { x: 100, y: 100, w: 400, h: 200 } }), rels: [I('e', 'a.emf')] },
+        { shapes: F.pic({ rid: 'w', box: { x: 100, y: 100, w: 400, h: 200 } }), rels: [I('w', 'a.wmf')] },
+        { shapes: F.pic({ rid: 'e', box: { x: 100, y: 100, w: 400, h: 200, flipH: true } }) + F.pic({ id: 11, rid: 'e2', box: { x: 600, y: 100, w: 100, h: 100 } }), rels: [I('e', 'a.emf'), I('e2', 'a2.emf')] },
+        { shapes: F.pic({ rid: 'b', box: { x: 100, y: 100, w: 300, h: 150 } }), rels: [I('b', 'trunc.emf')] },
+      ];
+      fs.writeFileSync(vecFile, F.deck({ slides: VEC, media: { 'a.emf': F.emf(), 'a.wmf': F.wmf(), 'a2.emf': F.emf({ left: F.GREEN, right: F.YELLOW }), 'trunc.emf': F.emf().subarray(0, 150) } }));
+      const vec = await openDeck(vecFile);
+      check('a deck with EMF and WMF pictures opens', Boolean(vec) && (await ready(vec)) === 'true', vec);
+      if (vec) {
+        const banner = () => run(vec, "document.getElementById('notes').textContent");
+        r = await show(vec, 0);
+        await run(vec, 'new Promise((res) => setTimeout(res, 800))');
+        c = await colors(vec, r, [[200, 200], [400, 200], [100 + 5, 100 + 5], [300, 90]]);
+        check('EMF: the left half of the picture is red and the right half blue, where the box is', is(c[0], F.RED) && is(c[1], F.BLUE), c.map(named).join(' '));
+        check('EMF: nothing is drawn outside the box', is(c[3], [255, 255, 255]), named(c[3]));
+        check('EMF: it is an image of an <img>, not a placeholder', (await run(vec, "document.querySelectorAll('.slide')[0].querySelectorAll('img').length")) === 1 && (await run(vec, "document.querySelectorAll('.slide')[0].querySelectorAll('.pic.missing').length")) === 0);
+        r = await show(vec, 1);
+        c = await colors(vec, r, [[200, 200], [400, 200]]);
+        check('WMF: the left half is red and the right half blue', is(c[0], F.RED) && is(c[1], F.BLUE), c.map(named).join(' '));
+        r = await show(vec, 2);
+        c = await colors(vec, r, [[200, 200], [400, 200], [625, 150], [675, 150]]);
+        check('EMF flipped (flipH): blue on the left, red on the right', is(c[0], F.BLUE) && is(c[1], F.RED), c.map(named).join(' '));
+        check('a second EMF in the same slide is its own picture (green, yellow)', is(c[2], F.GREEN) && is(c[3], F.YELLOW), c.map(named).join(' '));
+        r = await show(vec, 3);
+        await run(vec, 'new Promise((res) => setTimeout(res, 800))');
+        const trunc = await run(vec, "document.querySelectorAll('.slide')[3].querySelector('.pic.missing')?.textContent || ''");
+        check('a damaged EMF is a placeholder of the picture size, labelled EMF', /Picture not shown/.test(trunc) && /EMF/.test(trunc) && (await boxes(vec, 3, '.pic')).some((b) => boxIs(b, 100, 100, 300, 150)), trunc);
+        const note = await banner();
+        check('the "cannot show" banner is shown only because a picture really could not be drawn', /EMF or WMF/.test(note), note);
+        // the same deck without the damaged picture: no banner
+        const okFile = path.join(docs, 'vector-ok.pptx');
+        fs.writeFileSync(okFile, F.deck({ slides: VEC.slice(0, 2), media: { 'a.emf': F.emf(), 'a.wmf': F.wmf() } }));
+        const okId = await openDeck(okFile);
+        await show(okId, 0); await show(okId, 1);
+        const note2 = okId ? await run(okId, "document.getElementById('notes').textContent") : 'no viewer';
+        check('when every EMF and WMF draws there is no banner', okId && !/EMF|WMF|cannot show/.test(note2), note2);
+
+        // EMF+ (GDI+ records only: EMFJS draws nothing from it): on Windows the OS draws it in a hidden PowerShell (features/emf-gdi.js)
+        if (process.platform === 'win32') {
+          const plusFile = path.join(docs, 'emfplus.pptx');
+          fs.writeFileSync(plusFile, F.deck({ slides: [
+            { shapes: F.pic({ rid: 'p', box: { x: 100, y: 100, w: 400, h: 200 } }), rels: [I('p', 'plus.emf')] },
+            { shapes: F.pic({ rid: 'p', box: { x: 100, y: 100, w: 400, h: 200, flipH: true } }) + F.pic({ id: 11, rid: 'c', box: { x: 600, y: 100, w: 100, h: 100 } }), rels: [I('p', 'plus.emf'), I('c', 'classic.emf')] },
+          ], media: { 'plus.emf': F.emfPlus(), 'classic.emf': F.emf({ w: 300, h: 150, left: F.GREEN, right: F.YELLOW }) } }));
+          const cacheDir = path.join(profile, 'slides-picture-cache');
+          const listed = () => (fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')) : []);
+          const before = listed();
+          const t0 = Date.now();
+          const plus = await openDeck(plusFile);
+          check('a deck with EMF+ pictures opens', Boolean(plus) && (await ready(plus)) === 'true', plus);
+          if (plus) {
+            r = await show(plus, 0);
+            c = await colors(plus, r, [[200, 200], [400, 200], [300, 90]]);
+            const firstMs = Date.now() - t0;
+            check(`EMF+ (Windows draws it, ${firstMs} ms from opening to the picture): red on the left, blue on the right`, is(c[0], F.RED) && is(c[1], F.BLUE) && is(c[2], [255, 255, 255]), c.map(named).join(' '));
+            check('EMF+: it is an <img>, with no placeholder and no "cannot show" banner', (await run(plus, "document.querySelectorAll('.slide')[0].querySelectorAll('img').length")) === 1 && (await run(plus, "document.querySelectorAll('.slide')[0].querySelectorAll('.pic.missing').length")) === 0 && !/EMF|WMF|cannot show/.test(await run(plus, "document.getElementById('notes').textContent")));
+            check('EMF+: the page did not need its own EMFJS renderer for it', (await run(plus, "!document.querySelector('script[src*=\"slides-vector\"]')")) === true);
+            r = await show(plus, 1);
+            c = await colors(plus, r, [[200, 200], [400, 200], [625, 150], [675, 150]]);
+            check('EMF+ flipped, and a classic EMF beside it, both drawn by Windows', is(c[0], F.BLUE) && is(c[1], F.RED) && is(c[2], F.GREEN) && is(c[3], F.YELLOW), c.map(named).join(' '));
+            const cached = fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')) : [];
+            const stamp = cached.map((n) => fs.statSync(path.join(cacheDir, n)).mtimeMs).join(',');
+            check('the two converted pictures are cached in the profile, by content', cached.filter((n) => !before.includes(n)).length === 2, cached.join(' '));
+            const plusFile2 = path.join(docs, 'emfplus-again.pptx'); fs.copyFileSync(plusFile, plusFile2);
+            const t1 = Date.now();
+            const again = await openDeck(plusFile2);
+            r = again ? await show(again, 0) : null;
+            c = r ? await colors(again, r, [[200, 200], [400, 200]]) : [];
+            const secondMs = Date.now() - t1;
+            console.log(`INFO  EMF+ deck: first open to picture ${firstMs} ms, second open (cache) ${secondMs} ms`);
+            check('second open: the same picture, from the cache (no new files, none rewritten)', is(c[0], F.RED) && is(c[1], F.BLUE) && fs.readdirSync(cacheDir).filter((n) => n.endsWith('.png')).map((n) => fs.statSync(path.join(cacheDir, n)).mtimeMs).join(',') === stamp, c.map(named).join(' '));
+          }
+        }
+
+        // fuzz: truncated and garbage bytes never throw and never hang
+        const fuzz = await run(vec, `(async () => {
+          const out = { threw: 0, drew: 0, n: 0, ms: 0 };
+          const t0 = performance.now();
+          const emf = Uint8Array.from(${JSON.stringify([...F.emf()])});
+          const wmf = Uint8Array.from(${JSON.stringify([...F.wmf()])});
+          const cases = [];
+          for (const [kind, src] of [['emf', emf], ['wmf', wmf]]) {
+            for (let n = 0; n < src.length; n += 7) cases.push([kind, src.subarray(0, n)]);
+            let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+            for (let i = 0; i < 40; i++) { const b = new Uint8Array(src); for (let k = 0; k < 6; k++) b[Math.floor(rnd() * b.length)] = Math.floor(rnd() * 256); cases.push([kind, b]); }
+            for (let i = 0; i < 10; i++) cases.push([kind, Uint8Array.from({ length: 64 + i * 50 }, () => Math.floor(rnd() * 256))]);
+            const huge = new Uint8Array(src); huge.fill(0xff, 8, 16); cases.push([kind, huge]);
+            cases.push([kind, new Uint8Array(0)]); cases.push([kind, new Uint8Array(30 * 1024 * 1024)]);
+          }
+          for (const [kind, b] of cases) { out.n++; try { const png = await window.lumenVector.render(kind, b); if (png) out.drew++; } catch { out.threw++; } }
+          out.ms = Math.round(performance.now() - t0);
+          return out;
+        })()`);
+        check(`fuzz: ${fuzz.n} truncated or damaged EMF and WMF files: nothing throws, nothing hangs (${fuzz.ms} ms)`, fuzz.threw === 0 && fuzz.ms < 60000, JSON.stringify(fuzz));
+        check('fuzz: the page is still alive afterwards', (await run(vec, "document.querySelectorAll('.slide').length")) === 4);
+      }
+
     }
   } finally {
     await app.close().catch(() => {});

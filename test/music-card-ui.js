@@ -239,7 +239,7 @@ async function main() {
   check('library: a token without the library permission: "Sign in again to show your library" with a Sign in again button that opens the settings', /Sign in again to show your library/.test(lt), lt);
   navigations.length = 0;
   await js(`[...document.querySelectorAll('.mc-panel-library button')].find((b) => /Sign in again/.test(b.textContent)).click()`); await sleep(80);
-  check('library: …the button asks for the settings (configure)', asks()[0] === 'configure', JSON.stringify(asks()));
+  check('library: …the button starts the Spotify sign-in itself (reconnect), not a trip to Settings', asks()[0] === 'reconnect', JSON.stringify(asks()));
   lt = await lib({ playlists: [{ id: 'p1', kind: 'playlist', title: 'Mine', sub: 'You' }], albums: [{ id: 'al1', kind: 'album', title: 'Saved Album', sub: 'Ann · 2021' }], artists: [{ id: 'ar1', kind: 'artist', title: 'Followed Artist', sub: '' }] });
   check('library: saved albums and followed artists are listed under their own headings', /Saved albums/.test(lt) && /Saved Album/.test(lt) && /Followed artists/.test(lt) && /Followed Artist/.test(lt), lt);
   navigations.length = 0;

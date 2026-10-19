@@ -236,7 +236,7 @@ async function connectOrLaunch(userData, launch, log) {
     const { spawn } = require('child_process');
     const env = { ...process.env };
     launchEnv(env);
-    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', env, windowsHide: false });
+    const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore', env, windowsHide: false, cwd: require('os').homedir() }); // (not the assistant's project folder or the install: Lumen would hold it open)
     child.unref();
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
@@ -341,6 +341,7 @@ function runBridge({ app }) {
       LUMEN_LAUNCH: JSON.stringify(launch),
     },
     windowsHide: true,
+    cwd: require('os').homedir(),
   });
   child.on('exit', (code) => app.exit(code ?? 0));
   child.on('error', (err) => { process.stderr.write(`[lumen-mcp] ${err.message}\n`); app.exit(1); });

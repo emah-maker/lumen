@@ -2,13 +2,19 @@
 // Cuts a release: a release worktree from origin/main, the CHANGELOG cut and version bump, every check run hidden, and (only on a
 // clean pass) the "Release X.Y.Z" PR, CI, squash-merge, annotated tag on the merge commit, and the release.yml build.
 //   node scripts/release.js <X.Y.Z | patch | minor | major> [options]
-//   --dry-run        print the plan and the derived suite list; changes nothing (no fetch, worktree, process kill, push or tag)
+//   --dry-run        print the plan and the derived suite list; changes nothing (no fetch, worktree, process kill, push, dispatch or tag)
 //   --checks-only    stop after the checks: nothing is pushed
 //   --resume         continue the release from the last finished stage (kept in the worktree's git dir)
-//   --hold-lock      (default) hold the machine-wide Electron lock (scripts/e2e-lock.js) for the whole checks stage
+//   --hold-lock      (default) hold the machine-wide Electron lock (scripts/e2e-lock.js) while Electron suites run
 //   --share-machine  lock per Electron suite instead (retry included), releasing between suites so a parallel agent can run then
 //   --kill-stale     stop electron processes left under this repo's worktrees (by PID, only those) before the checks
+//   --only a,b,c     a targeted release: the pure-node stages and perf-budget always run, plus the named Electron suites
 //   --suite-timeout <minutes> (default 15)   --ci-timeout <minutes> (default 40)   --assets <n> (default 13)
+//   --no-preflight   do not dispatch release.yml on the release branch before the PR (the build then happens only at the tag)
+//   --preflight-timeout <minutes> (default 45)   how long to wait for that build
+//   --no-skip-ci     always wait for CI on the release PR (default: skip when the commit is verified to be only the release)
+//   --serial-checks  run the checks one after another (default: the pure-node lane alongside the Electron lane)
+//   --fresh-install  npm ci in the worktree instead of reusing the main checkout's node_modules
 // Never run it while another Lumen test or release is using Electron: it refuses when a release worktree is mid-run.
 // Stages and gotchas: docs/releasing.md.
 const fs = require('fs');
@@ -16,10 +22,12 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const e2eLock = require('./e2e-lock');
-const { cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder } = require('./release-lib');
-const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, waitForCi } = require('./ship-common');
+const {
+  cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder,
+  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, releasePlan, stageDone, stagesLeft,
+} = require('./release-lib');
+const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
 
-const STAGES = ['worktree', 'install', 'prepare', 'checks', 'pr', 'ci', 'merge', 'tag', 'publish'];
 const CO_AUTHOR = process.env.LUMEN_CO_AUTHOR || 'Claude Opus 5.5 <noreply@anthropic.com>';
 const STATE_FILE = 'lumen-release-state.json';
 
@@ -49,7 +57,7 @@ function releaseWorktrees(main) {
   return listWorktrees(main).filter((w) => /^release-\d/.test(w.branch || '')).map((w) => ({ dir: w.dir, branch: w.branch, state: loadState(w.dir) })).filter((w) => w.state);
 }
 
-const done = (st, stage) => STAGES.indexOf(st.stage) >= STAGES.indexOf(stage);
+const done = stageDone;
 
 // ----------------------------------------------------------------------------------------------------------------- preflight
 
@@ -77,6 +85,7 @@ function runStage(wt, stage, logFile, timeoutMs) {
   return new Promise((resolve) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-rel-'));
     const env = { ...process.env, LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_TEST: '1', TEMP: tmp, TMP: tmp, TMPDIR: tmp, CLAUDE_BROWSER_PROFILE: path.join(tmp, 'profile') };
+    fs.mkdirSync(path.dirname(logFile), { recursive: true }); // (the logs folder is in TEMP, which a cleaner can empty while the lock is awaited)
     const fd = fs.openSync(logFile, 'a');
     fs.writeSync(fd, `\n=== ${new Date().toISOString()} ${stage.name}: ${stage.cmd} ${stage.args.join(' ')}\n`);
     const t0 = Date.now();
@@ -103,41 +112,65 @@ async function runChecks(wt, st, opts) {
   const only = opts.only || st.only || null;
   if (only) { st.only = only; saveState(wt, st); stages = stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)); const unknown = only.filter((n) => !derived.electron.includes(n)); if (unknown.length) say('checks', `--only names suites test-all.js does not list (skipped): ${unknown.join(', ')}`); }
   if (derived.missing.length) say('checks', `named in test-all.js but not in test/ (skipped): ${derived.missing.join(', ')}`);
-  say('checks', `${stages.length} stages (${derived.electron.length} Electron suites, perf-budget last); logs in ${st.logs}`);
   fs.mkdirSync(st.logs, { recursive: true });
   const timeoutMs = opts.suiteMinutes * 60000;
   st.checks = st.checks || {};
   const owner = `release-${st.version}`;
-  const pending = stages.filter((x) => x.kind === 'electron' && !(st.checks[x.name] && st.checks[x.name].status !== 'fail'));
-  // The machine-wide Electron lock (docs/releasing.md): the whole checks stage by default, or per suite with --share-machine.
-  if (opts.holdLock && pending.length) { say('checks', 'taking the machine-wide Electron lock for the whole checks stage'); await e2eLock.acquire({ owner }); }
-  try {
-  for (const stage of stages) {
+  const isPending = (x) => !(st.checks[x.name] && st.checks[x.name].status !== 'fail');
+  const pending = stages.filter((x) => x.kind === 'electron' && isPending(x));
+  // Unit suites run several at a time (test-units.js --jobs), leaving cores for the Electron lane when both run at once.
+  const parallel = !opts.serialChecks;
+  const jobs = unitJobs({ cpus: os.cpus().length, withElectron: parallel && pending.length > 0 });
+  for (const s of stages) if (s.name === 'units') s.args = ['scripts/test-units.js', '--jobs', String(jobs)];
+  const phases = planLanes(stages, { serial: !parallel });
+  say('checks', `${stages.length} stages (${derived.electron.length} Electron suites, perf-sensitive ones last and alone; units ${jobs} at a time; ${parallel ? 'pure-node lane alongside the Electron lane' : 'one after another'}); logs in ${st.logs}`);
+
+  // The machine-wide Electron lock (docs/releasing.md): taken when the first Electron suite is about to start and held to the end of the checks by
+  // default, or taken per suite with --share-machine. The pure-node lane never needs it, so it starts (and may finish) while the lock is awaited.
+  let lockP = null;
+  const ensureLock = () => { if (!lockP) { say('checks', 'taking the machine-wide Electron lock'); lockP = e2eLock.acquire({ owner }); } return lockP; };
+
+  async function runOne(stage, ctx) {
     const prev = st.checks[stage.name];
-    if (prev && prev.status !== 'fail') { say('checks', `skip  ${stage.name} (${prev.status} earlier)`); continue; }
+    if (prev && prev.status !== 'fail') { say('checks', `skip  ${stage.name} (${prev.status} earlier)`); return; }
     const logFile = path.join(st.logs, `${stage.name}.log`);
-    const perSuite = stage.kind === 'electron' && !opts.holdLock;
+    const isElectron = stage.kind === 'electron';
+    const perSuite = isElectron && !opts.holdLock;
+    if (isElectron && opts.holdLock) await ensureLock();
     if (perSuite) { say('checks', `waiting for the Electron lock for ${stage.name}`); await e2eLock.acquire({ owner }); }
     try {
-    let r = await runStage(wt, stage, logFile, timeoutMs);
-    let status = r.ok ? 'pass' : 'fail';
-    if (!r.ok) {
-      const leftover = procsUnder(listElectron(), [wt]);
-      for (const p of leftover) killTree(p.pid);
-      if (stage.kind === 'electron') {
-        say('checks', `FAIL  ${stage.name} (${r.code}); retrying once`);
-        const r2 = await runStage(wt, stage, logFile, timeoutMs);
-        if (r2.ok) { status = 'flaky'; r = r2; } else { r = r2; for (const p of procsUnder(listElectron(), [wt])) killTree(p.pid); }
+      let r = await runStage(wt, stage, logFile, timeoutMs);
+      let status = r.ok ? 'pass' : 'fail';
+      if (!r.ok) {
+        const leftover = procsUnder(listElectron(), [wt]);
+        for (const p of leftover) killTree(p.pid);
+        if (isElectron) {
+          say('checks', `FAIL  ${stage.name} (${r.code}); retrying once${ctx.quiet ? ' when the pure-node lane is done (alone on the machine)' : ''}`);
+          if (ctx.quiet) await ctx.quiet;
+          const r2 = await runStage(wt, stage, logFile, timeoutMs);
+          if (r2.ok) { status = 'flaky'; r = r2; } else { r = r2; for (const p of procsUnder(listElectron(), [wt])) killTree(p.pid); }
+        }
       }
-    }
-    st.checks[stage.name] = { status, seconds: r.seconds, code: r.ok ? 0 : r.code, log: logFile };
-    saveState(wt, st);
-    const tag = { pass: 'PASS ', flaky: 'FLAKY', fail: 'FAIL ' }[status];
-    say('checks', `${tag} ${stage.name} (${r.seconds}s${r.ok ? '' : `, ${r.code}`})`);
-    if (status === 'fail') for (const l of failLines(logFile)) console.log(`            ${l.slice(0, 200)}`);
+      st.checks[stage.name] = { status, seconds: r.seconds, code: r.ok ? 0 : r.code, log: logFile };
+      saveState(wt, st);
+      const tag = { pass: 'PASS ', flaky: 'FLAKY', fail: 'FAIL ' }[status];
+      say('checks', `${tag} ${stage.name} (${r.seconds}s${r.ok ? '' : `, ${r.code}`})`);
+      if (status === 'fail') for (const l of failLines(logFile)) console.log(`            ${l.slice(0, 200)}`);
     } finally { if (perSuite) e2eLock.release(); }
   }
-  } finally { if (opts.holdLock) e2eLock.release(); }
+
+  const t0 = Date.now();
+  try {
+    for (const lanes of phases) {
+      // Within one phase the lanes run at once; the Electron lane's retry waits for the pure-node lane to end so a retry runs on a quiet machine.
+      const pureIdx = lanes.findIndex((l) => l[0].kind === 'plain');
+      const ctxs = lanes.map(() => ({ quiet: null }));
+      const lanePromises = lanes.map((lane, i) => (async () => { for (const stage of lane) await runOne(stage, ctxs[i]); })());
+      if (pureIdx >= 0) ctxs.forEach((c, i) => { if (i !== pureIdx) c.quiet = lanePromises[pureIdx].catch(() => {}); });
+      await Promise.all(lanePromises);
+    }
+  } finally { if (lockP) { try { await lockP; e2eLock.release(); } catch { /* never taken */ } } }
+  say('checks', `all stages ran in ${Math.round((Date.now() - t0) / 1000)}s`);
   const all = stages.map((s) => ({ name: s.name, ...st.checks[s.name] }));
   const failed = all.filter((x) => x.status === 'fail');
   const flaky = all.filter((x) => x.status === 'flaky');
@@ -151,11 +184,25 @@ async function runChecks(wt, st, opts) {
 
 // ----------------------------------------------------------------------------------------------------------------- the stages
 
-function installDeps(wt, main) {
+// node_modules for the worktree: a junction to the main checkout's when what npm installed there matches this lockfile (saves the npm ci and
+// the Electron copy), else npm ci. Never run npm ci through the junction: it would delete the main checkout's packages.
+function installDeps(wt, main, opts) {
+  const src = path.join(main, 'node_modules', 'electron');
+  const mainHasElectron = fs.existsSync(path.join(src, 'dist')) && fs.existsSync(path.join(src, 'path.txt'));
+  const target = path.join(wt, 'node_modules');
+  if (!opts.freshInstall && mainHasElectron && !fs.existsSync(target)) {
+    let verdict = { ok: false, reason: 'no readable lockfile' };
+    try { verdict = nodeModulesMatch(JSON.parse(fs.readFileSync(path.join(main, 'node_modules', '.package-lock.json'), 'utf8')), JSON.parse(fs.readFileSync(path.join(wt, 'package-lock.json'), 'utf8'))); } catch { /* fall back to npm ci */ }
+    if (verdict.ok) {
+      fs.symlinkSync(path.join(main, 'node_modules'), target, 'junction');
+      say('install', `node_modules is a junction to the main checkout's (${verdict.reason}); no npm ci`);
+      return;
+    }
+    say('install', `not reusing the main checkout's node_modules: ${verdict.reason}`);
+  }
   say('install', 'npm ci --ignore-scripts');
   must(run('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: wt }), 'npm ci');
-  const src = path.join(main, 'node_modules', 'electron');
-  if (!fs.existsSync(path.join(src, 'dist')) || !fs.existsSync(path.join(src, 'path.txt'))) throw new Stop(`the main checkout has no Electron download (${src}); run npm install there once`);
+  if (!mainHasElectron) throw new Stop(`the main checkout has no Electron download (${src}); run npm install there once`);
   const dst = path.join(wt, 'node_modules', 'electron');
   fs.mkdirSync(dst, { recursive: true });
   fs.cpSync(path.join(src, 'dist'), path.join(dst, 'dist'), { recursive: true });
@@ -163,10 +210,43 @@ function installDeps(wt, main) {
   say('install', 'copied electron/dist and path.txt from the main checkout');
 }
 
-function prepare(wt, version) {
+// Removes the node_modules junction (the link only, never what it points at).
+function dropJunction(wt) {
+  const target = path.join(wt, 'node_modules');
+  try { if (fs.lstatSync(target).isSymbolicLink()) { fs.unlinkSync(target); say('cleanup', 'removed the node_modules junction'); } } catch { /* none */ }
+}
+
+// Versions whose tag was pushed but whose release never published (release.yml failed after the tag): their notes move to the next version.
+// -> { burned: [versions], newest: the newest published tag or null }
+async function findBurnedVersions(wt, text) {
+  try {
+    const refs = must(await gitRetry(wt, ['ls-remote', '--tags', 'origin', 'v*'], { log: (m) => say('prepare', m) }), 'git ls-remote');
+    const tags = refs.split('\n').map((l) => /refs\/tags\/(v\d+\.\d+\.\d+)$/.exec(l.trim())).filter(Boolean).map((m) => m[1]);
+    const rel = await ghJsonRetry(wt, ['release', 'list', '--limit', '100', '--json', 'tagName,isDraft'], { tries: NET_TRIES, log: (m) => say('prepare', m) });
+    const published = rel.filter((r) => !r.isDraft).map((r) => r.tagName);
+    const newest = published.filter((t) => /^v\d+\.\d+\.\d+$/.test(t)).sort((a, b) => compareVersions(a.slice(1), b.slice(1))).pop() || null;
+    return { burned: findBurned({ changelogText: text, tags, published }), newest };
+  } catch (err) {
+    say('prepare', `could not check for burned versions (${err.message.slice(0, 100)}); folding nothing`);
+    return { burned: [], newest: null };
+  }
+}
+
+async function prepare(wt, version, st) {
   const file = path.join(wt, 'CHANGELOG.md');
+  let text = fs.readFileSync(file, 'utf8');
+  const { burned, newest } = await findBurnedVersions(wt, text);
+  if (newest) st.baseTag = newest;
+  if (burned.length) {
+    try {
+      const f = foldBurned(text, burned);
+      text = f.text;
+      st.folded = f.folded;
+      say('prepare', `${f.folded.join(', ')} was tagged but never published: its notes move into ${version}`);
+    } catch (err) { throw new Stop(err.message); }
+  }
   let cut;
-  try { cut = cutChangelog(fs.readFileSync(file, 'utf8'), version, localDate()); } catch (err) { throw new Stop(err.message); }
+  try { cut = cutChangelog(text, version, localDate()); } catch (err) { throw new Stop(err.message); }
   fs.writeFileSync(file, cut);
   must(run('npm', ['version', version, '--no-git-tag-version'], { cwd: wt }), 'npm version');
   must(run(process.execPath, ['--check', 'src/main.js'], { cwd: wt }), 'node --check src/main.js');
@@ -176,57 +256,175 @@ function prepare(wt, version) {
 }
 
 function releaseBody(wt, version, st) {
-  const tag = git(wt, 'describe', '--tags', '--abbrev=0', 'origin/main').stdout;
+  const tag = st.baseTag || git(wt, 'describe', '--tags', '--abbrev=0', 'origin/main').stdout;
   const subjects = tag ? git(wt, 'log', '--no-merges', '--format=%s', `${tag}..origin/main`).stdout.split('\n').filter((s) => s && !/^Release \d/.test(s)) : [];
   const lines = [`Release ${version}: version bump, and Unreleased becomes the ${version} section.`, ''];
+  if (st.folded && st.folded.length) lines.push(`${st.folded.join(', ')} was tagged but never published (its build failed after the tag), so its notes are folded into ${version}.`, '');
   if (subjects.length) lines.push(`Included since ${tag}:`, ...subjects.map((s) => `- ${s}`), '');
-  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (${st.only ? `a targeted set: units, acceptance, lint, perf-budget and ${st.only.join(', ')}` : 'every Electron suite, units, acceptance, lint'}). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`, '', '🤖 Generated with [Claude Code](https://claude.com/claude-code)');
+  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (${st.only ? `a targeted set: units, acceptance, lint, perf-budget and ${st.only.join(', ')}` : 'every Electron suite, units, acceptance, lint'}). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`);
+  if (st.preflight) lines.push('', `The Windows and macOS build was pre-flighted on this branch (release.yml, workflow_dispatch${st.preflight.url ? `: ${st.preflight.url}` : ''}); the tag publishes those artifacts when the tagged tree is identical.`);
+  lines.push('', '🤖 Generated with [Claude Code](https://claude.com/claude-code)');
   return lines.join('\n');
 }
 
-async function ship(wt, st, version) {
+// --------------------------------------------------------------------------------------------- the build preflight (release.yml, dispatched)
+
+const runJson = (wt, ...extra) => ghJsonRetry(wt, ['run', ...extra], { tries: NET_TRIES, log: (m) => say('preflight', m) });
+const REMOTE_HEAD = (wt, branch, sha) => () => { const r = git(wt, 'ls-remote', 'origin', `refs/heads/${branch}`); return r.status === 0 && r.stdout.startsWith(sha) ? { status: 0, stdout: '' } : null; };
+
+// Finds the dispatched run of release.yml for the release commit and records its id and URL.
+async function findPreflightRun(wt, st) {
+  const runs = await runJson(wt, 'list', '--workflow', 'release.yml', '--branch', st.branch, '--event', 'workflow_dispatch', '--limit', '20', '--json', 'databaseId,headSha,createdAt,status,conclusion,url');
+  const r = pickPreflightRun(runs, { sha: st.preflight.sha, notBeforeMs: st.preflight.dispatchedAt });
+  if (r) { st.preflight.runId = r.databaseId; st.preflight.url = r.url; }
+  return r;
+}
+
+// Pushes the release branch and dispatches release.yml on it: the Windows and macOS build and their tests, publishing nothing (publish is tags only).
+// Idempotent: a run already started for this commit that has not failed is kept (--resume), a failed one is dispatched again.
+async function startPreflight(wt, st, log) {
+  const head = must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse');
+  if (st.preflight && st.preflight.sha === head) {
+    if (!st.preflight.runId) await findPreflightRun(wt, st);
+    if (st.preflight.runId) {
+      const r = await runJson(wt, 'view', String(st.preflight.runId), '--json', 'status,conclusion,url');
+      if (runVerdict(r) !== 'failed') { saveState(wt, st); log(`build preflight already running: ${st.preflight.url}`); return; }
+      log(`the earlier build preflight ${r.conclusion}; dispatching a new one`);
+    }
+  }
+  must(await gitRetry(wt, ['push', '-q', '-u', 'origin', st.branch], { recheck: REMOTE_HEAD(wt, st.branch, head), log }), 'git push');
+  const dispatchedAt = Date.now();
+  st.preflight = { sha: head, dispatchedAt, runId: null, url: null };
+  const seen = async () => ((await findPreflightRun(wt, st)) ? { status: 0, stdout: '' } : null); // a dispatch that went through despite the error
+  must(await ghRetry(wt, ['workflow', 'run', 'release.yml', '--ref', st.branch], { tries: NET_TRIES, recheck: seen, log }), 'gh workflow run release.yml');
+  for (let i = 0; i < 40 && !st.preflight.runId; i++) { await findPreflightRun(wt, st); if (!st.preflight.runId) await sleep(3000); }
+  saveState(wt, st);
+  log(st.preflight.runId ? `build preflight dispatched on ${head.slice(0, 8)}: ${st.preflight.url}` : 'build preflight dispatched (its run has not shown up yet; it is looked for again at the CI stage)');
+}
+
+async function cancelPreflight(wt, st) {
+  if (!st.preflight || !st.preflight.runId) return;
+  const r = gh(wt, 'run', 'cancel', String(st.preflight.runId));
+  say('preflight', r.status === 0 ? `cancelled the build preflight ${st.preflight.url}` : 'the build preflight was not cancelled (already finished?)');
+}
+
+// Can the CI wait on the release PR be skipped? See ciSkipVerdict (release-lib.js): only when the commit is mechanically the release and its base passed CI.
+async function decideCiSkip(wt, st, version, opts) {
+  if (opts.noSkipCi) return { skip: false, reasons: ['--no-skip-ci'] };
+  const base = must(git(wt, 'merge-base', 'origin/main', st.head), 'git merge-base');
+  const files = must(git(wt, 'diff', '--name-only', base, st.head), 'git diff').split('\n').filter(Boolean);
+  const show = (rev, f) => { const r = git(wt, 'show', `${rev}:${f}`); return r.status === 0 ? r.out : null; };
+  const texts = (rev) => ({ changelog: show(rev, 'CHANGELOG.md'), package: show(rev, 'package.json'), lock: show(rev, 'package-lock.json') });
+  const runs = await ghJsonRetry(wt, ['run', 'list', '--workflow', 'ci.yml', '--commit', base, '--json', 'status,conclusion'], { tries: NET_TRIES, log: (m) => say('ci', m) });
+  const baseCi = runs.some((r) => r.status === 'completed' && r.conclusion === 'success') ? 'success' : (runs[0] ? runs[0].conclusion || runs[0].status : '');
+  const v = ciSkipVerdict({ files, version, base: texts(base), head: texts(st.head), baseCi });
+  st.ciBase = base;
+  return v;
+}
+
+// The gate before the merge: CI on the PR (unless verified skippable) and the build preflight, polled together.
+async function waitGates(wt, st, version, opts) {
+  const verdict = await decideCiSkip(wt, st, version, opts);
+  st.skipCi = verdict.skip;
+  saveState(wt, st);
+  if (verdict.skip) say('ci', `not waiting for the PR's CI: ${verdict.reasons.join('; ')}`);
+  else say('ci', `waiting for CI on ${st.head.slice(0, 8)}${opts.noSkipCi ? '' : ` (cannot skip: ${verdict.reasons.join('; ')})`}`);
+  const t0 = Date.now();
+  let last = '';
+  let blind = 0;
+  const ciMs = st.ciMinutes * 60000;
+  const pfMs = (opts.preflightMinutes || 45) * 60000;
+  for (;;) {
+    let ciOk = true;
+    let pfOk = true;
+    let line = '';
+    try {
+      if (!verdict.skip) {
+        const s = await ciState(wt, st.head, { log: (m) => say('ci', m) });
+        if (s.state === 'failed') throw new Stop(`CI failed on ${st.head.slice(0, 8)}: ${s.bad.workflowName} (${s.bad.conclusion}) ${s.bad.url}`);
+        if (s.state === 'none' && Date.now() - t0 > 10 * 60000) throw new Stop(`no CI run appeared for ${st.head.slice(0, 8)} after 10 min`);
+        ciOk = s.state === 'success';
+        line += ciOk ? 'CI passed' : s.state === 'none' ? 'CI not started' : 'CI running';
+      }
+      if (st.preflight) {
+        if (!st.preflight.runId) await findPreflightRun(wt, st);
+        if (!st.preflight.runId) {
+          pfOk = false;
+          line += `${line ? '; ' : ''}build preflight not found yet`;
+          if (Date.now() - t0 > 10 * 60000) throw new Stop('the dispatched release.yml run never appeared');
+        } else {
+          const r = await runJson(wt, 'view', String(st.preflight.runId), '--json', 'status,conclusion,url');
+          const v = runVerdict(r);
+          if (v === 'failed') throw new Stop(`the build preflight ${r.conclusion}: ${r.url}\nNothing was tagged, so no version is burned. Fix it, then --resume dispatches it again.`);
+          pfOk = v === 'passed';
+          line += `${line ? '; ' : ''}build preflight ${pfOk ? 'passed' : 'running'}`;
+        }
+      }
+      blind = 0;
+    } catch (err) {
+      if (!(err instanceof Stop) || /^CI failed|^the build preflight|^no CI run|never appeared/.test(err.message) || ++blind > 10) throw err;
+      say('ci', `could not read GitHub (${err.message.slice(0, 80)}); polling again (${blind} of 10)`);
+      await sleep(20000);
+      continue;
+    }
+    if (ciOk && pfOk) { say('ci', line || 'nothing to wait for'); break; }
+    if (line !== last) { say('ci', line); last = line; }
+    if (!ciOk && Date.now() - t0 > ciMs) throw new Stop(`CI still not green after ${st.ciMinutes} min`);
+    if (!pfOk && Date.now() - t0 > pfMs) throw new Stop(`the build preflight is still running after ${Math.round(pfMs / 60000)} min: ${st.preflight.url}`);
+    await sleep(20000);
+  }
+}
+
+async function ship(wt, st, version, opts) {
   const branch = st.branch;
+  const log = (step) => (m) => say(step, m);
+  // Idempotent: dispatches for a checks-only run or a release started before the early dispatch existed, and again when the earlier run was cancelled or failed.
+  if (!opts.noPreflight && !done(st, 'ci')) await startPreflight(wt, st, log('preflight'));
   if (!done(st, 'pr')) {
-    must(git(wt, 'push', '-q', '-u', 'origin', branch), 'git push');
+    must(await gitRetry(wt, ['push', '-q', '-u', 'origin', branch], { recheck: REMOTE_HEAD(wt, branch, must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse')), log: log('pr') }), 'git push');
     const bodyFile = path.join(st.logs, 'pr-body.md');
     fs.writeFileSync(bodyFile, releaseBody(wt, version, st));
     const existing = () => { const j = gh(wt, 'pr', 'view', branch, '--json', 'url'); try { return j.status === 0 ? { status: 0, stdout: JSON.parse(j.stdout).url } : null; } catch { return null; } };
-    const url = must(await ghRetry(wt, ['pr', 'create', '--base', 'main', '--head', branch, '--title', `Release ${version}`, '--body-file', bodyFile], { recheck: existing, log: (m) => say('pr', m) }), 'gh pr create');
+    const url = must(await ghRetry(wt, ['pr', 'create', '--base', 'main', '--head', branch, '--title', `Release ${version}`, '--body-file', bodyFile], { tries: NET_TRIES, recheck: existing, log: (m) => say('pr', m) }), 'gh pr create');
     st.pr = Number(url.trim().split('/').pop());
     st.head = must(git(wt, 'rev-parse', 'HEAD'), 'git rev-parse');
     st.stage = 'pr'; saveState(wt, st);
     say('pr', `release PR #${st.pr} ${url.trim()}`);
   }
   if (!done(st, 'ci')) {
-    say('ci', `waiting on ${st.head.slice(0, 8)}`);
-    await waitForCi(wt, st.head, { timeoutMs: st.ciMinutes * 60000, log: (m) => say('ci', m) });
+    await waitGates(wt, st, version, opts);
     st.stage = 'ci'; saveState(wt, st);
-    say('ci', 'passed');
+    say('ci', 'gates passed');
   }
   if (!done(st, 'merge')) {
     // A transient error may hit after GitHub merged: before each retry, an already-merged PR counts as success.
     const merged = () => { const j = gh(wt, 'pr', 'view', String(st.pr), '--json', 'state'); try { return j.status === 0 && JSON.parse(j.stdout).state === 'MERGED' ? { status: 0, stdout: '' } : null; } catch { return null; } };
-    must(await ghRetry(wt, ['pr', 'merge', String(st.pr), '--squash', '--match-head-commit', st.head], { recheck: merged, log: (m) => say('merge', m) }), 'gh pr merge');
-    git(wt, 'fetch', '-q', 'origin');
-    st.mergeSha = (await ghJsonRetry(wt, ['pr', 'view', String(st.pr), '--json', 'mergeCommit'], { log: (m) => say('merge', m) })).mergeCommit.oid;
+    must(await ghRetry(wt, ['pr', 'merge', String(st.pr), '--squash', '--match-head-commit', st.head], { tries: NET_TRIES, recheck: merged, log: (m) => say('merge', m) }), 'gh pr merge');
+    must(await gitRetry(wt, ['fetch', '-q', 'origin'], { log: log('merge') }), 'git fetch');
+    st.mergeSha = (await ghJsonRetry(wt, ['pr', 'view', String(st.pr), '--json', 'mergeCommit'], { tries: NET_TRIES, log: (m) => say('merge', m) })).mergeCommit.oid;
     st.stage = 'merge'; saveState(wt, st);
     say('merge', `squash-merged as ${st.mergeSha.slice(0, 8)}`);
   }
+  // The tag run publishes the preflight's artifacts only when it is the same tree (a squash of an unmoved main is); say which to expect.
+  const treeOf = (rev) => git(wt, 'rev-parse', `${rev}^{tree}`).stdout;
+  st.reuse = Boolean(st.preflight && st.preflight.runId && st.mergeSha && treeOf(st.mergeSha) && treeOf(st.mergeSha) === treeOf(st.head));
+  say('merge', st.reuse ? 'the merge commit has the same tree as the pre-flighted head: the tag will publish those artifacts' : st.preflight ? 'main moved (the tree differs): the tag run builds again' : 'no build preflight: the tag run builds');
   if (!done(st, 'tag')) {
     const tag = `v${version}`;
     const have = git(wt, 'rev-parse', '-q', '--verify', `refs/tags/${tag}^{commit}`);
     if (have.status !== 0) must(git(wt, 'tag', '-a', tag, '-m', `Lumen ${version}`, st.mergeSha), 'git tag');
     else if (have.stdout !== st.mergeSha) throw new Stop(`local tag ${tag} points at ${have.stdout.slice(0, 8)}, not the merge commit ${st.mergeSha.slice(0, 8)}`);
-    must(git(wt, 'push', '-q', 'origin', tag), 'git push tag');
+    const onRemote = () => { const r = git(wt, 'ls-remote', '--tags', 'origin', tag); return r.status === 0 && r.stdout ? { status: 0, stdout: '' } : null; };
+    must(await gitRetry(wt, ['push', '-q', 'origin', tag], { recheck: onRemote, log: log('tag') }), 'git push tag');
     st.stage = 'tag'; saveState(wt, st);
     say('tag', `${tag} (annotated) on the merge commit, pushed`);
   }
   if (!done(st, 'publish')) {
     const tag = `v${version}`;
-    say('publish', 'waiting for release.yml on the tag');
+    say('publish', st.reuse ? 'waiting for release.yml on the tag (publishing the pre-flighted artifacts)' : 'waiting for release.yml on the tag');
     const t0 = Date.now();
     for (;;) {
-      const runs = await ghJsonRetry(wt, ['run', 'list', '--workflow', 'release.yml', '--branch', tag, '--json', 'status,conclusion,url'], { log: (m) => say('publish', m) });
+      const runs = await ghJsonRetry(wt, ['run', 'list', '--workflow', 'release.yml', '--branch', tag, '--json', 'status,conclusion,url'], { tries: NET_TRIES, log: (m) => say('publish', m) });
       const r = runs && runs[0];
       if (r && r.status === 'completed') {
         if (r.conclusion !== 'success') throw new Stop(`release.yml ${r.conclusion}: ${r.url}`);
@@ -234,9 +432,9 @@ async function ship(wt, st, version) {
       }
       if (!r && Date.now() - t0 > 10 * 60000) throw new Stop('release.yml did not start within 10 min of the tag');
       if (Date.now() - t0 > 120 * 60000) throw new Stop('release.yml still running after 2 h');
-      await sleep(60000);
+      await sleep(st.reuse ? 15000 : 30000);
     }
-    const assets = await ghJsonRetry(wt, ['release', 'view', tag, '--json', 'assets,url'], { log: (m) => say('publish', m) });
+    const assets = await ghJsonRetry(wt, ['release', 'view', tag, '--json', 'assets,url'], { tries: NET_TRIES, log: (m) => say('publish', m) });
     if (assets.assets.length !== st.assets) throw new Stop(`release ${tag} has ${assets.assets.length} assets, expected ${st.assets}: ${assets.url}`);
     st.stage = 'publish'; saveState(wt, st);
     say('publish', `${assets.assets.length} assets: ${assets.url}`);
@@ -254,32 +452,29 @@ function dryRun(main, spec, opts) {
   const version = opts.resume && resumable.length ? resumable[resumable.length - 1].state.version : bumpVersion(current, spec);
   const wt = path.join(worktreesDir(main), `release-${version}`);
   const { stages, derived } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
+  const kept = opts.only ? stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || opts.only.includes(x.name)) : stages;
+  const phases = planLanes(kept, { serial: opts.serialChecks });
   say('plan', `origin/main (as last fetched) is ${current}; releasing ${version} (${spec}), worktree ${wt}`);
   if (!opts.resume && fs.existsSync(wt)) say('plan', `would STOP: ${wt} already exists (a release of ${version} is in progress or unfinished: use --resume, or remove that worktree)`);
-  if (opts.resume) say('plan', resumable.length ? `--resume would continue ${resumable[resumable.length - 1].branch} after stage "${resumable[resumable.length - 1].state.stage}"` : '--resume found no unfinished release; it would stop');
+  if (opts.resume) say('plan', resumable.length ? `--resume would continue ${resumable[resumable.length - 1].branch} after stage "${resumable[resumable.length - 1].state.stage}" (stages left: ${stagesLeft(resumable[resumable.length - 1].state, opts).join(', ') || 'none'}; the build preflight is checked again before the PR, never trusted blindly)` : '--resume found no unfinished release; it would stop');
   const stale = procsUnder(listElectron(), [main]);
   say('plan', `0. preflight: ${stale.length ? `${stale.length} electron process(es) under the repo: ${stale.map((p) => p.pid).join(', ')} (${opts.killStale ? 'would be stopped by PID' : 'would STOP the run; --kill-stale stops them'})` : 'no electron under the repo'}; refuse if another release is mid-run`);
-  say('plan', `1. worktree: git fetch, worktree add release-${version} from origin/main`);
-  say('plan', '2. install: npm ci --ignore-scripts, copy node_modules/electron/dist and path.txt from the main checkout');
-  say('plan', `3. prepare: CHANGELOG "## Unreleased" -> "## ${version} (${localDate()})" with a fresh empty Unreleased; npm version ${version} --no-git-tag-version; node --check src/main.js; commit "Release ${version}"`);
-  say('plan', `4. checks: ${stages.length} stages, each with its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; the Electron lock is ${opts.holdLock ? 'held for the whole stage' : 'taken per suite (--share-machine)'}; an Electron suite that fails is retried once (passing the retry = flaky, reported, not blocking)`);
-  say('plan', `   order: ${stages.slice(0, 3).map((s) => s.name).join(', ')}, then ${derived.electron.length} Electron suites from scripts/test-all.js (${derived.electron.slice(0, 4).join(', ')}, ... ${derived.electron.slice(-3).join(', ')})`);
+  const plan = releasePlan({ version, date: localDate(), opts, counts: { stages: kept.length } });
+  let n = 0;
+  for (const s of plan) say('plan', s.parallel ? `   | ${s.id}: ${s.text}` : `${++n}. ${s.id}: ${s.text}`);
+  say('plan', `   checks lanes: ${phases.map((lanes) => lanes.map((l) => `[${l.map((s) => s.name).slice(0, 3).join(', ')}${l.length > 3 ? `, ... ${l.length} in all` : ''}]`).join(' + ')).join('  then  ')}`);
+  say('plan', `   units: --jobs ${unitJobs({ cpus: os.cpus().length, withElectron: !opts.serialChecks && derived.electron.length > 0 })}; each stage has its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; an Electron suite that fails is retried once, alone on the machine (passing = flaky, reported, not blocking)`);
   if (derived.missing.length) say('plan', `   in test-all.js but no file (skipped): ${derived.missing.join(', ')}`);
   say('plan', `   not run (not in test-all.js, need network/keys/manual): ${derived.manual.length} file(s)`);
-  if (opts.checksOnly) say('plan', 'stop here (--checks-only): nothing pushed');
-  else {
-    say('plan', `5. pr: push release-${version}, gh pr create "Release ${version}" (body lists the commits since the last tag and any flaky suites)`);
-    say('plan', '6. ci: poll the PR head commit until every run completes; 7. merge: gh pr merge --squash --match-head-commit');
-    say('plan', `8. tag: annotated v${version} on the merge commit, pushed; 9. publish: wait for release.yml on the tag, expect ${opts.assets} release assets`);
-  }
-  say('dry-run', 'nothing was fetched, created, stopped, pushed or tagged');
+  say('plan', 'network steps (git fetch/push/ls-remote, every gh call) retry up to 5 times with 2 s, 4 s, 8 s, 16 s backoff, and polls tolerate a dropped connection for several minutes');
+  say('dry-run', 'nothing was fetched, created, stopped, pushed, dispatched or tagged');
 }
 
 // ------------------------------------------------------------------------------------------------------------------- main
 
 async function main() {
   const args = process.argv.slice(2);
-  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, assets: 13, only: null };
+  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, preflightMinutes: 45, assets: 13, only: null, noPreflight: false, noSkipCi: false, serialChecks: false, freshInstall: false };
   let spec = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -289,14 +484,19 @@ async function main() {
     else if (a === '--kill-stale') opts.killStale = true;
     else if (a === '--hold-lock') opts.holdLock = true;
     else if (a === '--share-machine') opts.holdLock = false;
+    else if (a === '--no-preflight') opts.noPreflight = true;
+    else if (a === '--no-skip-ci') opts.noSkipCi = true;
+    else if (a === '--serial-checks') opts.serialChecks = true;
+    else if (a === '--fresh-install') opts.freshInstall = true;
     else if (a === '--suite-timeout') opts.suiteMinutes = Number(args[++i]) || 15;
     else if (a === '--ci-timeout') opts.ciMinutes = Number(args[++i]) || 40;
+    else if (a === '--preflight-timeout') opts.preflightMinutes = Number(args[++i]) || 45;
     else if (a === '--assets') opts.assets = Number(args[++i]) || 13;
     else if (a === '--only') opts.only = String(args[++i] || '').split(',').map((x) => x.trim()).filter(Boolean);
     else if (!a.startsWith('-') && !spec) spec = a;
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
-  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite]'); process.exit(2); }
+  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite] [--no-preflight] [--no-skip-ci] [--serial-checks] [--fresh-install]'); process.exit(2); }
   const main = mainCheckout(process.cwd());
   if (opts.dryRun) return dryRun(main, spec || 'patch', opts);
 
@@ -308,7 +508,7 @@ async function main() {
     if (!open.length) throw new Stop('nothing to resume: no unfinished release worktree');
     const pick = open[open.length - 1];
     wt = pick.dir; st = pick.state; version = st.version;
-    say('resume', `${pick.branch}, last finished stage: ${st.stage}`);
+    say('resume', `${pick.branch}, last finished stage: ${st.stage}; stages left: ${stagesLeft(st, opts).join(', ') || 'none'}`);
   } else {
     const current = JSON.parse(must(git(main, 'show', 'origin/main:package.json'), 'git show').toString()).version;
     version = bumpVersion(current, spec);
@@ -317,12 +517,12 @@ async function main() {
   await preflight(main, opts, wt, !st || !done(st, 'checks'));
 
   if (!st) {
-    must(git(main, 'fetch', '-q', '--tags', 'origin'), 'git fetch');
+    must(await gitRetry(main, ['fetch', '-q', '--tags', 'origin'], { log: (m) => say('worktree', m) }), 'git fetch');
     const current = JSON.parse(must(git(main, 'show', 'origin/main:package.json'), 'git show')).version;
     version = bumpVersion(current, spec);
     wt = path.join(worktreesDir(main), `release-${version}`);
     if (fs.existsSync(wt)) throw new Stop(`${wt} exists: use --resume, or remove that worktree`);
-    if (must(git(main, 'ls-remote', '--tags', 'origin', `v${version}`), 'git ls-remote')) throw new Stop(`tag v${version} already exists on origin`);
+    if (must(await gitRetry(main, ['ls-remote', '--tags', 'origin', `v${version}`], { log: (m) => say('worktree', m) }), 'git ls-remote')) throw new Stop(`tag v${version} already exists on origin`);
     must(git(main, 'worktree', 'add', '-q', wt, '-b', `release-${version}`, 'origin/main'), 'git worktree add');
     st = { version, branch: `release-${version}`, stage: 'none', pid: process.pid, started: new Date().toISOString(), logs: path.join(os.tmpdir(), `lumen-release-${version}-${Date.now()}`) };
     saveState(wt, st);
@@ -332,11 +532,17 @@ async function main() {
   Object.assign(st, { pid: process.pid, ciMinutes: opts.ciMinutes, assets: opts.assets });
   saveState(wt, st);
 
-  if (!done(st, 'install')) { installDeps(wt, main); st.stage = 'install'; saveState(wt, st); }
-  if (!done(st, 'prepare')) { prepare(wt, version); st.stage = 'prepare'; saveState(wt, st); }
-  if (!done(st, 'checks')) { await runChecks(wt, st, opts); st.stage = 'checks'; saveState(wt, st); }
+  if (!done(st, 'install')) { installDeps(wt, main, opts); st.stage = 'install'; saveState(wt, st); }
+  if (!done(st, 'prepare')) { await prepare(wt, version, st); st.stage = 'prepare'; saveState(wt, st); }
+  // The build preflight starts now, so it runs alongside the local checks (its cost on this machine is nothing).
+  if (!done(st, 'preflight') && !opts.noPreflight && !opts.checksOnly) { await startPreflight(wt, st, (m) => say('preflight', m)); st.stage = 'preflight'; saveState(wt, st); }
+  if (!done(st, 'checks')) {
+    try { await runChecks(wt, st, opts); } catch (err) { await cancelPreflight(wt, st); throw err; }
+    st.stage = 'checks'; saveState(wt, st);
+  }
   if (opts.checksOnly) { say('done', `checks passed; --checks-only, so nothing was pushed. Worktree ${wt}; --resume ships it`); return; }
-  await ship(wt, st, version);
+  await ship(wt, st, version, opts);
+  dropJunction(wt);
   say('done', `Lumen ${version} released`);
 }
 

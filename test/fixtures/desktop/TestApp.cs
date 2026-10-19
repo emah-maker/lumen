@@ -27,6 +27,15 @@ class TestApp {
     AutomationProperties.SetName(pin, "Card PIN"); AutomationProperties.SetAutomationId(pin, "txtPin");
     go.Click += delegate { result.Text = "Hello, " + name.Text; w.Title = title + " - greeted " + name.Text; }; // (the title bar paints even where the window's client area does not, so a capture changes too)
     panel.Children.Add(name); panel.Children.Add(go); panel.Children.Add(result); panel.Children.Add(agree); panel.Children.Add(pass); panel.Children.Add(pin);
+    if (args.Length > 2 && args[2] == "animate") { // (test/desktop-apps.js, the live picture: the window changes by itself, ten times a second, with no help from Lumen)
+      TextBlock ticker = new TextBlock { Text = "Tick 0", FontSize = 28, Margin = new Thickness(0, 8, 0, 0) };
+      AutomationProperties.SetAutomationId(ticker, "lblTick");
+      panel.Children.Add(ticker);
+      int n = 0;
+      System.Windows.Threading.DispatcherTimer t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+      t.Tick += delegate { n++; ticker.Text = "Tick " + n; ticker.Foreground = (n % 2 == 0) ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.Red; w.Title = title + " - tick " + n; }; // (the title bar is painted by Windows itself and shows in a capture even when the display is asleep or the window is parked off every screen; the client area then stops updating)
+      t.Start();
+    }
     w.Content = panel;
     app.Run(w);
   }

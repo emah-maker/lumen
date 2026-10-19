@@ -19,7 +19,10 @@
 // search field, each narrowing the list), wide (a wider menu, for long catalog names).
 window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false } = {}) => {
   const uid = `pk${Math.random().toString(36).slice(2, 8)}`;
-  const nameOf = (o) => o.dataset.name || o.textContent;
+  // Auto with a model it last chose (data-last-used) is just "Auto" (the option's text); that model is shown apart,
+  // labelled "last used: …" (lastOf), so a name is never taken for the model Auto will use next.
+  const nameOf = (o) => (o.dataset.lastUsed ? o.textContent : o.dataset.name || o.textContent);
+  const lastOf = (o) => (o?.dataset?.lastUsed ? tr('picker.lastUsed', 'last used: {name}', { name: o.dataset.lastUsed }) : '');
   const groupOf = (o) => (o.parentElement?.tagName === 'OPTGROUP' ? o.parentElement.label : '');
   const tr = (key, fallback, vars) => {
     let s = window.t ? window.t(key, vars) : key;
@@ -36,7 +39,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   button.setAttribute('aria-controls', `${uid}-list`);
   const where = Object.assign(document.createElement('span'), { className: 'picker-provider' });
   const text = Object.assign(document.createElement('span'), { className: 'picker-text' });
-  button.append(where, text);
+  const last = Object.assign(document.createElement('span'), { className: 'picker-last', hidden: true });
+  button.append(where, text, last);
   if (anchor) button.hidden = true;
   const menu = Object.assign(document.createElement('div'), { className: 'picker-menu', hidden: true });
   const search = Object.assign(document.createElement('input'), { type: 'search', className: 'picker-search', autocomplete: 'off', spellcheck: false });
@@ -98,9 +102,11 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const tag = option ? option.dataset.provider || groupOf(option) : '';
     if (label) { where.textContent = ''; text.textContent = option ? label(option) : ''; }
     else { where.textContent = tag && !name.toLowerCase().startsWith(tag.toLowerCase()) ? tag : ''; text.textContent = name; }
+    last.textContent = option ? lastOf(option) : '';
+    last.hidden = !last.textContent;
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
     button.title = option ? [groupOf(option), name, option.value.toLowerCase() === name.toLowerCase() ? '' : option.value].filter(Boolean).join(' · ') : ''; // (not "Auto · auto")
-    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent].filter(Boolean).join(': '));
+    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': '));
     requestAnimationFrame(fitTag); // a new name (or the list reloaded): shortened again to the room there is
   };
   // The provider tag shows when the header has room for tag and name together (measured against the space the
@@ -118,7 +124,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     text.textContent = full;
     if (text.scrollWidth + 30 > room) text.textContent = shortName(full);
     button.classList.remove('picker-narrow');
-    const need = where.scrollWidth + text.scrollWidth + 30; // the tag, the name, the gap and the arrow
+    const need = where.scrollWidth + text.scrollWidth + (last.hidden ? 0 : last.scrollWidth + 6) + 30; // the tag, the name, the gap and the arrow
     button.classList.toggle('picker-narrow', need > Math.min(room, 320));
   }
   if (typeof ResizeObserver === 'function') new ResizeObserver(fitTag).observe(button.parentElement?.parentElement || button);
@@ -142,12 +148,20 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const SHOWN = 5;
 
   let activeEl = null;
+  // Scrolls the list only (scrollIntoView also scrolls the page sideways when the menu sits at the window's edge). The sticky heading keeps 30px clear at the top.
+  function scrollRowIntoView(el, centre) {
+    const l = list.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (centre) list.scrollTop += r.top - l.top - (l.height - r.height) / 2;
+    else if (r.top < l.top + 30) list.scrollTop -= l.top + 30 - r.top;
+    else if (r.bottom > l.bottom) list.scrollTop += r.bottom - l.bottom;
+  }
   function setActive(i, scroll = true) {
     if (!rows.length) { active = -1; activeEl?.classList.remove('active'); activeEl = null; owner().removeAttribute('aria-activedescendant'); return; }
     active = Math.max(0, Math.min(rows.length - 1, i));
     if (activeEl !== rows[active].el) { activeEl?.classList.remove('active'); activeEl = rows[active].el; activeEl.classList.add('active'); }
     owner().setAttribute('aria-activedescendant', rows[active].el.id);
-    if (scroll) rows[active].el.scrollIntoView({ block: centreNext ? 'center' : 'nearest' }); // the list's scroll-padding keeps it clear of the sticky heading
+    if (scroll) scrollRowIntoView(rows[active].el, centreNext);
     centreNext = false;
   }
   // One set of listeners on the list, not three per row (a catalog has hundreds): what a row does is kept here.
@@ -176,7 +190,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     el.append(top);
     // A recent pick says where it is from ("OpenAI"), since it sits outside its provider's heading.
     const maker = recentRow ? o.dataset.provider || groupOf(o) : '';
-    const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', o.dataset.detail || ''].filter(Boolean).join(' · ');
+    const detail = [maker && !String(o.dataset.detail || '').startsWith(maker) ? maker : '', lastOf(o), o.dataset.detail || ''].filter(Boolean).join(' · ');
     if (detail) el.append(Object.assign(document.createElement('span'), { className: 'picker-detail', textContent: detail }));
     el.title = [nameOf(o), o.dataset.more || o.value.toLowerCase() === nameOf(o).toLowerCase() ? '' : o.value, o.title && o.title !== detail ? o.title : ''].filter(Boolean).join('\n');
     el.setAttribute('aria-label', [nameOf(o), ...badges.map(badgeText), detail].filter(Boolean).join(', ')); // what a screen reader says
@@ -368,7 +382,10 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     if (refocus) (anchor || button).focus();
   }
   const onResize = () => close(false);
-  const onScroll = (e) => { if (!menu.contains(e.target) && (e.target === document || e.target.contains?.(anchor || button))) close(false); };
+  // A scroll event that moved nothing (the page fires one as the menu opens) is not the page moving under the menu.
+  let docAt = null;
+  const docMoved = () => { const d = document.scrollingElement; return !docAt || !d || d.scrollTop !== docAt.top || d.scrollLeft !== docAt.left; };
+  const onScroll = (e) => { if (menu.contains(e.target)) return; if (e.target === document ? docMoved() : e.target.contains?.(anchor || button)) close(false); };
   function outside(e) { if (!menu.contains(e.target) && e.target !== button && !button.contains(e.target) && !(anchor && anchor.contains(e.target))) close(false); }
   function choose(value) {
     if (value == null) return;
@@ -392,10 +409,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     search.value = initial;
     search.placeholder = placeholder || tr('picker.search', 'Search models');
     search.setAttribute('aria-label', tr('picker.search', 'Search models'));
+    place(); // (placed before it is shown: shown first, a wide menu at its unplaced spot widens the page and scrolls it sideways)
     menu.hidden = false;
     button.setAttribute('aria-expanded', 'true');
     usageBars?.touch(); // the cached usage numbers, at most every few seconds; the list redraws if they changed
     place();
+    { const d = document.scrollingElement; docAt = d ? { top: d.scrollTop, left: d.scrollLeft } : null; }
     centreNext = true;
     render();
     document.addEventListener('pointerdown', outside, true);

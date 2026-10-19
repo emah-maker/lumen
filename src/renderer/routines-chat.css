@@ -1,0 +1,40 @@
+/* Scheduling from the full-page chat (renderer/chat-routines.js): the "Schedule this" dialog, the clock button beside Copy on a
+   reply, and the "Make this a routine?" offer above the composer. The dialog sits on the shortcut sheet's frame (styles.css). */
+
+.rc-card { width: min(460px, 100%); }
+.rc-form { display: flex; flex-direction: column; gap: 10px; }
+.rc-field { display: flex; flex-direction: column; gap: 4px; }
+.rc-field label { font-size: var(--fs-sm); font-weight: 500; color: var(--muted); }
+.rc-field input, .rc-field textarea {
+  box-sizing: border-box; width: 100%; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--r-md); background: var(--field); color: var(--text);
+  font: inherit; font-size: var(--fs-md); outline: none;
+}
+.rc-field textarea { min-height: 72px; resize: vertical; }
+.rc-field input:focus-visible, .rc-field textarea:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.rc-help { margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+.rc-preview { min-height: 1lh; margin: 0; font-size: var(--fs-sm); color: var(--text); }
+.rc-preview.bad, .rc-error { color: var(--danger); }
+.rc-error { margin: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.rc-error[hidden], .rc-saved[hidden], .rc-offer[hidden] { display: none; }
+.rc-saved { margin: 0; font-size: var(--fs-md); line-height: 1.45; }
+.rc-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.rc-actions .btn[hidden] { display: none; }
+
+/* "Schedule this": in the row of small buttons under a reply, left of Read aloud (chat-page-tools.css) */
+.msg.assistant .reply-routine {
+  position: absolute; bottom: -24px; right: 108px; width: 28px; height: 26px; padding: 0; display: grid; place-items: center; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
+}
+.msg.assistant:has(> .reply-regen) .reply-routine { opacity: 0.75; }
+.msg.assistant .reply-routine svg { width: 16px; height: 16px; }
+.msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
+.msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
+.msg.assistant .reply-routine:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.msg.assistant .reply-routine:is(:hover, :focus-visible)::after {
+  content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: var(--r-sm);
+  background: var(--card, var(--field)); color: var(--text); font-size: var(--fs-sm); box-shadow: 0 0 0 0.5px var(--border); pointer-events: none;
+}
+
+/* the offer: one quiet line at the top of the composer; it never takes focus */
+.rc-offer { flex-basis: 100%; order: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 6px; font-size: var(--fs-sm); color: var(--text); }
+.rc-offer-text { flex: 1 1 auto; min-width: 0; }

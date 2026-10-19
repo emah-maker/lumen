@@ -1,7 +1,7 @@
 // Tells the main process whether a page handled a keyboard shortcut (features/page-first-keys.js has the whole story).
 // Registered session-wide as a 'frame' preload, which runs in a tab's main frame only. It listens on the window in the CAPTURE phase, so
 // it sees every key press before any page handler (even one that stops propagation), and looks at `defaultPrevented` once the event has
-// finished dispatching, which is the same thing Chrome checks before it runs Save page, Print or Find. Only Ctrl / Cmd chords and F3 are
+// finished dispatching, which is the same thing Chrome checks before it runs Save page, Print or Find. Only Ctrl / Cmd / Alt chords and F-keys are
 // reported, and only genuine key presses (synthetic events from page script are not trusted).
 //
 // A key typed into a frame never reaches the main window, and Google Docs types into a same-origin iframe, so the listener is also put
@@ -15,7 +15,7 @@ if (/^https?:$/.test(location.protocol)) {
   const onKey = (e) => {
     if (!e.isTrusted || e.repeat) return;
     const key = typeof e.key === 'string' ? e.key : '';
-    if (!(e.ctrlKey || e.metaKey || key === 'F3')) return;
+    if (!(e.ctrlKey || e.metaKey || e.altKey || /^F\d+$/.test(key))) return;
     const report = { key, ctrl: e.ctrlKey, meta: e.metaKey, shift: e.shiftKey, alt: e.altKey };
     setTimeout(() => { try { ipcRenderer.send('page-first-keys:done', { ...report, prevented: e.defaultPrevented }); } catch { /* the page is going away */ } }, 0);
   };

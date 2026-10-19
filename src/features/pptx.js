@@ -11,7 +11,7 @@
 // inflated (MAX_UNCOMPRESSED: a zip bomb stops there), the number of zip entries, slides, shapes per
 // slide, XML nodes and depth, and the bytes of pictures handed to the page.
 // Fidelity is "readable": text boxes, pictures, solid and gradient fills, simple shapes, lines and
-// tables in the right places. Equations, EMF/WMF pictures, animations and effects
+// tables in the right places. Equations, animations and effects
 // are not drawn. Charts are read from their cached values (bar, line, area, pie, doughnut, scatter; other
 // types keep a labelled box), SmartArt from the drawing PowerPoint saved with it (or its data model's text).
 const zlib = require('zlib');
@@ -27,6 +27,7 @@ const MAX_SHAPES = 3000; // per slide, layout and master shapes included
 const MAX_NODES = 1500000; // per XML part
 const MAX_DEPTH = 256;
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024; // one picture
+const MAX_VECTOR_BYTES = 8 * 1024 * 1024; // one EMF or WMF (a drawing, not a photograph)
 const MAX_MEDIA_BYTES = 150 * 1024 * 1024; // all pictures handed to the page
 const EMU_PER_PT = 12700;
 const DEFAULT_SIZE = { width: 12192000, height: 6858000 }; // 16:9, 13.333 x 7.5 in
@@ -996,7 +997,16 @@ function sniffImage(b) {
   if (b.length >= 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
   const head = b.toString('utf8', 0, Math.min(b.length, 1024)).replace(/^\uFEFF/, '').trimStart();
   if (head.startsWith('<') && /<svg[\s>]/i.test(head)) return 'image/svg+xml';
-  return null; // EMF, WMF, TIFF, …: Chromium can't show them
+  return null; // EMF, WMF, TIFF, …: Chromium can't show them (EMF and WMF: sniffVector, drawn by the viewer page)
+}
+// 'emf' | 'wmf' | null, from the header alone (never parsed here: the slides page, which is sandboxed, draws them).
+// EMF: record type 1 first and the " EMF" signature at byte 40. WMF: the placeable key, or a plain header (type 1 or 2, 9 header words, version 0x100 or 0x300).
+function sniffVector(b) {
+  if (!b || b.length < 18) return null;
+  if (b.length >= 44 && b.readUInt32LE(0) === 1 && b.readUInt32LE(40) === 0x464d4520) return 'emf';
+  if (b.readUInt32LE(0) === 0x9ac6cdd7) return 'wmf';
+  if ((b.readUInt16LE(0) === 1 || b.readUInt16LE(0) === 2) && b.readUInt16LE(2) === 9 && (b.readUInt16LE(4) === 0x100 || b.readUInt16LE(4) === 0x300)) return 'wmf';
+  return null;
 }
 // A picture's size in pixels from its header (PNG, GIF, JPEG, WebP, BMP): { w, h } or null. Never decodes the picture.
 function imageSize(b, type) {
@@ -1113,13 +1123,19 @@ async function parsePptx(buf, { media: wantMedia = true, maxBytes = MAX_UNCOMPRE
       await turn();
       let b;
       try { b = zip.has(part) ? await zip.bytes(part) : null; } catch (err) { if (err instanceof PptxError && /too large/.test(err.message)) { warnings.add('Some pictures were left out: the presentation is too large.'); media[part] = null; continue; } throw err; }
-      const type = sniffImage(b);
+      let type = sniffImage(b);
+      const vector = !type && b ? sniffVector(b) : null;
+      if (vector) {
+        if (b.length > MAX_VECTOR_BYTES) { media[part] = null; mediaInfo[part] = { missing: vector }; warnings.add('Some pictures were left out: they are too large.'); continue; }
+        type = `image/x-${vector}`;
+      }
       if (!b || !type) { media[part] = null; mediaInfo[part] = { missing: (/.([a-z0-9]{2,5})$/i.exec(part)?.[1] || 'unknown').toLowerCase() }; if (b) warnings.add('Some pictures are in a format Lumen cannot show (such as EMF or WMF).'); continue; }
       const digest = `${type}|${b.length}|${require('crypto').createHash('sha1').update(b).digest('hex')}`;
       if (seen.has(digest)) { mediaAlias[part] = seen.get(digest); continue; }
       seen.set(digest, part);
       const size = imageSize(b, type);
       if (size) mediaInfo[part] = size;
+      else if (vector) mediaInfo[part] = { vector };
       if (b.length > MAX_IMAGE_BYTES || mediaBytes + b.length > MAX_MEDIA_BYTES) { media[part] = null; warnings.add('Some pictures were left out: they are too large.'); continue; }
       mediaBytes += b.length;
       media[part] = `data:${type};base64,${b.toString('base64')}`;
@@ -1138,6 +1154,6 @@ async function extractSlideTexts(buf) {
 const isPptxName = (name) => /\.pptx$/i.test(String(name || '').split(/[?#]/)[0]);
 
 module.exports = {
-  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, imageSize, PptxError,
+  parsePptx, extractSlideTexts, createZipReader, parseXml, isPptxName, sniffImage, sniffVector, imageSize, PptxError,
   MAX_UNCOMPRESSED, MAX_FILE_BYTES, MAX_SLIDES, EMU_PER_PT, MAX_CHART_POINTS,
 };

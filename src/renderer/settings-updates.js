@@ -31,7 +31,8 @@ function updateView(u) {
   switch (u.status) {
     case 'checking': return { note: ut('checking'), cls: '' };
     case 'up-to-date': return plainMove ? { ...plainMove, note: `${ut('upToDate')} ${plainMove.note}` } : { note: ut('upToDate'), cls: 'ok' };
-    case 'downloading': return u.queued
+    case 'downloading': if (u.retrying) return { note: ut('retrying', { reason: u.retrying }), cls: '', action: own ? window.t('updates.restart') : undefined };
+      return u.queued
       ? { note: ut('downloadingQueued', { version: u.version, progress: u.progress || 0 }), cls: '' }
       : { note: ut('downloading', { version: u.version, progress: u.progress || 0 }), cls: '', action: own ? window.t('updates.restart') : undefined };
     case 'downloaded': return { note: ut('ready', { version: u.version }), cls: 'ok', action: window.t('updates.restart') };

@@ -70,7 +70,57 @@ const table = ({ id = 50, box, cellFill }) => `<p:graphicFrame><p:nvGraphicFrame
 const bgPicture = (rid, tile = '') => `<p:bg><p:bgPr><a:blipFill>${blipOf(rid)}${tile ? `<a:tile ${tile}/>` : '<a:stretch><a:fillRect/></a:stretch>'}</a:blipFill><a:effectLst/></p:bgPr></p:bg>`;
 const picturePlaceholder = ({ id = 60, idx = 13, rid }) => `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="Picture Placeholder"/><p:cNvPicPr/><p:nvPr><p:ph type="pic" idx="${idx}"/></p:nvPr></p:nvPicPr><p:blipFill>${blipOf(rid)}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr/></p:pic>`;
 
-const THEME = `<a:theme ${NS} name="T"><a:themeElements><a:clrScheme name="C"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="222222"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1></a:clrScheme><a:fontScheme name="F"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>`;
+// ---- EMF and WMF, made here byte by byte (never downloaded): a w x h picture, the left half one color and the right half another.
+const colorref = ([r, g, b]) => r | (g << 8) | (b << 16);
+function emf({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
+  const rec = (type, ...dwords) => { const b = Buffer.alloc(8 + dwords.length * 4); b.writeUInt32LE(type, 0); b.writeUInt32LE(b.length, 4); dwords.forEach((d, i) => b.writeUInt32LE(d >>> 0, 8 + i * 4)); return b; };
+  const brush = (id, c) => rec(39, id, 0, colorref(c), 0); // EMR_CREATEBRUSHINDIRECT: solid
+  const body = [rec(37, 0x80000008), brush(1, left), rec(37, 1), rec(43, 0, 0, w / 2, h), brush(2, right), rec(37, 2), rec(43, w / 2, 0, w, h), rec(14, 0, 16, 20)]; // null pen; two rectangles; EMR_EOF
+  const head = Buffer.alloc(88);
+  head.writeUInt32LE(1, 0); head.writeUInt32LE(88, 4);
+  [0, 0, w - 1, h - 1].forEach((v, i) => head.writeInt32LE(v, 8 + i * 4)); // device bounds
+  [0, 0, w * 26, h * 26].forEach((v, i) => head.writeInt32LE(v, 24 + i * 4)); // frame, 0.01 mm
+  head.writeUInt32LE(0x464d4520, 40); head.writeUInt32LE(0x10000, 44);
+  head.writeUInt32LE(body.length + 1, 52); head.writeUInt16LE(3, 56);
+  head.writeInt32LE(1024, 72); head.writeInt32LE(768, 76); head.writeInt32LE(270, 80); head.writeInt32LE(203, 84);
+  const all = Buffer.concat([head, ...body]);
+  all.writeUInt32LE(all.length, 48);
+  return all;
+}
+// An EMF+ only file (GDI+ records in one EMR_COMMENT: EmfPlusHeader, two EmfPlusFillRects with solid colors, EmfPlusEndOfFile) and no classic drawing
+// record, so EMFJS draws nothing from it: only GDI+ (Windows) shows the two halves. Same layout as emf(): left half one color, right half another.
+function emfPlus({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
+  const plus = (type, flags, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt16LE(type, 0); b.writeUInt16LE(flags, 2); b.writeUInt32LE(b.length, 4); b.writeUInt32LE(data.length, 8); data.copy(b, 12); return b; };
+  const header = (() => { const d = Buffer.alloc(16); d.writeUInt32LE(0xdbc01002, 0); d.writeUInt32LE(0, 4); d.writeUInt32LE(96, 8); d.writeUInt32LE(96, 12); return plus(0x4001, 0, d); })();
+  const fill = (c, x, ww) => { const d = Buffer.alloc(24); d.writeUInt32LE((0xff000000 | (c[0] << 16) | (c[1] << 8) | c[2]) >>> 0, 0); d.writeUInt32LE(1, 4); [x, 0, ww, h].forEach((v, i) => d.writeFloatLE(v, 8 + i * 4)); return plus(0x400a, 0x8000, d); };
+  const records = Buffer.concat([header, fill(left, 0, w / 2), fill(right, w / 2, w / 2), plus(0x4002, 0, Buffer.alloc(0))]);
+  const comment = Buffer.alloc(16 + records.length); comment.writeUInt32LE(70, 0); comment.writeUInt32LE(comment.length, 4); comment.writeUInt32LE(4 + records.length, 8); comment.writeUInt32LE(0x2b464d45, 12); records.copy(comment, 16);
+  const eof = Buffer.alloc(20); eof.writeUInt32LE(14, 0); eof.writeUInt32LE(20, 4); eof.writeUInt32LE(0, 8); eof.writeUInt32LE(16, 12); eof.writeUInt32LE(20, 16);
+  const head = Buffer.alloc(88);
+  head.writeUInt32LE(1, 0); head.writeUInt32LE(88, 4);
+  [0, 0, w - 1, h - 1].forEach((v, i) => head.writeInt32LE(v, 8 + i * 4));
+  [0, 0, Math.round(w * 26.4583), Math.round(h * 26.4583)].forEach((v, i) => head.writeInt32LE(v, 24 + i * 4));
+  head.writeUInt32LE(0x464d4520, 40); head.writeUInt32LE(0x10000, 44);
+  head.writeUInt32LE(3, 52); head.writeUInt16LE(1, 56);
+  head.writeInt32LE(1024, 72); head.writeInt32LE(768, 76); head.writeInt32LE(270, 80); head.writeInt32LE(203, 84);
+  const all = Buffer.concat([head, comment, eof]);
+  all.writeUInt32LE(all.length, 48);
+  return all;
+}
+function wmf({ w = 200, h = 100, left = RED, right = BLUE } = {}) {
+  const rec = (fn, ...words) => { const b = Buffer.alloc(6 + words.length * 2); b.writeUInt32LE(b.length / 2, 0); b.writeUInt16LE(fn, 4); words.forEach((v, i) => b.writeUInt16LE(v & 0xffff, 6 + i * 2)); return b; };
+  const brush = (c) => rec(0x02fc, 0, colorref(c) & 0xffff, colorref(c) >>> 16, 0); // META_CREATEBRUSHINDIRECT: solid
+  const body = [rec(0x020c, h, w), rec(0x020b, 0, 0), rec(0x02fa, 5, 0, 0, 0, 0), rec(0x012d, 0), brush(left), rec(0x012d, 1), rec(0x041b, h, w / 2, 0, 0), brush(right), rec(0x012d, 2), rec(0x041b, h, w, 0, w / 2), rec(0)]; // SETWINDOWEXT, SETWINDOWORG, null pen, two rectangles, META_EOF
+  const size = 9 + body.reduce((n, b) => n + b.length / 2, 0);
+  const head = Buffer.alloc(18);
+  head.writeUInt16LE(1, 0); head.writeUInt16LE(9, 2); head.writeUInt16LE(0x300, 4); head.writeUInt32LE(size, 6); head.writeUInt16LE(3, 10); head.writeUInt32LE(8, 12);
+  const placeable = Buffer.alloc(22);
+  placeable.writeUInt32LE(0x9ac6cdd7, 0); placeable.writeInt16LE(w, 10); placeable.writeInt16LE(h, 12); placeable.writeUInt16LE(96, 14); // left, top 0; right, bottom; units per inch
+  let sum = 0; for (let i = 0; i < 20; i += 2) sum ^= placeable.readUInt16LE(i); placeable.writeUInt16LE(sum, 20);
+  return Buffer.concat([placeable, head, ...body]);
+}
+
+const THEME =`<a:theme ${NS} name="T"><a:themeElements><a:clrScheme name="C"><a:dk1><a:srgbClr val="000000"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="222222"/></a:dk2><a:lt2><a:srgbClr val="EEEEEE"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1></a:clrScheme><a:fontScheme name="F"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>`;
 
 // slides: [{ shapes: '<p:pic>…', rels: [[id, type, target, external?]], bg: '<p:bg>…', hidden }]
 // layout: { shapes, bg, rels }, master: { shapes, bg, rels }: the shared parts every slide uses.
@@ -94,4 +144,4 @@ function deck({ width = 12192000, height = 6858000, slides, media = {}, layout =
 }
 const imageRel = (id, name) => [id, 'image', `../media/${name}`];
 
-module.exports = { zip, png, quadrants, solid, svgOf, deck, pic, picShape, rect, group, table, bgPicture, picturePlaceholder, imageRel, xfrm, pt, rels, NS, RED, GREEN, BLUE, YELLOW };
+module.exports = { emf, emfPlus, wmf, zip, png, quadrants, solid, svgOf, deck, pic, picShape, rect, group, table, bgPicture, picturePlaceholder, imageRel, xfrm, pt, rels, NS, RED, GREEN, BLUE, YELLOW };

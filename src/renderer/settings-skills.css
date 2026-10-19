@@ -40,3 +40,11 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+/* SKILL.md: the switches above the list, Claude Code's read-only skills, and the "Update the skill" diff */
+.skills-switches { margin-bottom: 8px; }
+.skills-cc { margin-top: 12px; }
+.skills-ignored { font-size: 12px; }
+.skills-diff { max-height: 50vh; overflow: auto; white-space: pre-wrap; }
+.skills-diff .diff-line { padding: 0 4px; }
+.skills-diff .diff-add { background: rgb(40 160 70 / 0.16); }
+.skills-diff .diff-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; }

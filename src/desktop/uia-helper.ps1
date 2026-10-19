@@ -37,7 +37,7 @@ function Send($o) { [Console]::Out.WriteLine($ser.Serialize($o)); [Console]::Out
 function Ensure-Native {
   if ($script:native) { return }
   Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
-using System; using System.Drawing; using System.Drawing.Drawing2D; using System.Drawing.Imaging; using System.IO; using System.Linq; using System.Runtime.InteropServices;
+using System; using System.Diagnostics; using System.Drawing; using System.Drawing.Drawing2D; using System.Drawing.Imaging; using System.IO; using System.Linq; using System.Runtime.InteropServices;
 public static class LumenNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -47,6 +47,10 @@ public static class LumenNative {
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, System.Text.StringBuilder sb, int max);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int val, int size);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
@@ -57,6 +61,42 @@ public static class LumenNative {
   public static void Init() { try { SetProcessDPIAware(); } catch { } }
   public static long Foreground() { return GetForegroundWindow().ToInt64(); }
   public static bool Raise(long hwnd) { IntPtr h = new IntPtr(hwnd); if (IsIconic(h)) ShowWindow(h, 9); return SetForegroundWindow(h); }
+  // ---- the live picture of the card (the "frame" command): the window scaled to the card, compared with the last picture sent, a JPEG only when it changed
+  public class FrameResult { public string Image, Skip; public bool Same; public int W, H; public long Ms; }
+  static byte[] prevPix; static long prevHwnd; static int prevW, prevH;
+  static Bitmap fullBmp; static int fullW, fullH;
+  public static long OwnerPid(long hwnd) { IntPtr h = new IntPtr(hwnd); if (!IsWindow(h)) return 0; uint p; GetWindowThreadProcessId(h, out p); return p; }
+  public static string Title(long hwnd) { System.Text.StringBuilder sb = new System.Text.StringBuilder(512); GetWindowText(new IntPtr(hwnd), sb, 512); return sb.ToString(); }
+  public static FrameResult Frame(long hwnd, int maxW, long quality, bool reset) {
+    Stopwatch sw = Stopwatch.StartNew();
+    FrameResult res = new FrameResult(); IntPtr h = new IntPtr(hwnd); RECT r;
+    if (IsIconic(h)) { res.Skip = "minimized"; return res; }
+    int cloaked = 0; try { DwmGetWindowAttribute(h, 14, out cloaked, 4); } catch { }
+    if (!IsWindowVisible(h) || cloaked != 0) { res.Skip = "hidden"; return res; }
+    if (!GetWindowRect(h, out r)) { res.Skip = "hidden"; return res; }
+    int w = r.R - r.L, ht = r.B - r.T;
+    if (w <= 0 || ht <= 0) { res.Skip = "hidden"; return res; }
+    if (fullBmp == null || fullW != w || fullH != ht) { if (fullBmp != null) fullBmp.Dispose(); fullBmp = new Bitmap(w, ht, PixelFormat.Format24bppRgb); fullW = w; fullH = ht; }
+    using (Graphics g = Graphics.FromImage(fullBmp)) { IntPtr dc = g.GetHdc(); bool ok = PrintWindow(h, dc, 2); g.ReleaseHdc(dc); if (!ok) { res.Skip = "hidden"; return res; } } // 2 = PW_RENDERFULLCONTENT
+    int nw = Math.Min(w, Math.Max(80, maxW)); int nh = Math.Max(1, (int)Math.Round((double)ht * nw / w));
+    using (Bitmap small = new Bitmap(nw, nh, PixelFormat.Format24bppRgb)) {
+      using (Graphics g2 = Graphics.FromImage(small)) { g2.InterpolationMode = InterpolationMode.Bilinear; g2.DrawImage(fullBmp, 0, 0, nw, nh); }
+      BitmapData bd = small.LockBits(new Rectangle(0, 0, nw, nh), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+      int stride = bd.Stride; byte[] cur = new byte[stride * nh];
+      System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, cur, 0, cur.Length); small.UnlockBits(bd);
+      if (!reset && prevPix != null && prevHwnd == hwnd && prevW == nw && prevH == nh && prevPix.Length == cur.Length) {
+        // changed = at least 3 pixels that moved by more than 20 in some colour: a blinking caret or a clock second is not a change
+        int count = 0;
+        for (int y = 0; y < nh && count < 3; y++) { int row = y * stride; for (int x = 0; x < nw; x++) { int i = row + x * 3; if (Math.Abs(cur[i] - prevPix[i]) > 20 || Math.Abs(cur[i + 1] - prevPix[i + 1]) > 20 || Math.Abs(cur[i + 2] - prevPix[i + 2]) > 20) { if (++count >= 3) break; } } }
+        if (count < 3) { res.Same = true; res.Ms = sw.ElapsedMilliseconds; return res; }
+      }
+      prevPix = cur; prevHwnd = hwnd; prevW = nw; prevH = nh;
+      ImageCodecInfo jpg = ImageCodecInfo.GetImageEncoders().First(c => c.MimeType == "image/jpeg");
+      EncoderParameters ep = new EncoderParameters(1); ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+      using (MemoryStream ms = new MemoryStream()) { small.Save(ms, jpg, ep); res.Image = Convert.ToBase64String(ms.ToArray()); }
+      res.W = nw; res.H = nh; res.Ms = sw.ElapsedMilliseconds; return res;
+    }
+  }
   public static string Capture(long hwnd, int maxW, long quality) {
     IntPtr h = new IntPtr(hwnd); RECT r;
     if (!GetWindowRect(h, out r)) return null;
@@ -405,6 +445,24 @@ function Cmd-Shot($req) {
   return @{ image = $b64 }
 }
 
+# The card's live picture. The caller names the window, the program it was approved for and the title it was approved with. Every call checks
+# that the window is still owned by that process; every verify call (about once a second) checks the program fully, as every other call does.
+# A window whose title is not the approved one is NOT captured: its title is returned, the caller judges it, and asks again.
+function Cmd-Frame($req) {
+  Ensure-Native
+  $hwnd = [int64]$req['hwnd']
+  $owner = [LumenNative]::OwnerPid($hwnd)
+  if ($owner -eq 0) { throw 'That window is gone.' }
+  if ([int]$req['pid'] -ne [int]$owner) { throw 'That window now belongs to a different program. Call list_apps again.' }
+  if ($req['verify']) { $null = Get-Target $req }
+  $title = [LumenNative]::Title($hwnd)
+  if ($title -ne [string]$req['title']) { return @{ retitle = $title } }
+  $f = [LumenNative]::Frame($hwnd, [int]$req['w'], [int64]$req['q'], [bool]$req['reset'])
+  if ($f.Skip) { return @{ skip = [string]$f.Skip } }
+  if ($f.Same) { return @{ same = $true; ms = [int64]$f.Ms } }
+  return @{ image = $f.Image; w = [int]$f.W; h = [int]$f.H; ms = [int64]$f.Ms }
+}
+
 # ---- opening an app: only what `resolve` found (a Start menu shortcut or an App Paths entry); never a path or arguments from the request
 function Cmd-Resolve($req) {
   $want = ([string]$req['name']).Trim().ToLowerInvariant()
@@ -454,6 +512,7 @@ function Handle($req) {
     'settext' { return Cmd-SetText $req }
     'keys' { return Cmd-Keys $req }
     'shot' { return Cmd-Shot $req }
+    'frame' { return Cmd-Frame $req }
     'resolve' { return Cmd-Resolve $req }
     'launch' { return Cmd-Launch $req }
     'quit' { exit 0 }

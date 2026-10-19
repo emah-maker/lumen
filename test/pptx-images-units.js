@@ -94,6 +94,14 @@ const J = (v) => JSON.stringify(v);
     const emf = Buffer.concat([Buffer.from([1, 0, 0, 0, 0x6c, 0, 0, 0]), Buffer.alloc(200)]);
     const e = await one(F.pic({ rid: 'rImg', box: { x: 0, y: 0, w: 50, h: 50 } }), { media: { 'image1.emf': emf }, rels: [F.imageRel('rImg', 'image1.emf')] });
     check('emf: no data URL, and the format is named for the placeholder', e.deck.media['ppt/media/image1.emf'] === null && e.deck.mediaInfo['ppt/media/image1.emf'].missing === 'emf' && e.deck.warnings.some((w) => /EMF/.test(w)), J([e.deck.media, e.deck.mediaInfo]));
+    const ve = await one(F.pic({ rid: 'rImg', box: { x: 0, y: 0, w: 50, h: 50 } }), { media: { 'image1.emf': F.emf() }, rels: [F.imageRel('rImg', 'image1.emf')] });
+    check('a real EMF is sent to the page as image/x-emf (drawn there), marked as a vector, with no warning', ve.deck.media['ppt/media/image1.emf'].startsWith('data:image/x-emf;base64,') && (ve.deck.media['ppt/media/image1.emf']) && ve.deck.mediaInfo['ppt/media/image1.emf'].vector === 'emf' && ve.deck.warnings.length === 0, J([ve.deck.mediaInfo, ve.deck.warnings]));
+    const vw = await one(F.pic({ rid: 'rImg', box: { x: 0, y: 0, w: 50, h: 50 } }), { media: { 'image1.wmf': F.wmf() }, rels: [F.imageRel('rImg', 'image1.wmf')] });
+    check('a placeable WMF is sent as image/x-wmf', vw.deck.media['ppt/media/image1.wmf'].startsWith('data:image/x-wmf;base64,') && vw.deck.mediaInfo['ppt/media/image1.wmf'].vector === 'wmf', J(vw.deck.mediaInfo));
+    check('sniffVector: EMF, placeable and plain WMF by their headers; PNG, zeros and short input are none', P.sniffVector(F.emf()) === 'emf' && P.sniffVector(F.wmf()) === 'wmf' && P.sniffVector(F.wmf().subarray(22)) === 'wmf' && P.sniffVector(Q) === null && P.sniffVector(Buffer.alloc(100)) === null && P.sniffVector(Buffer.alloc(3)) === null && P.sniffVector(null) === null, '');
+    const bigEmf = Buffer.concat([F.emf(), Buffer.alloc(9 * 1024 * 1024)]);
+    const vb = await one(F.pic({ rid: 'rImg', box: { x: 0, y: 0, w: 50, h: 50 } }), { media: { 'image1.emf': bigEmf }, rels: [F.imageRel('rImg', 'image1.emf')] });
+    check('an EMF over 8 MB is left out (placeholder), with a warning', vb.deck.media['ppt/media/image1.emf'] === null && vb.deck.mediaInfo['ppt/media/image1.emf'].missing === 'emf' && vb.deck.warnings.length === 1, J([vb.deck.mediaInfo, vb.deck.warnings]));
     const d = await one(`${F.pic({ rid: 'rImg', box: { x: 0, y: 0, w: 50, h: 50 } })}${F.pic({ id: 11, rid: 'rCopy', box: { x: 60, y: 0, w: 50, h: 50 } })}`, { media: { 'image1.png': Q, 'image9.png': Q }, rels: [F.imageRel('rCopy', 'image9.png')] });
     check('duplicates: the same bytes under two names are sent once (the second is an alias)', Object.keys(d.deck.media).length === 1 && d.deck.mediaAlias['ppt/media/image9.png'] === 'ppt/media/image1.png', J([Object.keys(d.deck.media), d.deck.mediaAlias]));
     const t = await one(F.table({ box: { x: 0, y: 0, w: 200, h: 80 }, cellFill: '<a:blipFill><a:blip r:embed="rImg"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>' }));
@@ -106,6 +114,81 @@ const J = (v) => JSON.stringify(v);
     check('4:3 slide size is read', w43.deck.width === 9144000 && w43.deck.height === 6858000, '');
   }
 
+
+  // ---- EMF+ and the rest through Windows (features/emf-gdi.js): header checks anywhere, the real conversion on win32 only
+  {
+    const G = require('../src/features/emf-gdi');
+    const SV = require('../src/features/slides-viewer');
+    const fsx = require('fs'); const osx = require('os'); const pathx = require('path');
+    const { decode } = require('./_png-pixels');
+    const plus = F.emfPlus(); const classic = F.emf();
+    check('checkMetafile: EMF, EMF+ and placeable WMF pass; PNG, zeros, a truncated EMF and a bad record size do not', G.checkMetafile(plus) === 'emf' && G.checkMetafile(classic) === 'emf' && G.checkMetafile(F.wmf()) === 'wmf' && G.checkMetafile(Q) === null && G.checkMetafile(Buffer.alloc(200)) === null && G.checkMetafile(classic.subarray(0, 150)) === null && G.checkMetafile((() => { const b = Buffer.from(classic); b.writeUInt32LE(7, 92); return b; })()) === null && G.checkMetafile(null) === null && G.checkMetafile(Buffer.alloc(17 * 1024 * 1024)) === null, '');
+    check('placeable: a WMF without the placeable header gets one from its window; one with no window or no end is refused', (() => { const bare = F.wmf().subarray(22); const w = G.placeable(bare); return w && w.readUInt32LE(0) === 0x9ac6cdd7 && G.checkMetafile(w) === 'wmf' && G.placeable(bare.subarray(0, 30)) === null && G.placeable(Buffer.alloc(40)) === null; })(), '');
+    check('pixelSide / pixelsFor: twice the shown size at 96 dpi, within 64..2048, aspect kept', G.pixelSide(300) === 832 && G.pixelSide(5000) === 2048 && G.pixelSide(1) === 64 && J(G.pixelsFor(2, 512)) === '{"w":512,"h":256}' && J(G.pixelsFor(0.5, 512)) === '{"w":256,"h":512}', J([G.pixelSide(300), G.pixelsFor(2, 512)]));
+
+    const none = await G.convertMetafiles([{ id: 'a', bytes: plus }], { platform: 'linux' });
+    check('not Windows (simulated): nothing is converted and nothing is started', none.size === 0, '');
+    const nope = { id: 'x', bytes: Buffer.from('this is not a metafile '.repeat(20)) };
+    const st0 = {};
+    const garbage = await G.convertMetafiles([nope, { id: 'y', bytes: classic.subarray(0, 120) }, { id: 'z', bytes: null }], { platform: 'win32', stats: st0 });
+    check('garbage and damaged input: no result, no process started, no throw', garbage.size === 0 && st0.spawned === 0, J(st0));
+
+    if (process.platform === 'win32') {
+      const cacheDir = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'vw-emf-cache-'));
+      const tmpRoot = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'vw-emf-work-'));
+      try {
+        const st1 = {}; const t1 = Date.now();
+        const r1 = await G.convertMetafiles([{ id: 'plus', bytes: plus, points: 200 }, { id: 'classic', bytes: F.emf({ left: F.GREEN, right: F.YELLOW }), points: 200 }, { id: 'wmf', bytes: F.wmf(), points: 200 }, nope], { cacheDir, tmpRoot, stats: st1 });
+        const ms1 = Date.now() - t1;
+        // The ONE reason to skip: this Windows has no System.Drawing at all (the script said so). A timeout, a failure or a wrong picture is a FAIL.
+        const noDrawing = st1.drawing === false;
+        console.log('INFO  win32 conversion: ' + ms1 + ' ms, exit ' + st1.exit + ', timed out: ' + st1.timedOut + ', log: ' + JSON.stringify(st1.log));
+        if (noDrawing) console.log('SKIP  win32 conversion checks: System.Drawing is not available on this machine (' + String(st1.log).trim().split('\n').pop() + ')');
+        else {
+        const px = (id, fx, fy) => { if (!r1.has(id)) return null; const d = decode(r1.get(id)); return d.at(Math.round(d.w * fx), Math.round(d.h * fy)); };
+        const near4 = (c, t) => c && t.every((v, k) => Math.abs(c[k] - v) <= 8) && c[3] === 255;
+        check(`win32: three pictures in ONE process (${ms1} ms), the bad one skipped`, r1.size === 3 && st1.spawned === 1 && st1.converted === 3, J(st1));
+        check('win32: an EMF+ only picture (EMFJS cannot draw it) comes out red on the left and blue on the right', r1.has('plus') && near4(px('plus', 0.25, 0.5), [...F.RED]) && near4(px('plus', 0.75, 0.5), [...F.BLUE]), r1.has('plus') && J([px('plus', 0.25, 0.5), px('plus', 0.75, 0.5)]));
+        check('win32: a classic EMF (green, yellow) and a placeable WMF (red, blue) too', r1.has('classic') && r1.has('wmf') && near4(px('classic', 0.25, 0.5), [...F.GREEN]) && near4(px('classic', 0.75, 0.5), [...F.YELLOW]) && near4(px('wmf', 0.25, 0.5), [...F.RED]) && near4(px('wmf', 0.75, 0.5), [...F.BLUE]), '');
+        check('win32: the size follows the shown size (2x at 96 dpi: 512 wide), aspect kept', r1.has('plus') && (() => { const d = decode(r1.get('plus')); return d.w === 512 && d.h === 256; })(), '');
+        check('win32: the private temp folder is removed afterwards', fsx.readdirSync(tmpRoot).length === 0, J(fsx.readdirSync(tmpRoot)));
+        const st2 = {}; const t2 = Date.now();
+        const r2 = await G.convertMetafiles([{ id: 'plus', bytes: plus, points: 200 }, { id: 'classic', bytes: F.emf({ left: F.GREEN, right: F.YELLOW }), points: 200 }, { id: 'wmf', bytes: F.wmf(), points: 200 }], { cacheDir, tmpRoot, stats: st2 });
+        check(`win32: the second time everything comes from the cache (${Date.now() - t2} ms), no process`, r2.size === 3 && st2.cached === 3 && st2.spawned === 0 && r1.has('plus') && r2.has('plus') && r2.get('plus').equals(r1.get('plus')), J(st2));
+        }
+        // a time limit: a stand-in that never ends is killed, and the result is "nothing"
+        const hang = (file, args, o) => require('../src/ai/cli-utils').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], o);
+        const st3 = {}; const t3 = Date.now();
+        const r3 = await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 300 }) }], { tmpRoot, spawn: hang, timeoutMs: 700, stats: st3 });
+        check('win32: a process that hangs is killed at the time limit and the picture falls back', r3.size === 0 && Date.now() - t3 < 5000, J([st3, Date.now() - t3]));
+        // a slow PowerShell start (nothing logged yet) has its own allowance, longer than the limit that applies once the script runs
+        const slow = (ms) => (file, args, o) => require('../src/ai/cli-utils').spawn(process.execPath, ['-e', 'setTimeout(() => { require("fs").appendFileSync(process.argv[1], "start"); setTimeout(() => process.exit(0), 200); }, ' + ms + ')', args[args.length - 1]], o);
+        const st6 = {}; await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 320 }) }], { tmpRoot, spawn: slow(1500), timeoutMs: 700, startMs: 6000, stats: st6 });
+        check('a start slower than the running limit is waited for (startup allowance), and then it ends on its own', st6.timedOut === undefined && st6.exit === 0 && /start/.test(st6.log), J(st6));
+        const st7 = {}; await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 330 }) }], { tmpRoot, spawn: slow(5000), timeoutMs: 700, startMs: 800, stats: st7 });
+        check('a start that takes longer than the startup allowance is cut off as a start timeout', st7.timedOut === 'start', J(st7));
+        const r4 = await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 310 }) }], { tmpRoot, powershell: pathx.join(tmpRoot, 'no-such-powershell.exe') });
+        check('win32: no PowerShell at all: the picture falls back, no throw', r4.size === 0, '');
+        await new Promise((r) => setTimeout(r, 300));
+        check('win32: nothing is left in the private temp folder after a timeout or a failure either', fsx.readdirSync(tmpRoot).length === 0, J(fsx.readdirSync(tmpRoot)));
+        const many = Array.from({ length: G.MAX_PICTURES + 8 }, (_, i) => ({ id: `m${i}`, bytes: F.emfPlus({ w: 100 + i }), points: 50 }));
+        const st5 = {};
+        const r5 = await G.convertMetafiles(many, { tmpRoot, stats: st5 });
+        check(`win32: at most ${G.MAX_PICTURES} pictures per deck, in one process`, r5.size === G.MAX_PICTURES && st5.spawned === 1 && !r5.has(`m${G.MAX_PICTURES}`), J(st5));
+
+        // the viewer's side: the deck's pictures by part name, sized from the slide, aliases counted
+        const deckBuf = F.deck({ slides: [{ shapes: F.pic({ rid: 'e', box: { x: 10, y: 10, w: 300, h: 150 } }) + F.pic({ id: 11, rid: 'e2', box: { x: 10, y: 200, w: 100, h: 50 } }), rels: [F.imageRel('e', 'a.emf'), F.imageRel('e2', 'b.emf')] }], media: { 'a.emf': plus, 'b.emf': plus } });
+        const deck = await P.parsePptx(deckBuf);
+        const sizes = SV.pictureSizes(deck);
+        const cd2 = fsx.mkdtempSync(pathx.join(osx.tmpdir(), 'vw-emf-cache2-'));
+        const viaViewer = await SV.metafilePngs(deck, { cacheDir: cd2 });
+        check('viewer: the shown size (largest use, in points) is read from the slides; one data:image/png URL per EMF part (the same bytes are sent once)', noDrawing || Math.round(sizes.get('ppt/media/a.emf')) === 300 && Object.keys(viaViewer).length === 1 && viaViewer['ppt/media/a.emf'].startsWith('data:image/png;base64,') && deck.mediaAlias['ppt/media/b.emf'] === 'ppt/media/a.emf', J([[...sizes], Object.keys(viaViewer), deck.mediaAlias]));
+        const viaLinux = await SV.metafilePngs(deck, { cacheDir: cd2, platform: 'linux' });
+        check('viewer: simulated non-win32: no PNGs, the deck keeps its image/x-emf data (drawn by EMFJS in the page)', Object.keys(viaLinux).length === 0 && deck.media['ppt/media/a.emf'].startsWith('data:image/x-emf;base64,'), J(Object.keys(viaLinux)));
+        fsx.rmSync(cd2, { recursive: true, force: true });
+      } finally { fsx.rmSync(cacheDir, { recursive: true, force: true }); fsx.rmSync(tmpRoot, { recursive: true, force: true }); }
+    }
+  }
   console.log(failures ? `\n${failures} FAILED` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

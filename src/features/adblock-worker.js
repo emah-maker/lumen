@@ -1,5 +1,5 @@
-// The ad blocker's slow jobs, off the main thread (features/adblock.js): fetching fresh filter lists and patching
-// the engine with the sign-in exceptions (~0.4 s of work that froze tabs and the UI while it ran). The engine is
+// The ad blocker's slow jobs, off the main thread (features/adblock.js): building the engine from the filter lists (a first start: ~0.7 s of
+// parsing), fetching fresh lists and patching the engine with the sign-in exceptions (~0.4 s of work that froze tabs and the UI while it ran). The engine is
 // built here, saved, and main loads the saved file (~15 ms).
 const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
@@ -13,9 +13,15 @@ async function writeAtomic(file, data) {
 }
 
 (async () => {
-  const { base, patched, exceptions, patch, refresh, sourceFile } = workerData;
+  const { base, patched, exceptions, patch, refresh, build, sourceFile } = workerData;
   let engine;
-  if (refresh) {
+  if (build) {
+    // A first start: no saved engine yet. The lists, or the library's snapshot when the CDN can't be reached.
+    const built = await lists.buildEngineOrFallback(FiltersEngine, fetch);
+    engine = built.engine;
+    await writeAtomic(base, engine.serialize());
+    if (sourceFile) await writeAtomic(sourceFile, built.source);
+  } else if (refresh) {
     // New lists, downloaded (no cache: the kept engine is what is being replaced).
     // (Not the snapshot fallback: if the lists can't be reached, the engine already kept is better than a stale one.)
     engine = await lists.buildEngine(FiltersEngine, fetch);

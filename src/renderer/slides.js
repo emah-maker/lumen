@@ -55,6 +55,27 @@
   }
   const shown = new Map(); // picture part -> Promise<blob: URL | null>
   const shrunk = new Set();
+  // EMF and WMF (media type image/x-emf, image/x-wmf): drawn by slides-vector.js (EMFJS and WMFJS, loaded when the first one is needed), one at a
+  // time with a turn of the event loop between, into a PNG. null when the picture cannot be drawn, and then the page says so (see vectorFailed).
+  const vectorKind = (data) => (/^data:image\/x-(emf|wmf);/.exec(data) || [])[1] || null;
+  const kindName = (key) => (vectorKind(dataOf(key) || '') || '').toUpperCase();
+  const isVector = (key) => Boolean(vectorKind(dataOf(key) || ''));
+  let vectorLib = null;
+  let vectorQueue = Promise.resolve();
+  const NOTE_VECTOR = 'Some pictures are in a format Lumen cannot show (such as EMF or WMF).';
+  const vectorFailed = () => { const n = $('notes'); if (!n.textContent.includes(NOTE_VECTOR)) n.textContent = `${n.textContent} ${NOTE_VECTOR}`.trim(); };
+  function vectorBlob(kind, blob) {
+    const job = vectorQueue.then(async () => {
+      if (!vectorLib) vectorLib = new Promise((resolve) => { const sc = document.createElement('script'); sc.src = 'slides-vector.js'; sc.onload = () => resolve(window.lumenVector || null); sc.onerror = () => resolve(null); document.head.append(sc); });
+      const lib = await vectorLib;
+      if (!lib) return null;
+      const png = await lib.render(kind, new Uint8Array(await blob.arrayBuffer()));
+      await tick();
+      return png;
+    }).catch(() => null);
+    vectorQueue = job;
+    return job;
+  }
   function displayUrl(key) {
     const k = canon(key);
     if (shown.has(k)) return shown.get(k);
@@ -64,6 +85,12 @@
       const data = dataOf(k);
       if (!data) return null;
       let blob = await blobOf(data);
+      const kind = vectorKind(data);
+      if (kind) {
+        const png = await vectorBlob(kind, blob);
+        if (!png) { vectorFailed(); return null; }
+        return URL.createObjectURL(png);
+      }
       const info = mediaInfo[k];
       if (info && info.w && info.h && blob.type !== 'image/svg+xml' && blob.type !== 'image/gif' && (Math.max(info.w, info.h) > SHRINK_SIDE || info.w * info.h > SHRINK_PIXELS)) {
         try {
@@ -271,14 +298,19 @@
     if (link) { box.href = link; box.target = '_blank'; box.rel = 'noopener noreferrer'; box.title = link; }
     placeBox(box, s);
     shapeGeometry(box, s);
-    if (!hasPicture(s)) {
-      const info = mediaInfo[canon(s.image)] || {};
+    const missing = (why) => {
       box.classList.add('missing');
-      const why = s.format === 'linked' ? 'linked picture' : info.missing ? `${String(info.missing).replace(/[^a-z0-9]/gi, '').slice(0, 5).toUpperCase()} picture` : '';
+      box.replaceChildren();
       box.textContent = `Picture not shown${why ? ` (${why})` : ''}${s.alt ? `: ${s.alt}` : ''}`;
       return box;
+    };
+    if (!hasPicture(s)) {
+      const info = mediaInfo[canon(s.image)] || {};
+      return missing(s.format === 'linked' ? 'linked picture' : info.missing ? `${String(info.missing).replace(/[^a-z0-9]/gi, '').slice(0, 5).toUpperCase()} picture` : '');
     }
     box.append(imageLayer(s, { alt: s.alt, flip: flipOf(s) }));
+    // An EMF or WMF that will not draw (and has no SVG twin): a placeholder of the picture's size, not an empty box.
+    if (isVector(s.image) && !imageUrl(s.svg)) displayUrl(s.image).then((u) => { if (!u) missing(`${kindName(s.image)} picture`); });
     if (s.line && HEX.test(s.line.color || '')) box.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px solid ${rgba(s.line.color, s.line.alpha ?? 1)}`;
     return box;
   }

@@ -36,7 +36,7 @@ const SECTIONS = [
   {
     id: 'navigation',
     entries: [
-      ['shortcuts.focusAddress', ['mod+l', 'f6', { other: 'alt+d' }]],
+      ['shortcuts.focusAddress', ['mod+l', 'mod+k', 'mod+e', 'f6', { other: 'alt+d' }]],
       ['shortcuts.back', [{ mac: 'mod+[' }, 'alt+left']],
       ['shortcuts.forward', [{ mac: 'mod+]' }, 'alt+right']],
       ['shortcuts.reload', ['mod+r', 'f5']],
@@ -78,6 +78,7 @@ const SECTIONS = [
       ['shortcuts.askFromAddress', ['alt+enter']],
       ['shortcuts.sendNow', ['mod+enter']],
       ['shortcuts.meetingHelper', ['mod+shift+e']],
+      ['shortcuts.dictate', ['mod+shift+space']], // [dictation] in the chat box only (renderer/dictation.js)
     ],
   },
   {
@@ -107,8 +108,8 @@ const SECTIONS = [
   },
 ];
 
-const MAC_NAMES = { mod: '⌘', shift: '⇧', alt: '⌥', ctrl: '⌃', left: '←', right: '→', tab: '⇥', enter: '↩', escape: 'Esc', backspace: '⌫', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
-const OTHER_NAMES = { mod: 'Ctrl', shift: 'Shift', alt: 'Alt', ctrl: 'Ctrl', left: '←', right: '→', tab: 'Tab', enter: 'Enter', escape: 'Esc', delete: 'Delete', backspace: 'Backspace', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
+const MAC_NAMES = { space: 'Space', mod: '⌘', shift: '⇧', alt: '⌥', ctrl: '⌃', left: '←', right: '→', tab: '⇥', enter: '↩', escape: 'Esc', backspace: '⌫', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
+const OTHER_NAMES = { space: 'Space', mod: 'Ctrl', shift: 'Shift', alt: 'Alt', ctrl: 'Ctrl', left: '←', right: '→', tab: 'Tab', enter: 'Enter', escape: 'Esc', delete: 'Delete', backspace: 'Backspace', pageup: 'Page Up', pagedown: 'Page Down', home: 'Home' };
 
 // 'mod+shift+t' -> '⇧⌘T' on macOS (Apple's order: ⌃ ⌥ ⇧ ⌘), 'Ctrl+Shift+T' elsewhere.
 function formatChord(chord, platform = process.platform) {

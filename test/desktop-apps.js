@@ -113,7 +113,69 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const second = await app.evaluate(() => global.__da.events.filter((e) => e.type === 'desktop_card' && e.thumbnail).pop().thumbnail);
     check('the thumbnail updates as the window changes (about every 1.5 s)', first !== second && /^data:image\/jpeg;base64,/.test(second), `${first.length} vs ${second.length}`);
 
+    // the live picture. Typing and clicking through Lumen: a picture comes after each action (the title changes too: it is judged first, then shown)
+    const frames = () => app.evaluate(() => global.__da.events.filter((e) => e.type === 'desktop_card' && e.thumbnail).length);
+    const liveStats = () => app.evaluate(() => global.__da.w.controller.liveStats());
+    const f0 = await frames();
+    for (let i = 0; i < 6; i++) { await run('type', { element: edit, text: `Name number ${i} ${'x'.repeat(i * 3)}` }); await run('click', { element: button }); await sleep(250); }
+    check('live: the card gets a new picture after each action in the app, though its title changes every time', (await frames()) - f0 >= 6, (await frames()) - f0);
+    // A window that changes by itself (ten times a second): the helper's pictures arrive at several a second, with Lumen doing nothing but forwarding them
+    const testApp3 = cp.spawn(exe, [`${title} C`, '-3000,900', 'animate'], { stdio: 'ignore', windowsHide: false });
+    try {
+      await sleep(1800);
+      const apps3 = await run('list_apps');
+      const mine3 = await app.evaluate(async (_e, pid) => { const x = (await global.__da.w.controller.apps(true)).find((w) => w.pid === pid); return x ? 'w' + x.hwnd : null; }, testApp3.pid);
+      check('live: the animated test window is listed', Boolean(mine3) && apps3.ok, apps3.v);
+      const first3 = await run('read_app', { id: mine3 });
+      check('live: the AI uses the animated window (the card follows it)', first3.ok && /Tick/.test(first3.v), first3.v);
+      const measure = async (ms) => {
+        const s0 = await liveStats();
+        const a0 = await frames();
+        await app.evaluate(() => { global.__da.gaps.length = 0; });
+        const t0 = Date.now();
+        await sleep(ms);
+        const liveGap = await app.evaluate(() => Math.max(0, ...global.__da.gaps)); // (read before anything else is asked of the main process)
+        const secs = (Date.now() - t0) / 1000;
+        const s1 = await liveStats();
+        const got = (await frames()) - a0;
+        const perMs = s1.frames > s0.frames ? Math.round((s1.helperMs - s0.helperMs) / (s1.frames - s0.frames)) : 0;
+        const kb = s1.frames > s0.frames ? Math.round((s1.bytes - s0.bytes) / (s1.frames - s0.frames) / 1024 * 0.75) : 0;
+        return { got, secs, retitled: s1.retitled - s0.retitled, same: s1.same - s0.same, skipped: s1.skipped - s0.skipped, fps: got / secs, perMs, kb, liveGap, calls: s1.calls - s0.calls };
+      };
+      await app.evaluate(() => { global.__desktopLight = false; }); // (a test run is often in software drawing, which is the slow pace: this run is the normal one)
+      // The main thread's worst stall with the picture loop stopped, then with it running (the least of two windows each: one-off stalls are the machine's, a systematic one shows in both)
+      await app.evaluate(() => { global.__da.w.controller._live().stop(); });
+      const quietGaps = [];
+      for (let i = 0; i < 2; i++) { await app.evaluate(() => { global.__da.gaps.length = 0; }); await sleep(3000); quietGaps.push(await app.evaluate(() => Math.max(0, ...global.__da.gaps))); }
+      await app.evaluate(() => { global.__da.w.controller._live().start(); });
+      await sleep(1500);
+      const runs = [await measure(4000), await measure(4000)];
+      const full = runs[0].fps >= runs[1].fps ? runs[0] : runs[1];
+      const liveGap = Math.min(runs[0].liveGap, runs[1].liveGap);
+      const baseGap = Math.min(...quietGaps);
+      console.log(`      live, animated window, full effects: ${full.got} pictures in ${full.secs.toFixed(1)} s (${full.fps.toFixed(1)}/s), helper ${full.perMs} ms per picture, about ${full.kb} KB each; worst main-thread gap ${liveGap} ms with it, ${baseGap} ms without`);
+      check(`live: a window that changes by itself gets about 3-10 pictures a second (${runs.map((r) => r.fps.toFixed(1)).join(' and ')}/s)`, runs.every((r) => r.fps >= 3 && r.fps <= 10), JSON.stringify(runs));
+      check(`live: the pictures add no stall to Lumen's main thread (worst ${liveGap} ms, ${baseGap} ms with the loop stopped; the bar is the larger of 20 ms and that plus 8)`, liveGap <= Math.max(20, baseGap + 8), `${liveGap} vs ${baseGap}`);
+      const pic = await app.evaluate(() => { const e = global.__da.events.filter((x) => x.type === 'desktop_card' && x.thumbnail).pop(); const b = Buffer.from(e.thumbnail.split(',')[1], 'base64'); let w = 0; for (let i = 2; i < b.length - 9; ) { if (b[i] !== 0xFF) { i++; continue; } const m = b[i + 1]; if (m >= 0xC0 && m <= 0xC3) { w = b.readUInt16BE(i + 7); break; } i += 2 + b.readUInt16BE(i + 2); } return { w, bytes: b.length, jpeg: b[0] === 0xFF && b[1] === 0xD8 }; });
+      check(`live: each picture is a small JPEG (the card's width: ${pic.w} px, ${Math.round(pic.bytes / 1024)} KB)`, pic.jpeg && pic.w > 0 && pic.w <= 680 && pic.bytes < 120 * 1024, JSON.stringify(pic));
+      await app.evaluate(() => { global.__desktopLight = true; });
+      await sleep(1500);
+      const light = await measure(5000);
+      console.log(`      live, animated window, Light graphics: ${light.got} pictures in ${light.secs.toFixed(1)} s (${light.fps.toFixed(1)}/s), helper ${light.perMs} ms per picture`);
+      check(`live: Light graphics / software drawing: a slower rate (${light.fps.toFixed(1)}/s, at most 1.6)`, light.fps > 0 && light.fps <= 1.6, JSON.stringify(light));
+      await app.evaluate(() => { global.__desktopLight = undefined; });
+      // the window stops changing: the pictures stop (the animation ends when its process does; a minimized window is skipped by the helper)
+      cp.spawnSync('taskkill', ['/PID', String(testApp3.pid), '/T', '/F'], { windowsHide: true });
+      await sleep(2500);
+      const stateAfter = await state();
+      check('live: the window closes: the session ends (stopped) and no more pictures come', !stateAfter.active && (await app.evaluate(() => global.__da.events.filter((e) => e.type === 'desktop_card').pop().status)) === 'stopped');
+      const z0 = await frames();
+      await sleep(1500);
+      check('live: nothing more is captured after that', (await frames()) === z0);
+    } finally { try { cp.spawnSync('taskkill', ['/PID', String(testApp3.pid), '/T', '/F'], { windowsHide: true }); } catch { /* gone */ } }
+
     // the banner and Stop (test hook)
+    await run('read_app', { id: `w${hwnd}` }); // (a new session on the first test window)
     const st = await state();
     check('the banner is up while the AI uses the app (hidden in tests), naming the app', st.active && st.banner.visible && /The AI is using LumenUiaTestApp/.test(st.banner.text), JSON.stringify(st.banner));
     check('the global Stop shortcut is registered only while it works', (await app.evaluate(() => global.__da.w.controller.shortcut.registered())).includes('Ctrl+Alt+Esc'));

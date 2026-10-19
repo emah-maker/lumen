@@ -60,6 +60,7 @@ function relaunch(links = []) {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     stdio: 'inherit',
     detached: DETACHED,
+    cwd: require('os').homedir(), // (never the install folder: a running process's cwd keeps the next update from renaming it)
   });
 }
 
@@ -85,7 +86,7 @@ function run() {
   const env = { ...process.env, [CHILD_ENV]: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   // Windows: Lumen's end is overlapped, so its reads don't block its writes on the same handle.
-  const child = spawn(process.execPath, browserArgs(process.argv), { env, stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe', 'overlapped'], detached: DETACHED });
+  const child = spawn(process.execPath, browserArgs(process.argv), { env, stdio: ['inherit', 'inherit', 'inherit', 'pipe', 'pipe', 'overlapped'], detached: DETACHED, cwd: require('os').homedir() });
   const [,,, toChromium, fromChromium, lumen] = child.stdio;
   for (const stream of [toChromium, fromChromium, lumen]) stream.on('error', () => {});
   fromChromium.pipe(lumen);

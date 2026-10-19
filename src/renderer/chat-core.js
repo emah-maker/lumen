@@ -333,6 +333,7 @@ async function loadModels() {
     if (m.context) option.dataset.context = String(m.context);
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
+    if (m.lastUsed) option.dataset.lastUsed = m.lastUsed; // Auto's last choice, shown as "last used: …" (never as Auto's name)
     if (m.auto) option.dataset.auto = '1'; // Auto, or a provider's own Auto: the model is chosen per message
     groups.get(m.group).append(option);
   }
@@ -995,7 +996,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
@@ -1022,10 +1023,11 @@ async function askInNewChat(text, files = []) {
 }
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
-function ask(text, images = [], tabs = null, screen) {
+// `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry; // (for Send now)
@@ -1050,7 +1052,8 @@ function ask(text, images = [], tabs = null, screen) {
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined; // [plan mode] (/plan sends opts.plan)
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
@@ -1296,7 +1299,7 @@ function showStepTime(step, final = false) {
   const ms = Date.now() - t0;
   const text = window.stepTime ? window.stepTime.format(ms) : '';
   slot.textContent = !final && ms < 1000 ? '' : text;
-  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; delete step.dataset.t0; }
+  if (final) { slot.title = text ? t('chat.step.took', { time: text }) : ''; step.dataset.start = String(t0); step.dataset.t1 = String(Date.now()); delete step.dataset.t0; } // (a group of steps adds up its members' start and end)
 }
 function startStepClock() {
   if (stepClock) return;
@@ -1360,6 +1363,7 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'), // [plan mode]
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
@@ -1458,6 +1462,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+  // [skills] After a run ended (opt-in, Settings → Skills): "Save how I did this as a skill?" or "Update the skill?" (skills.js)
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
   // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
   // text): drawn under that reply, not dropped with the finished turn.
@@ -1476,8 +1482,9 @@ window.assistant.onEvent((event) => {
     case 'text_block':
       settleThinking();
       endStream();
+      if (turn.text && turn.textSource?.trim()) turn.lastSaid = { el: turn.text, text: turn.text.textContent }; // (an engine that ends a block before its step: that block is the step's narration)
       turn.text = null; // next text starts a fresh block after any tool steps
-      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (a new model turn alone does not end a card: only the assistant's narration does)
+      if (event.type === 'text_block') window.stepUI?.endCard(turn); // (narration does not end the card either: one turn is one card, which stays until the turn ends, see step-ui.js endCard)
       turn.textSource = '';
       turn.thinking = null;
       break;
@@ -1543,7 +1550,10 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
+      turn.lastSaid = null; // (words before a step: that step's live line in the card, not a bubble)
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
@@ -1553,7 +1563,8 @@ window.assistant.onEvent((event) => {
       turn.textSource = '';
       break;
     }
-    case 'desktop_card': { // [desktop apps] the "Computer" card: the AI working in another program, with its live thumbnail (renderer/desktop-card.js)
+    case 'desktop_card': { // [desktop apps] another program: the turn's one activity card follows it (its window as the preview, its state in the status bar)
+      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { settleThinking(); break; }
       const drawn = window.desktopCard?.update(event);
       if (!drawn) break;
       if (drawn.created) {
@@ -1605,6 +1616,16 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached': // main read the picked tabs: what actually went along (a sleeping tab only by address)
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'plan': { // [plan mode] propose_plan: the plan as a card with Run plan / Edit / Keep planning (renderer/plan-mode.js)
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.title || t('chat.approvalWaiting'));
@@ -1612,6 +1633,24 @@ window.assistant.onEvent((event) => {
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'memory': { // [memory] the AI saved, changed or forgot a memory (ai/memory.js): said in the chat, with Undo, and Forget for what it kept
+      const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
+      if (!key || !window.assistant.memory) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note', textContent: t(key, { text: event.text || '' }) }));
+      const action = (label, done, run) => {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: label });
+        button.onclick = async () => {
+          for (const b of note.querySelectorAll('button')) b.disabled = true;
+          const ok = await run().catch(() => false);
+          for (const b of note.querySelectorAll('button')) b.remove();
+          note.append(` ${ok ? done : t('memory.changedSince')}`);
+        };
+        note.append(' ', button);
+      };
+      if (event.token) action(t('memory.undo'), t('memory.undone'), () => window.assistant.memory.undo(event.token));
+      if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
       // A chain of "couldn't reach X, switched to Y" lines in a row says one thing: keep the newest only.
@@ -1690,7 +1729,7 @@ function finishTurn(event, { early }) {
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
-  window.stepUI?.finalize(turn, event);
+  window.stepUI?.finalize(turn, { ...event, reply: turn.text?.source || '' });
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {
@@ -2449,7 +2488,25 @@ function drawEarlier(older, newest) {
   later();
 }
 function drawItems(items, userEntries, replyEntries) {
+  // A turn's narration lines (text before its steps) were the card's live line while it ran: a card that is drawn again has no bubbles for them,
+  // only the final answer, under the card.
+  const narration = new Set();
+  let before = [];
+  for (const it of items) {
+    if (it.role === 'user') before = [];
+    else if (it.role === 'assistant') {
+      if (it.cards && Array.isArray(it.tools) && it.tools.length && window.stepUI) { for (const n of before) narration.add(n); before = []; }
+      else if (it.text && !it.tools?.length && !it.generated?.length && !it.outFiles?.length && !('steps' in it)) before.push(it);
+      else before = [];
+    }
+  }
   for (const item of items) {
+    if (item.plan && window.planModeUI) { // [plan mode] a proposed plan: its card again, after any words that came with it
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
+    if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
       bubble.className = 'msg user';
@@ -2606,6 +2663,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
@@ -2627,7 +2685,7 @@ window.assistant.onSync?.(({ view } = {}) => applySync(view));
 // Asks main which chat this window's front tab shows and what its run is doing, and takes it when it is not what is shown
 // here (a tab switch can reach this view late or not at all while another chat's tool is acting). `settled` is false when it
 // changed the view.
-async function reconcile() {
+async function reconcile(late = false) {
   let answer = null;
   const seq = runStateSeq;
   try { answer = await window.assistant.resync?.(); } catch {}
@@ -2636,11 +2694,21 @@ async function reconcile() {
   // The view moved on (a run began or ended, another chat was drawn) while main was answering: that answer describes a moment that is gone.
   // Taking it redrew the chat from a snapshot taken mid-run, wiping the reply that had just finished (Send now: the follow-up and its answer).
   if (seq !== runStateSeq) return true;
-  return takeView(view);
+  return takeView(view, { late });
 }
-function takeView(view) {
+// How long a run that main says is over, in the chat shown here, may wait for its own 'done' before this view takes main's snapshot instead.
+const DONE_GRACE_MS = 1500;
+function takeView(view, { late = false } = {}) {
   const action = window.runState.reconcileAction(view, shownChatId, running);
   if (action === 'keep') return true;
+  // The run just ended in main (a key refused at once, a fast failure) and its 'error' and 'done' are still on the way here, or only the 'done' is:
+  // taking main's snapshot now redrew the chat and wiped the error it had just shown. Wait for the 'done'; only a run still shown as
+  // running after DONE_GRACE_MS lost it, and then main's view is taken.
+  if (!late && running && turn && view.id === shownChatId && !view.live) {
+    const mine = runId;
+    setTimeout(() => { if (running && runId === mine) reconcile(true).catch(() => {}); }, DONE_GRACE_MS);
+    return true;
+  }
   // A reply that was just stopped (Stop, or Send now) is already over in main while its 'done' is still on the way here: that is not a stale
   // view. Taking main's view now redraws the chat and drops the message waiting to go next (Send now's follow-up never left).
   if (running && turn && (turn.stopRequested || turn.interrupted) && view.id === shownChatId && !view.live) return true;
@@ -2831,6 +2899,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false); // [plan mode] a new chat starts as Settings says
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
