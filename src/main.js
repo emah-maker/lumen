@@ -3852,6 +3852,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   const [tab] = tabs.splice(index, 1);
   chatBind.unbindTab(id); // [chat per tab]
   finishLeaving(tab);
+  if (tab.settings) settingsProcSoon(300); // [settings process] the next open's process, made now the Settings tab is gone
   tabGroups.cleanup();
   // `pendingCloseUrl` (set by requestCloseTab) covers the case where this runs from the 'destroyed'
   // event below: the webContents is already gone by then, so its URL can't be read any more. A
@@ -4855,10 +4856,16 @@ ipcMain.handle('settings:default-browser', (_e, o) => setup.isDefault(o?.cached 
 ipcMain.handle('settings:make-default', () => setup.makeDefault());
 ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
+// Settings or the Import menu was opened once: from the next start-up, the browsers to import from are looked for in advance (firstTabLoaded).
+// (written a moment later, not while the page opens)
+function noteImportLooked() {
+  if (readSettings().importLooked) return;
+  setTimeout(() => { const s = readSettings(); if (!s.importLooked) writeSettings({ ...s, importLooked: true }); }, 3000).unref?.();
+}
 function importMenu() {
   const found = importer.detectBrowsers();
   if (!found.length) return [{ label: t('menu.noBrowsers'), enabled: false }];
-  return found.map((b) => ({ label: b.label, click: () => runImport(b.id) }));
+  return found.map((b) => ({ label: b.label, click: () => { noteImportLooked(); runImport(b.id); } }));
 }
 
 // ---------- history menu ----------
@@ -7840,7 +7847,8 @@ firstTabLoaded.then(() => { firstTabDone = true; if (chatPageUsedAt) spareChatSo
 firstTabLoaded.then(() => settingsProcSoon(3000)); // [settings process]
 firstTabLoaded.then(() => { const t = setTimeout(() => { try { settingsBackend.warmGpuInfo(); } catch { /* optional */ } setTimeout(() => { try { settingsBackend.warmTranslatePacks(); } catch { /* optional */ } }, 1500).unref?.();
     // (what the Settings pages ask the main process on their first open, each a first use of some modules or folders: done here, apart, once)
-    [() => importer.detectBrowsers(), () => widgets.state(), () => app.getAppMetrics()].forEach((warm, i) => setTimeout(() => { try { warm(); } catch { /* optional */ } }, 1500 + i * 700).unref?.());
+    // (other browsers' profile folders are looked for only by someone who has opened Settings or Import before: importLooked)
+    [() => { if (readSettings().importLooked) importer.detectBrowsers(); }, () => widgets.state(), () => app.getAppMetrics()].forEach((warm, i) => setTimeout(() => { try { warm(); } catch { /* optional */ } }, 1500 + i * 700).unref?.());
   }, 4000); t.unref?.(); }); // [settings] (the graphics devices, once)
 firstTabLoaded.then(() => probeRecordMp4()); // [screen recording] is MP4 offered?
 firstTabLoaded.then(() => schedulePreload(2500)); // background preload of likely next tabs (waking tabs faster, above)
@@ -9536,6 +9544,7 @@ function dropSpareSettings() {
   clearTimeout(s.timer);
   try { withWindow(s.rec, () => win.contentView.removeChildView(s.view)); } catch { /* gone */ }
   try { if (!s.view.webContents.isDestroyed()) s.view.webContents.close(); } catch { /* gone */ }
+  settingsProcSoon(); // (a press that was not followed by an open: the pooled process it took is made again)
 }
 // [settings process] A new view's renderer process takes about 90 ms to start (the navigation commits 100 ms in, against 17 ms in a view whose process is up), and
 // more on a busy PC. One blank view with the Settings page's preferences is kept, like the warm renderer for web pages (makeWarmTab): its process belongs to
@@ -9552,15 +9561,18 @@ const WARM_FONTS_JS = `(() => {
   for (const w of [400, 450, 500, 600, 700]) for (const px of [11, 12, 13, 14, 28]) { const s = document.createElement('span'); s.style.cssText = 'font:' + w + ' ' + px + 'px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif'; s.textContent = 'Settings Aa 0'; d.append(s); }
   document.body.append(d); void d.offsetWidth; d.remove(); return true;
 })()`;
+// (none is made while a Settings tab is open: the next open goes to that tab. The one used is replaced when the last Settings tab closes, not
+// while the page that took it is still opening: making a view holds the main process for 30-70 ms.)
+const settingsTabOpen = () => allTabsEverywhere().some((t) => t.settings && alive(t));
 function makeSettingsProc() {
-  if (settingsProc || !app.isReady() || quitting || !firstTabDone || !settingsProcOn() || sparePolicy.isIdle(settingsProcUsedAt)) return;
+  if (settingsProc || !app.isReady() || quitting || !firstTabDone || !settingsProcOn() || sparePolicy.isIdle(settingsProcUsedAt) || settingsTabOpen()) return;
   const prefs = settingsBackend.tabWebPreferences(true);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   const s = { view, prefs: JSON.stringify(prefs) };
   view.webContents.once('render-process-gone', () => { if (settingsProc === s) { settingsProc = null; try { view.webContents.close(); } catch { /* gone */ } } });
   view.webContents.once('did-finish-load', () => { try { view.webContents.executeJavaScript(WARM_FONTS_JS, true).catch(() => {}); } catch { /* gone */ } });
-  view.webContents.loadURL('about:blank').catch(() => {});
   settingsProc = s;
+  setImmediate(() => { if (settingsProc === s && !view.webContents.isDestroyed()) view.webContents.loadURL('about:blank').catch(() => {}); }); // (making the view and starting its process: two tasks, not one long one)
 }
 function dropSettingsProc() {
   const s = settingsProc;
@@ -9578,7 +9590,7 @@ function takeSettingsProc() {
   settingsProcUsedAt = Date.now();
   const s = settingsProc;
   settingsProc = null;
-  settingsProcSoon();
+  clearTimeout(settingsProcTimer); // (its replacement is made when the Settings tab closes: closeTab)
   if (!s) { if (TEST) global.__settingsProcTaken = 'none'; return null; }
   const wc = s.view.webContents;
   if (wc.isDestroyed() || wc.isCrashed() || wc.isLoading() || wc.getURL() !== 'about:blank' || s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))) { if (TEST) global.__settingsProcTaken = 'rejected ' + [wc.isDestroyed(), wc.isCrashed(), wc.isLoading(), wc.getURL(), s.prefs !== JSON.stringify(settingsBackend.tabWebPreferences(true))].join(','); try { wc.close(); } catch { /* gone */ } return null; }
@@ -9615,6 +9627,7 @@ function takeSpareSettings() {
 }
 ipcMain.on('prepare-settings', () => prepareSettings());
 function openSettingsPage(section = '', { replace = null } = {}) {
+  noteImportLooked();
   const url = settingsPage.urlFor(section);
   const existing = tabs.find((t) => t.settings && alive(t));
   if (existing) {
@@ -11898,7 +11911,7 @@ ipcMain.handle('cli:logout', async () => {
 });
 
 ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
-ipcMain.handle('import:browsers', () => importer.detectBrowsers());
+ipcMain.handle('import:browsers', () => { noteImportLooked(); return importer.detectBrowsers(); });
 ipcMain.handle('import:run', (_e, id) => runImport(id));
 ipcMain.handle('settings:set-model', (_e, id) => {
   // Any OpenRouter model can be picked from "More models…" once there is a key.
