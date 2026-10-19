@@ -529,6 +529,9 @@ contextBridge.exposeInMainWorld('browser', {
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
   onOpenFilesPicker: on('files:picker'),
+  onOpenCommandBar: on('cmdbar:open'),
+  commandData: () => ipcRenderer.invoke('cmdbar:data'),
+  commandRun: (id) => ipcRenderer.invoke('cmdbar:run', id),
 });
 
 contextBridge.exposeInMainWorld('lumenPrefs', {

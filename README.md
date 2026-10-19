@@ -148,6 +148,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 | Action | How |
 |---|---|
+| Command bar: search open tabs, bookmarks, history, Settings sections and commands (new tab, pin tab, mute tab, switch theme, clear data...), or ask the AI | `Ctrl+K` (a site that uses `Ctrl+K` itself keeps it; the ⋯ menu has Command bar…). Up and Down pick, Enter runs, `Ctrl+Enter` opens a page in a new tab, Esc closes. With nothing typed it lists the commands you ran lately, then your open tabs. The last row, **Ask AI: …**, sends what you typed to the sidebar. `Ctrl+E` is still the address bar's search |
 | Open or close the AI sidebar | `Ctrl+J` or the toolbar's AI button |
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
 | On the full-page chat: fold or open the chat list / new chat | `Ctrl+Shift+S` / `Ctrl+Shift+O` |

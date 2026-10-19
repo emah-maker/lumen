@@ -2887,6 +2887,25 @@ function loadFilesPicker() {
 window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
 setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
 
+// The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
+// "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
+
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
 window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
   showSidebar(true);
