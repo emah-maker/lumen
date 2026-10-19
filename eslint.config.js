@@ -71,6 +71,8 @@ module.exports = [
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },
   // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
   { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
+  { files: ['src/renderer/command-bar.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly', lastTabState: 'readonly' } } }, // (app.js's, loaded on first use)
+  { files: ['test/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
     files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],
