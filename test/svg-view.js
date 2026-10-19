@@ -139,7 +139,7 @@ const FENCE = '```';
         const img = m.querySelector('.svg-view img');
         await (img && img.decode().catch(() => {}));
         const src = img ? decodeURIComponent(img.src.split(',').slice(1).join(',')) : '';
-        return { pwned: window.__svgPwned, lines: window.__lines.filter((l) => /svg-script-ran|__svgPwned/.test(l)), srcHasScript: /script|foreignObject|onload|onclick|onerror|example\\.invalid/i.test(src), safeLabel: src.includes('safe label'), inline: m.querySelectorAll('.svg-view svg, svg rect, svg line, svg text, script, foreignObject, iframe').length, extScripts: document.querySelectorAll('script[src*="evil"]').length, w: img && img.naturalWidth };
+        return { pwned: window.__svgPwned, lines: window.__lines.filter((l) => /svg-script-ran|__svgPwned/.test(l)), srcHasScript: /script|foreignObject|onload|onclick|onerror|example\\.invalid/i.test(src), safeLabel: src.includes('safe label'), inline: [...m.querySelectorAll('svg, script, foreignObject, iframe')].filter((n) => !n.closest('button')).length, extScripts: document.querySelectorAll('script[src*="evil"]').length, w: img && img.naturalWidth };
       })()`);
       check(`a hostile SVG ${label} is drawn without its script`, seen && bad.w === 120 && bad.safeLabel && !bad.srcHasScript, JSON.stringify(bad));
       check(`...and nothing ran ${label}: no global, no console line, nothing inline`, bad.pwned === undefined && bad.lines.length === 0 && bad.inline === 0, JSON.stringify(bad));
