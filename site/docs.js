@@ -19,6 +19,7 @@ const PAGES = {
   'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
   'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
+  'screen-recording': { title: 'Screen recording', file: 'docs/screen-recording.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
   focus: { title: 'Focus mode', file: 'docs/focus.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },

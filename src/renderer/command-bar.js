@@ -50,6 +50,9 @@ const commandBar = (() => {
     ['theme-system', 'commandBar.act.themeSystem', 'Match the system theme', 'appearance colour auto'],
     ['settings', 'commandBar.act.settings', 'Open Settings', 'preferences options'],
     ['shortcuts', 'commandBar.act.shortcuts', 'Keyboard shortcuts', 'keys help'],
+    ['record-tab', 'commandBar.act.recordTab', 'Record tab', 'screen recording video capture demo', hasTab],
+    ['record-screen', 'commandBar.act.recordScreen', 'Record screen', 'screen recording video capture window demo'],
+    ['stop-recording', 'commandBar.act.stopRecording', 'Stop recording', 'screen recording video end finish'],
   ];
 
   let panel = null;
