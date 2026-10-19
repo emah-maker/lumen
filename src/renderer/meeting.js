@@ -205,6 +205,7 @@
       if (blob.size < 2000) return; // (silence compresses to almost nothing)
       try {
         const bytes = l.status.format === 'wav' ? await window.lumenDictation.toWav(blob) : new Uint8Array(await blob.arrayBuffer());
+        if (bytes.byteLength > (l.status.maxBytes || 8 * 1024 * 1024)) return; // (over the cap: not sent)
         const res = await window.assistant.dictation.transcribe(bytes, l.status.format);
         if (res?.error) { if (promptStatus) promptStatus.textContent = res.error; return; }
         if (res?.text) api.sendTranscript(res.text, 'Participant');

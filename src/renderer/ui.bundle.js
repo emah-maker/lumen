@@ -7399,7 +7399,8 @@ function startChat() {
     let result;
     try {
       const bytes = format === 'wav' ? await toWav(blob) : new Uint8Array(await blob.arrayBuffer());
-      result = await api.transcribe(bytes, format);
+
+      result = bytes.byteLength > (s.status.maxBytes || 8 * 1024 * 1024) ? { error: tr('dictation.error.tooLong') } : await api.transcribe(bytes, format);
     } catch (err) {
       result = { error: tr('dictation.error.audioLocal', { detail: String(err?.message || err).slice(0, 80) }) };
     }

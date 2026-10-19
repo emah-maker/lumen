@@ -8508,7 +8508,7 @@ function dictationState() {
   const s = readSettings();
   const choice = dictationLib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
   if (!choice.provider) { const m = dictationLib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
-  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, autoSend: s.dictationAutoSend === true };
+  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, maxBytes: dictationLib.MAX_BYTES, autoSend: s.dictationAutoSend === true };
 }
 ipcMain.handle('dictation:status', () => dictationState());
 ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {

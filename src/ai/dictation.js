@@ -148,7 +148,7 @@ async function transcribe({ provider, key, audio, format, models, language = '',
 // and isOwnView whether the asking view is the one Lumen made for it.
 function ownPageMic({ permission, mediaTypes, requestingUrl, pageUrl, isMainFrame, isOwnView, isOwnPage }) {
   if (permission !== 'media' || !isOwnView) return false;
-  if (isMainFrame === false) return false;
+  if (isMainFrame !== true) return false; // (unknown counts as no)
   const types = Array.isArray(mediaTypes) ? mediaTypes : [];
   if (types.length !== 1 || types[0] !== 'audio') return false;
   return Boolean(isOwnPage(requestingUrl) && isOwnPage(pageUrl));
