@@ -143,4 +143,19 @@ function apiError(status, text) {
 // send one again if this account connected before. select_account lets the user pick the mailbox.
 const AUTH_EXTRA = { access_type: 'offline', prompt: 'consent select_account' };
 
-module.exports = { MODES, SCOPE, MIN_COUNT, MAX_COUNT, DEFAULT_COUNT, AUTH_EXTRA, cleanClientId, cleanClientSecret, cleanConfig, labelPath, listPath, messagePath, messageIds, isMessageId, decodeWords, decodeEntities, parseSender, normalizeMessage, shape, reconnect, apiError };
+// [connectors] Gmail drafts. gmail.compose lets an app make drafts, and also send mail: Lumen asks for it only when the user
+// presses "Allow drafts" (Settings → You and AI → Connectors → Gmail), never at the first sign-in, and never calls send
+// (features/gmail-drafts.js). That sign-in is incremental (include_granted_scopes): Google adds compose to the read access
+// the account already gave, and its token answer's `scope` says what the token really has, which is what Lumen keeps.
+const COMPOSE_SCOPE = 'https://www.googleapis.com/auth/gmail.compose';
+// The scope and extra consent parameters for a sign-in: the plain read-only one, or (compose) the "Allow drafts" one for the
+// account already signed in (login_hint: Google skips the account picker when it knows the address).
+function signInParams({ compose = false, email = '' } = {}) {
+  if (!compose) return { scope: SCOPE, extra: AUTH_EXTRA };
+  const hint = typeof email === 'string' && /^[^\s@<>]{1,200}@[^\s@<>]{1,200}$/.test(email) ? { login_hint: email } : {};
+  return { scope: `${SCOPE} ${COMPOSE_SCOPE}`, extra: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true', ...hint } };
+}
+// Whether a token's space-separated scope list holds `scope` (a missing list holds nothing).
+const hasScope = (list, scope) => typeof list === 'string' && list.split(/\s+/).includes(scope);
+
+module.exports = { MODES, SCOPE, COMPOSE_SCOPE, signInParams, hasScope, MIN_COUNT, MAX_COUNT, DEFAULT_COUNT, AUTH_EXTRA, cleanClientId, cleanClientSecret, cleanConfig, labelPath, listPath, messagePath, messageIds, isMessageId, decodeWords, decodeEntities, parseSender, normalizeMessage, shape, reconnect, apiError };

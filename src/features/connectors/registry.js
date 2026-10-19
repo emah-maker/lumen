@@ -32,6 +32,10 @@ const WORD = /^[A-Za-z0-9_-]{1,40}$/; // an id used in a query: no separators or
 const int = (doc, min, max) => ({ type: 'integer', min, max, doc });
 const str = (doc, extra = {}) => ({ type: 'string', max: 200, doc, ...extra });
 const text = (doc, max, extra = {}) => ({ type: 'string', max, multiline: true, doc, ...extra }); // a body the user can edit on the card
+// Email addresses for a draft: "a@x.org, Ada Lovelace <b@y.org>", one line, up to 50 (no commas inside a name). Checked one address at a
+// time (a single regular expression for the whole list backtracks badly on a long wrong one); features/gmail-drafts.js checks them again.
+const ONE_ADDRESS = /^[ \t]*(?:(?:"[^<>,"\\\r\n]{0,100}"|[^<>,"\\\r\n]{0,100})[ \t]*<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+>|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+)[ \t]*$/;
+const ADDRESSES = { test: (v) => { const parts = String(v).replace(/,[ \t]*$/, '').split(','); return parts.length <= 50 && parts.every((p) => ONE_ADDRESS.test(p)); } };
 // A Notion page id: 32 hex digits, with or without its dashes, or a notion.so address that ends in one.
 const NOTION_ID = /^(?:https:\/\/(?:www\.)?notion\.so\/[^\s?#]{0,300}?)?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}(?:[?#]\S{0,200})?$/i;
 
@@ -53,15 +57,27 @@ const CONNECTORS = [
   {
     id: 'gmail', name: 'Gmail', category: 'mail', kind: 'oauth', icon: { text: 'M', color: '#d93025' },
     summary: 'Summarize unread mail, search your inbox and read a message.',
-    // No create_draft: a draft needs Google's gmail.compose scope, and Lumen's Google sign-in asks only for gmail.readonly.
-    sessionNote: 'Signs in with Google in your own browser, read-only. Without that, it can list unread mail through the Google sign-in already in Lumen.',
+    // create_draft needs Google's gmail.compose permission, which Lumen asks for only when the user presses Allow drafts on this
+    // card (an incremental sign-in: widgets.js gmailAllowDrafts). It makes a draft and nothing else; Lumen never sends.
+    sessionNote: 'Signs in with Google in your own browser, read-only. Without that, it can list unread mail through the Google sign-in already in Lumen. Making drafts needs one more step: Allow drafts, which asks Google for permission to make drafts. Lumen never sends email.',
     fields: [],
     reads: ['Your unread mail (sender, subject, a short start)', 'Messages you search for or open'],
-    does: [],
+    does: ['Make a draft in your Gmail Drafts, after you press Allow drafts (asks you first; it never sends)'],
     actions: {
       unread: { label: 'Unread mail', args: { max: int('how many, default 10', 1, 20) }, doc: 'Newest unread messages.' },
       search: { label: 'Search mail', args: { query: str('Gmail search, e.g. from:prof newer_than:7d', { required: true, max: 300 }), max: int('how many, default 10', 1, 20) }, doc: 'Search your mail. Needs the full Google sign-in.' },
       message: { label: 'Read a message', args: { id: str('message id from search or unread', { required: true, max: 40 }) }, doc: 'The text of one message. Needs the full Google sign-in.' },
+      create_draft: {
+        label: 'Make a draft', write: true, edit: ['to', 'cc', 'subject', 'body'],
+        args: {
+          to: str('addresses: a@x.org, Name <b@y.org>', { required: true, max: 2000, pattern: ADDRESSES, label: 'To' }),
+          cc: str('copy to, same form', { max: 2000, pattern: ADDRESSES, label: 'Cc' }),
+          subject: str('the subject; for a reply, Re: and the original subject', { required: true, max: 250, label: 'Subject' }),
+          body: text('the text, plain', 20000, { required: true, label: 'Text' }),
+          reply_to_message_id: str('message id to reply to, from search or unread', { max: 40, pattern: /^[0-9a-f]{6,32}$/i }),
+        },
+        doc: 'Puts an email in the user’s Gmail Drafts; it is never sent (the user sends it from Gmail). The user confirms first. Needs the full Google sign-in and Allow drafts in Settings.',
+      },
     },
   },
   {
@@ -248,7 +264,7 @@ function help(id) {
 function editable(input) {
   const a = get(input?.app)?.actions?.[input?.action];
   if (!a?.write) return [];
-  return (a.edit || []).map((key) => ({ key, label: a.args[key].doc, value: typeof input.args?.[key] === 'string' ? input.args[key] : '', multiline: Boolean(a.args[key].multiline), max: a.args[key].max || 200 }));
+  return (a.edit || []).map((key) => ({ key, label: a.args[key].label || a.args[key].doc, value: typeof input.args?.[key] === 'string' ? input.args[key] : '', multiline: Boolean(a.args[key].multiline), max: a.args[key].max || 200 }));
 }
 
 // What the user changed on a write's card, applied to a copy of its input and checked again. -> { input } or { error }.

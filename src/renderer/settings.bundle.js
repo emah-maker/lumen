@@ -2607,6 +2607,16 @@ function buildConnectors() {
     if (c.status === 'needs-signin') {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
+
+    if (c.drafts === 'off') {
+      const allow = h('button', { class: 'primary', id: `conn-${c.id}-drafts`, text: 'Allow drafts', 'aria-label': `Allow ${c.name} drafts`, onclick: async () => {
+        allow.disabled = true;
+        allow.textContent = 'Waiting for Google…';
+        flash(note, 'Google asks in your browser for permission to make drafts. Lumen only makes drafts; it never sends email.', 'ok');
+        try { render(await C.allowDrafts(c.id)); flash(note, 'Drafts allowed. The AI can now put emails in your Gmail Drafts, after you allow each one. It never sends.', 'ok'); } catch (err) { allow.disabled = false; allow.textContent = 'Allow drafts'; flash(note, clean(err), 'error'); }
+      } });
+      buttons.push(allow);
+    }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
         if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
@@ -2617,6 +2627,7 @@ function buildConnectors() {
     return h('div', { class: `conn-card ${c.status}`, 'data-connector': c.id, 'data-status': c.status },
       h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
       h('p', { class: 'conn-summary', text: c.summary }),
+      c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
       showing ? form(c, render) : (c.status !== 'soon' ? h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)) : null),
       showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
   }

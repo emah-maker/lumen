@@ -9,6 +9,8 @@
 //    with no redirect followed. A 'session' connector sends the user's signed-in Lumen cookies there and nowhere else; the
 //    others send their token there. Tests point a connector at 127.0.0.1 through `endpoints` (main.js allows that only in test mode).
 //  - Disconnecting forgets the entry and the sealed secret and drops cached answers.
+//  - Gmail's drafts need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, only when the
+//    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts).
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
 //  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
 //    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
@@ -145,12 +147,15 @@ function create({
     if (live === 'needs-signin' || live === 'bad-token') status = live;
     const e = connected[def.id];
     const account = e?.account || '';
+    // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
+    let drafts = null;
+    if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
       status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
-      reads: def.reads, does: def.does,
+      reads: def.reads, does: def.does, drafts,
       actions: Object.entries(def.actions).map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
     };
   }
@@ -249,6 +254,19 @@ function create({
     return list();
   }
 
+  // Settings' Allow drafts on the Gmail card: the Google sign-in again, asking Google to add gmail.compose (to make drafts; Lumen never
+  // sends). Only for a Gmail connected with the full sign-in; never started by the AI.
+  async function allowDrafts(id) {
+    const entry = connected[id];
+    if (id !== 'gmail' || !entry) throw new Error('Connect Gmail first.');
+    if (entry.config?.mode !== 'oauth' || !google?.allowDrafts) throw new Error('Drafts need the full Google sign-in. Disconnect Gmail, then connect it again and finish the Google sign-in.');
+    await google.allowDrafts();
+    runtime.set(id, 'ok');
+    cache.clear();
+    changed();
+    return list();
+  }
+
   async function disconnect(id) {
     const def = registry.get(id);
     const entry = connected[id];
@@ -306,6 +324,9 @@ function create({
     const args = input.args || {};
     const p = provider(def.id);
     const entry = connected[def.id];
+    if (entry && p.beforeCard) { // a write that can't happen yet says why, and no card is shown for it
+      try { await p.beforeCard(makeCtx(def, entry, signal), input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
+    }
     let names = {};
     if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
     const text = p.describeWrite?.(input.action, args, names);
@@ -362,7 +383,7 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
-  return { list, detect, connect, disconnect, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };
