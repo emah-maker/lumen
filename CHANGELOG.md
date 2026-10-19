@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Record a tab or your screen to a video file.** Open **⋯ → Record** (File → Record on a Mac) and choose **Record this tab** or **Record screen or window…** (a menu of screens and windows, as when you share your screen). A small bar with a timer, **Pause** and **Stop** appears at the top of the screen; it is left out of a screen recording. When you stop, Lumen saves a .webm (VP9 video, Opus sound) in your Downloads folder with a name like "Lumen tab recording - example.com - 2026-10-19 14-32-05", adds it to the Downloads list, and the bar offers **Show in folder**. Sound from the tab or PC is included by default; the microphone is off until you tick **Include the microphone** in the same menu. Nothing is uploaded, and the recorder is only loaded the first time you record. WebM is the default; **Save as MP4 instead of WebM** shows in the same menu only where the built-in recorder can write MP4. New files: `src/features/screen-recorder.js`, `src/renderer/recorder.html`, `test/screen-recorder-units.js`, `test/screen-recorder.js`.
 - **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
 
 ## 0.5.53 (2026-10-18)
