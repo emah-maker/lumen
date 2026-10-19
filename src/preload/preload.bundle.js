@@ -470,6 +470,8 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids),
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on),
   hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at),
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at),
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o),
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point),
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection),
@@ -493,6 +495,7 @@ contextBridge.exposeInMainWorld('browser', {
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
+  warmDownloads: () => ipcRenderer.send('downloads:warm'),
   go: (text) => ipcRenderer.send('nav:go', text),
   back: () => ipcRenderer.send('nav:back'),
   forward: () => ipcRenderer.send('nav:forward'),
@@ -502,6 +505,9 @@ contextBridge.exposeInMainWorld('browser', {
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
+  onSplit: on('split:layout'),
+  setSplitRatio: (ratio) => ipcRenderer.send('split:ratio', ratio),
+  closeSplit: () => ipcRenderer.send('split:close'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onNewSidebarChat: on('new-sidebar-chat'),
@@ -529,6 +535,9 @@ contextBridge.exposeInMainWorld('browser', {
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
   onOpenFilesPicker: on('files:picker'),
+  onOpenCommandBar: on('cmdbar:open'),
+  commandData: () => ipcRenderer.invoke('cmdbar:data'),
+  commandRun: (id) => ipcRenderer.invoke('cmdbar:run', id),
 });
 
 contextBridge.exposeInMainWorld('lumenPrefs', {
@@ -614,6 +623,11 @@ contextBridge.exposeInMainWorld('assistant', {
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
 
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
+
   research: {
     get: () => ipcRenderer.invoke('research:get'),
     addPage: () => ipcRenderer.invoke('research:add-page'),
@@ -626,6 +640,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url),
     onChanged: on('research:changed'),
   },
+  offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) },
   dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) },
 
   meeting: {
@@ -677,6 +692,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
 
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') },
   onHistory: on('agent:history'),
 
   openFullPage: () => ipcRenderer.send('chat:open-page'),

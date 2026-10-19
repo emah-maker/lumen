@@ -336,5 +336,48 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
   } catch { return null; }
 }
 
+// The tab's visible area as a JPEG already scaled to maxWidth, drawn and encoded by the browser's own processes: { data (base64), width,
+// height }, or null (no debugger, a tab that will not paint: the caller falls back to captureTab). capturePage() hands the main process
+// the full-size bitmap; nativeImage.resize() of it then ran 14 to 45 ms on the main thread per screenshot, toJPEG 4 to 13 ms more.
+// Here the main process receives only the finished JPEG. One at a time across all pages, with the event loop let through in between, so
+// several agents' screenshots do not stack their readback and encode work into one stall; and in the page's own queue (see oneAtATime).
+let captureChain = Promise.resolve();
+let capturing = 0; // screenshots queued or being taken
+const idleWaiters = new Set();
+function captureJpeg(wc, opts) {
+  capturing++;
+  const run = captureChain.then(() => oneAtATime(wc, () => captureJpegNow(wc, opts)));
+  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve))).then(() => { if (--capturing === 0) for (const done of [...idleWaiters]) done(); });
+  return run;
+}
+// Resolves once no screenshot is being taken, or after maxMs. A screenshot's result lands on the main process as a ~9 ms task; a step of making an
+// agent's window (5-6 ms each) that ran just as one landed stacked into a stall of 15 ms and more (test/mcp-perf.js), so those steps wait for a gap.
+function whenCaptureIdle(maxMs = 150) {
+  if (capturing === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, maxMs);
+    function done() { clearTimeout(timer); idleWaiters.delete(done); resolve(); }
+    idleWaiters.add(done);
+  });
+}
+async function captureJpegNow(wc, { maxWidth, quality }) {
+  const dbg = wc.debugger;
+  let attachedHere = false;
+  try {
+    if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
+    const m = await dbg.sendCommand('Page.getLayoutMetrics');
+    const v = m.cssVisualViewport;
+    if (!(v?.clientWidth > 0 && v?.clientHeight > 0)) return null;
+    const scale = Math.min(maxWidth / v.clientWidth, 2); // (never magnified past 2x: a narrow view is not blown up to the full width)
+    const width = Math.max(1, Math.round(v.clientWidth * scale));
+    const height = Math.max(1, Math.round(v.clientHeight * scale));
+    const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } });
+    return shot?.data ? { data: shot.data, width, height } : null;
+  } catch {
+    return null;
+  } finally {
+    if (attachedHere) { try { dbg.detach(); } catch {} }
+  }
+}
 
-module.exports = { checkPageSize, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { checkPageSize, captureJpeg, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
