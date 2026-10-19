@@ -82,6 +82,13 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCsv: call('settings:passwords-import'),
       removeNever: call('settings:passwords-never-remove'),
     },
+    // [memory] Settings → AI and agents → Memory (ai/memory.js): the saved entries, edited and deleted here
+    memory: {
+      list: call('settings:memory-list'),
+      update: call('settings:memory-update'),
+      remove: call('settings:memory-delete'),
+      removeAll: call('settings:memory-delete-all'),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     deviceGrants: call('prefs:device-grants'),

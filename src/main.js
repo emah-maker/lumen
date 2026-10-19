@@ -273,6 +273,7 @@ const UI_ONLY_IPC = new Set([
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
+  'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
@@ -8242,7 +8243,12 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL }), providerKey);
+  memory: { // [memory] Settings → AI and agents → Memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
+    on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
+    chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
+    searchChats: (query, exclude) => memorySearchChats(query, exclude),
+  },
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -10511,6 +10517,46 @@ ipcMain.handle('chats:pin', (_e, id, on) => { const ok = chats().setPinned(Strin
 ipcMain.handle('chats:archive', (_e, id, on) => { const ok = chats().setArchived(String(id), Boolean(on)); if (ok) pushAttention(); return ok; });
 // Chats whose title or messages contain the words typed: [{ id, snippet }] (the list shows them in its own order).
 ipcMain.handle('chats:search', (_e, query) => chats().search(String(query ?? '').slice(0, 200)));
+
+// ---- [memory] Saved memory across chats (ai/memory.js; docs/memory.md). Off by default (aiMemory). One encrypted file in the profile;
+// with no keychain nothing is kept. The chat's "Remembered: …" row (Undo / Forget), the /memory command and Settings → AI and agents → Memory.
+let memoryStore = null;
+function memory() {
+  return (memoryStore ||= require('./ai/memory').createMemoryStore({
+    file: path.join(app.getPath('userData'), 'memory.json'),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+    available: () => safeStorage.isEncryptionAvailable(),
+  }));
+}
+function memoryOn() { return readSettings().aiMemory === true; }
+// The chat id a run's messages array belongs to (the open chat, or one running in the background). null: none (a background task).
+function chatIdOfMessages(messages) {
+  if (!messages) return null;
+  if (messages === agent.messages) return chatId;
+  for (const [id, run] of chatRuns) if (run.messages === messages) return id;
+  return null;
+}
+// search_chats: saved chats (never temporary ones: they are not saved) whose title or text has every word; the running chat left out.
+function memorySearchChats(query, exclude) {
+  const titles = new Map(chats().list().map((c) => [c.id, c]));
+  return chats().search(query, { max: 6 }).filter((h) => h.id !== exclude).slice(0, 5).map((h) => {
+    const c = titles.get(h.id);
+    return { id: h.id, title: c?.title || '', date: c?.updated ? new Date(c.updated).toISOString().slice(0, 10) : '', snippet: h.snippet };
+  });
+}
+require('./ai/agent').setMemorySource({ on: memoryOn, text: () => memory().block() });
+const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated) });
+const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
+// The chat's row and /memory (the sidebar and the chat page).
+ipcMain.handle('memory:list', () => memoryView());
+ipcMain.handle('memory:undo', (_e, token) => { const ok = memory().undo(String(token ?? '').slice(0, 20)); if (ok) memoryEdited(); return ok; });
+ipcMain.handle('memory:forget', (_e, id) => { try { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return true; } catch { return false; } });
+// Settings → AI and agents → Memory.
+ipcMain.handle('settings:memory-list', () => memoryView());
+ipcMain.handle('settings:memory-update', (_e, id, text) => { memory().update(String(id ?? '').slice(0, 20), { text: String(text ?? '') }); memoryEdited(); return memoryView(); });
+ipcMain.handle('settings:memory-delete', (_e, id) => { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return memoryView(); });
+ipcMain.handle('settings:memory-delete-all', () => { memory().clear(); memoryEdited(); return memoryView(); });
 // The chat as Markdown (the open one as it is now, or a saved one), or null if it's empty.
 // `folder`: the name of the folder next to the file that holds its pictures (see chats:export); null: they are only named.
 function chatMarkdown(id, folder = null) {
