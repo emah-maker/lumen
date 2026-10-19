@@ -181,6 +181,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
+      local: { get: call('settings:local-get'), save: call('settings:local-save'), detect: call('settings:local-detect') }, // Ollama / LM Studio on this computer
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
       // [telegram] Phone (Telegram): the token goes in, never comes back

@@ -38,7 +38,21 @@ const PROVIDERS = {
     defaults: ['anthropic/claude-sonnet-5.5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
     include: () => true,
   },
+  // Models on this computer (Ollama, LM Studio): no key, the address is in settings.localAI (ai/local-models.js, loaded on first use).
+  local: {
+    label: 'Local',
+    baseURL: undefined,
+    defaults: [],
+    include: () => true,
+    local: true,
+  },
 };
+
+// Where the local settings come from: main.js sets it (settings.localAI). chatOnly(model) is told when a server refuses tools for a model.
+let localSource = { get: () => null, chatOnly: () => {} };
+const setLocalSource = (src) => { localSource = { ...localSource, ...src }; };
+const localModels = () => require('./local-models');
+const localConfig = () => localModels().clean(localSource.get());
 
 // ---------- OpenRouter's model catalog (GET /models, kept for 24 hours) ----------
 
@@ -108,6 +122,7 @@ function curatedOpenRouter(models) {
 
 // Can this model use tools (click, type, read pages)? Unknown models are assumed to.
 function canUseTools(provider, model) {
+  if (provider === 'local') return localConfig().models.find((m) => m.id === model)?.tools !== false; // unknown: tried, and said so if the server refuses
   if (provider !== 'openrouter' || !catalog) return true;
   const entry = catalog.models.find((m) => m.id === model);
   return entry ? entry.tools : true;
@@ -122,12 +137,18 @@ function splitModel(id) {
 
 function clientFor(provider, apiKey) {
   const OpenAI = OpenAISDK();
+  if (provider === 'local') {
+    const cfg = localConfig();
+    if (!localModels().allowed(cfg)) throw new Error('The local AI address isn’t on this computer. Check Settings → AI → Local.');
+    return new OpenAI({ apiKey: 'local', baseURL: localModels().baseURL(cfg), maxRetries: 0, fetch: netFetch() });
+  }
   return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2, fetch: netFetch() });
 }
 
 // Does the provider accept this key? { ok: true }, { ok: false, message } when it's rejected, or
 // { ok: null } when it couldn't be checked (offline, or the provider having trouble).
 async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
+  if (provider === 'local') return { ok: null }; // no key to check
   const rejected = { ok: false, message: `${PROVIDERS[provider].label} didn't accept that key. Check it and try again.` };
   try {
     if (provider === 'openrouter') {
@@ -149,6 +170,7 @@ async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
 async function listModels(provider, apiKey, { cacheFile, onRefresh = null } = {}) {
   try {
+    if (provider === 'local') return localConfig().models.map((m) => m.id); // what Detect found; the server isn't asked at startup
     if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile, onRefresh })).models); // (a day-old copy at once, refreshed behind)
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
@@ -227,7 +249,7 @@ function toChatMessages(system, messages) {
 // chunk when asked; OpenRouter also reports the request's cost. Gemini sends usage without asking.
 function usageOptions(provider) {
   if (provider === 'openrouter') return { stream_options: { include_usage: true }, usage: { include: true } };
-  if (provider === 'openai' || provider === 'xai') return { stream_options: { include_usage: true } };
+  if (provider === 'openai' || provider === 'xai' || provider === 'local') return { stream_options: { include_usage: true } };
   return {};
 }
 
@@ -235,7 +257,18 @@ const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Ma
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
 // effort: the user's reasoning-effort choice for this provider ('' = its default; ai/effort.js decides whether this model takes it).
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
+async function streamTurn(args) {
+  try {
+    return await streamTurnOnce(args);
+  } catch (err) {
+    // A local model whose server refuses tools: the same turn as plain chat, remembered so the picker says "chat only".
+    if (args.provider !== 'local' || !args.tools?.length || args.signal?.aborted || !localModels().isNoToolsError(err)) throw err;
+    try { localSource.chatOnly(args.model); } catch { /* the note below still tells the user */ }
+    args.emit({ type: 'notice', text: `${args.model} can't use tools, so it answers as plain chat: it can read the page you're on but can't click or type in your tabs. Pick a tool-capable local model for that.` });
+    return streamTurnOnce({ ...args, tools: [] });
+  }
+}
+async function streamTurnOnce({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
   const request = (client || clientFor(provider, apiKey)).chat.completions.create(
     { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
     { signal },
@@ -294,11 +327,16 @@ async function completeJSON({ provider, model, apiKey, system, user, maxTokens, 
   const res = await clientFor(provider, apiKey).chat.completions.create({
     model,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-    response_format: { type: 'json_object' },
-    ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
+    // (LM Studio refuses response_format json_object, so a local model is asked in the prompt and its reply is read as JSON below)
+    ...(provider === 'local' ? { messages: [{ role: 'system', content: `${system}\n\nAnswer with one JSON object and nothing else.` }, { role: 'user', content: user }] } : { response_format: { type: 'json_object' } }),
+    ...(maxTokens ? { [provider === 'local' ? 'max_tokens' : 'max_completion_tokens']: maxTokens } : {}),
     ...(temperature != null ? { temperature } : {}),
   }, signal ? { signal } : undefined);
-  return JSON.parse(res.choices?.[0]?.message?.content || '{}');
+  const content = res.choices?.[0]?.message?.content || '{}';
+  if (provider !== 'local') return JSON.parse(content);
+  const body = String(content).replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
+  const start = body.indexOf('{');
+  return JSON.parse(start >= 0 ? body.slice(start, body.lastIndexOf('}') + 1) : body);
 }
 
 // ---------- making a picture on purpose ("draw a cat") ----------
@@ -403,6 +441,10 @@ async function generateOpenRouterImage({ apiKey, prompt, model, signal, client, 
 function describeProviderError(err, provider) {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
+  if (provider === 'local') { // a server on this computer: not the internet, and no key
+    if (err instanceof OpenAIModule.APIConnectionError) return { text: 'Couldn’t reach your local AI server. Start Ollama or LM Studio (with its local server on) and check the address in Settings → AI → Local.' };
+    if (err.status === 404) return { text: 'The local server doesn’t have this model. Press Detect in Settings → AI → Local to refresh the list, or pull or load the model first.' };
+  }
   // Offline, DNS, a timeout: there is no HTTP status to report.
   if (err instanceof OpenAIModule.APIConnectionError) {
     const code = String(err.cause?.code || '');
@@ -436,4 +478,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { imageUrl, clientFor, canGenerateImages, canEditImages, isPolicyError, openRouterImageModel, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { setLocalSource, imageUrl, clientFor, canGenerateImages, canEditImages, isPolicyError, openRouterImageModel, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

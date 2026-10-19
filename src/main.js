@@ -483,6 +483,16 @@ function storedApiKey() {
 
 // Keys for OpenAI, Grok and Gemini: settings.keys[provider], encrypted like the Anthropic key.
 const ENV_KEYS = { openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY', gemini: 'GEMINI_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
+// [local AI] Ollama / LM Studio on this computer (settings.localAI; ai/local-models.js, loaded on first use). No key: "connected" means switched on.
+providers.setLocalSource({
+  get: () => readSettings().localAI,
+  chatOnly: (model) => { // the server refused tools for this model: the picker marks it "chat only" from now on
+    const cfg = require('./ai/local-models').clean(readSettings().localAI);
+    const models = cfg.models.some((m) => m.id === model) ? cfg.models.map((m) => (m.id === model ? { ...m, tools: false } : m)) : [...cfg.models, { id: model, tools: false }];
+    writeSettings({ ...readSettings(), localAI: { ...cfg, models } });
+    modelsChanged();
+  },
+});
 const OPENROUTER_CACHE = () => path.join(app.getPath('userData'), 'openrouter-models.json');
 
 // The Google Safe Browsing key: settings.keys.safebrowsing, encrypted like the others.
@@ -514,6 +524,7 @@ function setWidgetSecret(name, value) {
 }
 
 function providerKey(provider) {
+  if (provider === 'local') return readSettings().localAI?.enabled === true ? 'local' : null; // no key; just switched on
   const enc = readSettings().keys?.[provider];
   if (enc && safeStorage.isEncryptionAvailable()) {
     try {
@@ -564,7 +575,7 @@ const autoExcluded = () => (Array.isArray(readSettings().autoExclude) ? readSett
 // usage or unavailable) and "Switch models automatically" is on, it behaves like a picked model that ran out: the same vendor's other
 // route first, then any connected model (decision.outOfScope, said in the chat).
 function autoRoute({ request, last = null, allowEngines = true, apiOnly = false, scope = null, strict = false } = {}) {
-  const options = modelOptions().filter((o) => !apiOnly || !aiFallback.isEngine(o.id));
+  const options = modelOptions().filter((o) => (!apiOnly || !aiFallback.isEngine(o.id)) && !o.id.startsWith('local:')); // (Auto never picks a local model: its names say nothing about what it can do)
   const args = { options, request, last, prefer: autoModel.preferFrom({ lastId: last, home: readSettings().autoHome }), exclude: autoExcluded(), denied: autoDenied.set(), cooldowns: aiFallback.shared, allowEngines };
   return autoModel.routeOrFallBack({ ...args, scope }, { fallbackOn: fallbackOn(), strict, related: scope ? aiFallback.relatedOf(scope) : [] });
 }
@@ -597,14 +608,14 @@ function modelOptions() {
       const chatOnly = !providers.canUseTools(provider, model);
       // name: the readable model name the picker shows; badges: what it can't do or how settled it is. The raw id is the detail.
       // OpenRouter rows are named as OpenRouter names them (as its catalog shows them); the others from their id.
-      const name = (provider === 'openrouter' && providers.openRouterName(model)) || modelNames.prettyModel(model) || model;
+      const name = (provider === 'openrouter' && providers.openRouterName(model)) || (provider === 'local' && model.replace(/:latest$/, '')) || modelNames.prettyModel(model) || model;
       const snap = modelNames.snapshotOf(model);
       const isFree = provider === 'openrouter' && (/:free$/.test(model) || providers.openRouterInfo(model)?.free || providers.openRouterInfo(model)?.pricePerM === 0);
       const badges = [...new Set([...(isFree ? ['free'] : []), ...modelNames.badgesFor(model, { chatOnly })])];
       const orInfo = provider === 'openrouter' ? providers.openRouterInfo(model) : null;
       const fmt = require('./renderer/picker-match').format; // the catalog's own rules ($1.25, 128K)
       const orDetail = orInfo ? [orInfo.context ? t('models.context', { n: fmt.size(orInfo.context) }) : '', orInfo.pricePerM < 0 ? t('models.priceVaries') : orInfo.pricePerM > 0 ? (orInfo.pricePerM < 0.01 ? t('models.priceTiny') : t('models.price', { n: fmt.money(orInfo.pricePerM) })) : ''].filter(Boolean).join(' · ') : '';
-      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context, ...(typeof orInfo.vision === 'boolean' ? { vision: orInfo.vision } : {}) } : {}), detail: snap ? `Snapshot ${snap}` : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
+      return { id: `${provider}:${model}`, label: name, name, provider: info.label, badges, ...(recentOR.has(model) ? { recent: true } : {}), ...(provider === 'local' ? { context: 32768 } : {}), ...(orInfo ? { price: orInfo.pricePerM, context: orInfo.context, ...(typeof orInfo.vision === 'boolean' ? { vision: orInfo.vision } : {}) } : {}), detail: snap ? `Snapshot ${snap}` : provider === 'local' ? require('./ai/local-models').LABELS[readSettings().localAI?.flavor] || 'On this computer' : orDetail, title: chatOnly ? `${model}\nCan’t act in your tabs` : model };
     });
     if (provider === 'openrouter') entries.push({ id: 'openrouter:__more', label: t('models.more'), name: t('models.more'), provider: info.label, detail: t('models.more.detail'), more: true });
     groups.push({ label: info.label, entries });
@@ -619,7 +630,7 @@ function modelOptions() {
 function autoProviderList(options = modelOptions()) {
   const seen = new Map();
   for (const o of options) {
-    if (o.more || String(o.id).endsWith(':__more') || autoModel.isAuto(o.id)) continue;
+    if (o.more || String(o.id).endsWith(':__more') || autoModel.isAuto(o.id) || String(o.id).startsWith('local:')) continue;
     const key = aiFallback.providerOf(o.id);
     if (!seen.has(key)) seen.set(key, { key, label: aiFallback.providerName(o.id, options), on: !autoExcluded().includes(key) });
   }
@@ -4867,7 +4878,7 @@ function newTabUrl() {
 
 // Who "Ask AI" on the new-tab page talks to, and whether the assistant can answer right now.
 // Driven by the same connected options as the sidebar's picker, so the two never disagree.
-const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ASSISTANT_NAMES = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local AI' };
 function homeAssistant() {
   const options = modelOptions();
   if (!options.length) return { name: 'AI', agentUsable: false, model: null }; // nothing connected: no provider to privilege
@@ -11384,7 +11395,7 @@ ipcMain.handle('settings:get', () => {
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
-    providerKeys: Object.fromEntries(Object.keys(providers.PROVIDERS).map((p) => [p, {
+    providerKeys: Object.fromEntries(Object.keys(providers.PROVIDERS).filter((p) => p !== 'local').map((p) => [p, {
       label: providers.PROVIDERS[p].label,
       stored: Boolean(readSettings().keys?.[p]),
       env: Boolean(process.env[ENV_KEYS[p]]),
@@ -11433,6 +11444,44 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   writeSettings({ ...settings, keys });
   await safeBrowsing.refresh().catch(() => {});
   return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
+});
+// ---- [local AI] Settings → AI → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
+const localState = () => {
+  const lm = require('./ai/local-models');
+  const c = lm.clean(readSettings().localAI);
+  return { enabled: c.enabled, flavor: c.flavor, url: c.url, confirmedHost: c.confirmedHost, models: c.models, defaults: lm.DEFAULT_URLS, names: lm.LABELS };
+};
+// What the user entered -> { ok, cfg } (the address checked) or { ok: false, error, needsConfirm?, host? }.
+function localCheck(input) {
+  const lm = require('./ai/local-models');
+  const cur = lm.clean(readSettings().localAI);
+  const flavor = lm.FLAVORS.includes(input?.flavor) ? input.flavor : cur.flavor;
+  const n = lm.normalizeUrl(flavor, input?.url);
+  if (!n.ok) return { ok: false, error: n.error };
+  let confirmedHost = '';
+  if (!n.local) {
+    if (cur.confirmedHost !== n.host && input?.confirmRemote !== true) return { ok: false, needsConfirm: true, host: n.host, error: n.host + ' isn’t on this computer. Messages and the page text you share would be sent there. Use it only if you run that server yourself.' };
+    confirmedHost = n.host;
+  }
+  const same = cur.flavor === flavor && cur.url === n.url;
+  return { ok: true, cfg: { ...cur, flavor, url: n.url, confirmedHost, models: same ? cur.models : [] } };
+}
+ipcMain.handle('settings:local-get', () => localState());
+ipcMain.handle('settings:local-save', async (_e, input) => {
+  const r = localCheck(input);
+  if (!r.ok) return r;
+  writeSettings({ ...readSettings(), localAI: { ...r.cfg, enabled: input?.enabled === true } });
+  await refreshModels('local');
+  return { ok: true, ...localState() };
+});
+ipcMain.handle('settings:local-detect', async (_e, input) => {
+  const r = localCheck(input);
+  if (!r.ok) return r;
+  const found = await require('./ai/local-models').detect(r.cfg, { fetchImpl: require('./browser/net-fetch').netFetch() });
+  if (!found.ok) return found;
+  writeSettings({ ...readSettings(), localAI: { ...r.cfg, enabled: input?.enabled === true, models: found.models } });
+  await refreshModels('local');
+  return { ...found, ...localState() };
 });
 ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
   if (!providers.PROVIDERS[provider]) return false;

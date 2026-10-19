@@ -80,6 +80,7 @@ When the AI names a tab (in its answer, in a step such as switching to or closin
 - **ADHD mode** (on by default, toggle in Settings → AI and agents): answers lead with the next action, use short numbered steps, and end with one small next step.
 - **Other AI models:** add an OpenAI, Grok (xAI), Gemini or OpenRouter key in Settings → AI and agents. Their models appear in the model menu, work with every browser tool, and can take over a chat mid-conversation.
 - **OpenRouter:** paste a key or **Sign in with OpenRouter** (OAuth with PKCE through a one-time local address; the key it returns is stored like a pasted one). The menu shows the newest Claude, GPT, Gemini, Llama, DeepSeek and Grok models; **More models…** searches all of them (the list is cached for a day). Models that can't use tools are marked **(chat only)**: they read the page with you but can't click or type in your tabs.
+- **Local models (Ollama and LM Studio):** in Settings → AI and agents → AI providers → **Local**, switch on **Use local models**, pick Ollama or LM Studio, and press **Detect**. Lumen lists the models you have installed, and they join the model menu under **Local**. No key, and nothing leaves your computer: only `localhost`, `127.0.0.1` and `::1` addresses work unless you confirm another one. Models that support tools can click and type in your tabs; the others answer as plain chat (the list says which is which). Auto and the automatic model switching never use a local model, and a local model that fails is never handed to a cloud one. See [Local models](docs/local-models.md).
 
 ### Asking before it acts
 
@@ -355,6 +356,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Let other apps use Lumen](docs/external-apps.md): set up Claude Desktop, Cursor, VS Code and Claude Code with a token each, and watch, stop or revoke them
 - [Connectors](docs/connectors.md): let the AI use Canvas, Gmail, Google Calendar, GitHub, Todoist and Notion once you connect them, what each can read and do, and where the secrets go
 - [MCP tool reference](docs/mcp-tools.md): every tool with its parameters
+- [Local models](docs/local-models.md): chat with Ollama or LM Studio models on your own computer, no key, what stays local, and tools versus plain chat
 - [Settings reference](docs/settings.md): every setting, its key in `settings.json` and its default
 - [Privacy protections](docs/privacy-protections.md): what Lumen hides from websites (leaving the tab, window size, fingerprints, WebRTC IP, tracking links and pings), and the limits
 - [Meeting helper](docs/meeting-helper.md): real-time answers with Ctrl+Shift+E, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
