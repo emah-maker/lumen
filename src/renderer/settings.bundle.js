@@ -1107,11 +1107,24 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const above = b.top - 12;
     const up = below < 260 && above > below;
     menu.style.width = `${width}px`;
-    menu.style.left = `${Math.max(left0, Math.min(b.left, right0 - width))}px`;
+    const wantLeft = Math.max(left0, Math.min(b.left, right0 - width));
+    menu.style.left = `${wantLeft}px`;
     menu.style.maxHeight = `${Math.max(180, Math.min(460, up ? above : below))}px`;
     menu.style.top = up ? '' : `${b.bottom + 6}px`;
     menu.style.bottom = up ? `${window.innerHeight - b.top + 6}px` : '';
     menu.classList.toggle('up', up);
+
+
+    const at = menu.getBoundingClientRect();
+    const dx = at.left - wantLeft;
+    if (Math.abs(dx) > 0.5) menu.style.left = `${wantLeft - dx}px`;
+    if (up) {
+      const dy = at.bottom - b.top + 6;
+      if (Math.abs(dy) > 0.5) menu.style.bottom = `${window.innerHeight - b.top + 6 + dy}px`;
+    } else {
+      const dy = at.top - (b.bottom + 6);
+      if (Math.abs(dy) > 0.5) menu.style.top = `${b.bottom + 6 - dy}px`;
+    }
   }
   function close(refocus = true) {
     if (menu.hidden) return;
@@ -4295,7 +4308,7 @@ async function buildAi(card) {
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
-    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')),
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
 
