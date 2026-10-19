@@ -4244,6 +4244,7 @@ function tabMenuTemplate(id) {
     ...pinToFilesItem(url), // [files] a file tab: Pin to Files
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+    { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
     { type: 'separator' },
     ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
     { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
@@ -4697,8 +4698,8 @@ function widgetAction(event, url, wc = null) {
 async function cacheFavicon(pageUrl, iconUrls) {
   const host = hostOf(pageUrl);
   if (!host || faviconStore.has(host)) return;
-  // Only sites the new-tab page shows: favorites and frequently visited ones.
-  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host)) return;
+  // Only sites the new-tab page shows (favorites and frequently visited ones) and the sites on the reading list.
+  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host) && !readingListStore?.list().some((e) => hostOf(e.url) === host)) return;
   for (const iconUrl of iconUrls.filter((u) => /^https?:/.test(u))) {
     try {
       const res = await net.fetch(iconUrl);
@@ -4747,6 +4748,30 @@ function bookmarkAllTabs() {
   return folder;
 }
 
+// ---------- Reading list: Save for later (features/reading-list.js; the page is lumen://readinglist) ----------
+// The list is read from <userData>/reading-list.json the first time a page is saved or the list is opened, so a profile that never uses it pays nothing.
+let readingListStore = null;
+function readingList() {
+  if (!readingListStore) {
+    readingListStore = require('./features/reading-list').create({ file: path.join(app.getPath('userData'), 'reading-list.json') });
+    readingListStore.onChange(() => managers.pushReadingList()); // an open Reading list page redraws
+  }
+  return readingListStore;
+}
+app.on('before-quit', () => { try { readingListStore?.flushSync(); } catch { /* nothing pending */ } });
+const readingIcon = (host) => (host ? faviconStore.get(host) || '' : ''); // a data: URL (the page's CSP allows only those), kept for hosts the new-tab page or the list shows
+function saveForLaterUrl(url, title, icons) {
+  const r = isWebUrl(url) ? readingList().add({ url, title }) : { ok: false };
+  toast(t(!r.ok ? 'readingList.cantSave' : r.added ? 'readingList.saved' : 'readingList.savedAgain'));
+  if (r.ok && icons?.length) cacheFavicon(url, icons); // (the list shows a site's icon the way the new-tab page does)
+  return r.ok;
+}
+// Ctrl+Shift+Y, the tab menu, the Bookmarks menu: the page in that tab. (A research tab's own session is not the user's browsing.)
+function saveForLater(tab) {
+  if (!tab || tab.isolated) { toast(t('readingList.cantSave')); return false; }
+  return saveForLaterUrl(tabUrl(tab), tabTitle(tab), tab.favicons);
+}
+
 function bookmarksMenu() {
   const list = bookmarks();
   const wc = activeTab()?.webContents;
@@ -4756,6 +4781,8 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: t('menu.saveForLater'), accelerator: 'CmdOrCtrl+Shift+Y', enabled: isWebUrl(current), click: () => saveForLater(tabs.find((x) => x.id === activeId)) },
+    { label: t('menu.showReadingList'), click: () => managers.open('readinglist') },
     { type: 'separator' },
     ...list.filter((b) => !b.folder).map((b) => ({ label: menuLabel(b.title || b.url), click: () => openTab(b.url) })),
     ...[...new Set(list.filter((b) => b.folder).map((b) => b.folder))].map((folder) => ({
@@ -4816,6 +4843,8 @@ const managers = createManagers({
   bookmarks: () => bookmarks(),
   saveBookmarks: (list) => writeSettings({ ...readSettings(), bookmarks: list }),
   bookmarksChanged: () => sendTabs(),
+  readingList: () => readingList(),
+  readingIcon: (host) => readingIcon(host),
   downloads,
   openFolder: () => shell.openPath(settingsBackend.downloadDir()),
 });
@@ -4823,6 +4852,7 @@ managers.setup();
 // When each site last stored cookies: lets Clear browsing data honour a time range for them.
 const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
+if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/reading-list.js
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
@@ -5022,6 +5052,7 @@ function showContextMenu(wc, p) {
       ...link.open, // Open Link in New Window, … in Private Window
       { type: 'separator' },
       ...link.save, // Save Link As…
+      ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveLinkForLater'), click: () => saveForLaterUrl(p.linkURL, p.linkText) }]),
       { label: t('menu.copyLink'), click: () => { clipboard.writeText(p.linkURL); toast(t('menu.linkCopied')); } },
       { type: 'separator' },
     );
@@ -5056,6 +5087,7 @@ function showContextMenu(wc, p) {
     if (isWebUrl(wc.getURL())) {
       items.push(
         { label: t('menu.savePageAs'), ...shortcutHint('CmdOrCtrl+S'), click: () => pageTools.savePage(wc).catch(() => {}) },
+        ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), click: () => saveForLater(tabByContents(wc)) }]),
         { label: t('menu.print'), ...shortcutHint('CmdOrCtrl+P'), click: () => printTab(wc) },
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
@@ -5105,6 +5137,7 @@ function handleShortcut(event, input) {
   else if (mod && key === 'f' && tabs.find((t) => t.id === activeId)?.settings) { wc.focus(); wc.executeJavaScript("{ const s = document.getElementById('search'); s?.focus(); s?.select(); }").catch(() => {}); } // [settings] Ctrl+F searches settings
   else if (mod && key === 'f') openFindBar();
   else if (mod && input.shift && key === 'o') managers.open('bookmarks');
+  else if (mod && input.shift && !input.alt && key === 'y') saveForLater(tabs.find((x) => x.id === activeId)); // Save for later (the reading list: lumen://readinglist)
   else if (mod && input.shift && key === 'j' && process.platform !== 'darwin') managers.open('downloads'); // Ctrl+J stays the sidebar
   else if (process.platform === 'darwin' && input.meta && input.alt && key === 'l') managers.open('downloads');
   else if (mod && input.shift && !input.alt && key === 'k') newSidebarChat(); // K sits next to J (the sidebar); Ctrl+Shift+J is Downloads on Windows/Linux
@@ -6269,7 +6302,7 @@ function macMenu() {
         normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') })] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
@@ -7945,7 +7978,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -8651,6 +8684,7 @@ const macrosFeature = require('./features/macros-runtime').create({
 });
 macrosFeature.register();
 agent.browser.macros = macrosFeature; // the run_macro tool (ai/agent.js)
+agent.browser.readingList = (input, tab, hidden) => require('./features/reading-list').toolText(input, { store: readingList(), tab, hidden }); // the reading_list tool (ai/agent.js)
 if (TEST) global.__macros = macrosFeature;
 
 // ---------- [settings] lumen://settings ----------

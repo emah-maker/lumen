@@ -25,6 +25,7 @@ const PAGE_FIRST = [
   { combo: 'mod+shift+s', does: 'Screenshot' },
   { combo: 'mod+o', does: 'Open file' },
   { combo: 'mod+shift+o', does: 'Bookmarks' },
+  { combo: 'mod+shift+y', does: 'Save for later' },
   { combo: 'mod+p', does: 'Print' },
   { combo: 'mod+shift+p', does: 'Print with the system dialog' },
   { combo: 'mod+f', does: 'Find in page' },
