@@ -104,6 +104,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
     routines: { preview: (text) => ipcRenderer.invoke('chat:routine-preview', { text }), create: (spec) => ipcRenderer.invoke('chat:routine-create', spec) }, // [routines] "Schedule this" (renderer/chat-routines.js)
     dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js)
+    offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
