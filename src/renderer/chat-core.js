@@ -1256,7 +1256,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -1556,6 +1556,7 @@ window.assistant.onEvent((event) => {
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
+      if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') })); // [connectors] what a write made, with its link
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
       if (event.id) { turn.steps.set(event.id, step); startStepClock(); } // how long it has been going / took
       if (event.name === 'annotate') { step.dataset.tool = 'annotate'; step.dataset.marks = String(Array.isArray(event.input?.marks) ? event.input.marks.length : 0); }
@@ -1633,7 +1634,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -2178,10 +2179,10 @@ function showHelperCard(e) {
   if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
@@ -2286,12 +2287,15 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 // A tool from an MCP server the user added (agent.js allowExternal): the card shows exactly what
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '' }) {
+// [connectors] A write in a connected service (note 'connector') with `fields`: where it goes, then its text in boxes the user can
+// edit; Allow sends what the boxes hold. Only a real click allows it (no Enter, no scripted click).
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, app = false, note = '', fields = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
   card.setAttribute('role', 'group');
   card.setAttribute('aria-label', heading || t('approval.tool.use', { host }));
+  const editing = note === 'connector' && Array.isArray(fields?.list) && fields.list.length > 0;
   const title = Object.assign(document.createElement('p'), { className: 'approval-title', textContent: heading || t('approval.tool.use', { host }) });
   const detail = Object.assign(document.createElement('p'), {
     className: 'approval-detail',
@@ -2300,9 +2304,18 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
       ? t('approval.tool.terminal')
       : tainted
         ? t('approval.tool.tainted')
-        : note === 'connector' ? t('approval.connector.details') : t('approval.tool.details'), // (a connected service: the change it would make, in the user's own account)
+        : note === 'connector' ? `${t('approval.connector.details')}${editing ? ` ${t('approval.connector.edit')}` : ''}` : t('approval.tool.details'), // (a connected service: the change it would make, in the user's own account)
   });
-  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: args || '{}' });
+  const pre = Object.assign(document.createElement('pre'), { className: 'approval-args', textContent: editing ? String(fields.fixed || '') : args || '{}' });
+  const boxes = editing ? fields.list.filter((f) => f && typeof f.key === 'string').map((f) => {
+    const box = Object.assign(document.createElement(f.multiline ? 'textarea' : 'input'), { className: 'approval-edit', value: String(f.value ?? ''), maxLength: Number(f.max) || 200, spellcheck: true });
+    if (f.multiline) box.rows = Math.min(12, Math.max(3, String(f.value ?? '').split('\n').length + 1)); else box.type = 'text';
+    box.dataset.key = f.key;
+    box.setAttribute('aria-label', String(f.label || f.key));
+    const label = Object.assign(document.createElement('label'), { className: 'approval-edit-label' });
+    label.append(Object.assign(document.createElement('span'), { textContent: String(f.label || f.key) }), box);
+    return { key: f.key, box, label };
+  }) : [];
   const actions = document.createElement('div');
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: t('approval.deny') });
@@ -2315,14 +2328,16 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     window.assistant.approve?.(approvalId, ok);
   };
   deny.onclick = () => answer(false);
-  allow.onclick = () => answer(true);
+  allow.onclick = note === 'connector'
+    ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])) } : true); } // (a real click only)
+    : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card) { e.preventDefault(); answer(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); } // (Escape in a box being edited keeps the card and its edits)
   });
   actions.append(...[deny, always, allow].filter(Boolean));
-  card.append(title, detail, pre, actions);
+  card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);
   append(card, { force: true }); // waiting for you: always in view
   approvals.set(approvalId, { card, host, tool: true });
   scrollToBottom();

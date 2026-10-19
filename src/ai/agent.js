@@ -5121,7 +5121,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // The servers' tools for this turn; a server that won't start is mentioned once per error.
   async externalToolDefs(emit) {
-    const own = this.browser.connectors?.defs() || []; // [connectors] one tool for every connected service (none when nothing is connected)
+    const own = this.browser.connectors?.defs({ readOnly: Boolean(this.browser.background) }) || []; // [connectors] one tool for every connected service (none when nothing is connected); a background task or routine gets the reads only
     const ext = this.browser.externalTools;
     if (!ext) return own;
     const { defs, failed } = await ext.tools();
@@ -5166,17 +5166,26 @@ ${prompt}` : prompt), historyImages: [] };
   // A read goes straight through (the user connected the service for this), and its answer is untrusted content like a page,
   // so the chat counts as having read page content from then on. A write (add a task, send, post) always asks, with what it
   // would do on the card, and needs a real click: "Always allow", Auto-allow, Bypass permissions, "agents don't ask", hands-off mode and
-  // background tasks never answer it. Outside agents (MCP clients) don't get the tool at all: the user's accounts are theirs to open up.
+  // background tasks and routines never answer it (those are offered the reads only, and a write they send anyway is refused). The
+  // card's text fields (a comment, a title) can be edited there; what the user allowed is what is sent. Outside agents (MCP clients)
+  // don't get the tool at all: the user's accounts are theirs to open up.
   async allowConnector(input, { emit, signal, who, run, noAsk, external }) {
     const svc = this.browser.connectors;
     if (external || !svc?.hasAny()) throw new Error('Unknown tool: connector');
     const holder = taintHolder(run);
     if (svc.isWrite(input)) {
+      if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
-      const { title, detail } = svc.describeWrite(input);
-      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector' });
+      const { title, detail, fixed, fields } = await svc.describeWrite(input, { signal });
+      const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null });
       if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
+      if (answer?.edits) { // the user changed the text on the card: that is what goes
+        const next = connectors.applyEdits(input, answer.edits);
+        if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);
+        input.args = next.input.args;
+      }
+      (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
     }
     if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
@@ -5184,7 +5193,10 @@ ${prompt}` : prompt), historyImages: [] };
 
   async runConnector(input) {
     if (!this.connectorGrants?.delete(input)) throw new Error('Unknown tool: connector');
-    return this.browser.connectors.call(input);
+    const emit = this.connectorEmits?.get(input);
+    this.connectorEmits?.delete(input);
+    const onWritten = emit ? ({ label, link }) => emit({ type: 'tool', name: 'connector_done', label, ...(link ? { link } : {}) }) : null; // a done step: "GitHub · Opened ada/x#7" with Open
+    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten });
   }
   // ---- [/connectors]
 
@@ -5373,7 +5385,7 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
     if (action !== 'upload-pick' && action !== 'app' && !noBypass && this.bypassOn()) { // ('app': which program the AI may use is always the user's to answer, even with Bypass on)
@@ -5390,7 +5402,7 @@ ${out.text}${note}
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
       ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}) }
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(fields ? { fields } : {}) } // ([connectors] fields: a write's text the user can edit on the card)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)
@@ -5426,7 +5438,7 @@ ${out.text}${note}
     const resolve = this.pendingApprovals.get(approvalId);
     if (!resolve) return;
     this.pendingApprovals.delete(approvalId);
-    resolve(ok === 'always' ? 'always' : Boolean(ok)); // 'always': an MCP tool card's "Always allow"
+    resolve(ok === 'always' ? 'always' : ok && typeof ok === 'object' && ok.edits && typeof ok.edits === 'object' ? { edits: { ...ok.edits } } : Boolean(ok)); // 'always': an MCP tool card's "Always allow"; { edits }: a connector write's card, allowed with its text as the user left it
   }
 
   // ---- [uploads] upload_file (features/upload-files.js, docs/uploading-files.md)
