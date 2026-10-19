@@ -23,7 +23,8 @@ const PAGE = '1234567890abcdef1234567890abcdef';
 // as a read-only token would.
 function fakeFetch() {
   const seen = [];
-  const mode = { github: 'ok', notion: 'ok' };
+  const mode = { github: 'ok', notion: 'ok', notionPatchFailAt: 0 };
+  let patches = 0;
   const reply = (status, body, headers = {}) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers });
   const fetch = async (url, opts = {}) => {
     const u = new URL(url);
@@ -33,6 +34,10 @@ function fakeFetch() {
       if (u.pathname === '/user') return reply(200, { login: 'ada' });
       if (u.pathname === '/search/issues') return reply(200, { total_count: 0, items: [] });
       if (rec.method === 'POST' && mode.github === 'readonly') return reply(403, { message: 'Resource not accessible by personal access token' });
+      if (rec.method === 'POST' && mode.github === 'locked') return reply(403, { message: 'Unable to create comment because issue is locked.' });
+      if (rec.method === 'POST' && mode.github === 'archived') return reply(403, { message: 'Repository was archived so is read-only.' });
+      if (rec.method === 'POST' && mode.github === 'notfound') return reply(404, { message: 'Not Found' });
+      if (rec.method === 'POST' && mode.github === 'rate429') return reply(429, { message: 'Too many requests' });
       if (rec.method === 'POST' && /^\/repos\/ada\/notes\/issues\/7\/comments$/.test(u.pathname)) return reply(201, { id: 1, html_url: 'https://github.com/ada/notes/issues/7#issuecomment-1' });
       if (rec.method === 'POST' && u.pathname === '/repos/ada/notes/issues') return reply(201, { number: 8, title: rec.body.title, html_url: 'https://github.com/ada/notes/issues/8' });
       return reply(404, { message: 'Not Found' });
@@ -42,7 +47,11 @@ function fakeFetch() {
       if (rec.method !== 'GET' && mode.notion === 'readonly') return reply(403, { object: 'error', code: 'restricted_resource' });
       if (rec.method === 'GET' && u.pathname === `/v1/pages/${PAGE}`) return reply(200, { id: PAGE, properties: { title: { type: 'title', title: [{ plain_text: 'Lab notebook' }] } } });
       if (rec.method === 'POST' && u.pathname === '/v1/pages') return reply(200, { id: 'abcdefabcdefabcdefabcdefabcdef12', url: 'https://www.notion.so/Week-7-abcdefabcdefabcdefabcdefabcdef12' });
-      if (rec.method === 'PATCH' && /^\/v1\/blocks\/[0-9a-f]{32}\/children$/.test(u.pathname)) return reply(200, { results: [] });
+      if (rec.method === 'PATCH' && /^\/v1\/blocks\/[0-9a-f]{32}\/children$/.test(u.pathname)) {
+        patches++;
+        if (mode.notionPatchFailAt && patches === mode.notionPatchFailAt) return reply(502, { object: 'error' });
+        return reply(200, { results: [] });
+      }
       return reply(404, { object: 'error' });
     }
     if (u.host === 'api.todoist.com') {
@@ -52,7 +61,7 @@ function fakeFetch() {
     }
     throw new Error(`unexpected host ${u.host}`);
   };
-  return { fetch, seen, mode };
+  return { fetch, seen, mode, resetPatches: () => { patches = 0; } };
 }
 
 async function main() {
@@ -91,6 +100,9 @@ async function main() {
   fake.mode.github = 'readonly';
   const ro = await fails(() => svc.call(comment));
   check('a read-only token gets a clear "give it Read and write" message', /can only read here/.test(ro) && /Read and write/.test(ro) && /connect GitHub again/.test(ro), ro);
+  const why = {};
+  for (const m of ['locked', 'archived', 'notfound', 'rate429']) { fake.mode.github = m; why[m] = await fails(() => svc.call(comment)); }
+  check('a locked conversation, an archived repo, Not Found and a 429 each say what they are, not "can only read"', /locked/.test(why.locked) && /archived/.test(why.archived) && /can’t find/.test(why.notfound) && /limiting requests/.test(why.rate429) && !Object.values(why).some((m) => /can only read/.test(m)), JSON.stringify(why));
   fake.mode.github = 'ok';
 
   console.log('--- Notion');
@@ -112,6 +124,28 @@ async function main() {
   check('append adds the text to the end of the page, 100 blocks a request, in order', patches.length === 3 && patches.every((r) => r.path === `/v1/blocks/${PAGE}/children`) && patches.map((r) => r.body.children.length).join() === '100,100,30' && patches[2].body.children[29].paragraph.rich_text[0].text.content === 'line 229', patches.map((r) => r.body.children.length).join());
   const big = require('../src/features/connectors/providers/notion').toBlocks('x'.repeat(4500));
   check('a line longer than Notion takes in one piece is split into pieces of 2000', big.length === 1 && big[0].paragraph.rich_text.map((r) => r.text.content.length).join() === '2000,2000,500', JSON.stringify(big[0].paragraph.rich_text.map((r) => r.text.content.length)));
+  const notion = require('../src/features/connectors/providers/notion');
+  check('an address with a ?v= view id or a #block resolves to the page in its path, not the view', notion.pageId(`https://www.notion.so/ada/Lab-${PAGE}?v=ffffffffffffffffffffffffffffffff`) === PAGE && notion.pageId(`https://www.notion.so/${PAGE}#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`) === PAGE && registry.validate({ app: 'notion', action: 'append', args: { page_id: `https://www.notion.so/ada/Lab-${PAGE}?v=ffffffffffffffffffffffffffffffff`, body: 'x' } }) === null, notion.pageId(`https://www.notion.so/ada/Lab-${PAGE}?v=ffffffffffffffffffffffffffffffff`));
+  check('an address whose only id is in the query is refused', /expected form/.test(registry.validate({ app: 'notion', action: 'append', args: { page_id: 'https://www.notion.so/ada/Board?v=ffffffffffffffffffffffffffffffff', body: 'x' } }) || ''), '');
+  const emoji = notion.toBlocks(`${'a'.repeat(1999)}😀b`)[0].paragraph.rich_text.map((r) => r.text.content);
+  check('a split never cuts an emoji in half', emoji.length === 2 && emoji[0].length === 1999 && emoji[1] === '😀b' && emoji.join('') === `${'a'.repeat(1999)}😀b`, JSON.stringify(emoji.map((x) => x.length)));
+  fake.mode.notionPatchFailAt = 2;
+  fake.resetPatches();
+  const partialPage = await fails(() => svc.call({ app: 'notion', action: 'create_page', args: { parent_id: PAGE, title: 'Long', body: Array.from({ length: 250 }, (_, i) => `l${i}`).join('\n') } }));
+  check('create_page failing partway says the page was made (with its link) and how many blocks got in, and not to repeat it', /The page was created \(https:\/\/www\.notion\.so\/Week-7-[0-9a-f]{32}\) and 200 of 250 blocks were added/.test(partialPage) && /Don’t repeat this/.test(partialPage), partialPage);
+  fake.resetPatches();
+  const partialAppend = await fails(() => svc.call({ app: 'notion', action: 'append', args: { page_id: PAGE, body: Array.from({ length: 150 }, (_, i) => `l${i}`).join('\n') } }));
+  check('append failing partway says how much was added and not to repeat it', /100 of 150 blocks were added/.test(partialAppend) && /Don’t repeat this/.test(partialAppend) && /notion\.so\/1234567890abcdef/.test(partialAppend), partialAppend);
+  fake.mode.notionPatchFailAt = 1;
+  fake.resetPatches();
+  const firstFails = await fails(() => svc.call({ app: 'notion', action: 'append', args: { page_id: PAGE, body: 'x' } }));
+  check('when nothing got in, the error is the plain one', /Notion answered 502/.test(firstFails) && !/repeat/.test(firstFails), firstFails);
+  fake.mode.notionPatchFailAt = 0;
+  const stop = new AbortController();
+  stop.abort();
+  const n2 = fake.seen.length;
+  const stopped = await svc.describeWrite(page, { signal: stop.signal });
+  check('a stopped run’s card makes no title lookup (the run’s signal reaches it), and the card still shows the page id', fake.seen.length === n2 && /New page under \(1234567890abcdef1234567890abcdef\)/.test(stopped.detail), JSON.stringify({ sent: fake.seen.slice(n2), stopped }));
   fake.mode.notion = 'readonly';
   const nro = await fails(() => svc.call({ app: 'notion', action: 'append', args: { page_id: PAGE, body: 'x' } }));
   check('an integration without “Insert content” gets a message that says how to turn it on', /isn’t allowed to add content/.test(nro) && /Insert content/.test(nro), nro);

@@ -34,12 +34,24 @@ const titleOf = (o) => {
   return plain(prop?.title);
 };
 const ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{32}/i;
-// A page id from an id or an address: the last id in it (an address ends in the page's own), without dashes, or ''.
-const pageId = (v) => { const all = String(v || '').match(new RegExp(ID.source, 'gi')); return all ? all[all.length - 1].replace(/-/g, '').toLowerCase() : ''; };
+// A page id from an id or an address: the last id in its path (an address ends in the page's own; a ?v= view id or a #block
+// in the query or fragment is not the page), without dashes, or ''.
+const pageId = (v) => { const all = String(v || '').replace(/[?#].*$/s, '').match(new RegExp(ID.source, 'gi')); return all ? all[all.length - 1].replace(/-/g, '').toLowerCase() : ''; };
 
 // Text as Notion blocks, a line each: # ## ### headings, - or * bullets, 1. numbered, > quotes, the rest paragraphs. Notion
 // takes at most 2000 characters in one piece of text, so a long line is split into pieces.
-const rich = (t) => { const out = []; for (let i = 0; i < t.length || !out.length; i += 2000) out.push({ type: 'text', text: { content: t.slice(i, i + 2000) } }); return out; };
+// (A piece never ends between the two halves of a character outside the BMP, an emoji: that cut would send broken text.)
+const rich = (t) => {
+  const out = [];
+  for (let i = 0; i < t.length || !out.length;) {
+    let end = Math.min(i + 2000, t.length);
+    if (end < t.length && /[\ud800-\udbff]/.test(t[end - 1])) end--;
+    out.push({ type: 'text', text: { content: t.slice(i, end) } });
+    if (end === i) break; // (an empty text: one empty piece)
+    i = end;
+  }
+  return out;
+};
 function toBlocks(body) {
   const blocks = [];
   for (const raw of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
@@ -53,9 +65,23 @@ function toBlocks(body) {
   }
   return blocks;
 }
-// Notion adds at most 100 blocks a request: the rest follow in more requests, in order.
-async function appendBlocks(ctx, pid, blocks) {
-  for (let i = 0; i < blocks.length; i += 100) await call(ctx, `/blocks/${pid}/children`, { method: 'PATCH', json: { children: blocks.slice(i, i + 100) } });
+// Notion adds at most 100 blocks a request: the rest follow in more requests, in order. A request that fails partway leaves the
+// earlier ones in place, so the error says how far it got (`done`: blocks already there before this call, `total`: all of them) and
+// tells the AI not to run it again, which would add the same text twice.
+async function appendBlocks(ctx, pid, blocks, { done = 0, total = blocks.length, made = '' } = {}) {
+  let added = done;
+  for (let i = 0; i < blocks.length; i += 100) {
+    const chunk = blocks.slice(i, i + 100);
+    try {
+      await call(ctx, `/blocks/${pid}/children`, { method: 'PATCH', json: { children: chunk } });
+    } catch (err) {
+      if (!added) throw err;
+      const link = `https://www.notion.so/${pid}`;
+      throw new ConnectorError(`${made ? `The page was created (${made}) and ` : `Part of the text was added to the page (${link}): `}${added} of ${total} blocks were added before Notion stopped (${err.message}). Don’t repeat this: tell the user what is missing.`, 'partial');
+    }
+    added += chunk.length;
+  }
+  return added;
 }
 const pageLink = (p, pid) => (/^https:\/\/(www\.)?notion\.so\//.test(String(p?.url || '')) ? String(p.url) : `https://www.notion.so/${pid}`);
 
@@ -104,7 +130,9 @@ actions.create_page = async (ctx, { parent_id: parent, title, body }) => {
   const blocks = toBlocks(body);
   const page = await call(ctx, '/pages', { method: 'POST', json: { parent: { page_id: pid }, properties: { title: { title: rich(title) } }, children: blocks.slice(0, 100) } });
   const id = pageId(page?.id);
-  if (blocks.length > 100 && id) await appendBlocks(ctx, id, blocks.slice(100));
+  const first = Math.min(blocks.length, 100);
+  if (blocks.length > 100 && !id) throw new ConnectorError(`The page was created and ${first} of ${blocks.length} blocks were added, but Notion didn’t say which page it is, so the rest weren’t. Don’t repeat this: tell the user what is missing.`, 'partial');
+  if (blocks.length > 100) await appendBlocks(ctx, id, blocks.slice(100), { done: first, total: blocks.length, made: pageLink(page, id) });
   return { text: `Added the page “${flat(title, 160)}”${id ? ` (id ${id})` : ''}.`, link: pageLink(page, id || pid), done: `Added “${flat(title, 60)}”` };
 };
 

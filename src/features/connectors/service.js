@@ -94,6 +94,7 @@ function create({
         const h = { Accept: accept, ...headers };
         if (def.kind === 'token' && def.id !== 'gcal') h.Authorization = `Bearer ${secret}`;
         if (json !== undefined) h['Content-Type'] = 'application/json';
+        if (signal?.aborted) throw new ConnectorError('Stopped.', 'other'); // (stopped before it began: nothing is sent)
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         const onAbort = () => controller.abort();
@@ -269,13 +270,13 @@ function create({
   // What the confirm card says before a write: `detail` is everything it will send, `fixed` the part the user can't change
   // (where it goes) and `fields` the text the user can edit there (registry.editable). A provider may look up a name for
   // the card (Notion: the page's title), which is a read; when that fails the card shows the id instead.
-  async function describeWrite(input) {
+  async function describeWrite(input, { signal } = {}) { // signal: the run's, so Stop also stops the title lookup
     const def = registry.get(input.app);
     const args = input.args || {};
     const p = provider(def.id);
     const entry = connected[def.id];
     let names = {};
-    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, null), input.action, args)) || {}; } catch { names = {}; } }
+    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);
     return {

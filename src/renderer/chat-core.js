@@ -2276,7 +2276,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
-    else if (e.key === 'Escape') { e.preventDefault(); answer(false); }
+    else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); } // (Escape in a box being edited keeps the card and its edits)
   });
   actions.append(...[deny, always, allow].filter(Boolean));
   card.append(title, detail, ...(editing && !fields.fixed ? [] : [pre]), ...boxes.map((b) => b.label), actions);

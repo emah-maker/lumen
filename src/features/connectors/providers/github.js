@@ -43,10 +43,16 @@ async function search(ctx, kind, role, state) {
 async function post(ctx, path, json) {
   const res = await ctx.http(path, { method: 'POST', json, headers: HEADERS });
   if (res.status === 401) throw new ConnectorError('GitHub refused the token. Connect GitHub again with a new one.', 'auth');
-  if (res.status === 403 || res.status === 404) {
-    const limited = res.status === 403 && (/rate limit|secondary/i.test(res.text) || res.headers.get('x-ratelimit-remaining') === '0');
-    if (limited) throw new ConnectorError('GitHub is limiting requests right now. Try again in a minute.', 'rate');
-    throw new ConnectorError('The GitHub token can only read here. To comment or open issues, edit the token at github.com/settings/personal-access-tokens: give it this repository and Issues and Pull requests “Read and write”. Then connect GitHub again in Settings → You and AI → Connectors.', 'scope');
+  let message;
+  try { message = flat(JSON.parse(res.text)?.message, 200); } catch { message = flat(res.text, 200); }
+  const limited = res.status === 429 || (res.status === 403 && (/rate limit|secondary/i.test(message) || res.headers.get('x-ratelimit-remaining') === '0'));
+  if (limited) throw new ConnectorError('GitHub is limiting requests right now. Try again in a minute.', 'rate');
+  if (res.status === 404) throw new ConnectorError('GitHub can’t find that repository, issue or pull request (or the token can’t see it). Check the name and number.', 'missing');
+  if (res.status === 403) {
+    if (/resource not accessible/i.test(message)) throw new ConnectorError('The GitHub token can only read here. To comment or open issues, edit the token at github.com/settings/personal-access-tokens: give it this repository and Issues and Pull requests “Read and write”. Then connect GitHub again in Settings → You and AI → Connectors.', 'scope');
+    if (/locked/i.test(message)) throw new ConnectorError('That conversation is locked on GitHub, so it can’t take new comments.', 'other');
+    if (/archived/i.test(message)) throw new ConnectorError('That repository is archived on GitHub, so it is read-only.', 'other');
+    throw new ConnectorError(`GitHub refused that${message ? `: ${message}` : '.'}`, 'other');
   }
   if (res.status === 410) throw new ConnectorError('Issues are turned off in that repository.', 'missing');
   if (res.status === 422) throw new ConnectorError(`GitHub didn’t accept that: ${flat(res.text, 160)}`, 'args');

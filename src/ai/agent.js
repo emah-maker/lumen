@@ -4976,7 +4976,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
-      const { title, detail, fixed, fields } = await svc.describeWrite(input);
+      const { title, detail, fixed, fields } = await svc.describeWrite(input, { signal });
       const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null });
       if (!answer) throw new Error(`The user did not allow that (${title}). Ask them what to do instead.`);
       if (answer?.edits) { // the user changed the text on the card: that is what goes
