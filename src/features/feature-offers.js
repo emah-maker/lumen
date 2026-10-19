@@ -15,6 +15,8 @@
 const OFFERS = [
   // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   { key: 'aiDeviceAccess', value: true, title: 'settings.ai.deviceAccess', detail: 'settings.ai.deviceAccessDesc', where: 'Settings > AI' },
+  // [routines] features/routine-webhooks.js: start a routine from Shortcuts, cron or a script through a local web link
+  { key: 'routineWebhooks', value: true, title: 'settings.routines.webhooks', detail: 'settings.routines.webhooksDesc', where: 'Settings > AI and agents > Routines' },
 ];
 
 // What to do at startup: { show: [offer], seen: [key] } (seen: what to record now, before anything is shown, so a

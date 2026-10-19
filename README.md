@@ -341,7 +341,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Meeting helper](docs/meeting-helper.md): real-time answers with Ctrl+Shift+E, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
 - [The AI using other apps](docs/desktop-apps.md): Word, File Explorer and more on your PC (Windows): per-app approval, what is never available, the banner and Stop
-- [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do (all of them, with templates and quiet hours, in Settings → AI and agents → Routines)
+- [Routines](docs/routines.md): requests the AI repeats on a schedule, from a local web link or when new email arrives, when they run, and what they may do (all of them, with templates, quiet hours and web links, in Settings → AI and agents → Routines)
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 
 ## Layout

@@ -88,7 +88,7 @@ check('a routine counts as repeating: the store never drops it to make room', bg
 const stored = bg.sanitizeTask(JSON.parse(JSON.stringify(task)));
 check('a stored routine comes back whole (schedule, start page, history)', stored && stored.schedule.repeat === 'weekdays' && stored.routine.startUrl === task.routine.startUrl && Array.isArray(stored.routine.history) && stored.status === 'scheduled');
 check('a damaged routine schedule makes the task unusable, not a crash', bg.sanitizeTask({ ...JSON.parse(JSON.stringify(task)), schedule: { type: 'routine', repeat: 'weekly', days: [] } }) === null);
-check('garbage in the routine state is cleaned', JSON.stringify(R.sanitizeRoutine({ startUrl: 'file:///etc/passwd', lastDue: 'x', history: [{ status: 'evil', result: 5 }] })) === JSON.stringify({ startUrl: '', template: '', lastDue: null, trigger: null, scheduledFor: null, history: [{ startedAt: 0, endedAt: 0, scheduledFor: null, trigger: 'schedule', status: 'done', result: '5', error: '' }] }));
+check('garbage in the routine state is cleaned', JSON.stringify(R.sanitizeRoutine({ startUrl: 'file:///etc/passwd', lastDue: 'x', history: [{ status: 'evil', result: 5 }] })) === JSON.stringify({ startUrl: '', template: '', lastDue: null, trigger: null, scheduledFor: null, quietUnlessNeeded: false, input: '', webhookHash: '', inbox: { seen: [], primed: false, checkedAt: null, error: '' }, history: [{ startedAt: 0, endedAt: 0, scheduledFor: null, trigger: 'schedule', status: 'done', result: '5', error: '' }] }));
 const paused = { ...task, enabled: false };
 check('a disabled routine is never due', bg.nextRunAt(paused) === null && R.dueAt(paused) === null);
 const running = { ...task, status: 'running', lastRun: t0, routine: { ...task.routine, trigger: 'schedule', scheduledFor: t0 } };
@@ -226,20 +226,20 @@ check('"every day at 13pm" is not a time', R.parseScheduleText('every day at 13p
 
 // ---- templates
 {
-  check('four one-click templates need no page, and all have a name, description and request in the locale file', (() => {
+  check('five one-click templates need no page, and all have a name, description and request in the locale file', (() => {
     const en = require('../src/locales/en.json');
     const oneClick = R.TEMPLATES.filter((x) => !x.page).map((x) => x.key);
-    return JSON.stringify(oneClick) === JSON.stringify(['email', 'canvas', 'news', 'calendar']) && R.TEMPLATES.every((x) => ['name', 'description', 'prompt'].every((f) => typeof en[`routines.template.${x.key}.${f}`] === 'string'));
+    return JSON.stringify(oneClick) === JSON.stringify(['email', 'canvas', 'news', 'calendar', 'heartbeat']) && R.TEMPLATES.every((x) => ['name', 'description', 'prompt'].every((f) => typeof en[`routines.template.${x.key}.${f}`] === 'string'));
   })());
   check('every template schedule is a valid routine schedule', R.TEMPLATES.every((x) => { try { R.validateNew(R.normalizeRoutineSchedule(x.schedule, t0), t0); return true; } catch { return false; } }));
   check('the connector templates name a connector that exists', (() => {
     const ids = require('../src/features/connectors/registry').CONNECTORS.map((c) => c.id);
-    return R.TEMPLATES.filter((x) => x.connector).every((x) => ids.includes(x.connector)) && R.TEMPLATES.filter((x) => x.connector).map((x) => x.connector).join() === 'gmail,canvas,gcal';
+    return R.TEMPLATES.filter((x) => x.connector).every((x) => ids.includes(x.connector)) && R.TEMPLATES.filter((x) => x.connector).map((x) => x.connector).join() === 'gmail,canvas,gcal,gmail';
   })());
   check('the connector prompts name only actions the connector really has', (() => {
     const en = require('../src/locales/en.json');
     const reg = require('../src/features/connectors/registry');
-    return [['email', 'gmail', 'unread'], ['canvas', 'canvas', 'upcoming'], ['canvas', 'canvas', 'announcements'], ['calendar', 'gcal', 'events']].every(([key, app, action]) => reg.get(app).actions[action] && en[`routines.template.${key}.prompt`].includes(`action ${action}`) && en[`routines.template.${key}.prompt`].includes(`app ${app}`));
+    return [['email', 'gmail', 'unread'], ['canvas', 'canvas', 'upcoming'], ['canvas', 'canvas', 'announcements'], ['calendar', 'gcal', 'events'], ['heartbeat', 'gmail', 'unread'], ['heartbeat', 'gcal', 'events']].every(([key, app, action]) => reg.get(app).actions[action] && en[`routines.template.${key}.prompt`].includes(`action ${action}`) && en[`routines.template.${key}.prompt`].includes(`app ${app}`));
   })());
   check('the template that was added is remembered on the routine and survives storage', R.sanitizeRoutine({ template: 'email' }).template === 'email' && R.sanitizeRoutine({ template: 'nope' }).template === '' && R.newRoutineState().template === '');
   check('a template routine made switched off is never due until it is turned on', (() => {

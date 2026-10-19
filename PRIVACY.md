@@ -53,6 +53,8 @@ When the sidebar AI still hands a task back to you after Lumen's one automatic s
 
 Settings → AI also has optional **Give … full access to this computer** switches for Claude Code, Grok Build and Antigravity in the sidebar (all off by default, one each plus a master switch). With one on, that command-line AI can read any file on your computer and run commands, as it does in your terminal, and what it reads is sent to its own AI provider under that provider's privacy policy. Lumen does not see or keep it.
 
+**Routine web links** (Settings → AI and agents → Routines, off by default) open a small listener on `127.0.0.1` (port 47821 unless you change it) so programs on your computer can start a routine. It accepts nothing from other computers, answers only `POST /routines/<id>/run` with that routine's own key, and keeps only a SHA-256 fingerprint of each key. Text sent with a request is stored with the routine's run (encrypted with the background tasks) and goes to your AI provider as part of that run. If you expose the port to the internet yourself (a tunnel for Zapier or IFTTT), anyone with the link and key can start the routine, at most once a minute, and its approvals still apply. A routine whose trigger is **When new email arrives** reads the unread list of your Gmail connector every few minutes, on your computer; only the new messages' sender, subject and first words go to your AI provider with that run.
+
 The same goes for **Allow automation tools (Chrome DevTools Protocol)**, also off by default: while it's on, programs on your computer can read and control your tabs without asking.
 
 ## Removing your data

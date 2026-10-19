@@ -12,12 +12,15 @@
   const timeText = (hhmm) => { const [hh, mm] = String(hhmm || '08:00').split(':').map(Number); return new Date(2026, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const clock = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-  // "Weekdays at 8:00 AM", "Every 3 hours", "Mon, Thu at 9:15 AM" (the same wording as the sidebar's Routines tab)
+  // "Weekdays at 8:00 AM", "Every 3 hours", "Mon, Thu at 9:15 AM", "When its web link is called" (the same wording as the sidebar's Routines tab)
   function scheduleText(s, T) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -41,7 +44,7 @@
       next: !r.enabled ? T('settings.routines.off') : (r.nextRun ? T('settings.routines.next', { time: clock(r.nextRun) }) : ''),
       last: lastText,
       late,
-      snippet: !active && last ? (last.error || last.snippet || '') : '',
+      snippet: !active && last ? (last.error || last.snippet || r.emailError || '') : (r.emailError || ''),
       failed: !active && Boolean(last && (last.status === 'failed' || last.error)),
       needsOk: r.pending > 0,
       active,
@@ -64,7 +67,15 @@
     return { have, ready, connectorText: ready === null ? '' : T(ready ? 'routines.template.ready' : 'routines.template.needs', { app }) };
   }
 
-  const api = { scheduleText, rowModel, historyLine, templateModel, clock, timeText, dayName };
+  // The web links' line: listening, the port taken by another program, or nothing (off).
+  function webhookStatus(w, T) {
+    if (!w || !w.on) return '';
+    if (w.listening) return T('settings.routines.webhookStatus.listening', { port: w.port });
+    if (w.error === 'in-use') return T('settings.routines.webhookStatus.inUse', { port: w.port });
+    return w.error ? T('settings.routines.webhookStatus.error', { port: w.port, error: w.error }) : '';
+  }
+
+  const api = { scheduleText, rowModel, historyLine, templateModel, webhookStatus, clock, timeText, dayName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.settingsRoutinesText = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -84,6 +95,9 @@ async function buildRoutines(card) {
   const quietOn = h('input', { type: 'checkbox', class: 'switch', id: 'routines-quiet-on', role: 'switch', 'aria-label': T('routines.quiet.on'), onchange: () => saveQuiet() });
   const quietFrom = h('input', { type: 'time', id: 'routines-quiet-from', 'aria-label': T('routines.quiet.from'), onchange: () => saveQuiet() });
   const quietTo = h('input', { type: 'time', id: 'routines-quiet-to', 'aria-label': T('routines.quiet.to'), onchange: () => saveQuiet() });
+  const hooksOn = h('input', { type: 'checkbox', class: 'switch', id: 'routines-webhooks-on', role: 'switch', 'aria-label': T('settings.routines.webhooks'), onchange: () => saveHooks('routineWebhooks', hooksOn.checked) });
+  const hooksPort = h('input', { type: 'number', min: '1024', max: '65535', id: 'routines-webhooks-port', 'aria-label': T('settings.routines.webhookPort'), onchange: () => saveHooks('routineWebhookPort', Number(hooksPort.value)) });
+  const hooksStatus = h('p', { class: 'note', id: 'routines-webhooks-status', role: 'status', 'aria-live': 'polite' });
   const openHistory = new Set(); // routines whose History is open: kept across a redraw
   let view = null;
   let shown = ''; // what was drawn last (a read that changed nothing redraws nothing, so focus and open rows stay put)
@@ -99,6 +113,12 @@ async function buildRoutines(card) {
   async function saveQuiet() {
     if (!quietFrom.value || !quietTo.value) return; // a cleared time field is not a time
     await act({ act: 'settings', patch: { quiet: { on: quietOn.checked, from: quietFrom.value, to: quietTo.value } } });
+  }
+
+  // Routine web links: top-level settings (settings-backend), which start, stop or move the listener before answering.
+  async function saveHooks(key, value) {
+    try { await window.lumenSettings.set(key, value); } catch (err) { flash(hooksStatus, clean(err), 'error'); return; }
+    await refresh();
   }
 
   function rowFor(r) {
@@ -168,6 +188,13 @@ async function buildRoutines(card) {
     if (document.activeElement !== quietOn) quietOn.checked = Boolean(view.quiet?.on);
     if (document.activeElement !== quietFrom && view.quiet?.from) quietFrom.value = view.quiet.from;
     if (document.activeElement !== quietTo && view.quiet?.to) quietTo.value = view.quiet.to;
+    if (view.webhooks) {
+      hooksOn.checked = Boolean(view.webhooks.on);
+      if (document.activeElement !== hooksPort) hooksPort.value = String(view.webhooks.port);
+      const line = X.webhookStatus(view.webhooks, T);
+      hooksStatus.textContent = line;
+      hooksStatus.classList.toggle('error', Boolean(view.webhooks.on && !view.webhooks.listening));
+    }
     if (focused) card.el.querySelector(`[data-focus="${focused}"]:not(:disabled)`)?.focus();
     const titles = view.routines.map((r) => r.title).join(' ');
     for (const el of [listRow, tplRow]) el.dataset.search = `${el.dataset.base} ${titles}`.toLowerCase();
@@ -195,6 +222,12 @@ async function buildRoutines(card) {
   quietRow.dataset.search += ' quiet hours night do not disturb sleep routine routines schedule';
   quietRow.querySelector('.label').addEventListener('click', () => quietOn.click());
   card.append(quietRow, row(T('routines.quiet.from'), '', quietFrom), row(T('routines.quiet.to'), '', quietTo));
+  card.group(T('settings.routines.webhooks'));
+  const hooksRow = row(T('settings.routines.webhooks'), T('settings.routines.webhooksDesc'), hooksOn);
+  hooksRow.dataset.search += ' web link webhook trigger shortcuts cron curl api local port routine routines';
+  hooksRow.querySelector('.label').addEventListener('click', () => hooksOn.click());
+  hooksRow.querySelector('.text').append(hooksStatus); // listening, or why not
+  card.append(hooksRow, row(T('settings.routines.webhookPort'), T('settings.routines.webhookPortDesc'), hooksPort));
   listRow.dataset.search = KEYWORDS;
   tplRow.dataset.search = `${KEYWORDS} email canvas news calendar gmail`;
 

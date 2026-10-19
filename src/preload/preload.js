@@ -249,6 +249,8 @@ contextBridge.exposeInMainWorld('assistant', {
     settings: (patch) => ipcRenderer.invoke('tasks:settings', patch),
     saveRoutine: (spec) => ipcRenderer.invoke('routines:save', spec), // routines (renderer/routines.js)
     routinePreview: (spec) => ipcRenderer.invoke('routines:preview', spec),
+    routineWebhookKey: (id) => ipcRenderer.invoke('routines:webhook-key', id), // a new key for a routine's web link, shown once
+
     onState: on('tasks:state'),
     onToast: on('tasks:toast'),
     onOpen: on('tasks:open'),

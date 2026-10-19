@@ -12922,12 +12922,17 @@ $('agent-stop')?.addEventListener('click', () => {
   const timeText = (hhmm) => { const [hh, mm] = String(hhmm || '08:00').split(':').map(Number); return new Date(2026, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const routinesOf = (state) => state.tasks.filter((t) => t.schedule?.type === 'routine');
 
+  const TRIGGERS = ['schedule', 'webhook', 'email'];
+  const triggerOf = (s) => (s && ['webhook', 'email'].includes(s.repeat) ? s.repeat : 'schedule');
 
   function scheduleText(s) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -13011,14 +13016,14 @@ $('agent-stop')?.addEventListener('click', () => {
       const when = [clock(r.startedAt || r.endedAt), T(`routines.history.status.${r.status}`), T(`routines.trigger.${r.trigger}`),
         r.trigger === 'catch-up' && r.scheduledFor ? T('routines.history.dueAt', { time: clock(r.scheduledFor) }) : ''].filter(Boolean).join(' · ');
       const details = h('details', { className: 'routine-run', open: i === 0 && r.status !== 'done' },
-        h('summary', {}, h('span', { className: `task-dot ${r.status === 'skipped' ? 'stopped' : r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
+        h('summary', {}, h('span', { className: `task-dot ${{ skipped: 'stopped', nothing: 'done' }[r.status] || r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
       if (r.error) details.append(h('p', { className: r.status === 'skipped' ? 'task-meta' : 'task-error', textContent: r.error }));
       if (r.result) {
         const body = h('div', { className: 'msg assistant task-result routine-result' });
         body.innerHTML = window.renderMarkdown(r.result);
         body.addEventListener('click', (e) => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); window.browser.newTab(a.href); } });
         details.append(body);
-      } else if (!r.error) details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
+      } else if (!r.error && r.status !== 'nothing') details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
       return h('li', {}, details);
     })));
     return out;
@@ -13026,7 +13031,8 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
   let card = null;
-  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false } = {}) {
+
+  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false, shownKey = null } = {}) {
     const state = core.state();
     if (!state.settings.enabled) { core.openPanel(null, { tab: 'routines' }); return; }
     card?.remove();
@@ -13061,12 +13067,17 @@ $('agent-stop')?.addEventListener('click', () => {
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });
+    const quiet = h('input', { type: 'checkbox', className: 'routine-quiet-check', checked: Boolean(task?.routine?.quietUnlessNeeded) });
     const syncMcp = () => { const cli = pv.models.find((m) => m.id === model.value)?.engine !== 'api'; mcp.disabled = cli; if (cli) mcp.checked = false; };
     model.addEventListener('change', syncMcp);
 
 
     const s0 = task?.schedule || schedule || { repeat: 'weekdays', time: '08:00' };
-    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === s0.repeat })));
+
+    const trigger = h('select', { className: 'routine-trigger' }, TRIGGERS.map((k) => h('option', { value: k, textContent: T(`routines.trigger.kind.${k}`), selected: k === triggerOf(s0) })));
+    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === (triggerOf(s0) === 'schedule' ? s0.repeat : 'weekdays') })));
+    const emailEvery = h('input', { type: 'number', min: 5, max: 1440, value: s0.minutes || 10, className: 'task-minutes routine-email-every' });
+    emailEvery.setAttribute('aria-label', T('routines.field.emailEvery'));
     const time = h('input', { type: 'time', value: s0.time || '08:00', required: true });
     time.setAttribute('aria-label', T('routines.field.time'));
     const days = h('fieldset', { className: 'routine-days' }, h('legend', { textContent: T('routines.field.days') }),
@@ -13087,7 +13098,40 @@ $('agent-stop')?.addEventListener('click', () => {
       cron: h('div', {}, h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.cron') }), cron), h('p', { className: 'task-meta', textContent: T('routines.field.cron.hint') })),
     };
     const next = h('p', { className: 'task-meta routine-next', 'aria-live': 'polite' });
+    const hooks = core.state().webhooks || { on: false, port: 47821, listening: false, error: '' };
+    const emailBox = h('div', { className: 'routine-email' },
+      h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.emailEvery') }), emailEvery, h('span', { textContent: T('routines.field.minutesUnit') })),
+      h('p', { className: 'task-meta', textContent: T('routines.email.hint') }),
+      (state.connected || []).includes('gmail') ? null : h('p', { className: 'task-meta task-error routine-email-needs', textContent: T('routines.email.needsGmail') }),
+      task?.routine?.emailError ? h('p', { className: 'task-meta task-error', textContent: T('routines.email.error', { error: task.routine.emailError }) }) : null);
+    const hookBox = h('div', { className: 'routine-webhook' }, h('p', { className: 'task-meta', textContent: T('routines.webhook.hint') }));
+    if (!hooks.on) hookBox.append(h('p', { className: 'task-meta task-error routine-webhook-off', textContent: T('routines.webhook.settingOff') }));
+    else if (hooks.error) hookBox.append(h('p', { className: 'task-meta task-error', textContent: T('routines.webhook.inUse', { port: hooks.port }) }));
+    if (!task) hookBox.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.saveFirst') }));
+    else {
+      const url = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-url', value: shownKey?.url || `http://127.0.0.1:${hooks.port}/routines/${task.id}/run` });
+      hookBox.append(field(T('routines.webhook.url'), url));
+      const copyText = async (b, text) => { try { await navigator.clipboard.writeText(text); b.textContent = T('routines.webhook.copied'); setTimeout(() => { b.textContent = T('routines.webhook.copyCurl'); }, 1500); } catch (err) { console.error('[lumen] copy failed:', err); } };
+      const showKey = (made) => {
+        const keyBox = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-key', value: made.key });
+        const copy = btn(T('routines.webhook.copyCurl'), () => copyText(copy, made.curl), 'btn routine-webhook-copy');
+        return h('div', { className: 'routine-webhook-made' }, field(T('routines.webhook.key'), keyBox), h('p', { className: 'task-meta', textContent: T('routines.webhook.keyShown') }), copy);
+      };
+      const keyArea = h('div', {});
+      const makeKey = btn(task.routine?.hasKey || shownKey ? T('routines.webhook.regenerate') : T('routines.webhook.make'), async () => {
+        const res = await api.routineWebhookKey(task.id);
+        if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
+        keyArea.replaceChildren(showKey(res));
+        makeKey.textContent = T('routines.webhook.regenerate');
+      }, 'btn routine-webhook-make');
+      if (shownKey) keyArea.append(showKey(shownKey));
+      else if (task.routine?.hasKey) keyArea.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.hasKey') }));
+      hookBox.append(keyArea, h('div', { className: 'approval-actions' }, makeKey));
+    }
+    const scheduleBox = h('div', { className: 'routine-schedule-box' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron);
     const getSchedule = () => {
+      if (trigger.value === 'webhook') return { repeat: 'webhook' };
+      if (trigger.value === 'email') return { repeat: 'email', minutes: Number(emailEvery.value) };
       const r = repeat.value;
       if (r === 'once') return { repeat: r, at: new Date(when.value).getTime() };
       if (r === 'hours') return { repeat: r, hours: Number(hours.value), ...(task?.schedule.repeat === 'hours' && Number(hours.value) === task.schedule.hours ? { anchor: task.schedule.anchor } : {}) };
@@ -13100,9 +13144,15 @@ $('agent-stop')?.addEventListener('click', () => {
       const res = await api.routinePreview({ schedule: getSchedule() });
       if (seq !== previewSeq) return;
       next.classList.toggle('task-error', !res.ok);
-      next.textContent = res.ok ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : res.error;
+      next.textContent = res.ok ? (trigger.value === 'schedule' ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : '') : res.error;
     };
+    const enabledLabel = h('span', {});
     const sync = () => {
+      const k = trigger.value;
+      scheduleBox.hidden = k !== 'schedule';
+      emailBox.hidden = k !== 'email';
+      hookBox.hidden = k !== 'webhook';
+      enabledLabel.textContent = k === 'schedule' ? T('routines.field.enabled') : T('routines.field.enabled.event');
       const r = repeat.value;
       rows.time.hidden = !['daily', 'weekdays', 'weekly'].includes(r);
       rows.days.hidden = r !== 'weekly';
@@ -13112,7 +13162,8 @@ $('agent-stop')?.addEventListener('click', () => {
       updateNext();
     };
     repeat.addEventListener('change', sync);
-    for (const c of [time, hours, when, cron, days]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
+    trigger.addEventListener('change', sync);
+    for (const c of [time, hours, when, cron, days, emailEvery]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
 
 
     let siteTimer = null;
@@ -13131,8 +13182,11 @@ $('agent-stop')?.addEventListener('click', () => {
       name.value = T(`routines.template.${tp.key}.name`);
       what.value = T(`routines.template.${tp.key}.prompt`);
       if (tp.page) start.value = /^https?:/i.test(pv.pageUrl) ? pv.pageUrl : '';
+      trigger.value = triggerOf(tp.schedule);
       repeat.value = tp.schedule.repeat;
       time.value = tp.schedule.time || '08:00';
+      if (tp.schedule.cron) cron.value = tp.schedule.cron;
+      quiet.checked = Boolean(tp.quiet);
       for (const i of days.querySelectorAll('input')) i.checked = (tp.schedule.days || [1]).includes(Number(i.value));
       templateKey = tp.key;
       sitesTouched = false;
@@ -13146,14 +13200,20 @@ $('agent-stop')?.addEventListener('click', () => {
       save.disabled = true;
       const res = await api.saveRoutine({
         id: task?.id, title: name.value, prompt: what.value, startUrl: start.value, sites: sitesTouched ? sites.value.split(',').map((x) => x.trim()).filter(Boolean) : undefined,
-        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, confirmed: true,
+        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, quietUnlessNeeded: quiet.checked, confirmed: true,
       });
       if (!res.ok) { error.textContent = res.error; error.hidden = false; save.disabled = false; return; }
       if (fromComposer) { composerInput.value = ''; composerInput.dispatchEvent(new Event('input')); }
       core.announce(task ? T('routines.saved') : T('routines.created'));
       fromComposer = false;
+      const firstKey = !task?.routine?.hasKey && trigger.value === 'webhook' && !shownKey;
       close();
       await core.openPanel(res.id, { tab: 'routines' });
+      if (firstKey) {
+        const made = await api.routineWebhookKey(res.id);
+        const saved = made.ok ? await api.get(res.id) : null;
+        if (saved) open({ task: saved, shownKey: made });
+      }
     }, 'btn primary');
 
     box.append(
@@ -13163,12 +13223,14 @@ $('agent-stop')?.addEventListener('click', () => {
       field(T('routines.field.name'), name),
       field(T('tasks.create.prompt'), what),
       field(T('routines.field.start'), start),
-      h('div', { className: 'task-schedule' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron, next),
+      h('div', { className: 'task-schedule' }, field(T('routines.field.trigger'), trigger, false),
+        scheduleBox, emailBox, hookBox, next),
       field(T('tasks.create.sites'), sites),
       h('label', { className: 'task-field' }, model, h('span', { textContent: T('tasks.create.model') })),
       h('label', { className: 'task-check' }, signedIn, T('tasks.create.signedIn')),
       pv.hasMcp ? h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp')) : null,
-      task ? h('label', { className: 'task-check' }, enabled, T('routines.field.enabled')) : null,
+      h('label', { className: 'task-check', title: T('routines.field.quiet.hint') }, quiet, T('routines.field.quiet')),
+      task ? h('label', { className: 'task-check' }, enabled, enabledLabel) : null,
       h('p', { className: 'task-meta', textContent: `${T('tasks.create.asks')} ${T('routines.create.whileOpen')}` }),
       ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
