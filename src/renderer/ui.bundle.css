@@ -927,6 +927,26 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .attach-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .attach-btn:disabled { opacity: 0.4; }
 
+.mic-btn {
+  position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
+  background: transparent; color: var(--muted); touch-action: none;
+  transition: background-color var(--t-base) ease-out, color var(--t-base) ease-out;
+}
+.mic-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.mic-btn:hover { color: var(--text); background: var(--hover); }
+.mic-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mic-btn[data-state="recording"] { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.mic-btn[data-state="sending"], .mic-btn[data-state="starting"] { opacity: 0.55; }
+.dictation-bar { flex: 1 1 100%; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dictation-bar[hidden] { display: none; }
+.dictation-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--danger); animation: dictation-pulse 1.2s ease-in-out infinite; }
+.dictation-bar[data-state="sending"] .dictation-dot { background: var(--muted); }
+.dictation-meter { flex: 1 1 auto; max-width: 120px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.dictation-meter i { display: block; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; transition: transform 80ms linear; }
+.dictation-hint { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@keyframes dictation-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .dictation-dot { animation: none; } .dictation-meter i { transition: none; } }
+
 .screen-btn {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
   background: transparent; color: var(--muted);

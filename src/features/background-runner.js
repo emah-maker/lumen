@@ -539,11 +539,11 @@ function create(deps) {
         if (isLocalEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone
         const start = task.routine?.startUrl;
         if (start && deps.aiOff?.(start)) throw new Error(deps.t('tasks.error.aiOff', { host: bg.hostOfUrl(start) })); // a routine's start page with AI off: it doesn't run at all
-        const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false }), (p) => deps.getKey(p), { riskOf });
+        const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false, noMemory: true }), (p) => deps.getKey(p), { riskOf });
         rt.agent = agent;
         agent.baseHosts = new Set(task.allowedSites);
         agent.approvedHosts = new Set(task.allowedSites);
-        agent.messages.settings = { model: task.model, adhdMode: false };
+        agent.messages.settings = { model: task.model, adhdMode: false, noMemory: true }; // [memory] unattended runs never read or write saved memory
         agent.messages.tainted = true; // every site outside the allowed ones asks first
         agent.onUsage = (engine, data) => deps.reportUsage?.(engine, data);
         const allowedNav = (url) => {
