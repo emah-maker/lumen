@@ -302,6 +302,7 @@ function server(opts) {
   // ---- the new-tab page ----
   await app.evaluate(() => new Promise((res) => { const t = global.__agent.browser.openTab(); global.__wtab = t; t.webContents.once('did-finish-load', res); }));
   const page = (code) => app.evaluate((_e, c) => global.__wtab.webContents.executeJavaScript(c), code);
+  // Waits until every CSS transition on the page has ended (a card slides 260 ms and its colors fade; the hidden test window draws few frames, so a fixed sleep measured cards half-way). Bounded: after `ms` it returns and the check judges what is there.  const settled = (ms = 8000) => page(`new Promise((res) => { const end = Date.now() + ${ms}; const tick = () => { const run = document.getAnimations().filter((a) => a instanceof CSSTransition && (a.playState === 'running' || a.playState === 'pending')); if (!run.length || Date.now() > end) requestAnimationFrame(() => requestAnimationFrame(() => res(!run.length))); else setTimeout(tick, 40); }; tick(); })`);
   await app.evaluate(() => { global.__errs = []; global.__wtab.webContents.on('console-message', (_e, level, msg) => { if (level >= 2) global.__errs.push(String(msg).slice(0, 300)); }); });
   await page(`window.__t = {
     fire(target, type, x, y, extra) { return target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 7, pointerType: 'mouse', clientX: x, clientY: y, buttons: type === 'pointerup' ? 0 : 1, button: 0, ...extra })); },
@@ -675,6 +676,7 @@ function server(opts) {
   const savedBefore = await layoutOf();
   await app.evaluate(() => { global.__wtab.webContents.enableDeviceEmulation({ screenPosition: 'desktop', screenSize: { width: 560, height: 800 }, viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0, viewSize: { width: 560, height: 800 }, scale: 1 }); });
   await sleep(900);
+  await settled();
   const nar = await page(`(() => ({ cols: window.__t.info().cols, x: [...document.querySelectorAll('.w-card')].map((c) => Math.round(c.getBoundingClientRect().left)), w: innerWidth, stacked: document.body.classList.contains('w-stacked'), btn: document.querySelector('.w-edit-btn').hidden, cards: [...document.querySelectorAll('.w-card')].map((c) => [c.dataset.id, Math.round(c.getBoundingClientRect().top)]) }))()`);
   check('a narrow window stacks the cards in one column (in reading order) and hides editing', nar.cols === 1 && nar.stacked && nar.btn && new Set(nar.x).size === 1 && nar.cards.slice().sort((a, b) => a[1] - b[1]).map((c) => c[0]).join() === (await W('list')).map((x) => x.id).join(), JSON.stringify(nar));
   check('…without touching the saved places', (await layoutOf()) === savedBefore, `${savedBefore} / ${await layoutOf()}`);
@@ -696,6 +698,7 @@ function server(opts) {
   let bar0 = rgbHex(await page(`getComputedStyle(document.querySelector('.w-card[data-id="${ID.cal}"] .w-row[data-c="0"] .w-bar')).backgroundColor`));
   check('Match screen: event bars follow the chosen background (ocean) and the accent', bar0 === pal.bars[0] && await page(`window.__t.card(${JSON.stringify(ID.cal)}).classList.contains('tinted')`), JSON.stringify([bar0, pal]));
   const contrast = async () => page(`(() => { const c = window.__t.card(${JSON.stringify(ID.cal)}); const s = getComputedStyle(c); const hex = (v) => '#' + v.match(/\\d+/g).slice(0, 3).map((n) => Number(n).toString(16).padStart(2, '0')).join(''); const head = getComputedStyle(c.querySelector('.w-head h2')).color; return { text: WidgetColors.contrast(hex(s.color), hex(s.backgroundColor)), head: WidgetColors.contrast(hex(head), hex(s.backgroundColor)), raw: [s.color, s.backgroundColor, head] }; })()`);
+  await settled();
   let cr = await contrast();
   check('Match screen: text on the tinted card stays at 4.5:1 or better (also the title)', cr.text >= 4.5 && cr.head >= 4.5, JSON.stringify(cr));
   await page('window.__colorMarker = 1');
@@ -709,6 +712,7 @@ function server(opts) {
   await sleep(700);
   const palPlain = await palette('match');
   check('…and a plain page uses the accent (green), light or dark', rgbHex(await page(`getComputedStyle(document.querySelector('.w-card[data-id="${ID.cal}"] .w-row[data-c="0"] .w-bar')).backgroundColor`)) === palPlain.bars[0] && hueOf(palPlain.hues[0]) > 90 && hueOf(palPlain.hues[0]) < 170, JSON.stringify(palPlain));
+  await settled();
   cr = await contrast();
   check('…still at 4.5:1 or better', cr.text >= 4.5 && cr.head >= 4.5, JSON.stringify(cr));
   await W('save', { type: 'calendar', url: `${base}/cal.ics`, colors: 'accent' }, ID.cal);
