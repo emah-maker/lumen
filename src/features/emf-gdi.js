@@ -17,7 +17,8 @@ const MAX_PICTURES = 64;
 const MAX_SIDE = 2048;
 const MIN_SIDE = 64;
 const TIME_LIMIT_MS = 30000; // with no sign of life (the script logs each step). Measured cold start of PowerShell on a GitHub Windows runner: about 10 s before the first line; 30 s is three times that
-const HARD_LIMIT_MS = 60000; // the whole batch, however slowly it moves
+const HARD_LIMIT_MS = 60000; // the work after the script has started, however slowly it moves
+const START_LIMIT_MS = 90000; // PowerShell's own cold start (nothing logged yet): seen at 10 s to over 30 s on a loaded runner
 const MAX_RECORDS = 500000;
 const CACHE_MAX_FILES = 300;
 const CACHE_VERSION = 'v1';
@@ -186,18 +187,19 @@ async function convertMetafiles(pictures, opts = {}) {
     const exe = opts.powershell || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     stats.spawned++;
     const logFile = path.join(work, 'log.txt');
-    const idleMs = opts.timeoutMs || TIME_LIMIT_MS; // no sign of life (a new line in the log) for this long: the process is killed
-    const hardMs = opts.timeoutMs || HARD_LIMIT_MS;
+    const idleMs = opts.timeoutMs || TIME_LIMIT_MS; // once the script has started: no new line in the log for this long and the process is killed
+    const hardMs = opts.timeoutMs || HARD_LIMIT_MS; // ...or this long in all after it started
+    const startMs = opts.startMs || opts.timeoutMs || START_LIMIT_MS; // before it started: PowerShell's cold start has its own, longer allowance
     let stderr = '';
     await new Promise((resolve) => {
-      let child = null; let timer = null; let done = false; let seen = -1; let quiet = Date.now();
+      let child = null; let timer = null; let done = false; let seen = -1; let quiet = Date.now(); let up = 0; // up: when the script logged its first line
       const started = Date.now();
       const finish = () => { if (!done) { done = true; clearInterval(timer); resolve(); } };
       const stop = (why) => { stats.timedOut = why; try { if (child) utils.killTree(child); } catch { /* gone */ } finish(); };
       timer = setInterval(() => {
         let size = 0; try { size = fs.statSync(logFile).size; } catch { /* not yet */ }
-        if (size !== seen) { seen = size; quiet = Date.now(); }
-        if (Date.now() - started > hardMs) stop('hard'); else if (Date.now() - quiet > idleMs) stop('idle');
+        if (size !== seen) { seen = size; quiet = Date.now(); if (!up && size > 0) up = Date.now(); }
+        if (!up) { if (Date.now() - started > startMs) stop('start'); } else if (Date.now() - up > hardMs) stop('hard'); else if (Date.now() - quiet > idleMs) stop('idle');
       }, 100);
       try {
         child = spawn(exe, ['-NoProfile', '-NoLogo', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, manifestFile, logFile], { cwd: work, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
@@ -231,4 +233,4 @@ async function convertMetafiles(pictures, opts = {}) {
   return result;
 }
 
-module.exports = { convertMetafiles, checkMetafile, placeable, aspectOf, pixelSide, pixelsFor, isPng, SCRIPT, MAX_PICTURES, MAX_INPUT_BYTES, MAX_SIDE, TIME_LIMIT_MS };
+module.exports = { convertMetafiles, checkMetafile, placeable, aspectOf, pixelSide, pixelsFor, isPng, SCRIPT, MAX_PICTURES, MAX_INPUT_BYTES, MAX_SIDE, TIME_LIMIT_MS, HARD_LIMIT_MS, START_LIMIT_MS };
