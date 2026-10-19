@@ -201,6 +201,16 @@ module.exports = async function widgetEditUnits(check) {
   check('picker: every kind first, then the sections that were hidden; unknown kinds get a name and a generic line', pe[2].kind === 'section' && pe[2].id === 'wsysfavs' && pe[0].label === 'Weather' && pe[1].label === 'Bogus' && pe[1].hint === WE.STRINGS['newtab.edit.type.other.hint'], JSON.stringify(pe));
   check('picker: a translation table wins over English', WE.pickerEntries({ types: ['weather'], table: { 'newtab.edit.type.weather': 'Wetter' } })[0].label === 'Wetter' && WE.text('newtab.edit.undone', { what: 'x' }) === 'Undone: x' && WE.text('nope.key') === 'nope.key', '');
 
+  // grouped, with a filter, and what each key-needing kind asks for
+  const all = WE.pickerEntries({ types: Object.keys(CONNECTORS), hidden: [{ id: 'wsysfavs', label: 'Favorites' }], stack: true });
+  const groupOrder = [...new Set(all.map((e) => e.group))];
+  check('picker: entries are grouped (starter, time and weather, work, music, news, more, show again), every entry in a group', groupOrder.join() === 'stack,time,work,music,news,other,section' && all.every((e) => e.group && e.groupLabel), groupOrder.join());
+  check('picker: a group is one run (no heading twice)', all.every((e, i) => i === 0 || e.group === all[i - 1].group || all.findIndex((x) => x.group === e.group) === i), '');
+  check('picker: Todoist is under work, Spotify under music, Weather under time, Stocks under news', ['todoist:work', 'spotify:music', 'weather:time', 'stocks:news'].every((p) => all.find((e) => e.type === p.split(':')[0]).group === p.split(':')[1]), '');
+  const todoEntry = all.find((e) => e.type === 'todoist');
+  check('picker filter: matches the name, the line and the group; every word must match; empty matches all', WE.matchesFilter(todoEntry, 'todo') && WE.matchesFilter(todoEntry, 'TASKS') && WE.matchesFilter(todoEntry, 'work tod') && !WE.matchesFilter(todoEntry, 'todo weather') && WE.matchesFilter(todoEntry, '  ') && !WE.matchesFilter(todoEntry, 'zzz'), '');
+  check('picker: every kind that needs a key or a sign-in has a note saying what to paste and where from', ['todoist', 'github', 'stocks', 'muse', 'gmail', 'slack', 'spotify'].every((t) => WE.setupNote(t).length > 20) && WE.setupNote('todoist') === require('../src/renderer/widget-summary').setupNote('todoist') && WE.setupNote('notes') === '' && /API token/.test(WE.setupNote('todoist')), '');
+
   // ---- the clock's size and the search bar's width ----
   const SB = require('../src/settings/settings-backend');
   check('size: defaults are medium and 640 px', SB.DEFAULTS.newTabClockSize === 'm' && SB.DEFAULTS.newTabSearchWidth === 640 && WS.CLOCK_DEFAULT === 'm' && WS.SEARCH_DEFAULT === 640, '');
@@ -233,6 +243,24 @@ module.exports = async function widgetEditUnits(check) {
   for (const f of ['src/renderer/newtab-edit.js', 'src/renderer/newtab-system.js', 'src/renderer/newtab-stacks.js']) {
     const src = read(f);
     check(`page: ${f} builds everything with DOM calls and textContent (no markup strings, no eval, no network)`, !/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|fetch\(|XMLHttpRequest|WebSocket/.test(src), '');
+  }
+  // ---- Edit layout holds the cards where they were drawn (WE.holdBase / holdItems) ----
+  {
+    const saved = [it('a', 'notes', 0, 5, 4, 3), it('b', 'notes', 8, 5, 4, 3, { snap: 'right' }), it('wsysfavs', 'favorites', 3, 5, 6, 3)];
+    const drawn = [it('a', 'notes', 0, 9, 4, 3), it('b', 'notes', 8, 0, 4, 8, { snap: 'right' }), it('wsysfavs', 'favorites', 3, 5, 6, 3)];
+    const base = WE.holdBase(drawn, saved, WS.isSystemId);
+    check('hold: only real, unsnapped cards are held', base.size === 1 && base.has('a'), [...base.keys()].join());
+    const held = WE.holdItems(saved, base);
+    check('hold: a card is drawn where it was, not at its saved rect', enc([held[0]]) === 'a:0,9,4,3' && enc([held[1]]) === enc([saved[1]]) && enc([held[2]]) === enc([saved[2]]), enc(held));
+    check('hold: once its saved rect changes (a layout was sent) the saved rect wins', enc(WE.holdItems([it('a', 'notes', 0, 9, 4, 4)], base)) === 'a:0,9,4,4' && enc(WE.holdItems([it('a', 'notes', 2, 5, 4, 3)], base)) === 'a:2,5,4,3', '');
+    check('hold: no base (edit mode off) leaves the list alone', WE.holdItems(saved, null) === saved, '');
+    // the obstacle shrinks in Edit layout (sections are cards), yet the held cards resolve exactly where they were
+    const o = { cols: 12, packed: false, rows: 10 };
+    const full = WL.resolve(saved.slice(0, 1), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 9 } });
+    const edit = WL.resolve(WE.holdItems(saved.slice(0, 1), WE.holdBase(full, saved.slice(0, 1), WS.isSystemId)), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 5 } });
+    check('hold: a card pushed below the full column stays there under the smaller one', enc(full) === 'a:0,9,4,3' && enc(edit) === enc(full), `${enc(full)} / ${enc(edit)}`);
+    const loose = WL.resolve(saved.slice(0, 1), { ...o, obstacle: { x: 3, y: 0, w: 6, h: 5 } });
+    check('hold: without it the card would jump up (the bug)', enc(loose) === 'a:0,5,4,3', enc(loose));
   }
   const gridSrc = read('src/renderer/newtab-widgets-grid.js');
   check('page: the grid keeps its calm mode and reduced-motion rules, and the edit UI has its own', /body\.calm/.test(read('src/renderer/newtab.html')) && /prefers-reduced-motion: no-preference\) \{ body:not\(\.calm\)/.test(read('src/renderer/newtab-edit.js')) && /aria-live|widgetAnnounce/.test(gridSrc), '');

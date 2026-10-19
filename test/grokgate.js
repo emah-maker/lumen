@@ -9,6 +9,7 @@
 //     must deny it before it runs: the file must not exist.
 //  3. A gate Grok can't reach, same loosened rules: nothing may run (the file must not exist).
 // Skipped when grok isn't installed or signed in.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -72,7 +73,7 @@ const MODEL = process.env.GROK_TEST_MODEL || 'grok-4.7-build-fast';
     check('unreachable gate: nothing ran (no file) and the message failed', !fs.existsSync(sentinel) && three.out.failed === true, JSON.stringify({ exists: fs.existsSync(sentinel), out: three.out, events: three.events }));
   } finally {
     gate.stop();
-    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     console.log(failures ? `\n${failures} FAILED` : '\nall passed');
     process.exitCode = failures ? 1 : 0;
   }

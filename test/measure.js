@@ -34,7 +34,7 @@ const which = process.argv[2] || 'both';
     'Wikipedia search + read': {
       async baseline() {
         await run('navigate', { url: 'https://en.wikipedia.org/wiki/Main_Page' });
-        const page = await run('read_page', {});
+        const page = await run('read_page', { elements: true });
         const box = idOf(page, (e) => /search/i.test(e.label) && e.tag === 'input');
         await run('type_text', { element_id: box, text: 'Alan Turing', press_enter: true });
         return (await run('read_page', {})).includes('23 June 1912');
@@ -73,7 +73,7 @@ const which = process.argv[2] || 'both';
     'DuckDuckGo search': {
       async baseline() {
         await run('navigate', { url: 'https://duckduckgo.com/' });
-        const page = await run('read_page', {});
+        const page = await run('read_page', { elements: true });
         const box = idOf(page, (e) => /search/i.test(e.label) && (e.tag === 'input' || e.tag === 'textarea'));
         await run('type_text', { element_id: box, text: 'playwright connectOverCDP', press_enter: true });
         await run('wait_for', { text: 'playwright.dev', seconds: 8 });
@@ -114,10 +114,10 @@ const which = process.argv[2] || 'both';
       let ok = false;
       try { ok = await modes[mode](); } catch (err) { console.log(`${task} ${mode}: ${err.message}`); }
       rows.push({ task, mode, ok, calls, tokens: Math.round(chars / 4) });
-      console.log(`${task.padEnd(26)} ${mode.padEnd(9)} ${ok ? 'done  ' : 'FAILED'} calls=${calls} tokensâ‰ˆ${Math.round(chars / 4)}`);
+      console.log(`${task.padEnd(26)} ${mode.padEnd(9)} ${ok ? 'done  ' : 'FAILED'} calls=${calls} tokens≈${Math.round(chars / 4)}`);
     }
   }
-  console.log(`tool definitions sent per request: â‰ˆ${Math.round(toolDefs / 4)} tokens`);
+  console.log(`tool definitions sent per request: ≈${Math.round(toolDefs / 4)} tokens`);
   console.log(JSON.stringify(rows));
   await app.close();
 })();

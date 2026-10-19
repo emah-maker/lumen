@@ -2,6 +2,7 @@
 // browser does. Node's fetch ignored it: on a network that needs a proxy the browser loaded
 // openrouter.ai while the OpenRouter/OpenAI/Grok/Gemini engines got "connection error".
 // A fake proxy plays the providers: Lumen is pointed at it, and the SDK calls must arrive there.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -43,7 +44,7 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
   } finally {
     await app.close().catch(() => {});
     proxy.close();
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

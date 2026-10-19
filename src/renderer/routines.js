@@ -18,12 +18,17 @@
   const timeText = (hhmm) => { const [hh, mm] = String(hhmm || '08:00').split(':').map(Number); return new Date(2026, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
   const routinesOf = (state) => state.tasks.filter((t) => t.schedule?.type === 'routine');
 
-  // "Weekdays at 8:00 AM", "Every 3 hours", "Mon, Thu at 9:15 AM"
+  const TRIGGERS = ['schedule', 'webhook', 'email'];
+  const triggerOf = (s) => (s && ['webhook', 'email'].includes(s.repeat) ? s.repeat : 'schedule');
+  // "Weekdays at 8:00 AM", "Every 3 hours", "Mon, Thu at 9:15 AM", "When new email arrives (checked every 10 min)"
   function scheduleText(s) {
     if (!s || s.type !== 'routine') return '';
+    if (s.repeat === 'webhook') return T('routines.schedule.webhook');
+    if (s.repeat === 'email') return T('routines.schedule.email', { n: s.minutes });
     if (s.repeat === 'once') return T('routines.schedule.once', { time: clock(s.at) });
     if (s.repeat === 'hours') return s.hours === 1 ? T('routines.schedule.hour') : T('routines.schedule.hours', { n: s.hours });
-    if (s.repeat === 'cron') return T('routines.schedule.cron', { cron: s.cron });
+    const every = /^\*\/(\d+) \* \* \* \*$/.exec(s.cron || '');
+    if (s.repeat === 'cron') return every ? T('routines.schedule.minutes', { n: Number(every[1]) }) : T('routines.schedule.cron', { cron: s.cron });
     const time = timeText(s.time);
     if (s.repeat === 'daily') return T('routines.schedule.daily', { time });
     if (s.repeat === 'weekdays') return T('routines.schedule.weekdays', { time });
@@ -55,17 +60,48 @@
         return h('li', { className: 'routine-item' }, toggle, row, run);
       })));
     } else out.push(h('p', { className: 'chat-list-empty', textContent: T('routines.empty') }));
+    out.push(quietBlock(state));
     out.push(h('section', { className: 'routine-templates', 'aria-label': T('routines.templates') }, h('h3', { textContent: T('routines.templates') }),
-      TEMPLATES.map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; })));
+      h('ul', { className: 'routine-template-list' }, templates().filter((tp) => !tp.page).map((tp) => templateCard(tp, items, state))),
+      h('div', { className: 'routine-template-more' }, templates().filter((tp) => tp.page).map((tp) => { const b = btn(T(`routines.template.${tp.key}.name`), () => open({ template: tp }), 'btn routine-template'); b.title = T(`routines.template.${tp.key}.description`); b.disabled = !state.settings.enabled; return b; }))));
     return out;
   }
 
-  // Starter routines. `page`: the start page is the tab in front (the user can change it).
-  const TEMPLATES = [
-    { key: 'news', schedule: { repeat: 'weekdays', time: '08:00' } },
-    { key: 'changes', schedule: { repeat: 'daily', time: '09:00' }, page: true },
-    { key: 'weekly', schedule: { repeat: 'weekly', days: [1], time: '09:00' }, page: true },
-  ];
+  // Starter routines come from main (features/routines.js TEMPLATES, in the tasks state): a one-click card adds one switched off;
+  // `page` ones start at the tab in front, so they open the editor.
+  const templates = () => core.state().templates || [];
+  async function addTemplate(tp) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const res = await api.saveRoutine({ title: name, prompt: T(`routines.template.${tp.key}.prompt`), schedule: tp.schedule, enabled: false, template: tp.key, confirmed: true });
+    core.announce(res.ok ? T('routines.template.added', { name }) : res.error);
+    await core.refresh();
+  }
+  function templateCard(tp, items, state) {
+    const name = T(`routines.template.${tp.key}.name`);
+    const have = items.some((x) => x.routine?.template === tp.key);
+    const app = tp.connector ? T(`routines.connector.${tp.connector}`) : '';
+    const add = btn(have ? T('routines.template.have') : T('routines.template.add'), () => addTemplate(tp), 'btn routine-template-add');
+    add.disabled = have || !state.settings.enabled;
+    add.setAttribute('aria-label', `${add.textContent}: ${name}`);
+    return h('li', { className: 'routine-template-card' },
+      h('span', { className: 'task-text' }, h('span', { className: 'task-title', textContent: name }),
+        h('span', { className: 'task-meta', textContent: `${T(`routines.template.${tp.key}.description`)} ${scheduleText({ type: 'routine', ...tp.schedule })}` }),
+        tp.connector ? h('span', { className: `task-meta routine-template-conn${(state.connected || []).includes(tp.connector) ? ' ready' : ''}`, textContent: (state.connected || []).includes(tp.connector) ? T('routines.template.ready', { app }) : T('routines.template.needs', { app }) }) : null),
+      add);
+  }
+
+  // Quiet hours: no routine starts on its own in this daily window; one due then runs once when it ends.
+  function quietBlock(state) {
+    const q = state.settings.quiet || { on: false, from: '22:00', to: '07:00' };
+    const set = (patch) => api.settings({ quiet: { ...q, ...patch } }).then(core.refresh);
+    const on = h('input', { type: 'checkbox', checked: q.on, onchange: (e) => set({ on: e.target.checked }) });
+    const time = (value, key, label) => { const i = h('input', { type: 'time', value, required: true, onchange: (e) => { if (e.target.value) set({ [key]: e.target.value }); } }); i.setAttribute('aria-label', label); return i; };
+    return h('details', { className: 'routine-quiet', open: q.on },
+      h('summary', { textContent: T('routines.quiet.title') }),
+      h('label', { className: 'task-check' }, on, T('routines.quiet.on')),
+      h('div', { className: 'routine-quiet-times' }, h('span', { textContent: T('routines.quiet.from') }), time(q.from, 'from', T('routines.quiet.from')), h('span', { textContent: T('routines.quiet.to') }), time(q.to, 'to', T('routines.quiet.to'))),
+      h('p', { className: 'task-meta', textContent: T('routines.quiet.desc') }));
+  }
 
   // ---- a routine's history, in its task page
   function history(task) {
@@ -76,14 +112,14 @@
       const when = [clock(r.startedAt || r.endedAt), T(`routines.history.status.${r.status}`), T(`routines.trigger.${r.trigger}`),
         r.trigger === 'catch-up' && r.scheduledFor ? T('routines.history.dueAt', { time: clock(r.scheduledFor) }) : ''].filter(Boolean).join(' · ');
       const details = h('details', { className: 'routine-run', open: i === 0 && r.status !== 'done' }, // the newest problem is shown open; results are a click away (the latest is above)
-        h('summary', {}, h('span', { className: `task-dot ${r.status === 'skipped' ? 'stopped' : r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
+        h('summary', {}, h('span', { className: `task-dot ${{ skipped: 'stopped', nothing: 'done' }[r.status] || r.status}`, 'aria-hidden': 'true' }), h('span', { textContent: when })));
       if (r.error) details.append(h('p', { className: r.status === 'skipped' ? 'task-meta' : 'task-error', textContent: r.error }));
       if (r.result) {
         const body = h('div', { className: 'msg assistant task-result routine-result' });
         body.innerHTML = window.renderMarkdown(r.result);
         body.addEventListener('click', (e) => { const a = e.target.closest?.('a[href]'); if (a) { e.preventDefault(); window.browser.newTab(a.href); } });
         details.append(body);
-      } else if (!r.error) details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
+      } else if (!r.error && r.status !== 'nothing') details.append(h('p', { className: 'task-meta', textContent: T('tasks.detail.noResult') }));
       return h('li', {}, details);
     })));
     return out;
@@ -91,7 +127,8 @@
 
   // ---- the editor (new, from a template, from /routine or a reply, or editing one)
   let card = null;
-  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false } = {}) {
+  // `shownKey`: a web link key just made for this routine ({ key, url, curl }), shown this once.
+  async function open({ task = null, prompt = '', schedule = null, template = null, fromComposer = false, shownKey = null } = {}) {
     const state = core.state();
     if (!state.settings.enabled) { core.openPanel(null, { tab: 'routines' }); return; }
     card?.remove();
@@ -120,17 +157,23 @@
     const start = h('input', { type: 'text', spellcheck: false, value: task?.routine?.startUrl || '', placeholder: 'https://' });
     const sites = h('input', { type: 'text', spellcheck: false, value: task ? task.allowedSites.filter((x, _i, all) => !(x.startsWith('www.') && all.includes(x.slice(4)))).join(', ') : pv.sites.join(', ') });
     let sitesTouched = Boolean(task);
+    let templateKey = ''; // set when the editor was filled from a template (kept on the routine so the cards know it is added)
     sites.addEventListener('input', () => { sitesTouched = true; });
-    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === (task?.model || pv.model), disabled: !m.available })));
+    const model = h('select', {}, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === (task?.model || pv.model), disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox', checked: Boolean(task?.signedIn) });
     const mcp = h('input', { type: 'checkbox', checked: Boolean(task?.allowMcp) });
     const enabled = h('input', { type: 'checkbox', checked: task ? task.enabled !== false : true });
+    const quiet = h('input', { type: 'checkbox', className: 'routine-quiet-check', checked: Boolean(task?.routine?.quietUnlessNeeded) });
     const syncMcp = () => { const cli = pv.models.find((m) => m.id === model.value)?.engine !== 'api'; mcp.disabled = cli; if (cli) mcp.checked = false; };
     model.addEventListener('change', syncMcp);
 
     // When: the repeat, and the fields it needs.
     const s0 = task?.schedule || schedule || { repeat: 'weekdays', time: '08:00' };
-    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === s0.repeat })));
+    // Starts: on a schedule, from a web link, or when new email arrives (the schedule's repeat says which).
+    const trigger = h('select', { className: 'routine-trigger' }, TRIGGERS.map((k) => h('option', { value: k, textContent: T(`routines.trigger.kind.${k}`), selected: k === triggerOf(s0) })));
+    const repeat = h('select', { className: 'routine-repeat' }, REPEATS.map((r) => h('option', { value: r, textContent: T(`routines.repeat.${r}`), selected: r === (triggerOf(s0) === 'schedule' ? s0.repeat : 'weekdays') })));
+    const emailEvery = h('input', { type: 'number', min: 5, max: 1440, value: s0.minutes || 10, className: 'task-minutes routine-email-every' });
+    emailEvery.setAttribute('aria-label', T('routines.field.emailEvery'));
     const time = h('input', { type: 'time', value: s0.time || '08:00', required: true });
     time.setAttribute('aria-label', T('routines.field.time'));
     const days = h('fieldset', { className: 'routine-days' }, h('legend', { textContent: T('routines.field.days') }),
@@ -151,7 +194,40 @@
       cron: h('div', {}, h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.cron') }), cron), h('p', { className: 'task-meta', textContent: T('routines.field.cron.hint') })),
     };
     const next = h('p', { className: 'task-meta routine-next', 'aria-live': 'polite' });
+    const hooks = core.state().webhooks || { on: false, port: 47821, listening: false, error: '' };
+    const emailBox = h('div', { className: 'routine-email' },
+      h('label', { className: 'task-field' }, h('span', { textContent: T('routines.field.emailEvery') }), emailEvery, h('span', { textContent: T('routines.field.minutesUnit') })),
+      h('p', { className: 'task-meta', textContent: T('routines.email.hint') }),
+      (state.connected || []).includes('gmail') ? null : h('p', { className: 'task-meta task-error routine-email-needs', textContent: T('routines.email.needsGmail') }),
+      task?.routine?.emailError ? h('p', { className: 'task-meta task-error', textContent: T('routines.email.error', { error: task.routine.emailError }) }) : null);
+    const hookBox = h('div', { className: 'routine-webhook' }, h('p', { className: 'task-meta', textContent: T('routines.webhook.hint') }));
+    if (!hooks.on) hookBox.append(h('p', { className: 'task-meta task-error routine-webhook-off', textContent: T('routines.webhook.settingOff') }));
+    else if (hooks.error) hookBox.append(h('p', { className: 'task-meta task-error', textContent: T('routines.webhook.inUse', { port: hooks.port }) }));
+    if (!task) hookBox.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.saveFirst') }));
+    else {
+      const url = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-url', value: shownKey?.url || `http://127.0.0.1:${hooks.port}/routines/${task.id}/run` });
+      hookBox.append(field(T('routines.webhook.url'), url));
+      const copyText = async (b, text) => { try { await navigator.clipboard.writeText(text); b.textContent = T('routines.webhook.copied'); setTimeout(() => { b.textContent = T('routines.webhook.copyCurl'); }, 1500); } catch (err) { console.error('[lumen] copy failed:', err); } };
+      const showKey = (made) => {
+        const keyBox = h('input', { type: 'text', readOnly: true, className: 'routine-webhook-key', value: made.key });
+        const copy = btn(T('routines.webhook.copyCurl'), () => copyText(copy, made.curl), 'btn routine-webhook-copy');
+        return h('div', { className: 'routine-webhook-made' }, field(T('routines.webhook.key'), keyBox), h('p', { className: 'task-meta', textContent: T('routines.webhook.keyShown') }), copy);
+      };
+      const keyArea = h('div', {});
+      const makeKey = btn(task.routine?.hasKey || shownKey ? T('routines.webhook.regenerate') : T('routines.webhook.make'), async () => {
+        const res = await api.routineWebhookKey(task.id);
+        if (!res.ok) { error.textContent = res.error; error.hidden = false; return; }
+        keyArea.replaceChildren(showKey(res));
+        makeKey.textContent = T('routines.webhook.regenerate');
+      }, 'btn routine-webhook-make');
+      if (shownKey) keyArea.append(showKey(shownKey));
+      else if (task.routine?.hasKey) keyArea.append(h('p', { className: 'task-meta', textContent: T('routines.webhook.hasKey') }));
+      hookBox.append(keyArea, h('div', { className: 'approval-actions' }, makeKey));
+    }
+    const scheduleBox = h('div', { className: 'routine-schedule-box' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron);
     const getSchedule = () => {
+      if (trigger.value === 'webhook') return { repeat: 'webhook' };
+      if (trigger.value === 'email') return { repeat: 'email', minutes: Number(emailEvery.value) };
       const r = repeat.value;
       if (r === 'once') return { repeat: r, at: new Date(when.value).getTime() };
       if (r === 'hours') return { repeat: r, hours: Number(hours.value), ...(task?.schedule.repeat === 'hours' && Number(hours.value) === task.schedule.hours ? { anchor: task.schedule.anchor } : {}) };
@@ -164,9 +240,15 @@
       const res = await api.routinePreview({ schedule: getSchedule() });
       if (seq !== previewSeq) return;
       next.classList.toggle('task-error', !res.ok);
-      next.textContent = res.ok ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : res.error;
+      next.textContent = res.ok ? (trigger.value === 'schedule' ? T('routines.next', { times: res.next.map((x) => clock(x)).join(' · ') || '-' }) : '') : res.error;
     };
+    const enabledLabel = h('span', {});
     const sync = () => {
+      const k = trigger.value;
+      scheduleBox.hidden = k !== 'schedule';
+      emailBox.hidden = k !== 'email';
+      hookBox.hidden = k !== 'webhook';
+      enabledLabel.textContent = k === 'schedule' ? T('routines.field.enabled') : T('routines.field.enabled.event');
       const r = repeat.value;
       rows.time.hidden = !['daily', 'weekdays', 'weekly'].includes(r);
       rows.days.hidden = r !== 'weekly';
@@ -176,7 +258,8 @@
       updateNext();
     };
     repeat.addEventListener('change', sync);
-    for (const c of [time, hours, when, cron, days]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
+    trigger.addEventListener('change', sync);
+    for (const c of [time, hours, when, cron, days, emailEvery]) { c.addEventListener('input', updateNext); c.addEventListener('change', updateNext); }
 
     // The sites follow the request and the start page until the user edits them.
     let siteTimer = null;
@@ -195,9 +278,13 @@
       name.value = T(`routines.template.${tp.key}.name`);
       what.value = T(`routines.template.${tp.key}.prompt`);
       if (tp.page) start.value = /^https?:/i.test(pv.pageUrl) ? pv.pageUrl : '';
+      trigger.value = triggerOf(tp.schedule);
       repeat.value = tp.schedule.repeat;
       time.value = tp.schedule.time || '08:00';
+      if (tp.schedule.cron) cron.value = tp.schedule.cron;
+      quiet.checked = Boolean(tp.quiet);
       for (const i of days.querySelectorAll('input')) i.checked = (tp.schedule.days || [1]).includes(Number(i.value));
+      templateKey = tp.key;
       sitesTouched = false;
       sync();
       followSites();
@@ -209,29 +296,37 @@
       save.disabled = true;
       const res = await api.saveRoutine({
         id: task?.id, title: name.value, prompt: what.value, startUrl: start.value, sites: sitesTouched ? sites.value.split(',').map((x) => x.trim()).filter(Boolean) : undefined, // untouched: worked out from the request and start page
-        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, confirmed: true,
+        schedule: getSchedule(), model: model.value, signedIn: signedIn.checked, allowMcp: mcp.checked, enabled: enabled.checked, template: templateKey || undefined, quietUnlessNeeded: quiet.checked, confirmed: true,
       });
       if (!res.ok) { error.textContent = res.error; error.hidden = false; save.disabled = false; return; }
       if (fromComposer) { composerInput.value = ''; composerInput.dispatchEvent(new Event('input')); }
       core.announce(task ? T('routines.saved') : T('routines.created'));
       fromComposer = false;
+      const firstKey = !task?.routine?.hasKey && trigger.value === 'webhook' && !shownKey; // a new web link routine: its key is made now and shown once
       close();
       await core.openPanel(res.id, { tab: 'routines' });
+      if (firstKey) {
+        const made = await api.routineWebhookKey(res.id);
+        const saved = made.ok ? await api.get(res.id) : null;
+        if (saved) open({ task: saved, shownKey: made });
+      }
     }, 'btn primary');
 
     box.append(
       h('h2', { textContent: task ? T('routines.edit.title') : T('routines.create.title') }),
       task ? null : h('div', { className: 'routine-template-row', role: 'group', 'aria-label': T('routines.templates') }, h('span', { className: 'task-meta', textContent: T('routines.templates.start') }),
-        TEMPLATES.map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
+        templates().map((tp) => btn(T(`routines.template.${tp.key}.name`), () => applyTemplate(tp), 'btn routine-template'))),
       field(T('routines.field.name'), name),
       field(T('tasks.create.prompt'), what),
       field(T('routines.field.start'), start),
-      h('div', { className: 'task-schedule' }, field(T('routines.field.repeat'), repeat, false), rows.time, rows.days, rows.hours, rows.once, rows.cron, next),
+      h('div', { className: 'task-schedule' }, field(T('routines.field.trigger'), trigger, false),
+        scheduleBox, emailBox, hookBox, next),
       field(T('tasks.create.sites'), sites),
       h('label', { className: 'task-field' }, model, h('span', { textContent: T('tasks.create.model') })),
       h('label', { className: 'task-check' }, signedIn, T('tasks.create.signedIn')),
       pv.hasMcp ? h('label', { className: 'task-check' }, mcp, T('tasks.create.mcp')) : null,
-      task ? h('label', { className: 'task-check' }, enabled, T('routines.field.enabled')) : null,
+      h('label', { className: 'task-check', title: T('routines.field.quiet.hint') }, quiet, T('routines.field.quiet')),
+      task ? h('label', { className: 'task-check' }, enabled, enabledLabel) : null,
       h('p', { className: 'task-meta', textContent: `${T('tasks.create.asks')} ${T('routines.create.whileOpen')}` }),
       ...(pv.cli || []).filter((c) => c.state !== 'ready').map((c) => h('p', { className: 'task-meta', textContent: T(`tasks.create.cliNote.${c.state}`, { name: c.name }) })),
       error,
@@ -281,5 +376,49 @@
     };
   }
 
-  window.lumenRoutines = { list, history, scheduleText, open };
+  // ---- opened from elsewhere (the home page card, Settings): main sends tasks:open { routine: 'new' | 'edit', id, prompt }
+  async function fromMain({ routine, id, prompt } = {}) {
+    if (routine === 'edit') {
+      const task = await api.get(id);
+      if (!task) return;
+      await core.openPanel(id, { tab: 'routines' });
+      open({ task });
+      return;
+    }
+    open({ prompt: typeof prompt === 'string' ? prompt : '' });
+  }
+
+  // ---- "Every day at 8am check my email" typed in the message box: a small bar offers to make it a routine.
+  // It never sends or saves anything by itself, and the message still sends normally.
+  (() => {
+    const phrase = window.routinePhrase;
+    if (!phrase || !composerInput) return;
+    const label = h('span', { className: 'routine-offer-text' });
+    const yes = btn(T('routines.offer.button'), () => {}, 'btn primary routine-offer-yes');
+    const no = btn(T('routines.offer.dismiss'), () => {}, 'btn routine-offer-no');
+    const bar = h('div', { className: 'routine-offer', role: 'status', hidden: true }, label, yes, no);
+    composerInput.before(bar);
+    let timer = null;
+    let seq = 0;
+    let dismissedFor = '';
+    const hide = () => { seq++; clearTimeout(timer); bar.hidden = true; };
+    composerInput.addEventListener('input', () => {
+      clearTimeout(timer);
+      const text = composerInput.value.trim();
+      if (!core.state().settings.enabled || text === dismissedFor || !phrase.looksScheduled(text)) { hide(); return; }
+      timer = setTimeout(async () => {
+        const mine = ++seq;
+        const res = await api.routinePreview({ text });
+        if (mine !== seq || composerInput.value.trim() !== text) return;
+        if (!res.parsed) { bar.hidden = true; return; }
+        label.textContent = `${T('routines.offer.text')} ${scheduleText({ type: 'routine', ...res.parsed.schedule })}`;
+        yes.onclick = () => { hide(); open({ prompt: res.parsed.prompt, schedule: res.parsed.schedule, fromComposer: true }); };
+        no.onclick = () => { dismissedFor = text; hide(); composerInput.focus(); };
+        bar.hidden = false;
+      }, 400);
+    });
+    composerInput.form?.addEventListener('submit', hide);
+  })();
+
+  window.lumenRoutines = { list, history, scheduleText, open, fromMain };
 })();

@@ -1,44 +1,262 @@
-/* lumen://chat: a chat list on the left, the conversation on the right. The conversation is the
-   sidebar's own markup and styles (styles.css: body.chat-full is its wide layout); this file only
-   adds the list, the header's "working on" tab and the page frame. */
+/* lumen://chat: a chat list on the left (a rail), the conversation on the right, laid out as claude.ai and ChatGPT do:
+   a centred column, your messages as soft bubbles on the right, replies as plain text, one rounded composer, a greeting
+   with the composer in the middle of an empty chat. The conversation is the sidebar's own markup and styles (styles.css:
+   body.chat-full is its wide layout); everything here is scoped to body.chat-page, so the sidebar is untouched.
+   Spacing is an 8px scale (--cp-1..--cp-5); colours are the theme tokens, so light and dark follow styles.css. */
 
-body.chat-page { flex-direction: row; background: var(--bg); }
-
-.cp-list {
-  flex: none; width: 280px; display: flex; flex-direction: column; min-height: 0;
-  background: var(--bg); border-right: 1px solid var(--border);
+body.chat-page {
+  --cp-1: 4px; --cp-2: 8px; --cp-3: 16px; --cp-4: 24px; --cp-5: 32px;
+  --cp-col: 768px; /* 48rem: the conversation column and the composer */
+  --cp-rail: 260px;
+  --cp-bottom: 40px; /* the composer's distance from the window's bottom: the disclaimer lives under it */
+  --cp-row: color-mix(in srgb, var(--text) 8%, transparent);
+  flex-direction: row; background: var(--surface); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-.cp-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 8px 16px; }
-.cp-list-head h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
-.cp-list .chat-items { padding: 0 8px 16px; }
-.cp-list .chat-list-empty { margin: 8px 16px; }
 
+/* ---------- the rail ---------- */
+.cp-list {
+  flex: none; width: var(--cp-rail); box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
+  padding: 0 var(--cp-2); background: var(--bg);
+  transition: margin-left var(--t-smooth) var(--ease-out), visibility 0s;
+}
+.cp-rail-top { display: flex; align-items: center; gap: var(--cp-2); height: 52px; padding: 0 var(--cp-1); }
+.cp-rail-top h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.cp-new {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; margin-bottom: var(--cp-1); box-sizing: border-box;
+  border: none; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.cp-new:hover { background: var(--cp-row); }
+.cp-new svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cp-new-label { flex: 1; min-width: 0; }
+.cp-kbd { font: 11px/1 system-ui, sans-serif; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out; white-space: nowrap; }
+.cp-new:hover .cp-kbd, .cp-new:focus-visible .cp-kbd { opacity: 1; }
+.cp-list .chat-search {
+  width: 100%; margin: 0 0 var(--cp-2); box-sizing: border-box; height: 36px; padding: 0 10px 0 34px; border-radius: 10px; background-color: transparent; font-size: 13.5px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238e8e93' stroke-width='1.5' stroke-linecap='round'%3E%3Ccircle cx='7' cy='7' r='4.2'/%3E%3Cpath d='m10.2 10.2 3.3 3.3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: 10px 50%; background-size: 16px;
+}
+.cp-list .chat-search:hover { background-color: var(--cp-row); }
+.cp-list .chat-search:focus { background-color: var(--cp-row); }
+.cp-list .chat-search::placeholder { color: var(--muted); }
+.cp-list .chat-items { padding: 0 0 var(--cp-3); }
+.cp-list .chat-list-empty { margin: var(--cp-2) 10px; }
+.cp-list .chat-group { padding: var(--cp-3) 10px var(--cp-1); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.cp-list .chat-group:first-child { padding-top: var(--cp-1); }
+
+/* a row is its title: the date, tab and usage lines are the sidebar's (a search hit still shows its words) */
+.cp-list .chat-item { border-radius: 10px; }
+.cp-list .chat-item:hover, .cp-list .chat-item:focus-within, .cp-list .chat-item.menu-open { background: var(--cp-row); }
+.cp-list .chat-item.current { background: color-mix(in srgb, var(--text) 11%, transparent); }
+.cp-list .chat-open { min-height: 36px; justify-content: center; padding: 0 10px; cursor: pointer; }
+.cp-list .chat-meta, .cp-list .chat-place { display: none; }
+.cp-list .chat-title { font-size: 13.5px; }
+.cp-list .chat-item:hover .chat-title, .cp-list .chat-item:focus-within .chat-title, .cp-list .chat-item.menu-open .chat-title { padding-right: 28px; }
+.cp-list .chat-item.has-running .chat-title, .cp-list .chat-item.has-queued .chat-title { padding-right: 0; }
+.cp-list .chat-snippet { font-size: 11.5px; padding-bottom: 6px; }
+.cp-list .chat-stop-wait { margin-left: 10px; }
+.cp-list .chat-item.has-unread { box-shadow: none; }
+.cp-list .chat-item.has-unread .chat-title { font-weight: 600; }
+.cp-list .chat-rename-input { margin: 3px 0; }
+/* the ⋯ and its menu (chat-items.js rowMenu): the same buttons as the sidebar's row, with their names */
+.cp-list .chat-more { position: absolute; right: 4px; top: 4px; width: 28px; height: 28px; opacity: 0; color: var(--muted); }
+.cp-list .chat-more svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+.cp-list .chat-item:hover .chat-more, .cp-list .chat-item:focus-within .chat-more, .cp-list .chat-item.menu-open .chat-more { opacity: 1; }
+.cp-list .chat-item:has(.chat-rename-input) .chat-more { display: none; }
+.cp-list .chat-actions.chat-menu {
+  display: none; position: absolute; top: calc(100% + 2px); right: 4px; z-index: 40; flex-direction: column; min-width: 196px; padding: var(--cp-1); box-sizing: border-box;
+  opacity: 1; pointer-events: auto; border-radius: 12px; background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+}
+.cp-list .chat-item.menu-open .chat-menu { display: flex; }
+.cp-list .chat-menu.up { top: auto; bottom: calc(100% + 2px); }
+.cp-list .chat-menu .icon-btn { width: auto; height: 32px; display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 0 10px; border-radius: 8px; color: var(--text); font-size: 13px; text-align: left; }
+.cp-list .chat-menu .icon-btn svg { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cp-list .chat-menu .icon-btn:focus-visible, body.chat-page .cp-menu .icon-btn:focus-visible { outline: none; background: var(--hover); }
+.cp-list .chat-menu .chat-delete { color: var(--danger); }
+.cp-list .chat-menu .icon-btn:hover:not(:disabled), .cp-list .chat-menu .icon-btn:focus-visible { background: var(--hover); color: var(--text); }
+.cp-list .chat-menu .chat-delete:hover:not(:disabled), .cp-list .chat-menu .chat-delete:focus-visible { color: var(--danger); background: var(--danger-soft); }
+.cp-list .chat-act-drop { display: flex !important; }
+
+.cp-rail-foot { flex: none; padding: var(--cp-2) 0 var(--cp-3); }
+.cp-archived { display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px; box-sizing: border-box; border: none; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cp-archived[hidden] { display: none; }
+.cp-archived svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cp-archived:hover, .cp-archived[aria-pressed="true"] { background: var(--cp-row); color: var(--text); }
+
+/* folded: out of the way and out of the tab order (chat-page.js sets inert) */
+body.cp-rail-hidden .cp-list { margin-left: calc(-1 * var(--cp-rail)); visibility: hidden; transition: margin-left var(--t-smooth) var(--ease-out), visibility 0s var(--t-smooth); }
+/* a narrow window: the rail is a drawer over the conversation, with a scrim behind it */
+body.cp-narrow .cp-list { position: absolute; z-index: 60; top: 0; bottom: 0; left: 0; box-shadow: 8px 0 32px -12px rgb(0 0 0 / 0.35); }
+body.cp-narrow.cp-rail-hidden .cp-list { box-shadow: none; }
+.cp-scrim { position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / 0.32); animation: cp-fade var(--t-base) ease-out; }
+.cp-scrim[hidden] { display: none; }
+@keyframes cp-fade { from { opacity: 0; } }
+
+/* ---------- the page ---------- */
 .cp-main { flex: 1; min-width: 0; display: flex; min-height: 0; background: var(--surface); }
-body.chat-page .sidebar { flex: 1; width: 100%; min-width: 0; background: var(--surface); animation: none; }
-body.chat-page .sidebar-head { max-width: 760px; width: 100%; gap: 8px; padding-left: 24px; }
-body.chat-page .messages { padding-left: 24px; padding-right: 24px; }
+body.chat-page .sidebar { flex: 1; width: 100%; min-width: 0; background: var(--surface); animation: none; container: cpmain / inline-size; }
+
+/* ---------- the header: thin, no rules ---------- */
+body.chat-page .sidebar-head { max-width: none; width: 100%; margin: 0; height: 52px; padding: 0 var(--cp-3) 0 var(--cp-3); gap: var(--cp-1); box-sizing: border-box; }
+body.chat-page .sidebar-head .model-picker { margin: 0; flex: 0 1 auto; border-radius: 8px; transition: background-color var(--t-fast) ease-out; }
+body.chat-page .sidebar-head .model-picker:hover { background: var(--hover); }
+body.chat-page .sidebar-head .model-picker .picker-button { font-size: 14px; font-weight: 600; padding: 0 28px 0 10px; height: 32px; align-items: center; }
+body.chat-page .sidebar-head .model-picker svg { right: 10px; }
+body.chat-page .sidebar-actions { gap: var(--cp-1); align-items: center; }
+body.chat-page .sidebar-head .icon-btn { width: 32px; height: 32px; border-radius: 8px; }
+/* [header controls] every control on the right is 32px tall and centred; the permission button grows by its name only */
+body.chat-page .sidebar-head .icon-btn.auto-allow { width: auto; min-width: 32px; padding: 0 10px 0 8px; font-size: 12px; font-weight: 600; line-height: 1; }
+body.chat-page .sidebar-actions { flex: none; align-self: center; }
+body.chat-page .sidebar-actions > *, body.chat-page .cp-more-wrap .icon-btn { align-self: center; }
+body.chat-page .sidebar-head .icon-btn svg { width: 16px; height: 16px; }
+body.chat-page #cp-more svg { fill: currentColor; stroke: none; }
 
 /* Which tab the AI is working in: the chat page is never that tab. */
 .cp-target {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 3px 8px; border-radius: 8px; font-size: 12px; color: var(--muted);
+  flex: 0 1 auto; min-width: 0; max-width: min(420px, 34%); box-sizing: border-box; height: 32px; margin: 0 auto 0 var(--cp-2); display: flex; align-items: center; gap: 6px; justify-content: flex-start; overflow: hidden;
+  padding: 0 var(--cp-2); border-radius: 14px; font-size: 12px; line-height: 1; color: var(--muted);
 }
 .cp-target[hidden] { display: none; }
 .cp-target-icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
-.cp-target-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.cp-target-text { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 body.agent-active .cp-target { color: var(--accent); background: var(--accent-soft); }
+/* (under 900px the chip is not shown at all: see "a narrower window" below) */
 
-#cp-back { width: auto; padding: 0 8px; gap: 6px; display: inline-flex; align-items: center; }
-.cp-back-label { font-size: 12px; white-space: nowrap; }
+/* the ⋯ menu: Back to sidebar and AI settings, named */
+.cp-more-wrap { position: relative; }
+.cp-menu { position: absolute; z-index: 40; top: calc(100% + var(--cp-1)); right: 0; min-width: 208px; padding: var(--cp-1); border-radius: 12px; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
+.cp-menu[hidden] { display: none; }
+body.chat-page .cp-menu .icon-btn { width: 100%; height: 34px; display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 0 10px; border-radius: 8px; color: var(--text); font-size: 13px; text-align: left; }
+body.chat-page .cp-menu .icon-btn:hover { background: var(--hover); }
+.cp-back-label, .cp-menu-label { font-size: 13px; white-space: nowrap; }
 
-/* A frame in the accent colour while the AI works, as around the page in the browser window. */
+/* a frame in the accent colour while the AI works, as around the page in the browser window */
 body.chat-page.agent-active .cp-main { box-shadow: inset 0 0 0 2px var(--accent); }
 
-@media (max-width: 720px) {
-  .cp-list { width: 200px; }
-  .cp-back-label { display: none; }
+/* ---------- the conversation: a centred column ---------- */
+/* the composer's Context meter says it; the sidebar keeps this line */
+body.chat-page .chat-usage { display: none; }
+body.chat-page .messages {
+  max-width: none; margin: 0; width: 100%; box-sizing: border-box; line-height: 1.6; font-size: 15px;
+  padding: var(--cp-2) max(var(--cp-4), calc((100% - var(--cp-col)) / 2)) calc(var(--composer-h) + var(--cp-bottom) + 56px);
 }
-body.chat-page .chat-usage { max-width: 760px; width: 100%; margin: 0 auto; padding-left: 24px; }
+body.chat-page .msg { margin: var(--cp-4) 0; }
+/* yours: a soft bubble, on the right */
+body.chat-page .msg.user {
+  width: fit-content; max-width: min(85%, 560px); margin: var(--cp-4) 0 var(--cp-4) auto; padding: 10px var(--cp-3);
+  border-radius: 20px; background: var(--field); box-shadow: none; line-height: 1.5;
+}
+/* the reply: no bubble, the column's full width; a small mark hangs in the margin when the window has room for it */
+body.chat-page .msg.assistant { line-height: 1.65; }
+body.chat-page .msg.assistant::before {
+  content: ""; display: none; position: absolute; left: -40px; top: 2px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='white' d='M12 5.2c.5 3.7 2.6 5.8 6.8 6.8-4.2 1-6.3 3.1-6.8 6.8-.5-3.7-2.6-5.8-6.8-6.8 4.2-1 6.3-3.1 6.8-6.8z'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+@container cpmain (min-width: 868px) { body.chat-page .msg.assistant::before { display: block; } }
+body.chat-page .msg.assistant p { margin: 0 0 var(--cp-3); }
+body.chat-page .msg.assistant ul, body.chat-page .msg.assistant ol { margin: 0 0 var(--cp-3); padding-left: var(--cp-4); }
+body.chat-page .msg.assistant li { margin: 2px 0; }
+body.chat-page .msg.assistant h1, body.chat-page .msg.assistant h2, body.chat-page .msg.assistant h3, body.chat-page .msg.assistant h4 { margin: var(--cp-4) 0 var(--cp-2); }
+body.chat-page .msg.assistant h1 { font-size: 20px; } body.chat-page .msg.assistant h2 { font-size: 17px; } body.chat-page .msg.assistant h3 { font-size: 15.5px; } body.chat-page .msg.assistant h4 { font-size: 15px; }
+body.chat-page .msg.assistant code { font-size: 13px; }
+/* code takes the column's whole width */
+body.chat-page .msg.assistant .code-block { margin: 0 0 var(--cp-3); border-radius: 12px; }
+body.chat-page .msg.assistant .code-head { height: 34px; padding: 0 var(--cp-2) 0 var(--cp-3); }
+body.chat-page .msg.assistant .code-block pre { padding: var(--cp-2) var(--cp-3) var(--cp-3); font-size: 13px; line-height: 1.55; }
+
+/* Scrolled up while a reply streams: a pill in the column, over the composer's edge */
+body.chat-page .jump-latest {
+  bottom: calc(var(--composer-h) + var(--cp-bottom) + var(--cp-3)); width: auto !important; max-width: none; height: 32px; padding: 0 14px 0 10px; border-radius: 16px; display: inline-flex; align-items: center; gap: 6px;
+  box-shadow: 0 0 0 1px var(--border), 0 4px 14px -4px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
+}
+body.chat-page .jump-latest::after { content: attr(aria-label); font-size: 12.5px; font-weight: 500; }
+body.chat-page .jump-latest[hidden] { display: none; }
+
+/* ---------- the composer: one rounded, raised box in the column ---------- */
+body.chat-page .composer {
+  bottom: var(--cp-bottom); left: 50%; right: auto; width: min(var(--cp-col), calc(100% - 2 * var(--cp-3))) !important; box-sizing: border-box;
+  gap: var(--cp-1) var(--cp-2); padding: 14px var(--cp-3) 10px; border-radius: 24px; align-items: center;
+  background: var(--surface-raised); backdrop-filter: none;
+  box-shadow: 0 0 0 1px var(--border), 0 2px 6px rgb(0 0 0 / calc(0.5 * var(--shadow-k))), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k)));
+  transform: translate(-50%, 0);
+  transition: box-shadow var(--t-smooth) var(--ease-out), transform var(--t-smooth) var(--ease-out);
+}
+/* focus: a thin accent edge and a soft halo, not the sidebar's heavy ring */
+body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--border)), 0 0 0 3px var(--accent-soft), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); }
+/* the message box on the first line; attach (+) and the tools on the line under it, Send/Stop at the right */
+body.chat-page .composer textarea { order: 1; flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: 0 var(--cp-1); min-height: 1lh; max-height: min(320px, 40vh); }
+body.chat-page .composer .attach-btn { order: 2; }
+body.chat-page .composer .screen-btn { order: 3; }
+body.chat-page .composer .mic-btn { order: 3; width: 32px; height: 32px; }
+body.chat-page .composer .dictation-bar { order: 0; padding: 0 var(--cp-1); }
+body.chat-page .composer .meter-strip { order: 4; flex: 1 1 0; min-width: 0; margin: 0; padding: 0; }
+body.chat-page .composer .send-now { order: 5; }
+body.chat-page .composer .send { order: 6; margin-left: auto; }
+body.chat-page .composer .composer-hint { order: 7; }
+body.chat-page .composer .attach-btn, body.chat-page .composer .screen-btn { width: 32px; height: 32px; }
+body.chat-page .composer .attach-btn { box-shadow: inset 0 0 0 1px var(--border); }
+body.chat-page .composer .attach-btn svg { width: 16px; height: 16px; stroke-width: 1.6; }
+body.chat-page .composer .send { width: 32px; height: 32px; margin-left: auto; }
+body.chat-page .composer .send svg { width: 16px; height: 16px; }
+body.chat-page .composer .send.stop { width: 32px; min-width: 32px; padding: 0; gap: 0; border-radius: 50%; }
+body.chat-page .composer .send.stop::after { content: none; }
+body.chat-page .composer .send.stop::before { width: 10px; height: 10px; border-radius: 2px; }
+body.chat-page .composer .send-now { height: 32px; border-radius: 16px; }
+body.chat-page .cp-disclaimer { position: absolute; left: 0; right: 0; bottom: 0; z-index: var(--z-composer); margin: 0; height: var(--cp-bottom); padding: 0 var(--cp-3); box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); pointer-events: none; text-align: center; }
+
+/* ---------- an empty chat: the greeting, the composer in the middle of the page, starters under it ---------- */
+body.chat-page #empty { display: contents; animation: none; }
+body.chat-page #empty[hidden] { display: none; }
+body.chat-page #empty .empty-title {
+  position: absolute; left: 50%; bottom: calc(54vh + var(--composer-h) / 2 + var(--cp-4)); transform: translateX(-50%); width: min(var(--cp-col), calc(100% - 2 * var(--cp-4))); margin: 0; box-sizing: border-box;
+  text-align: center; font-size: 28px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.25; color: var(--text); animation: cp-rise var(--t-smooth) var(--ease-out);
+}
+body.chat-page #empty .chips {
+  position: absolute; left: 50%; top: calc(46vh + var(--composer-h) / 2 + var(--cp-3)); transform: translateX(-50%); width: min(var(--cp-col), calc(100% - 2 * var(--cp-4))); box-sizing: border-box;
+  flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; gap: var(--cp-2);
+}
+body.chat-page #empty .chip { padding: 0 14px; height: 34px; display: inline-flex; align-items: center; border-radius: 17px; border: 1px solid var(--border); color: var(--text); font-size: 13.5px; }
+body.chat-page #empty .chip:nth-child(n+5) { display: none; } /* four starters */
+body.chat-page #empty .chip:hover { background: var(--hover); }
+@keyframes cp-rise { from { opacity: 0; transform: translate(-50%, 8px); } }
+/* the composer rides up to the middle while the chat is empty, and glides down with the first message */
+body.chat-page:has(#empty:not([hidden])):not(:has(#setup:not([hidden]))) .composer { transform: translate(-50%, calc(-1 * max(0px, 54vh - var(--cp-bottom) - var(--composer-h) / 2))); }
+body.cp-booting .composer, body.cp-booting #empty .empty-title { transition: none; animation: none; }
+/* nothing connected: the set-up card in the middle instead */
+body.chat-page #empty #setup:not([hidden]) { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); width: min(360px, calc(100% - 2 * var(--cp-4))); margin: 0; text-align: left; }
+body.chat-page:has(#setup:not([hidden])) #empty .empty-title, body.chat-page:has(#setup:not([hidden])) #empty .chips { display: none; }
+@media (max-height: 560px) { body.chat-page #empty .chips { display: none; } }
+
+/* ---------- focus ---------- */
+body.chat-page :is(button, a[href], select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.chat-page .cp-list .chat-open:focus-visible { outline: none; }
+body.chat-page .cp-list .chat-search:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+body.chat-page .composer :is(.attach-btn, .screen-btn, .send):focus-visible { outline-offset: 1px; }
+
+/* a narrower window */
+@media (max-width: 899px) {
+  .cp-target { display: none; }
+  .cp-back-label { display: inline; }
+}
+@media (max-width: 640px) {
+  body.chat-page .sidebar-head { padding: 0 var(--cp-2); }
+  body.chat-page .messages { font-size: 14.5px; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- reading comfort (chat UI polish) ---------- */
+/* Prose stops at about 72 characters a line, the span readers follow comfortably; code, tables, math and pictures keep the column's full width. */
+body.chat-page .msg.assistant > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 72ch; }
+/* A long code block keeps its language label and Copy in view while it scrolls past (overflow: clip, not hidden, so the header can stick to the list). */
+body.chat-page .msg.assistant .code-block { overflow: clip; }
+body.chat-page .msg.assistant .code-head { position: sticky; top: calc(var(--cp-2) * -1); z-index: var(--z-raised, 1); background: linear-gradient(var(--field), var(--field)) var(--bg); }
+/* A failed reply: an icon and a bar, a readable size, and Try again as the way out. */
+body.chat-page .error { color: var(--text); position: relative; margin: var(--cp-3) 0; padding: 12px var(--cp-3) 12px 44px; font-size: 14px; line-height: 1.5; border-radius: 12px; box-shadow: inset 3px 0 0 var(--danger); }
+body.chat-page .error::before { content: "!"; position: absolute; left: 14px; top: 12px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 13px/1 system-ui, sans-serif; color: #fff; background: var(--danger); }
+body.chat-page .error .error-details { color: var(--text); } /* (the muted grey on the red tint was 4.2:1 in dark) */
+body.chat-page .error .btn { height: 30px; padding: 0 14px; font-size: 13px; box-shadow: 0 0 0 1px var(--border); }
+/* The composer's keys, said once under the box (not on a narrow window, where the on-screen keyboard has its own send). */
+body.chat-page .cp-hint::after { content: "\00a0\00b7\00a0"; }
+@media (max-width: 760px) { body.chat-page .cp-hint { display: none; } }

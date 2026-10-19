@@ -14,9 +14,20 @@
 //       graceMs, setTimer, clearTimer
 const GRACE_MS = 20000; // a client that reconnects within a run (Claude Code starts a bridge per run) finds its work still open
 
-function createAgentWindows({ open, alive, close, keep, userUsed = () => false, hasPinned = () => false, graceMs = GRACE_MS, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+// Windows are made one at a time, with the main process let alone for a moment after each: a window's creation is Chromium work on the
+// main thread (tens of ms, spread over the next second as its renderers start), and several sessions' windows made together stacked it into
+// stalls of 40 ms and more that every other session's calls then waited behind.
+const OPEN_SPACING_MS = 150;
+
+function createAgentWindows({ open, alive, close, keep, userUsed = () => false, hasPinned = () => false, graceMs = GRACE_MS, spacingMs = OPEN_SPACING_MS, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   const entries = new Map(); // key -> { key, label, rec, creating, timer }
   const owned = new Set(); // windows made here and not kept
+  let openChain = Promise.resolve(); // the last window's creation, and its spacing
+  function openOne(label, key) {
+    const run = openChain.then(() => open(label, key));
+    openChain = run.then(() => {}, () => {}).then(() => (spacingMs > 0 ? new Promise((resolve) => { setTimeout(resolve, spacingMs); }) : null));
+    return run;
+  }
 
   function settle(entry) {
     entries.delete(entry.key);
@@ -37,7 +48,7 @@ function createAgentWindows({ open, alive, close, keep, userUsed = () => false, 
     if (entry.rec) { owned.delete(entry.rec); entry.rec = null; } // the user closed it: the next call makes a new one
     if (entry.creating) return entry.creating;
     entry.label = label || entry.label;
-    entry.creating = Promise.resolve().then(() => open(entry.label, key)).then((rec) => {
+    entry.creating = openOne(entry.label, key).then((rec) => {
       if (entries.get(key) !== entry) { try { close(rec); } catch {} throw new Error('The agent session ended.'); }
       entry.rec = rec;
       owned.add(rec);
@@ -80,7 +91,7 @@ function createAgentWindows({ open, alive, close, keep, userUsed = () => false, 
 }
 
 // Tools that can answer without a window: a session that has none yet has no tabs to list.
-const NEEDS_NO_WINDOW = new Set(['list_tabs', 'wait']);
+const NEEDS_NO_WINDOW = new Set(['find_sources', 'list_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard']);
 const needsWindow = (tool) => !NEEDS_NO_WINDOW.has(tool);
 
 module.exports = { createAgentWindows, needsWindow, GRACE_MS };

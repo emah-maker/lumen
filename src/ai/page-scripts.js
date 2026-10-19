@@ -6,6 +6,8 @@
 // frames.js reading every embedded frame in its own isolated world (readPage(..., { frames: false })),
 // each frame keeps its own registry and the walk stops at iframes.
 
+const { resolveUploadTarget } = require('../features/upload-files');
+
 const TEXT_CHUNK = 12000;
 const ELEMENT_PAGE = 150;
 
@@ -42,6 +44,14 @@ const PAGE_TEXT = `
 `;
 
 const HELPERS = `
+  // Brings an element on screen for a click or typing. One that is already fully in view stays where it is: centring it every time moved
+  // the page under the user's eyes at each step of a task (a visible jump per click).
+  const bringIntoView = (el, inline) => {
+    const w = el.ownerDocument.defaultView;
+    const r = el.getBoundingClientRect();
+    if (r.top >= 0 && r.left >= 0 && r.bottom <= w.innerHeight && r.right <= w.innerWidth) return;
+    el.scrollIntoView(inline ? { block: 'center', inline: 'center', behavior: 'instant' } : { block: 'center', behavior: 'instant' });
+  };
   const isVisible = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return false;
@@ -89,7 +99,10 @@ ${PAGE_TEXT}
 `;
 
 // frames: false leaves iframes to frames.js (each read in its own frame); they are only counted.
-function readPage(textOffset, elementOffset, { frames = true } = {}) {
+// list: false returns the text and the element count only (read_page's default: the model works from
+// compact outlines and find, and the 150-element JSON list cost more than the page's text); the registry
+// is built either way, so ids still resolve.
+function readPage(textOffset, elementOffset, { frames = true, list = true } = {}) {
   return `(() => {
     ${HELPERS}
     const selector = [
@@ -100,7 +113,9 @@ function readPage(textOffset, elementOffset, { frames = true } = {}) {
     ].join(',');
     const registry = [];
     let crossOriginFrames = 0;
-    const walk = (root, chain) => {
+    // A styled label is often the only visible part of a file upload (its input is hidden): it can be named to upload_file.
+    const fileLabel = (el) => el.tagName === 'LABEL' && Boolean(el.control) && el.control.tagName === 'INPUT' && el.control.type === 'file';
+    const walk =(root, chain) => {
       for (const el of root.querySelectorAll('*')) {
         if (el.shadowRoot) walk(el.shadowRoot, chain);
         if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
@@ -110,22 +125,24 @@ function readPage(textOffset, elementOffset, { frames = true } = {}) {
           else if (isVisible(el)) crossOriginFrames++;
           continue;
         }
-        if (!el.matches(selector) || el.disabled || !isVisible(el)) continue;
+        if (!(el.matches(selector) || fileLabel(el)) || el.disabled || !isVisible(el)) continue;
         registry.push({ el, chain });
       }
     };
     walk(document, []);
     window.__claudeEls = registry;
 
+    const listing = ${list ? 'true' : 'false'};
     const elements = registry.slice(${elementOffset}, ${elementOffset + ELEMENT_PAGE}).map((entry, i) => {
       const { el, chain } = entry;
       const id = ${elementOffset} + i + 1;
       const label = accessibleName(el).slice(0, 80);
       entry.label = label;
+      if (!listing) return null;
       const item = { id, tag: el.tagName.toLowerCase(), label };
       const kind = el.getAttribute('role') || (el.tagName === 'INPUT' ? el.type : null);
       if (kind) item.kind = kind;
-      if (el.tagName === 'A') item.href = el.href.slice(0, 150);
+      if (el.tagName === 'A') item.href = (el.origin === location.origin ? el.href.slice(el.origin.length) || '/' : el.href).slice(0, 80);
       if ((el.type === 'radio' || el.type === 'checkbox') && el.name) item.group = el.name;
       if ('value' in el && el.tagName !== 'BUTTON' && el.value && !secretField(el) &&
           el.type !== 'radio' && el.type !== 'checkbox' && el.value !== label) item.value = String(el.value).slice(0, 80);
@@ -142,6 +159,20 @@ function readPage(textOffset, elementOffset, { frames = true } = {}) {
     const text = pageText(document).replace(/\\n{3,}/g, '\\n\\n');
     const start = ${textOffset};
     const end = start + ${TEXT_CHUNK};
+    if (!listing) {
+      return {
+        url: location.href,
+        title: document.title,
+        text: text.slice(start, end),
+        textRange: [start, Math.min(end, text.length)],
+        totalTextChars: text.length,
+        moreTextAvailable: text.length > end,
+        scroll: { y: Math.round(scrollY), pageHeight: document.documentElement.scrollHeight, viewportHeight: innerHeight },
+        totalElements: registry.length,
+        elementsNotListed: true,
+        crossOriginFrames,
+      };
+    }
     return {
       url: location.href,
       title: document.title,
@@ -166,7 +197,7 @@ function locate(id) {
     const entry = entryFor(${id});
     if (!entry) return null;
     const { el, chain } = entry;
-    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    bringIntoView(el, true);
     const r = el.getBoundingClientRect();
     let x = r.left + r.width / 2, y = r.top + r.height / 2;
     const root = el.getRootNode();
@@ -179,11 +210,12 @@ function locate(id) {
     }
     const ring = document.createElement('div');
     ring.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:28px;height:28px;margin:-14px 0 0 -14px;' +
-      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);transition:opacity .5s .3s;' +
+      'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);' + (matchMedia('(prefers-reduced-motion: reduce)').matches ? '' : 'transition:opacity .5s .3s;') +
       'left:' + x + 'px;top:' + y + 'px';
     document.documentElement.appendChild(ring);
-    requestAnimationFrame(() => { ring.style.opacity = '0'; });
-    setTimeout(() => ring.remove(), 900);
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches; // (no fade: it stays a moment, then goes)
+    if (!still) requestAnimationFrame(() => { ring.style.opacity = '0'; });
+    setTimeout(() => ring.remove(), still ? 600 : 900);
     return { x: Math.round(x), y: Math.round(y), covered, tag: el.tagName.toLowerCase(), label: entry.label || accessibleName(el) };
   })()`;
 }
@@ -224,7 +256,7 @@ function focusForTyping(id) {
     const entry = entryFor(${id});
     if (!entry) return 'missing';
     const el = entry.el;
-    el.scrollIntoView({ block: 'center', behavior: 'instant' });
+    bringIntoView(el, false);
     if (el.tagName === 'SELECT') return 'setvalue';
     if (el.tagName === 'INPUT') {
       if (['checkbox', 'radio'].includes(el.type)) return 'toggle';
@@ -384,23 +416,52 @@ function clickProbeRead(done = false) {
   })()`;
 }
 
-// Scrolls the window, or the largest scrollable container if the window does not move.
+// Scrolls the window, or else the largest scrollable container around the middle of the view (a web app: Google Docs). Resolves (a promise)
+// once the position has held still for two 50 ms samples (smooth scrolling, scroll-linked loading), at most ~400 ms.
 function scroll(pages) {
   return `(() => {
     const dy = Math.round(innerHeight * 0.85 * ${pages});
+    const settle = (read, result) => new Promise((resolve) => {
+      let last = read();
+      const began = Date.now();
+      const tick = () => {
+        const now = read();
+        if (now === last || Date.now() - began >= 400) return resolve(result(now));
+        last = now;
+        setTimeout(tick, 50);
+      };
+      setTimeout(tick, 50);
+    });
     const before = scrollY;
     window.scrollBy(0, dy);
-    if (scrollY !== before) return { scrolled: 'window', y: Math.round(scrollY) };
-    let best = null, bestArea = 0;
-    for (const el of document.querySelectorAll('*')) {
+    if (scrollY !== before) return settle(() => Math.round(scrollY), (y) => ({ scrolled: 'window', y }));
+    // The window cannot move (a web app: Google Docs draws inside .kix-appview-editor): the largest scrollable container around
+    // the middle of the view, else the largest one anywhere.
+    const scrollable = (el) => {
       const s = getComputedStyle(el);
-      if (!/(auto|scroll)/.test(s.overflowY) || el.scrollHeight <= el.clientHeight) continue;
-      const area = el.clientWidth * el.clientHeight;
-      if (area > bestArea) { best = el; bestArea = area; }
+      return /(auto|scroll|overlay)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 1;
+    };
+    let best = null, bestArea = 0;
+    const consider = (el) => { const area = el.clientWidth * el.clientHeight; if (area > bestArea) { best = el; bestArea = area; } };
+    for (let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2); el; el = el.parentElement || (el.getRootNode() && el.getRootNode().host) || null) {
+      if (el !== document.documentElement && el !== document.body && scrollable(el)) consider(el);
     }
+    if (!best) for (const el of document.querySelectorAll('*')) if (scrollable(el)) consider(el);
     if (!best) return { scrolled: 'none' };
+    const room = best.scrollHeight - best.clientHeight;
     best.scrollBy(0, dy);
-    return { scrolled: 'container', y: Math.round(best.scrollTop) };
+    const label = best.tagName.toLowerCase() + (best.className && typeof best.className === 'string' ? '.' + best.className.trim().split(/\\s+/)[0] : '');
+    return settle(() => Math.round(best.scrollTop), (y) => ({ scrolled: 'container', y, max: Math.round(room), in: label }));
+  })()`;
+}
+
+// wait_for's page check: does the page's visible text contain `text`? Case-insensitive, and whitespace-insensitive on both
+// sides (a heading split by a line break or a non-breaking space still matches its multi-word text).
+function textProbe(text) {
+  return `(() => {
+    const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    const want = norm(${JSON.stringify(text)});
+    return norm(document.body ? document.body.innerText : '').includes(want);
   })()`;
 }
 
@@ -491,4 +552,89 @@ function labelOf(id) {
   return `(() => { const e = (window.__claudeEls || [])[${id - 1}]; return e ? { label: e.label || '', tag: e.el.tagName.toLowerCase() } : null; })()`;
 }
 
-module.exports = { PAGE_TEXT, readPage, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm };
+// ---- upload_file (features/upload-files.js)
+// Finds the file input behind element `id` (the input itself, its label, a button that has one inside or beside it) and
+// marks it with `token` (an attribute the DevTools side finds it by; uploadCleanup takes it off), counting the input and
+// change events it gets. { status: 'missing' | 'click' (no input found: a click should open the page's file chooser) | 'input', ... }
+function uploadProbe(id, token) {
+  return `(() => {
+    ${HELPERS}
+    const entry = entryFor(${id});
+    if (!entry) return { status: 'missing' };
+    const found = (${resolveUploadTarget.toString()})(entry.el);
+    const base = { label: (entry.label || accessibleName(entry.el) || '').slice(0, 80), tag: entry.el.tagName.toLowerCase() };
+    if (!found.input) return { ...base, status: 'click', ambiguous: Boolean(found.ambiguous) };
+    const input = found.input;
+    const events = { input: 0, change: 0 };
+    input.addEventListener('input', () => { events.input++; });
+    input.addEventListener('change', () => { events.change++; });
+    window.__claudeUploads = window.__claudeUploads || {};
+    window.__claudeUploads[${JSON.stringify(token)}] = { el: input, events };
+    input.setAttribute('data-lumen-upload', ${JSON.stringify(token)});
+    if (!base.label) base.label = (accessibleName(input) || input.name || '').slice(0, 80);
+    return { ...base, status: 'input', how: found.how, accept: input.accept || '', multiple: input.multiple, disabled: input.disabled, directory: Boolean(input.webkitdirectory) };
+  })()`;
+}
+
+// After the files were set: makes sure the page got the input and change events a real selection fires (the DevTools
+// command normally fires them; one missing is sent), then reports what the field holds and what the page shows.
+function uploadReport(token, names) {
+  return `(() => {
+    ${HELPERS}
+    const rec = (window.__claudeUploads || {})[${JSON.stringify(token)}] || null; // (none when a file chooser was answered: no field to read back)
+    const el = rec ? rec.el : null;
+    const files = el ? Array.prototype.slice.call(el.files || []).map((f) => f.name) : null;
+    if (el && files.length) {
+      if (!rec.events.input) el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      if (!rec.events.change) el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return new Promise((resolve) => setTimeout(() => {
+      const text = (document.body && document.body.innerText) || '';
+      const wanted = ${JSON.stringify(names)};
+      const scope = (el && el.closest('form')) || document.body;
+      const alerts = Array.prototype.slice.call(scope.querySelectorAll('[role=alert], [aria-invalid=true], [class*=error], [class*=invalid]'))
+        .filter((e) => e !== el && isVisible(e)).map((e) => clean(e.innerText)).filter(Boolean).slice(0, 3).map((s) => s.slice(0, 160));
+      resolve({ files, shown: wanted.map((n) => text.includes(n)), alerts, events: rec ? { ...rec.events } : null });
+    }, 400));
+  })()`;
+}
+
+function uploadCleanup(token) {
+  return `(() => {
+    const rec = (window.__claudeUploads || {})[${JSON.stringify(token)}];
+    if (rec) { try { rec.el.removeAttribute('data-lumen-upload'); } catch {} delete window.__claudeUploads[${JSON.stringify(token)}]; }
+    return true;
+  })()`;
+}
+
+// What read_page returns: the page's facts as JSON, then its text.
+function formatFull(page, extras = '') {
+  const { text, ...rest } = page;
+  return `<untrusted_page_content>
+${JSON.stringify(rest)}${extras ? `
+${extras}` : ''}
+
+PAGE TEXT:
+${text}
+</untrusted_page_content>`;
+}
+
+// What the page looks like after a click, in a few words: its title and the focused element (a field, a button, or the editing surface of an
+// app such as Google Docs). A click_at result carries it, so the model need not take a screenshot to learn whether it landed.
+const glance = `(() => {
+  const name = (a, tag) => String(a.getAttribute('aria-label') || a.placeholder || a.name || a.title || (/^(button|a|summary)$/.test(tag) ? a.innerText : '') || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+  const a = document.activeElement;
+  let focus = '';
+  if (a && a !== document.body && a !== document.documentElement) {
+    const tag = a.tagName.toLowerCase();
+    if (tag === 'iframe' && /texteventtarget/i.test(a.className + ' ' + a.id)) focus = 'the page text input (typing and keys go to the document)';
+    else {
+      const role = a.getAttribute('role') || (tag === 'input' ? (a.type || 'text') + ' field' : tag === 'textarea' ? 'text area' : a.isContentEditable ? 'editable text' : tag);
+      const label = name(a, tag);
+      focus = label ? role + ' "' + label + '"' : role;
+    }
+  }
+  return { title: document.title, focus };
+})()`;
+
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };

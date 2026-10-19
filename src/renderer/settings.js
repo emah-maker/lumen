@@ -2,7 +2,7 @@
 // like System Settings: a large title, then grouped lists of rows. Deep things open as sub-pages.
 // Everything goes through window.lumenSettings (settings-preload.js); the backend is
 // settings-backend.js.
-const S = window.lumenSettings;
+const S = window.settingsEarly ? window.settingsEarly(window.lumenSettings) : window.lumenSettings; // (renderer/settings-early.js)
 const $ = (id) => document.getElementById(id);
 
 function h(tag, props = {}, ...children) {
@@ -29,6 +29,7 @@ const tr = (key, english, vars) => {
 async function save(key, value) {
   try {
     st = await S.set(key, value);
+    window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); // another row for the same setting (Settings → AI → AI providers) follows
     applyPageClasses();
     refreshRestartNotes();
   } catch (err) {
@@ -39,12 +40,81 @@ async function save(key, value) {
 
 // ---------- row builders ----------
 
+// A description of more than a line or two is clamped to two lines; fitDescs() adds a quiet "Show more" only where the text really is clipped.
+const CLAMP_FROM = 60;
+function fitDescs() {
+  const todo = [];
+  for (const d of document.querySelectorAll('.desc.clamp')) { // (reads first: a write in between would make the next read lay the page out again)
+    if (!d.offsetParent || d.classList.contains('open')) continue; // on another page, filtered out, or already opened
+    if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue; // (in a list below the screen that is not laid out yet: asking its size would lay it out; it is looked at when it nears the screen)
+    const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
+    todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
+  }
+  for (const [d, has, clipped] of todo) {
+    if (clipped && !has) {
+      const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
+      more.addEventListener('click', () => {
+        const open = d.classList.toggle('open');
+        more.setAttribute('aria-expanded', String(open));
+        more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
+        if (!open) requestAnimationFrame(fitDescs);
+      });
+      d.after(more);
+    } else if (!clipped && has) has.remove();
+  }
+}
+let fitTimer = 0;
+const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitDescs, 80); };
+
+// Search hits: the matched words are wrapped in <mark class="hit"> in the visible labels and descriptions.
+function highlight(words) {
+  const parents = new Set();
+  for (const m of document.querySelectorAll('mark.hit')) { parents.add(m.parentNode); m.replaceWith(document.createTextNode(m.textContent)); }
+  for (const el of parents) el.normalize();
+  if (!words.length) return;
+  const source = `(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`;
+  const split = new RegExp(source, 'gi');
+  const has = new RegExp(source, 'i');
+  for (const el of document.querySelectorAll('.row:not(.filtered) .label, .row:not(.filtered) .desc')) {
+    if (!el.offsetParent) continue;
+    for (const node of [...el.childNodes]) {
+      if (node.nodeType !== 3 || !has.test(node.data)) continue;
+      const frag = document.createDocumentFragment();
+      node.data.split(split).forEach((part, i) => { if (!part) return; frag.append(i % 2 ? h('mark', { class: 'hit', text: part }) : document.createTextNode(part)); });
+      node.replaceWith(frag);
+    }
+  }
+}
+
 function row(label, desc, ...controls) {
   const el = h('div', { class: 'row' },
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
   return el;
+}
+// Extra words a row is found by (scored like the names of its choices): "default search" finds the search engine picker.
+function withKeywords(el, words) {
+  el.dataset.keywords = `${el.dataset.keywords || ''} ${words}`.trim().toLowerCase();
+  return el;
+}
+// A button that asks twice: the first click changes its label to `confirmLabel` and the second click, within 4 seconds, runs `action`.
+// For actions that can't be undone. The button's name stays put; a live region says "click again" for screen readers.
+function armedButton(label, confirmLabel, action, cls = 'danger', id) {
+  const b = h('button', { class: cls, text: label, 'aria-label': label, ...(id ? { id } : {}) });
+  const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
+  const wrap = h('span', { class: 'confirm-delete' }, b, announce);
+  wrap.style.display = 'contents';
+  let timer = 0;
+  const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); announce.textContent = ''; };
+  b.addEventListener('click', () => {
+    if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; announce.textContent = confirmLabel; timer = setTimeout(reset, 4000); return; }
+    reset();
+    action();
+  });
+  wrap.button = b;
+  return wrap;
 }
 function stackRow(label, desc, ...content) {
   const el = row(label, desc);
@@ -52,10 +122,14 @@ function stackRow(label, desc, ...content) {
   el.append(...content);
   return el;
 }
-function toggle(key, label, desc, after) {
-  const input = h('input', { type: 'checkbox', class: 'switch', id: `pref-${key}`, role: 'switch', 'aria-label': label });
-  input.checked = Boolean(st.prefs[key]);
-  input.addEventListener('change', async () => { await save(key, input.checked); after?.(input.checked); });
+// `invert`: the setting is stored the other way round (aiHandsOff is true when the AI is *kept off* the pages), so the switch shows the
+// positive wording ("Let the AI act on my pages") and the stored key and its meaning stay as they were.
+function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false, invert = false } = {}) {
+  const input = h('input', { type: 'checkbox', class: 'switch', id, role: 'switch', 'aria-label': label });
+  const shown = () => (st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key])) !== invert;
+  input.checked = shown();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = shown(); });
+  input.addEventListener('change', async () => { await save(key, input.checked !== invert); after?.(input.checked); });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
@@ -66,6 +140,7 @@ const CLI_ACCESS_EXTRA = {
   claudeCodeFullAccess: ', and use your own MCP servers, skills and slash commands',
   grokBuildFullAccess: ', with its own tools and without the limits Lumen otherwise puts on them',
   antigravityFullAccess: ', with its terminal sandbox off',
+  codexFullAccess: ', with its sandbox off and its own shell, patch and web search tools',
 };
 const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Off by default; applies from the next message.`;
 function syncCliAccess() {
@@ -84,7 +159,7 @@ function cliAccessRows() {
     for (const key of CA.KEYS) await save(key, value);
     syncCliAccess();
   });
-  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build and Antigravity together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build, Antigravity and Codex together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);
@@ -92,10 +167,11 @@ function cliAccessRows() {
   master.classList.add('warn');
   return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows)];
 }
-function select(key, label, desc, options, { number = false, after } = {}) {
-  const el = h('select', { id: `pref-${key}`, 'aria-label': label },
+function select(key, label, desc, options, { number = false, after, id = `pref-${key}` } = {}) {
+  const el = h('select', { id, 'aria-label': label },
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) el.value = String(st.prefs[key]); });
   el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
   const r = row(label, desc, el);
   r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase(); // "dark" finds Theme (the names of its choices)
@@ -117,9 +193,8 @@ const importSummary = (r) => tr('settings.import.done', 'Imported from {browser}
 });
 const flash = (el, text, cls = 'ok') => { el.textContent = text; el.className = `note ${cls}`; };
 const langName = (() => {
-  let names;
-  try { names = new Intl.DisplayNames([navigator.language], { type: 'language' }); } catch {}
-  return (tag) => { try { return names?.of(tag) || tag; } catch { return tag; } };
+  let names; // (made on first use: loading the language data takes 6 ms the page doesn't need to open)
+  return (tag) => { try { names ||= new Intl.DisplayNames([navigator.language], { type: 'language' }); return names.of(tag) || tag; } catch { return tag; } };
 })();
 const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
@@ -128,10 +203,10 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
-  { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Memory']] },
+  { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
   { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Add-ons']] },
   { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
   { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
@@ -156,18 +231,34 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
-  accessibility: { cat: 'appearance', focus: 'accessibility' }, system: { cat: 'advanced', focus: 'system' },
+  accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
 const slots = new Map(); // slot or sub-page id -> Slot
+// Probes that start a process in main (is the CLI there, is it signed in, which version) wait until the page has painted and is idle.
+let paintedResolve = () => {};
+const painted = new Promise((resolve) => { paintedResolve = resolve; });
+// (one at a time, 40 ms apart: each starts a program, and two together hold the main process for over 20 ms)
+let laterChain = painted;
+const later = (fn) => {
+  const turn = laterChain.then(() => new Promise((resolve) => (window.requestIdleCallback ? requestIdleCallback(() => resolve(), { timeout: 400 }) : setTimeout(resolve, 50))));
+  laterChain = turn.then(() => new Promise((resolve) => setTimeout(resolve, 40)));
+  return turn.then(fn);
+};
+let isBuilt = () => true; // set up by init(): is the builder (by id) done
+let neededBuilds = () => []; // ...the builders a page needs before it is shown
+let buildOne = () => Promise.resolve();
+let buildAll = () => Promise.resolve();
+let allDone = false;
+window.__settingsPerf = { visibleDone: false }; // (read by test/settings-open-perf.js)
 let forceRoute = null; // a widget's gear on the new-tab page opens Home > Widgets, whatever hash it used
 
 // A run of grouped lists inside a category (or a sub-page). Builders append rows to it; the first append
@@ -223,13 +314,15 @@ function collapsible(title, rows) {
   return d;
 }let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
 let gmailWatchOn = false;
+let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
+let slackWatchOn = false;
 async function buildAi(card) {
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
-    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
+    ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (m.lastUsed) o.dataset.lastUsed = m.lastUsed; if (m.auto) o.dataset.auto = '1'; if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
   card.append(
-    row('Model', 'The model the assistant in the sidebar uses.', h('select', {
+    row('Model', tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
       id: 'ai-model',
       'aria-label': 'Model',
       onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
@@ -248,11 +341,19 @@ async function buildAi(card) {
     extra: (q) => (q && [...modelPicker.options].some((o) => o.dataset.more) ? [{ label: tr('models.searchFor', 'Look for “{q}” on OpenRouter', { q }), detail: tr('models.more.detail', 'Every model OpenRouter has'), run: (text) => openCatalog(text) }] : []),
     onMore: () => openCatalog(),
   });
-  const noModels = h('p', { class: 'note', id: 'ai-model-empty', text: tr('settings.ai.noModels', 'No AI connected yet. Add a key or sign in under Accounts and keys below.') });
+  // One chevron on the button's centre line, a real element (the sidebar's picker draws its own).
+  const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chevron.setAttribute('class', 'picker-chevron'); chevron.setAttribute('viewBox', '0 0 10 6'); chevron.setAttribute('aria-hidden', 'true'); chevron.setAttribute('focusable', 'false');
+  chevron.innerHTML = '<path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  settingsPicker.button.append(chevron);
+  // Nothing connected: say so and put the way in right here (the keys and sign-ins page), not somewhere below.
+  const noModels = h('p', { class: 'note empty-model', id: 'ai-model-empty' }, h('span', { text: tr('settings.ai.noModels', 'No AI connected yet.') }), h('button', { type: 'button', class: 'primary', id: 'ai-model-connect', text: tr('settings.ai.connect', 'Connect an AI'), onclick: () => { location.hash = '#ai-keys-page'; } }));
   modelPicker.parentElement.append(noModels);
   const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
+  let autoUseRender = () => {};
   const refreshModels = async () => {
     ai = await S.ai.get();
+    autoUseRender();
     showEmpty();
     modelPicker.replaceChildren(...modelOptions());
     if (ai.model) modelPicker.value = ai.model;
@@ -269,27 +370,106 @@ async function buildAi(card) {
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
   const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone. On by default.', idleOrganize);
+  // [auto model] Which connected providers Auto may choose from (the model picker's first row; docs/auto-model.md).
+  const autoUseBox = h('div', { class: 'auto-use', id: 'ai-auto-use', role: 'group', 'aria-label': tr('settings.ai.autoUse', 'Auto may use') });
+  const renderAutoUse = () => {
+    const off = new Set(st.prefs.autoExclude || []);
+    autoUseBox.replaceChildren(...(ai.autoProviders || []).map((p) => {
+      const input = h('input', { type: 'checkbox', id: `auto-use-${p.key}`, checked: !off.has(p.key) });
+      input.addEventListener('change', async () => {
+        const next = new Set(st.prefs.autoExclude || []);
+        if (input.checked) next.delete(p.key); else next.add(p.key);
+        await save('autoExclude', [...next]);
+      });
+      return h('label', { class: 'auto-use-item' }, input, h('span', { text: p.label }));
+    }));
+  };
+  renderAutoUse();
+  autoUseRender = renderAutoUse;
   const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
   card.append(
     row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
-    toggle('autoModel', 'Pick the Claude Code model for me', 'With no model chosen, simple requests use Haiku, most use Sonnet and hard ones use Opus. A model you pick is always used.'),
+    stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Auto picks by task: quick chat and page questions go to a small, fast model, browsing to a reliable mid-size one, hard code and deep research to the strongest. Models out of usage are skipped. A model you pick is always used.'), autoUseBox),
+    toggle('ccUserSettings', tr('settings.ai.ccUserSettings', 'Use my Claude Code settings in Lumen chats'), tr('settings.ai.ccUserSettingsDesc', 'Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.')),
+    select('imageGen', tr('settings.ai.imageGen', 'Image generation'), tr('settings.ai.imageGenDesc', 'When you or the AI ask for a picture, Lumen sends the request to a provider you have already connected that makes pictures, even if the chat is on a model that can’t (Claude, Claude Code, Antigravity, Codex). Automatic tries the chat’s own provider first, then your other connected ones, and moves on if one is out of usage or down; a provider that refuses the picture on content grounds is not retried elsewhere. The picture says which provider made it. Your prompt goes to that provider, and it may count against its usage or your API key’s billing. Lumen never uses a provider you haven’t connected.'),
+      ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].map((v) => [v, tr(`settings.ai.imageGen.${v}`, { auto: 'Automatic', off: 'Off', grokbuild: 'Grok Build only', xai: 'Grok (API) only', gemini: 'Gemini only', openai: 'OpenAI only', openrouter: 'OpenRouter only' }[v])])),
+    toggle('autoModel', tr('settings.ai.autoModel', 'Pick the model for me when I choose an engine’s Default'), tr('settings.ai.autoModelDesc', 'On Claude Code, Codex, Grok Build and Antigravity, Default picks per message: quick chat and one-step browsing use the small model (Haiku, Luna, Flash-Lite), multi-step browsing, research and code the mid-size one (Sonnet, Sol, Flash), hard debugging and proofs the strongest (Opus, Astra, Pro). A model you pick is always used.')),
+    toggle('aiGapLog', tr('settings.ai.aiGapLog', 'Keep a list of what the AI couldn’t do'), tr('settings.ai.aiGapLogDesc', 'Notes, on this computer only, the times the AI still handed a task back to you after a second try: date, site, what was missing, the tool error. Never page content. See the list under Privacy below.')),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
   );
+  // [bypass permissions] Ask / Auto-allow actions / Bypass permissions; a warning shows under the row while Bypass is on.
+  const permWarn = h('span', { class: 'note error', id: 'perm-warn' });
+  const showPermWarn = (v) => { permWarn.textContent = v === 'bypass' ? tr('sidebar.perm.bypass.desc', 'The AI won’t ask before acting, reading PDFs, using your signed-in accounts, or sending what it read anywhere.') : ''; };
+  const permissionRow = select('aiPermissionMode', tr('settings.ai.permissionMode', 'Asking before it acts'), tr('settings.ai.permissionModeDesc', 'Ask, Auto-allow actions, or Bypass permissions (the AI never asks).'),
+    ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: (v) => { showPermWarn(v); window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'bypassBackground' } })); } }); // (leaving Bypass switches the background option off: its row follows)
+  permissionRow.querySelector('.text').append(permWarn);
+  showPermWarn(st.prefs.aiPermissionMode);
+  // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).
+  const instructionBox = (key, id, label, placeholder) => {
+    const box = h('textarea', { id, rows: 4, maxlength: 1500, spellcheck: 'true', 'aria-label': label, placeholder });
+    box.value = st.prefs[key] || '';
+    box.addEventListener('change', () => save(key, box.value));
+    return stackRow(label, '', box);
+  };
+  card.group(tr('settings.ai.groupInstructions', 'Custom instructions')).append(
+    toggle('aiInstructionsOn', tr('settings.ai.instructionsOn', 'Use custom instructions'), tr('settings.ai.instructionsOnDesc', 'Sent to the AI at the start of every new chat, as your preferences. Off keeps what you wrote but does not send it.'), undefined, { fallback: true }),
+    instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
+    instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
+  );
+  // [memory] Saved memory across chats (ai/memory.js; docs/memory.md): the switch, past-chat search, and the entries with Edit / Delete.
+  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
+  // [projects] Where new projects' folders are made (a project's chats are saved there as Markdown: features/project-folders.js).
+  const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
+  const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
+  showProjectsDir();
+  const projectsRow = row(tr('settings.ai.projectsDir', 'Projects folder'), tr('settings.ai.projectsDirDesc', 'New projects get their own folder here. Chats in a project are also saved in it as Markdown files (not encrypted); chats outside projects never are.'),
+    h('button', { id: 'projects-dir-change', text: tr('settings.ai.projectsDirChange', 'Change…'), onclick: async () => { st = await S.pickProjectsDir(); showProjectsDir(); } }),
+    h('button', { id: 'projects-dir-reset', text: tr('settings.ai.projectsDirReset', 'Use Documents'), onclick: async () => { await save('projectsDir', ''); showProjectsDir(); } }));
+  projectsRow.querySelector('.text').append(projectsWhere);
+  card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
+  // [ai tabs] one group for the tabs the AI opened: hide them, what happens when it finishes, and whether it may bring them to the front
+  card.group(tr('settings.ai.groupAiTabs', 'AI tabs')).append(
+    toggle('hideAiTabs', tr('settings.ai.hideAiTabs', 'Hide AI tabs'), tr('settings.ai.hideAiTabsDesc', 'Leaves the tabs the AI opened out of the tab strip, in every window. They stay open; the one you are on and one playing sound stay shown. A tab that needs you (an approval, a dialog, an error) shows as "needs you" so it is never lost.')),
+    toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Bring tabs the AI opened to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
+    select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
+      ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
+  );
+  card.group(tr('settings.ai.groupVoice', 'Voice input')).append( // [dictation] the chat box's mic (ai/dictation.js)
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
   card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
+    permissionRow,
+    toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')), // [plan mode]
+    toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
+    select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
+      ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
+    toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Don’t let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'The AI can read pages you share, but it won’t click, type or navigate in your tabs. It works in tabs it opens itself. It also applies to programs connected through the Automation server. It doesn’t limit a command-line AI you gave full access to this computer: that AI’s own tools (shell, files) are not Lumen’s.')),
-    select('closeAiTabs', tr('settings.ai.closeAiTabs', 'Close tabs the AI opened when it finishes'), tr('settings.ai.closeAiTabsDesc', 'Off leaves them open (the tab menu and the chat list can still close them). Ask puts the question under the reply. Always closes them as soon as the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
-      ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Off', ask: 'Ask', always: 'Always' }[v])])),
+    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
+    toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
+    toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
+    toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
+    toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows only for now. The AI can read and operate programs such as Word, File Explorer or MATLAB, one app at a time.')), // [desktop apps]
+    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
     select('maxSteps', tr('settings.ai.maxSteps', 'Max steps per task'), tr('settings.ai.maxStepsDesc', 'How many steps the assistant may take on one request before it wraps up with an answer. Unlimited still stops if it gets stuck in a loop, and you can always press Stop.'),
       [[0, tr('settings.ai.maxSteps.unlimited', 'Unlimited')], ...[30, 60, 120, 250].map((n) => [n, String(n)])], { number: true }),
-    select('maxChatRuns', tr('settings.ai.maxChatRuns', 'Chats working at once'), tr('settings.ai.maxChatRunsDesc', 'Each tab has its own sidebar chat, and chats in different tabs can work at the same time. When this many are working, the next one waits its turn. Claude Code and Grok Build always take turns, one chat at a time.'),
-      [1, 2, 3, 4, 6, 8].map((n) => [n, String(n)]), { number: true }),
+    select('maxChatRuns', tr('settings.ai.maxChatRuns', 'Chats working at once'), tr('settings.ai.maxChatRunsDesc', 'Each tab has its own sidebar chat, and chats in different tabs can work at the same time. With a limit, once this many are working the next one waits its turn.'),
+      [[0, tr('settings.ai.maxChatRuns.unlimited', 'No limit')], ...[1, 2, 3, 4, 6, 8].map((n) => [n, String(n)])], { number: true }),
     toggle('autoCompact', tr('settings.ai.autoCompact', 'Compact long chats automatically'), tr('settings.ai.autoCompactDesc', 'When a chat with an API model (Claude, OpenAI, Grok, Gemini, OpenRouter) gets close to what the model can take in one request, its earlier part is summarized by the same model and the AI goes on from that summary, instead of the oldest messages being left out. The messages stay on screen. Type /compact to do it yourself at any time. Claude Code, Grok Build and Antigravity compact their own sessions.')),
+    toggle('codexSidebar', tr('settings.ai.codexSidebar', 'Offer Codex in the model menu'), tr('settings.ai.codexSidebarDesc', 'Lets the sidebar chat answer with your own Codex sign-in (the Codex CLI), using only Lumen’s browser tools: no shell, no file writes.')),
+    toggle('grokTerminal', tr('settings.ai.grokTerminal', 'Let Grok Build ask to run terminal commands'), tr('settings.ai.grokTerminalDesc', 'Grok Build in the sidebar can ask to run a command on this computer, and runs it only if you approve. Off: it is told no every time, without asking you. Turning it off can also stop antivirus warnings about Grok’s chat logs.'), null, { fallback: true }),
     toggle('grokWarmup', tr('settings.ai.grokWarmup', 'Warm up Grok Build when Lumen starts'), tr('settings.ai.grokWarmupDesc', 'Starts Grok Build’s setup in the background so your first message starts faster. Only while Grok Build is connected or chosen; nothing is sent to Grok.')),
+    toggle('grokKeepConnected', tr('settings.ai.grokKeepConnected', 'Keep Grok Build connected'), tr('settings.ai.grokKeepConnectedDesc', 'Each chat that uses Grok Build keeps its own Grok Build running between messages, so replies start sooner. Each one uses about 70 MB of memory while it waits. Messages with images, and Grok Build with full access, still start Grok Build each time.')),
+    toggle('codexKeepConnected', tr('settings.ai.codexKeepConnected', 'Keep Codex connected'), tr('settings.ai.codexKeepConnectedDesc', 'Each chat that uses Codex keeps its own Codex running between messages, so replies start sooner and stream as they are written. Each one uses about 80 MB of memory while it waits.')),
+    select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build, Codex or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build or Codex, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
+      [[5, tr('settings.ai.grokKeepIdle.5', '5 minutes')], [15, tr('settings.ai.grokKeepIdle.15', '15 minutes')], [30, tr('settings.ai.grokKeepIdle.30', '30 minutes')], [60, tr('settings.ai.grokKeepIdle.60', '1 hour')], [0, tr('settings.ai.grokKeepIdle.never', 'Never')]], { number: true }),
   ];
   card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
   // Control of the whole computer is its own group, apart from the everyday switches above.
@@ -336,6 +516,55 @@ async function buildAi(card) {
   card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
     h('div', { class: 'controls' }, clearSigned)));
   renderSigned();
+
+  // [desktop apps] Apps the AI may always use (src/desktop/): added only from its approval card (Always); revoked here.
+  const appList = h('div', { class: 'list', id: 'ai-desktop-apps' });
+  const clearApps = h('button', { id: 'ai-desktop-apps-clear', text: 'Revoke all', onclick: async () => renderApps(await S.ai.clearDesktopApps()) });
+  const renderApps = async (apps) => {
+    apps ||= await S.ai.desktopApps();
+    clearApps.hidden = !apps.length;
+    appList.replaceChildren(...(apps.length ? apps.map(({ app, name, added }) => h('div', { class: 'item', 'data-app': app },
+      h('span', { class: 'grow', text: name, title: app }),
+      added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
+      h('button', { text: 'Revoke', 'aria-label': `Revoke ${name}`, onclick: async () => renderApps(await S.ai.removeDesktopApp(app)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it uses any app.' })]));
+  };
+  card.at('ai-privacy').append(stackRow(tr('settings.ai.desktopApps', 'Apps the AI can use'), tr('settings.ai.desktopAppsDesc', 'Apps you chose Always for.'), appList,
+    h('div', { class: 'controls' }, clearApps)));
+  renderApps();
+
+  // [screen context] Files on this computer the AI may always see: added only from its card ("Allow always for this file"); removed here.
+  const sharedList = h('div', { class: 'list', id: 'ai-shared-files' });
+  const clearShared = h('button', { id: 'ai-shared-files-clear', text: 'Remove all', onclick: async () => renderShared(await S.ai.clearSharedFiles()) });
+  const renderShared = async (files) => {
+    files ||= await S.ai.sharedFiles();
+    clearShared.hidden = !files.length;
+    sharedList.replaceChildren(...(files.length ? files.map(({ url, name }) => h('div', { class: 'item', 'data-file': name },
+      h('span', { class: 'grow', text: name, title: decodeURI(url).replace(/^file:\/\/\//, '') }),
+      h('button', { text: 'Remove', 'aria-label': `Remove ${name}`, onclick: async () => renderShared(await S.ai.removeSharedFile(url)) })))
+      : [h('span', { class: 'note', text: 'None. The AI asks before it looks at a file on your computer.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Files on this computer the AI can see', 'When you ask about a file in front of you ("what does this say?"), Lumen asks once; choosing Allow always for this file lists it here. Turn AI off for local files under Sites where AI is off to stop it for every file.', sharedList,
+    h('div', { class: 'controls' }, clearShared)));
+  renderShared();
+
+  // [no handoff] What the AI still couldn't do after its automatic second try: a private list on this computer (ai/capability-gaps.js).
+  const gapList = h('div', { class: 'list', id: 'ai-gaps' });
+  const gapClear = h('button', { id: 'ai-gaps-clear', text: 'Clear list', onclick: async () => renderGaps(await S.ai.clearAiGaps()) });
+  const gapCopy = h('button', { id: 'ai-gaps-copy', text: 'Copy to send to us' });
+  const renderGaps = async (data) => {
+    data ||= await S.ai.aiGaps();
+    const entries = data?.entries || [];
+    gapClear.hidden = gapCopy.hidden = !entries.length;
+    gapCopy.onclick = async () => { try { await navigator.clipboard.writeText(data.report || ''); gapCopy.textContent = 'Copied'; } catch { gapCopy.textContent = 'Copy failed'; } setTimeout(() => { gapCopy.textContent = 'Copy to send to us'; }, 1400); };
+    gapList.replaceChildren(...(entries.length ? entries.slice(0, 50).map((e) => h('div', { class: 'item', 'data-gap': e.date },
+      h('span', { class: 'grow', text: `${e.site || 'No site'}: ${e.missing}${e.tool ? ` (${e.tool}${e.error ? `: ${e.error}` : ''})` : ''}` }),
+      h('span', { class: 'note', text: e.date })))
+      : [h('span', { class: 'note', text: 'Nothing yet. When the AI still hands a task back to you after a second try, it is noted here.' })]));
+  };
+  card.at('ai-privacy').append(stackRow('Show what the AI couldn’t do', 'When the AI hands a task back to you even after Lumen asks it to try another way, Lumen notes the date, the site, what was missing and the tool error. No page content or personal data. It stays on this computer; copy it and send it to us if you like. Turn it off with the switch above.', gapList,
+    h('div', { class: 'controls' }, gapCopy, gapClear)));
+  renderGaps();
 
   // API keys: one line per provider; Edit opens the field in place.
   const keys = h('div', { class: 'list', id: 'ai-keys' });
@@ -428,13 +657,14 @@ async function buildAi(card) {
   const cliRow = row(tr('settings.ai.cli.title', 'Sign in with your Anthropic account'), tr('settings.ai.cli.desc', 'For Anthropic API access without copying a key: the Anthropic CLI signs you in to your Console account (pay as you go). To use a Claude Pro or Max plan instead, choose Claude Code in the model menu.'), cliButtons);
   cliRow.querySelector('.text').append(cliNote);
   accounts.group(tr('settings.ai.cli.group', 'Anthropic account')).append(cliRow);
-  S.ai.cliStatus().then(renderCli).catch(() => {});
+  later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen, with your OK for each new site. Off by default.', mcpToggle));
+  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
+  agents.append(toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Ask before agents act in their own window'), tr('settings.ai.agentsNoAskDesc', 'On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.'), null, { fallback: true, invert: true }));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
@@ -447,6 +677,7 @@ async function buildAi(card) {
         add.textContent = 'Adding…';
         const r = await S.ai.addToAgent(snip.addButton).catch((err) => ({ ok: false, text: err.message }));
         add.textContent = r.already ? 'Already connected' : r.ok ? 'Added' : addLabel;
+        if (snip.id === 'codex') refreshCodex(true);
         add.disabled = Boolean(r.ok);
         if (r.ok) mcpToggle.checked = true; // connecting an agent turns agent connections on
         if (!r.already) flash(note, r.text, r.ok ? 'ok' : 'err');
@@ -455,22 +686,58 @@ async function buildAi(card) {
     // Claude Code's own row also shows install/sign-in state, so "not signed in" doesn't look like
     // a broken Add button (the CLI itself gates sign-in; Lumen only checks, never reads, its status).
     const ccState = snip.id === 'claude' ? status() : null;
+    const usageChipFor = usageChip({ claude: 'claudecode', codex: 'codex', grok: 'grokbuild' }[snip.id]);
     if (ccState) {
-      S.ai.claudeCodeStatus().then((s) => {
+      later(() => S.ai.claudeCodeStatus()).then((s) => {
         ccState.textContent = !s.installed ? 'Not installed' : s.signedIn === false ? 'Installed · not signed in' : s.signedIn === true ? 'Installed · signed in' : 'Installed · sign-in unknown';
         ccState.className = `note${s.installed && s.signedIn === false ? ' err' : ''}`;
       }).catch(() => {});
     }
+    // Codex CLI is found however it was installed (npm, winget, the standalone .exe, Homebrew, an app…): its row says what Lumen
+    // found, whether it is signed in and whether Lumen is already in its config, and offers "Locate codex…" when it can't be found.
+    const cxState = snip.id === 'codex' ? status() : null;
+    const cxActions = snip.id === 'codex' ? h('div', { class: 'controls', id: 'codex-actions' }) : null;
+    const SIGN = { chatgpt: ' with ChatGPT', apikey: ' with an API key' };
+    const CONNECTED = { same: 'connected to Lumen', stale: 'Lumen’s entry is out of date (click Add to update it)', disabled: 'Lumen is switched off in its config', absent: 'not connected to Lumen yet' };
+    function renderCodex(s) {
+      if (!cxState) return;
+      const parts = s.installed
+        ? [`Codex ${s.version || ''}`.trim(), s.signedIn === true ? `signed in${SIGN[s.method] || ''}` : s.signedIn === false ? 'not signed in (run codex login in a terminal)' : 'sign-in unknown', CONNECTED[s.connected] || null]
+        : [s.reason || 'Codex wasn’t found'];
+      cxState.textContent = parts.filter(Boolean).join(' · ');
+      cxState.className = `note${!s.installed || s.signedIn === false ? ' err' : ''}`;
+      cxState.title = s.path || '';
+      const buttons = [];
+      if (!s.installed && s.links) {
+        buttons.push(h('button', { text: 'Download Codex', onclick: () => S.openUrl(s.links.github) }), h('button', { text: 'Install guide', onclick: () => S.openUrl(s.links.docs) }));
+      }
+      buttons.push(h('button', { id: 'codex-locate', text: 'Locate codex…', onclick: async () => {
+        const r = await S.ai.codexLocate().catch((err) => ({ rejected: err.message }));
+        if (r.rejected) flash(note, r.rejected, 'err');
+        else if (!r.canceled) flash(note, r.installed ? `Using ${r.path}` : 'That file isn’t Codex.', r.installed ? 'ok' : 'err');
+        renderCodex(r);
+      } }));
+      if (s.custom) buttons.push(h('button', { text: 'Use automatic detection', onclick: async () => renderCodex(await S.ai.codexLocate(true).catch(() => s)) }));
+      cxActions.replaceChildren(...buttons);
+    }
+    function refreshCodex(refresh) { S.ai.codexStatus(refresh).then(renderCodex).catch(() => {}); }
+    if (cxState) later(() => S.ai.codexStatus(false)).then(renderCodex).catch(() => {});
     return h('div', { class: 'snippet', 'data-snippet': snip.id },
-      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), ccState, add, copy),
+      h('div', { class: 'item' }, h('span', { class: 'grow' }, snip.label, h('span', { class: 'note', text: ` · ${snip.hint}` })), usageChipFor, ccState, add, copy),
+      cxState ? h('div', { class: 'item' }, cxState) : null,
+      cxActions,
       h('pre', { class: 'mono code', text: snip.text }),
       snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
   agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
 
+  agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
+
   buildAntigravity(agents, refreshModels);
+  buildTelegram(agents);
 
   const auto = await S.ai.automationInfo();
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
@@ -492,12 +759,15 @@ async function buildAi(card) {
   const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl);
   portRow.querySelector('.text').append(autoNote);
   const saveAuto = async () => {
-    const p = Number(port.value) || 9222;
-    await S.ai.setAutomation({ enabled: autoToggle.checked, port: p });
+    const asked = Number(port.value);
+    await S.ai.setAutomation({ enabled: autoToggle.checked, port: asked || 9222 });
+    const p = (await S.ai.automationInfo()).port; // as saved: a number outside 1024 to 65535 comes back corrected
+    port.value = String(p);
     portRow.hidden = !autoToggle.checked;
     if (!autoToggle.checked) running = null;
     token = (await S.ai.automationInfo()).token; // turning it off and on again makes a new one
     describe(autoToggle.checked, p);
+    if (autoToggle.checked && asked && asked !== p) autoNote.textContent = `Ports run from 1024 to 65535, so Lumen uses ${p}. ${autoNote.textContent}`;
   };
   autoToggle.addEventListener('change', saveAuto);
   port.addEventListener('change', saveAuto);
@@ -506,6 +776,10 @@ async function buildAi(card) {
   describe(auto.enabled, auto.port);
   card.at('automation').append(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), portRow);
 
+}
+
+// General > Import and Default browser. (Its own builder: the General page, which opens first, needs these two and not the AI page's rows.)
+function buildImport(card) {
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
@@ -529,8 +803,8 @@ async function buildAi(card) {
   // Default browser (features/setup.js): what the system says now, and a button that asks it.
   const defaultNote = status('default-browser-status');
   const defaultButton = h('button', { id: 'default-browser-button', class: 'primary', text: tr('settings.default.button', 'Make default') });
-  const renderDefault = async () => {
-    const yes = await S.ai.isDefaultBrowser?.().catch(() => null);
+  const renderDefault = async (cachedFirst) => { // (opening Settings may show the last answer; coming back to the page asks again)
+    const yes = await S.ai.isDefaultBrowser?.({ cached: cachedFirst === true }).catch(() => null);
     defaultButton.hidden = yes === true;
     flash(defaultNote, yes ? tr('welcome.default.done', 'Lumen is your default browser.') : tr('settings.default.not', 'Another browser is the default.'), '');
   };
@@ -546,7 +820,7 @@ async function buildAi(card) {
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
   card.at('default-browser').append(defaultRow);
-  renderDefault();
+  renderDefault(true);
 }
 
 // A Relaunch button in the row of a setting that only takes effect at launch; shown while that
@@ -565,17 +839,26 @@ function buildAppearance(card) {
   buildLook(card);
   card.group('Page display').append(
     select('defaultZoom', 'Page zoom', 'The default for every site. Sites you zoom by hand keep their own level.', st.zooms.map((z) => [z, `${Math.round(z * 100)}%`]), { number: true }),
+    toggle('pinchZoom', 'Pinch to zoom', 'Pinch on a trackpad or touch screen to magnify part of a page, as in Chrome. The page keeps its layout; Ctrl/Cmd + and − still change the page zoom.'),
     select('fontSize', 'Font size', 'The default text size websites start from. Applies to new tabs.', st.fontSizes.map((s) => [s, { 9: 'Very small', 12: 'Small', 16: 'Medium (recommended)', 20: 'Large', 24: 'Very large' }[s]]), { number: true }),
   );
-  card.group('Toolbar').append(toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'));
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.group('Toolbar').append(
+    toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
+    toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
+  );
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
   // Expert: Chromium's forced dark mode for pages.
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
 
 // ---------- [look] accent color and the new-tab page ----------
-const ACCENT_SWATCHES = [['blue', 'Blue'], ['indigo', 'Indigo'], ['purple', 'Purple'], ['pink', 'Pink'], ['red', 'Red'], ['orange', 'Orange'], ['green', 'Green'], ['teal', 'Teal'], ['graphite', 'Graphite']];
-const BACKGROUND_CHOICES = [['plain', 'Plain'], ['aurora', 'Aurora'], ['dusk', 'Dusk'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['sunset', 'Sunset'], ['graphite', 'Graphite']];
+// The accent colours (features/theme-colors.js) and the backgrounds and effects (features/backgrounds.js) are the same lists the browser uses.
+const TC = window.ThemeColors;
+const BG = window.Backgrounds;
 // The animated effect's look: a color (automatic, the accent, rainbow, a preset or any), how many,
 // how fast, how big, and whether the pointer moves them.
 const EFFECT_SWATCHES = [['#ffffff', 'White'], ['#64d2ff', 'Cyan'], ['#bf5af2', 'Purple'], ['#ff6482', 'Pink'], ['#ffd60a', 'Gold'], ['#30d158', 'Green']];
@@ -611,32 +894,97 @@ function buildEffectOptions() {
   render();
   return box;
 }
-function applyPageAccent() {
-  const hex = st?.accent && (matchMedia('(prefers-color-scheme: dark)').matches ? st.accent.dark : st.accent.light);
-  const style = document.documentElement.style;
-  if (!hex) { style.removeProperty('--accent'); style.removeProperty('--accent-soft'); style.removeProperty('--ring'); return; }
-  const n = parseInt(hex.slice(1), 16);
-  style.setProperty('--accent', hex);
-  style.setProperty('--accent-soft', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.14)`);
-  style.setProperty('--ring', `rgb(${n >> 16} ${(n >> 8) & 255} ${n & 255} / 0.3)`);
+// [look] Music-reactive home screen: the switch, and one line under it when the effect is limited, and why (the same rules as
+// features/music-react.js modeOf): Reduce motion and Performance mode turn it off; Visual effects: Light (chosen, or Automatic on an integrated GPU) and
+// software drawing give the glow only. The line is also shown while the switch is off, so turning it on never looks broken.
+function musicReactiveRow() {
+  const row = toggle('newTabMusicReactive', tr('settings.musicReactive.label', 'Music-reactive home screen'), tr('settings.musicReactive.desc', 'Moves the new-tab page’s background with the music: soft dots drift, burst on the beat, swirl with the mids and twinkle with the highs. It reacts to the sound your PC is playing (any program, the Spotify desktop app included) and only while the new tab is on screen. Lumen reads how loud the bass, mids and highs are; nothing is recorded or sent, and the microphone is never used. Windows only. Simplified with Visual effects: Light; off with Reduce motion or Performance mode.'));
+  const note = h('span', { class: 'note', id: 'music-reactive-note', hidden: true });
+  const link = h('button', { type: 'button', class: 'linkish', id: 'music-reactive-link', hidden: true, text: tr('settings.musicReactive.linkLight', 'Change Visual effects'), onclick: () => { location.hash = '#visual-effects'; } });
+  const preview = h('button', { type: 'button', id: 'music-reactive-preview', text: tr('settings.musicReactive.preview', 'Preview') });
+  const stage = h('canvas', { class: 'mr-preview', id: 'music-reactive-stage', hidden: true, 'aria-hidden': 'true' });
+  let off = false; let light = false;
+  const show = () => {
+    const g = st.graphics; const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.software) || (Boolean(g?.drawing) && mode !== 'full');
+    light = mode === 'light' || (mode === 'auto' && Boolean(g?.integrated)) || soft;
+    off = Boolean(st.prefs?.reduceMotion || st.performance?.active);
+    let text = '';
+    if (st.prefs?.reduceMotion) text = tr('settings.musicReactive.offMotion', 'Off because Reduce motion is on.');
+    else if (st.performance?.active) text = tr('settings.musicReactive.offPerformance', 'Off because Performance mode is on.');
+    else if (st.platform && st.platform !== 'win32') text = tr('settings.musicReactive.platform', 'Windows only for now: it listens to the sound the PC is playing.');
+    else if (soft) text = tr('settings.musicReactive.lightSoftware', 'Simplified (fewer dots, slower) because Lumen is drawing in software.');
+    else if (light) text = mode === 'light' ? tr('settings.musicReactive.lightChosen', 'Simplified (fewer dots, slower) because Visual effects is set to Light.') : tr('settings.musicReactive.lightAuto', 'Simplified (fewer dots, slower) because Visual effects is on Automatic, which uses Light on this computer.');
+    note.textContent = text; note.hidden = !text;
+    link.hidden = !(text && light && !off && !(st.platform && st.platform !== 'win32'));
+    preview.disabled = off;
+    if (off && !stage.hidden) stopPreview();
+  };
+  // Preview: the same dots and the same limits, driven by a made-up beat for ten seconds (no music, no capture), so the effect can be seen without
+  // playing anything. It is the page's own drawing code, loaded here only when the button is pressed.
+  let run = null;
+  const scripts = {};
+  const loadScript = (src) => (scripts[src] ||= new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.append(s); }));
+  function stopPreview() {
+    if (run) { cancelAnimationFrame(run.raf); run = null; }
+    stage.hidden = true; preview.textContent = tr('settings.musicReactive.preview', 'Preview');
+  }
+  async function startPreview() {
+    if (off) return;
+    await loadScript('../features/music-react.js'); await loadScript('music-field-canvas.js');
+    stage.hidden = false; preview.textContent = tr('settings.musicReactive.previewStop', 'Stop preview');
+    const mode = light ? 'reduced' : 'full';
+    const w = Math.max(200, Math.round(stage.getBoundingClientRect().width)); const hgt = 140;
+    const painter = window.MusicFieldCanvas.create({ canvas: stage, mode, accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#0a84ff', tone: 'plain' });
+    painter.resize(w, hgt, devicePixelRatio || 1, { cx: -1e5, w: 1 });
+    const mapper = window.MusicReact.createMapper(); const beats = window.MusicReact.beatDetector();
+    const step = mode === 'reduced' ? window.MusicReact.REDUCED_MS : 33;
+    let last = 0; const t0 = performance.now();
+    run = { raf: 0 };
+    const frame = (now) => {
+      if (!run) return;
+      run.raf = requestAnimationFrame(frame);
+      const t = now - t0;
+      if (t > 10000) { stopPreview(); return; }
+      if (now - last < step) return;
+      const dt = last ? Math.min(0.1, (now - last) / 1000) : 0.033; last = now;
+      const b = window.MusicReact.demoFrame(t);
+      painter.draw(t, mapper.step({ ...b, beat: beats.push(t, b.bass) }, t), dt);
+    };
+    run.raf = requestAnimationFrame(frame);
+  }
+  preview.addEventListener('click', () => { if (run) stopPreview(); else startPreview().catch(() => stopPreview()); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && run) stopPreview(); });
+  show();
+  window.addEventListener('lumen-pref', (e) => { if (['reduceMotion', 'performanceMode', 'graphicsMode'].includes(e.detail.key)) setTimeout(show, 0); });
+  row.querySelector('.text').append(note, link, h('div', { class: 'mr-preview-row' }, preview), stage);
+  return row;
 }
 function buildLook(card) {
-  // Accent: one swatch per color, plus any color.
+  // Accent: one swatch per colour (each drawn in the shade it will really have, light or dark), "Match wallpaper", and any colour.
   const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Accent color' });
   const custom = h('input', { type: 'color', class: 'swatch-custom', 'aria-label': 'Custom accent color', title: 'Any color' });
+  const scheme = matchMedia('(prefers-color-scheme: dark)');
+  const shade = (id) => { const [l, d] = TC.ACCENTS[id]; return scheme.matches ? TC.tokensFor(d, 'dark').accent : TC.tokensFor(l, 'light').accent; };
+  const paintSwatches = () => { for (const btn of swatches.querySelectorAll('button[data-shade]')) { const c = shade(btn.dataset.value); btn.style.background = c; btn.style.color = c; } };
   const renderSwatches = () => {
     const current = st.prefs.accentColor;
-    for (const b of swatches.querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.value === current));
+    for (const btn of swatches.querySelectorAll('button')) btn.setAttribute('aria-checked', String(btn.dataset.value === current));
     custom.classList.toggle('on', /^#/.test(current));
     custom.value = /^#/.test(current) ? current : st.accent?.light || '#007aff';
   };
-  for (const [value, label] of ACCENT_SWATCHES) {
-    swatches.append(h('button', { type: 'button', role: 'radio', class: `swatch accent-${value}`, 'data-value': value, title: label, 'aria-label': label,
-      onclick: async () => { await save('accentColor', value); renderSwatches(); } }));
+  for (const id of TC.ACCENT_IDS) {
+    const label = TC.ACCENT_LABELS[id];
+    swatches.append(h('button', { type: 'button', role: 'radio', class: 'swatch', 'data-value': id, 'data-shade': '1', title: label, 'aria-label': label,
+      onclick: async () => { await save('accentColor', id); renderSwatches(); } }));
   }
+  swatches.append(h('button', { type: 'button', role: 'radio', class: 'swatch swatch-wallpaper', id: 'accent-wallpaper', 'data-value': TC.MATCH_WALLPAPER, title: 'Match wallpaper: the accent comes from the new-tab background', 'aria-label': 'Match wallpaper',
+    onclick: async () => { await save('accentColor', TC.MATCH_WALLPAPER); renderSwatches(); } }));
   custom.addEventListener('change', async () => { await save('accentColor', custom.value); renderSwatches(); });
   swatches.append(custom);
-  card.append(row('Accent color', 'Buttons, links, the selected tab and focus rings, across Lumen and its pages.', swatches));
+  scheme.addEventListener('change', paintSwatches);
+  card.append(row('Accent color', 'Buttons, links and focus rings across Lumen. Each color is fitted to stay readable in light and dark; the last swatch takes it from the new-tab background.', swatches));
+  paintSwatches();
   renderSwatches();
 }
 
@@ -706,28 +1054,81 @@ function buildClockStyle() {
 async function buildHome(card) {
 
   // The new-tab page: background, clock, greeting, sections.
-  const tiles = h('div', { class: 'bg-tiles', role: 'radiogroup', 'aria-label': 'New tab background' });
+  // The picker: a live preview that follows the pointer or the keyboard over the tiles, the backgrounds in groups (Gradients, Solids, Your picture)
+  // and the animated effects. A tile's art is the same CSS the new-tab page uses (features/backgrounds.js; the older ones are classes in settings.css).
+  const sections = h('div', { class: 'bg-sections', role: 'radiogroup', 'aria-label': 'New tab background', id: 'pref-newTabBackground' });
+  // The preview shows the whole new-tab page as chosen (renderer/settings-preview.js); pointing at a tile swaps only that background or effect.
+  const preview = window.NewTabPreview.create({ state: () => st, picture: () => S.wallpaperPreview() });
+  const showPreview = (item, effect) => preview.hover(effect ? { effect: item.id } : { background: item.id });
+  const shuffled = () => st.prefs.newTabShuffle === true;
+  const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
+  const tileOf = (item) => {
+    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
+      onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
+    if (item.art) btn.style.background = item.art;
+    const show = () => showPreview(item);
+    const back = () => preview.hover(null);
+    btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);
+    btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
+    return btn;
+  };
+  const gridOf = (items) => h('div', { class: 'bg-tiles dense' }, items.map(tileOf));
+  const sectionOf = (title, id, grid) => h('div', { class: 'bg-section', 'data-group': id }, h('h4', { class: 'bg-group', text: title }), grid);
+  for (const g of BG.GROUPS.filter((x) => x.id !== 'image')) sections.append(sectionOf(g.label, g.id, gridOf(BG.BACKGROUNDS.filter((x) => x.group === g.id))));
+  const imageSection = sectionOf('Your picture', 'image', h('div', { class: 'bg-tiles dense' }, tileOf(BG.IMAGE)));
+  sections.append(imageSection);
+  const allTiles = () => [...sections.querySelectorAll('.bg-tile:not([hidden])')];
+  sections.addEventListener('keydown', (e) => { // arrow keys move through every tile
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step || !e.target.matches?.('.bg-tile')) return;
+    e.preventDefault();
+    const list = allTiles(); const at = list.indexOf(e.target);
+    const next = list[(at + step + list.length) % list.length];
+    next.focus();
+  });
+  const shuffleNote = h('p', { class: 'bg-note', id: 'bg-shuffle-note', hidden: true });
   const renderTiles = () => {
-    for (const t of tiles.querySelectorAll('button')) t.setAttribute('aria-checked', String(t.dataset.value === st.prefs.newTabBackground));
+    const current = currentId();
+    for (const t of sections.querySelectorAll('.bg-tile')) { const on = t.dataset.value === current; t.setAttribute('aria-checked', String(on)); t.tabIndex = on || (!sections.querySelector('.bg-tile[aria-checked="true"]') && t.dataset.value === 'plain') ? 0 : -1; }
     const has = Boolean(st.prefs.newTabImage);
     picture.replaceChildren(...[
       h('button', { id: 'pick-wallpaper', text: has ? 'Change picture…' : 'Use a picture…', onclick: async () => { try { st = await S.pickWallpaper(); } catch (err) { alertLine(picture, err.message); } renderTiles(); } }),
       has ? h('button', { text: 'Remove picture', onclick: async () => { st = await S.removeWallpaper(); renderTiles(); } }) : null,
     ].filter(Boolean));
-    tiles.querySelector('[data-value="image"]').hidden = !has;
-    evenRows(tiles, tiles.querySelectorAll('button:not([hidden])').length);
+    imageSection.hidden = !has;
+    sections.classList.toggle('shuffled', shuffled());
+    shuffleNote.hidden = !shuffled();
+    shuffleNote.textContent = shuffled() ? `Today: ${BG.byId(BG.dailyPick())?.label}. Pick a background to stop shuffling.` : '';
+    preview.refresh();
+    for (const t of fxTiles.querySelectorAll('button')) { const on = t.dataset.value === st.prefs.newTabEffect; t.setAttribute('aria-checked', String(on)); t.tabIndex = on ? 0 : -1; }
   };
-  for (const [value, label] of [...BACKGROUND_CHOICES, ['image', 'Your picture']]) {
-    tiles.append(h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${value}`, 'data-value': value, 'aria-label': label, title: label,
-      onclick: async () => { await save('newTabBackground', value); renderTiles(); } }, h('span', { text: label })));
+  // The animated effects, one still picture each.
+  const fxTiles = h('div', { class: 'bg-tiles dense', role: 'radiogroup', 'aria-label': 'Animated effect', id: 'pref-newTabEffect' });
+  const effectOptions = buildEffectOptions();
+  for (const fx of BG.EFFECTS) {
+    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile fx-tile fx-${fx.id}`, 'data-value': fx.id, 'aria-label': fx.label, title: fx.label,
+      onclick: async () => { await save('newTabEffect', fx.id); effectOptions.hidden = fx.id === 'none'; renderTiles(); } }, h('span', { text: fx.label }));
+    if (fx.art) btn.style.background = fx.art;
+    btn.addEventListener('pointerenter', () => showPreview(fx, true)); btn.addEventListener('focus', () => showPreview(fx, true));
+    const back = () => preview.hover(null);
+    btn.addEventListener('pointerleave', back); btn.addEventListener('blur', back);
+    fxTiles.append(btn);
   }
-  card.group('Background').append(stackRow('New tab background', 'Behind the new-tab page. A picture is resized and kept in your Lumen profile; it never leaves this computer.', tiles, picture));
+  fxTiles.addEventListener('keydown', (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const list = [...fxTiles.querySelectorAll('button')]; const at = list.indexOf(document.activeElement);
+    list[(at + step + list.length) % list.length].click(); list[(at + step + list.length) % list.length].focus();
+  });
+  card.group('Background').append(
+    toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
+    stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
+  );
   card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
-  const effectOptions = buildEffectOptions();
-  card.append(select('newTabEffect', 'Animated effect', 'Moving particles over the background. Light on purpose: few particles, at most 30 frames a second, paused while the tab is hidden, and still with Reduce motion. It never covers the search box or the cards.',
-    [['none', 'None'], ['particles', 'Particles'], ['stars', 'Stars'], ['bubbles', 'Bubbles'], ['snow', 'Snow']], { after: (v) => { effectOptions.hidden = v === 'none'; } }), effectOptions);
+  card.append(stackRow('Animated effect', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.', fxTiles), effectOptions);
   effectOptions.hidden = st.prefs.newTabEffect === 'none';
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
@@ -757,11 +1158,12 @@ async function buildHome(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
+    musicReactiveRow(),
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
   const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
+  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify apple music gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
   try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
@@ -775,6 +1177,7 @@ const WIDGET_ICONS = {
   calendar: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2.2"/><path d="M2 6.5h12M5.5 1.6v2.6M10.5 1.6v2.6"/></svg>',
   todoist: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="m5.4 8.1 1.8 1.8 3.5-3.7"/></svg>',
   spotify: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M4.9 6.2c2.2-.7 4.7-.5 6.6.6M5.3 8.3c1.8-.5 3.7-.3 5.2.5M5.7 10.3c1.4-.4 2.7-.2 3.9.4"/></svg>',
+  applemusic: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 11.5V3.8l6-1.3v7.7"/><circle cx="4.5" cy="11.6" r="1.7"/><circle cx="10.5" cy="10.3" r="1.7"/></svg>',
   gmail: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="2"/><path d="m2.4 4.4 5.6 4.2 5.6-4.2"/></svg>',
   slack: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.2 2 5 14M11 2l-1.2 12M2.6 5.6h11.2M2.2 10.4h11.2"/></svg>',
   github: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.7"/><circle cx="4.5" cy="12.5" r="1.7"/><circle cx="11.5" cy="6" r="1.7"/><path d="M4.5 5.2v5.6M11.5 7.7c0 2.4-3.2 2-6 3.4"/></svg>',
@@ -785,6 +1188,8 @@ const WIDGET_ICONS = {
   notes: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5h7.5L13 5v8.5H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
   countdown: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1.8h6M5 14.2h6M5.5 1.8c0 3.4 5 3.8 5 6.2s-5 2.8-5 6.2M10.5 1.8c0 3.4-5 3.8-5 6.2s5 2.8 5 6.2"/></svg>',
   timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.2"/><path d="M8 9V6.2M6.5 1.8h3M12.2 4.4l1-1"/></svg>',
+  files: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5a1.2 1.2 0 0 1 1.2-1.2h3L7.6 5h5.2A1.2 1.2 0 0 1 14 6.2v6.1a1.2 1.2 0 0 1-1.2 1.2H3.2A1.2 1.2 0 0 1 2 12.3z"/></svg>',
+  routines: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8.5" r="5.2"/><path d="M8 5.6v3.2l2 1.2M6 1.8h4"/></svg>',
   aistatus: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4" cy="4.5" r="1.3"/><circle cx="4" cy="11.5" r="1.3"/><path d="M7.5 4.5h6M7.5 11.5h6"/></svg>',
   custom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 3.5 2 8l3.5 4.5M10.5 3.5 14 8l-3.5 4.5"/></svg>',
   tradingview: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3v10M4 5.5h-1.2M4 10h1.2M8 2v12M8 4.5H6.8M8 11h1.2M12 4v8M12 6h-1.2M12 9.5h1.2"/></svg>',
@@ -1045,7 +1450,7 @@ async function buildWidgets(card) {
       inputs.showDone = tog('widget-showdone', 'Tasks completed today', t.showDone, 'Keep them on the card, crossed out.');
       inputs.overdueRed = tog('widget-overdue', 'Overdue in red', t.overdueRed !== false);
       inputs.showCount = tog('widget-showcount', 'Task count in the title', t.showCount);
-      inputs.quick = segment('widget-quick', 'Add-task box', [['off', 'Off'], ['top', 'Top'], ['bottom', 'Bottom']], t.quick || 'off');
+      inputs.quick = segment('widget-quick', 'Add-task box', [['off', 'Button'], ['top', 'Top'], ['bottom', 'Bottom']], t.quick || 'top');
       inputs.quickProject = sel('widget-quickproject', 'New tasks go to', [['', 'Inbox (Todoist’s default)'], ...(t.quickProjectId ? [[t.quickProjectId, 'The chosen project']] : [])], t.quickProjectId || '');
       const tokenRow = helpLink(setting('API token', inputs.token, ws.secrets.todoist ? 'Connected: a token is saved. Paste a new one only to replace it.' : 'Not connected yet. Paste your personal API token.'), 'todoist', 'Where do I find it?');
       fields.replaceChildren(
@@ -1053,16 +1458,18 @@ async function buildWidgets(card) {
         section('Tasks', [setting('Show', inputs.source), daysRow, projectRow, labelRow, queryRow, setting('Tasks shown', inputs.max), setting('Sort by', inputs.sort), setting('Group by', inputs.group)]),
         section('Each task shows', Object.values(inputs.fields)),
         section('Also', [inputs.showDone, inputs.overdueRed, inputs.showCount, setting('Spacing', inputs.density)]),
-        advanced([setting('Add-task box', inputs.quick, 'A box on the card to add tasks, typed like Todoist’s quick add: “Pay rent tomorrow 9am”.'), setting('New tasks go to', inputs.quickProject, 'Press Load projects above to pick a project.')]));
+        advanced([setting('Add-task box', inputs.quick, 'Add tasks from the card, typed like Todoist’s quick add: “Pay rent tomorrow 9am”. Top and Bottom keep the box open; Button shows a “+ Add task” row that opens it.'), setting('New tasks go to', inputs.quickProject, 'Press Load projects above to pick a project.')]));
     }
     // ---- spotify: the user's own Client ID, then Connect (OAuth PKCE in a tab; the token stays in the browser) ----
     function spotifyFields(same) {
       const sp = () => ws.spotify || {};
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '64', placeholder: '32-character Client ID', value: same?.clientId || '', 'aria-label': 'Your own Spotify app’s Client ID' });
       inputs.art = tog('widget-spotify-art', 'Album art', same ? same.art !== false : true);
-      // 'web' shows Spotify's own site in the card (sign in there, nothing to set up); 'api' is Lumen's own now-playing card.
-      inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['web', 'Web player'], ['api', 'Now playing card']], same ? same.mode || 'api' : 'web');
-      const modeRow = block('How to show Spotify', 'Web player: Spotify’s own site in the card. You sign in on Spotify’s site and there is nothing to set up (recommended). Now playing card: Lumen’s own card, using Spotify’s API.', inputs.mode);
+      inputs.react = tog('widget-spotify-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
+      // 'status' plays Spotify inside Lumen (a hidden page) and shows a now-playing card; 'web' shows Spotify's own site in the card; 'api' is the
+      // now-playing card driven by Spotify's API with your own app (a widget saved before modes existed stays 'api').
+      inputs.mode = segment('widget-spotify-mode', 'How Spotify is shown', [['status', 'Plays in Lumen'], ['web', 'Web player'], ['api', 'Now playing (API)']], same ? same.mode || 'api' : 'status');
+      const modeRow = block('How to show Spotify', 'Plays in Lumen: Spotify plays in a hidden page inside Lumen and the card shows what is playing, with controls and a search (recommended). You sign in on Spotify’s site once. Web player: Spotify’s own site in the card. Now playing (API): Lumen’s own card driven by Spotify’s API with your own Spotify app, for music playing on your other devices.', inputs.mode);
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-spotify-status' });
       const login = h('button', { id: 'widget-spotify-connect', class: 'primary big', text: 'Log in with Spotify' });
       const disconnect = h('button', { id: 'widget-spotify-disconnect', class: 'danger', text: 'Disconnect' });
@@ -1110,43 +1517,116 @@ async function buildWidgets(card) {
       drawStatus();
       const apiBox = h('div', { class: 'wf-mode-api' },
         section('Account', [loginRow]),
-        section('Can’t sign in? Use your own Spotify app', [steps]),
-        section('Show', [inputs.art]));
+        section('Can’t sign in? Use your own Spotify app', [steps]));
+      const showBox = section('Show', [inputs.art]);
+      const statusNote = h('p', { class: 'wf-foot', text: 'Spotify plays in a hidden page inside Lumen (open.spotify.com, in your normal Lumen session), so the music keeps playing when you leave the new-tab page. Sign in on Spotify’s site once; Lumen never sees your Spotify password. The card also shows what is playing on your other devices (Spotify Connect) and drives them. Log in with Spotify below as well to get the Home tab, faster search and your library.' });
       const webNote = h('p', { class: 'wf-foot wf-mode-web', text: 'The card shows open.spotify.com. Sign in there once; Lumen never sees your Spotify password or token.' });
-      const syncMode = () => { apiBox.hidden = inputs.mode.value !== 'api'; webNote.hidden = inputs.mode.value !== 'web'; };
+      const syncMode = () => { apiBox.hidden = inputs.mode.value === 'web'; /* (Plays in Lumen needs the account too, for Home, search and your library) */ webNote.hidden = inputs.mode.value !== 'web'; statusNote.hidden = inputs.mode.value !== 'status'; showBox.hidden = inputs.mode.value === 'web'; };
       inputs.mode.addEventListener('change', syncMode);
       syncMode();
-      fields.replaceChildren(section('Mode', [modeRow]), webNote, apiBox);
+      fields.replaceChildren(section('Mode', [modeRow]), webNote, statusNote, apiBox, showBox, section('Music', [inputs.react]));
     }
-    // ---- gmail: your own Google Cloud OAuth client, then Connect (opens your browser) ----
+    // ---- gmail: your Google sign-in in Lumen (default), or your own Google Cloud client (Advanced) ----
     function gmailFields(same) {
       const g = same || {};
-      const connected = () => Boolean(ws.connections?.gmail);
+      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], g.mode === 'oauth' ? 'oauth' : 'google');
+      inputs.account = h('select', { id: 'widget-gmail-account', 'aria-label': tr('settings.gmail.accountPick', 'Google account') });
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
       inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
       inputs.count = sel('widget-gmail-count', tr('settings.gmail.count', 'Messages shown'), [3, 4, 5, 6, 8, 10].map((n) => [n, String(n)]), g.count || 5);
       inputs.snippets = tog('widget-gmail-snippets', tr('settings.gmail.snippets', 'Show a short preview under each subject'), g.snippets !== false);
+      const isGoogle = () => inputs.mode.value !== 'oauth';
+
+      // ---- Google sign-in in Lumen (default): nothing to set up ----
+      const gStatus = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-gstatus' });
+      const gSignIn = h('button', { type: 'button', id: 'widget-gmail-signin', class: 'primary big', text: tr('settings.gmail.signInLumen', 'Sign in to Gmail') });
+      const gCheck = h('button', { type: 'button', id: 'widget-gmail-recheck', text: tr('settings.gmail.checkAgain', 'Check again') });
+      const googleRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-google' },
+        h('div', { class: 'sp-actions' }, gSignIn, gCheck), gStatus,
+        setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).')),
+        h('span', { class: 'note', text: tr('settings.gmail.googleHow', 'Uses the Google sign-in you already have in Lumen. Nothing to set up, no Google Cloud project, no key. Lumen only reads Gmail’s unread list: sender, subject and a preview. It cannot send, delete or change anything.') }),
+        h('span', { class: 'note', id: 'widget-gmail-limits', text: tr('settings.gmail.googleLimits', 'This way shows unread messages only (up to the newest 20), not read mail or other labels. For more, use your own Google Cloud client under Advanced.') }));
+      let signedIn = ws.gmailGoogle?.signedIn;
+      let accounts = [];
+      const fillAccounts = () => {
+        const want = Number(inputs.account.value || g.account || 0);
+        const nth = (n) => (n === 0 ? tr('settings.gmail.firstAccount', 'First signed-in account') : tr('settings.gmail.accountN', 'Google account {n}', { n: n + 1 }));
+        const opts = accounts.length ? accounts.map((a) => [a.index, a.email]) : [[want, nth(want)]];
+        if (!opts.some(([i]) => i === want)) opts.push([want, nth(want)]);
+        inputs.account.replaceChildren(...opts.map(([v, t]) => h('option', { value: String(v), text: t })));
+        inputs.account.value = String(want);
+      };
+      const loadAccounts = async () => {
+        gCheck.disabled = true;
+        flash(gStatus, tr('settings.gmail.looking', 'Looking for your Google sign-in…'), 'ok');
+        try {
+          const r = await S.widgets.gmailAccounts();
+          accounts = r.accounts || [];
+          signedIn = Boolean(r.signedIn);
+        } catch { accounts = []; signedIn = null; }
+        gCheck.disabled = false;
+        fillAccounts();
+        if (signedIn) {
+          flash(gStatus, accounts.length > 1 ? tr('settings.gmail.signedInMany', 'Signed in to Google in Lumen: {n} accounts.', { n: accounts.length }) : tr('settings.gmail.signedInAs', 'Signed in as {email}.', { email: accounts[0]?.email || '' }), 'ok');
+          gStatus.className = 'sp-status on';
+        } else {
+          gStatus.className = 'sp-status';
+          gStatus.textContent = signedIn === false ? tr('settings.gmail.notSignedIn', 'Not signed in to Google in Lumen yet. Press Sign in to Gmail; this updates when you’re done.') : tr('settings.gmail.couldNotCheck', 'Couldn’t check the Google sign-in right now.');
+        }
+      };
+      fillAccounts();
+      gSignIn.addEventListener('click', async () => {
+        try { await S.widgets.gmailSignIn(); flash(gStatus, tr('settings.gmail.signInOpened', 'Finish signing in, in the tab Lumen opened. This updates when you’re done.'), 'ok'); } catch (err) { flash(gStatus, clean(err), 'err'); }
+      });
+      gCheck.addEventListener('click', loadAccounts);
+
+      // ---- Advanced: your own Google Cloud client, with a guided setup ----
       const status = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-status' });
-      // builtin: Lumen was built with its own Google client, so "Sign in with Google" needs no setup and
-      // the user's own Google Cloud client moves under Advanced (it still wins when its Client ID is filled in).
+      const connected = () => Boolean(ws.connections?.gmail);
+      // builtin: this copy of Lumen was built with its own Google client, so Connect works with no Client ID typed.
       const builtin = Boolean(ws.gmailClient?.builtin);
       const own = () => Boolean(inputs.clientId.value.trim());
-      // Connected, it stays: "Sign in again" switches account or mends a sign-in Google ended.
       const connectLabel = () => (connected() || ws.gmailSignedOut ? tr('settings.gmail.signInAgain', 'Sign in again') : builtin && !own() ? tr('settings.gmail.signIn', 'Sign in with Google') : tr('settings.gmail.connect', 'Connect Gmail'));
       const connect = h('button', { id: 'widget-gmail-connect', class: 'primary big', text: connectLabel() });
       const cancel = h('button', { id: 'widget-gmail-cancel', text: tr('settings.gmail.cancel', 'Cancel'), hidden: true });
       const disconnect = h('button', { class: 'danger', id: 'widget-gmail-disconnect', text: tr('settings.gmail.disconnect', 'Disconnect') });
-      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
+      const step = (n, key, label, hint) => h('div', { class: 'row stack' }, h('span', { class: 'note' }, h('strong', { text: `${n}. ` }), `${hint} `, h('button', { type: 'button', class: 'linkish', 'data-help': key, text: label, onclick: () => S.widgets.help(key) })));
+      const found = h('span', { class: 'note', role: 'status', id: 'widget-gmail-found' });
+      const dropLabel = tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text');
+      const dropBox = h('textarea', { id: 'widget-gmail-json', rows: '3', spellcheck: 'false', autocomplete: 'off', placeholder: dropLabel, 'aria-label': dropLabel });
+      const readClient = async (text) => {
+        const r = await S.widgets.gmailParseClient(text);
+        if (r?.error) { flash(found, r.error, 'warn'); return; }
+        inputs.clientId.value = r.clientId;
+        inputs.clientSecret.value = r.clientSecret;
+        inputs.clientId.dispatchEvent(new Event('input'));
+        dropBox.value = '';
+        flash(found, tr('settings.gmail.clientFound', 'Got the client {id}. Now press Connect Gmail.', { id: `${r.clientId.slice(0, 12)}…` }), 'ok');
+      };
+      dropBox.addEventListener('paste', (e) => { const t = e.clipboardData?.getData('text'); if (t) { e.preventDefault(); readClient(t); } });
+      dropBox.addEventListener('change', () => { if (dropBox.value.trim()) readClient(dropBox.value); });
+      dropBox.addEventListener('dragover', (e) => e.preventDefault());
+      dropBox.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer?.files?.[0];
+        if (f) { if (f.size > 20000) flash(found, tr('settings.gmail.notClientFile', 'That is too big to be a Google client file.'), 'warn'); else readClient(await f.text()); return; }
+        const t = e.dataTransfer?.getData('text');
+        if (t) readClient(t);
+      });
+      const oauthRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-oauth' },
+        h('span', { class: 'note', text: tr('settings.gmail.advancedHow', 'Uses the Gmail API with your own Google Cloud project: it also works when you are not signed in to Google in Lumen, and it sees read mail too. A few steps in Google’s console, then one paste:') }),
+        step(1, 'gmailProject', tr('settings.gmail.step1Link', 'Create a project'), tr('settings.gmail.step1', 'Make a Google Cloud project (any name).')),
+        step(2, 'gmailApi', tr('settings.gmail.step2Link', 'Turn on the Gmail API'), tr('settings.gmail.step2', 'Press Enable on the Gmail API page.')),
+        step(3, 'gmailConsent', tr('settings.gmail.step3Link', 'Set up the consent screen'), tr('settings.gmail.step3', 'User type External, and add your own Google address as a test user.')),
+        step(4, 'gmailClient', tr('settings.gmail.step4Link', 'Create the client'), tr('settings.gmail.step4', 'Application type Desktop app, then Download JSON.')),
+        dropBox, found,
+        setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? tr('settings.gmail.leaveEmpty', 'Leave empty to use Lumen’s own Google sign-in.') : tr('settings.gmail.filledByJson', 'Filled in for you when you drop the JSON file; or type it.')),
+        setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, tr('settings.gmail.secretHelp', 'From the same client. Stored encrypted by your system.')),
+        h('div', { class: 'sp-actions' }, connect, cancel, disconnect), status,
         h('span', { class: 'note', text: tr('settings.gmail.readOnly', 'Read-only: Lumen can see sender, subject and a preview, and cannot send, delete or change anything. Google’s sign-in opens in your browser.') }),
-        // Said before the user tries, not after five silent minutes: until Google approves it, not every account can use it.
+        h('span', { class: 'note', text: tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.') }),
         builtin && !ws.gmailClient?.verified ? h('span', { class: 'note', id: 'widget-gmail-unverified', text: tr('settings.gmail.unverified', 'Google is still reviewing Lumen’s sign-in. If Google says Lumen “hasn’t verified this app”, choose Advanced › Go to Lumen. If it says “Access blocked”, use your own Google Cloud client under Advanced.') }) : null);
-      const adv = advanced([
-        builtin ? h('div', { class: 'row stack' }, h('span', { class: 'note', text: tr('settings.gmail.ownHint', 'Optional. Sign in with Google works without this. To use a Google Cloud project of your own instead, paste its Desktop app client here; it is then used instead of Lumen’s.') })) : null,
-        helpLink(setting(tr('settings.gmail.clientId', 'Google OAuth Client ID'), inputs.clientId, builtin ? 'Leave empty to use Lumen’s own Google sign-in.' : 'Gmail needs a Google Cloud project of your own. Enable the Gmail API and create an OAuth client of type Desktop app.'), 'gmail', 'Open Google Cloud Console'),
-        setting(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), inputs.clientSecret, 'From the same client. Stored encrypted by your system.'),
-      ], tr('settings.gmail.limits', 'Because you use your own Google Cloud project, Google’s limits for unverified apps apply: while the project is in Testing, only test users you add can connect, Google shows a “hasn’t verified this app” warning, and the connection ends every 7 days, so you connect again then. Publishing the project removes the 7-day limit.'), !builtin && !g.clientId);
-      adv.querySelector('summary').textContent = builtin ? tr('settings.gmail.advancedOwn', 'Advanced: use your own Google Cloud client') : tr('settings.advanced', 'Advanced');
-      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = accountRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
+      inputs.clientId.addEventListener('input', () => { connect.textContent = connectLabel(); const n = oauthRow.querySelector('#widget-gmail-unverified'); if (n) n.hidden = own(); }); // the review note is about Lumen's client only
       const draw = () => {
         disconnect.hidden = !connected();
         connect.textContent = connectLabel();
@@ -1158,7 +1638,7 @@ async function buildWidgets(card) {
         }
       };
       connect.addEventListener('click', async () => {
-        if (!builtin && !own()) { adv.open = true; flash(status, tr('settings.gmail.needClient', 'First add your Google Cloud Client ID and secret under Advanced.'), 'warn'); inputs.clientId.focus(); return; }
+        if (!builtin && !own()) { flash(status, tr('settings.gmail.needClient', 'First drop the client JSON file above, or type your Client ID and secret.'), 'warn'); dropBox.focus(); return; }
         connect.disabled = true;
         cancel.hidden = false;
         flash(status, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
@@ -1200,9 +1680,16 @@ async function buildWidgets(card) {
         draw();
       });
       draw();
+      // Only the chosen way shows.
+      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); };
+      inputs.mode.addEventListener('change', () => { showMode(); if (isGoogle() && signedIn == null) loadAccounts(); });
+      showMode();
+      if (isGoogle()) loadAccounts();
       // A connection that changed elsewhere (Google ended it, the card signed in) shows here at once.
       gmailWatch = async () => {
-        if (!accountRow.isConnected || connect.disabled || armed) return; // a sign-in or a confirm is under way
+        if (!googleRow.isConnected) return;
+        if (isGoogle()) { if (!gCheck.disabled) loadAccounts(); return; } // a Google sign-in began or ended in a tab
+        if (connect.disabled || armed) return; // a sign-in or a confirm is under way
         const next = await S.widgets.state();
         const was = `${Boolean(ws.connections?.gmail)}|${ws.gmailAccount || ''}|${ws.gmailSignedOut || ''}`;
         const now = `${Boolean(next.connections?.gmail)}|${next.gmailAccount || ''}|${next.gmailSignedOut || ''}`;
@@ -1213,47 +1700,71 @@ async function buildWidgets(card) {
       };
       if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); } // one listener per page, whatever editor is open
       fields.replaceChildren(
-        section(tr('settings.gmail.account', 'Account'), [accountRow]),
-        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]),
-        adv);
+        section(tr('settings.gmail.account', 'Account'), [h('div', { class: 'row stack' }, inputs.mode), googleRow, oauthRow]),
+        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
     }
-    // ---- slack: sign in (OAuth v2 with your own Slack app), then what to show ----
+    // ---- slack: guided setup (create the app from a prefilled link, copy one token), then what to show ----
     function slackFields(same) {
       const sc = same?.slack || {};
       let st = ws.slack || {};
+      let sawLast = '';
       const picked = new Map((sc.channels || []).map((c) => [c.id, c.name]));
       inputs.token = h('input', { type: 'password', id: 'widget-token', autocomplete: 'off', spellcheck: 'false', placeholder: 'xoxp-… (optional)', 'aria-label': 'Slack user token' });
       const clientId = h('input', { type: 'text', id: 'slack-client-id', autocomplete: 'off', spellcheck: 'false', placeholder: '1234567890.1234567890', value: st.clientId || '', 'aria-label': 'Slack app Client ID' });
       const clientSecret = h('input', { type: 'password', id: 'slack-client-secret', autocomplete: 'off', spellcheck: 'false', placeholder: st.hasSecret ? 'Saved. Paste a new secret to replace it' : 'Client Secret', 'aria-label': 'Slack app Client Secret' });
       const redirect = h('input', { type: 'url', id: 'slack-redirect', spellcheck: 'false', value: st.redirect || '', 'aria-label': 'Slack redirect URL' });
       const pasted = h('input', { type: 'text', id: 'slack-pasted', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the address you landed on', 'aria-label': 'Address after approving' });
+      const pasteAll = h('input', { type: 'password', id: 'slack-paste', autocomplete: 'off', spellcheck: 'false', placeholder: 'Paste the token (xoxp-…) here', 'aria-label': 'Slack token, or Client ID and Client Secret' });
       const status = h('span', { class: 'sp-status', role: 'status', id: 'slack-status' });
+      const steps = h('ol', { class: 'wf-steps', id: 'slack-steps' });
       const drawStatus = () => {
         st = ws.slack || st;
-        if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Log in again to reconnect.`, 'warn');
-        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
-        else if (st.waiting) flash(status, 'Approve in the browser tab that opened, then paste the address it ends on.', 'note');
+        if (st.last && st.last.message !== sawLast) { sawLast = st.last.message; flash(status, st.last.message, st.last.ok ? 'ok' : 'err'); }
+        else if (st.connected && st.reconnect) flash(status, `Slack no longer accepts the sign-in${st.team ? ` for ${st.team}` : ''}. Set it up again to reconnect.`, 'warn');
+        else if (st.connected) flash(status, `Connected${st.team ? ` to ${st.team}` : ''}${st.user ? ` as ${st.user}` : ''}${st.canRefresh ? ' (renews itself)' : ''}. Read-only.`, 'ok');
+        else if (st.waiting) flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+        else if (st.draft) flash(status, 'Got one half. Paste the other (Client ID and Client Secret) to continue.', 'note');
         else { status.textContent = 'Not connected.'; status.className = 'sp-status'; }
         disconnect.hidden = !st.connected;
-        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
-        open.classList.toggle('primary', !st.connected);
+        create.textContent = st.connected ? 'Set up again' : 'Create the Lumen app in Slack';
+        create.classList.toggle('primary', !st.connected);
+        steps.hidden = Boolean(st.connected);
+        viaBrowser.hidden = Boolean(st.connected);
+        pasteRow.hidden = Boolean(st.connected);
         pastedRow.hidden = !st.waiting;
+        open.textContent = st.connected ? 'Log in again' : 'Log in with Slack';
       };
-      const open = h('button', { type: 'button', id: 'slack-open', class: 'primary big', text: 'Log in with Slack', onclick: async () => {
-        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret under Advanced.', 'warn'); clientId.focus(); return; }
-        try {
-          const r = await S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value });
-          ws = r.state; clientSecret.value = ''; drawStatus();
-        } catch (err) { flash(status, clean(err), 'err'); }
+      const run = async (fn) => { try { const r = await fn(); if (r?.state) ws = r.state; else if (r && r.slack) ws = r; drawStatus(); return r; } catch (err) { flash(status, clean(err), 'err'); return null; } };
+      const create = h('button', { type: 'button', id: 'slack-create', class: 'primary big', text: 'Create the Lumen app in Slack', onclick: () => run(async () => { const r = await S.widgets.slackCreateApp(); flash(status, 'Slack opened in a small window. Follow the steps below; Lumen connects when you copy the token.', 'note'); return r; }) });
+      const viaBrowser = h('button', { type: 'button', class: 'linkish', id: 'slack-browser', text: 'Slack won’t let me sign in there: use my browser instead', onclick: () => run(() => S.widgets.slackCreateApp({ browser: true })) });
+      const connectPasted = async () => {
+        const r = await run(() => S.widgets.slackPaste(pasteAll.value));
+        if (!r) return;
+        pasteAll.value = '';
+        if (r.kind === 'connected') flash(status, r.message, 'ok');
+        else if (r.kind === 'partial') flash(status, `Got it. Now paste the ${r.missing}.`, 'note');
+        else if (r.kind === 'approve') flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
+      };
+      const connect = h('button', { type: 'button', id: 'slack-connect', text: 'Connect', onclick: connectPasted });
+      pasteAll.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectPasted(); } });
+      steps.append(
+        h('li', {}, h('b', { text: 'Create the app. ' }), 'The button above opens Slack with the name, read-only permissions and redirect already filled in. Pick your workspace, press Next, then Create.'),
+        h('li', {}, h('b', { text: 'Install it. ' }), 'On the page that follows press Install to Workspace, then Allow.'),
+        h('li', {}, h('b', { text: 'Copy the token. ' }), 'Press Copy next to User OAuth Token. Lumen notices it and connects by itself; or paste it below.'));
+      const pasteRow = setting('Paste it instead', pasteAll, 'The token, or the Client ID and Client Secret from Basic Information (copied together is fine). Stored encrypted by your system.', connect);
+      const open = h('button', { type: 'button', id: 'slack-open', text: 'Log in with Slack', onclick: async () => {
+        if (!clientId.value.trim() && !st.clientId) { adv.open = true; flash(status, 'First add your Slack app’s Client ID and secret.', 'warn'); clientId.focus(); return; }
+        run(() => S.widgets.slackStart({ clientId: clientId.value, clientSecret: clientSecret.value, redirect: redirect.value })).then(() => { clientSecret.value = ''; });
       } });
       const finish = h('button', { type: 'button', id: 'slack-finish', text: 'Finish', onclick: async () => {
-        try {
-          const r = await S.widgets.slackFinish(pasted.value);
-          ws = r.state; pasted.value = ''; drawStatus(); flash(status, r.message, 'ok');
-        } catch (err) { flash(status, clean(err), 'err'); }
+        const r = await run(() => S.widgets.slackFinish(pasted.value));
+        if (r) { pasted.value = ''; flash(status, r.message, 'ok'); }
       } });
-      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: async () => { ws = await S.widgets.slackDisconnect(); drawStatus(); } });
-      const pastedRow = setting('Finish signing in', pasted, 'Slack ends on a page that may not load. That is fine: copy its address from the address bar and paste it here.', finish);
+      const disconnect = h('button', { type: 'button', class: 'danger', id: 'slack-disconnect', text: 'Disconnect', onclick: () => run(async () => S.widgets.slackDisconnect()) });
+      const pastedRow = setting('Finish signing in', pasted, 'Only if the Slack window was closed before it finished: paste the address it ended on.', finish);
+      // A connection that finished by itself (the window caught the redirect, the clipboard held the token) shows here at once.
+      slackWatch = async () => { if (!status.isConnected) return; ws = await S.widgets.state(); drawStatus(); };
+      if (!slackWatchOn) { slackWatchOn = true; S.widgets.onChanged?.(() => slackWatch?.()); }
       const chBox = h('div', { class: 'widget-checks', id: 'slack-channels' });
       const drawChannels = (items) => {
         chBox.replaceChildren(...items.map((c) => {
@@ -1272,17 +1783,18 @@ async function buildWidgets(card) {
       inputs.dms = tog('widget-slack-dms', 'Unread direct messages', sc.dms !== false);
       inputs.mentions = tog('widget-slack-mentions', 'Mentions of you', sc.mentions !== false, 'In the channels chosen below.');
       inputs.count = segment('widget-slack-count', 'Recent messages', [[3, '3'], [5, '5'], [8, '8'], [10, '10']], sc.count || 5);
-      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, open, disconnect), status,
-        h('span', { class: 'note', text: 'Read-only: nothing can be posted. Slack’s sign-in opens in your browser.' }));
+      const accountRow = h('div', { class: 'row stack sp-login' }, h('div', { class: 'sp-actions' }, create, disconnect), status,
+        h('span', { class: 'note', text: 'Read-only: nothing can be posted. The app is yours; Lumen only ever shows slack.com in its setup window.' }), viaBrowser);
       const adv = advanced([
-        helpLink(setting('Slack app Client ID', clientId, 'Slack needs an app of your own (Create New App). Keep it private, not distributed.'), 'slack', 'Open Slack API apps'),
-        setting('Client Secret', clientSecret, 'From the app’s Basic Information page. Stored encrypted by your system.'),
-        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https.'),
-        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token from the app’s OAuth & Permissions page. It doesn’t renew itself.'),
-      ], 'User Token Scopes to add: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', !st.connected && !st.clientId);
+        setting('Slack app Client ID', clientId, 'From the app’s Basic Information page, if you made the app yourself.'),
+        setting('Client Secret', clientSecret, 'The same page. Stored encrypted by your system.'),
+        setting('Redirect URL', redirect, 'Add this address under OAuth & Permissions. Slack requires https. The setup link already does.'),
+        setting('Sign in with them', open, 'Opens Slack’s approval in the setup window and finishes by itself. Renews itself if the app has token rotation on.'),
+        setting('Or a user token', inputs.token, 'Skip signing in: paste the User OAuth Token. It doesn’t renew itself. (Saved with the card.)'),
+      ], 'User Token Scopes the app needs: ' + ((st.scopes || []).join(', ') || 'channels:read, channels:history, im:read, im:history, users:read') + '. Everything is stored encrypted by your system and never reaches the new-tab page.', Boolean(st.draft));
       drawStatus();
       fields.replaceChildren(
-        section('Account', [accountRow, pastedRow]),
+        section('Account', [accountRow, steps, pasteRow, pastedRow]),
         section('Show', [inputs.dms, inputs.mentions, setting('Recent messages', inputs.count)]),
         section('Channels', [block('Channels to follow', 'Up to 4 channels you are in; their recent messages show on the card.', h('div', { class: 'widget-inline' }, load), chBox)]),
         adv);
@@ -1423,6 +1935,22 @@ async function buildWidgets(card) {
         marketFields(same);
       } else if (type === 'notes') {
         fields.replaceChildren(section('Note', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Type straight on the card. It saves as you go, stays on this computer and never goes online.' }))]));
+      } else if (type === 'applemusic') {
+        inputs.mode = segment('widget-applemusic-mode', 'How Apple Music is shown', [['status', 'Status card'], ['web', 'Web player']], same?.mode === 'web' ? 'web' : 'status');
+        inputs.art = tog('widget-applemusic-art', 'Album art', same ? same.art !== false : true);
+        inputs.react = tog('widget-applemusic-react', tr('settings.widgets.react.label', 'React to music'), same ? same.react === true : false, tr('settings.widgets.react.desc', 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent. Still with Reduce motion and Performance mode; simpler with Visual effects: Light.'));
+        inputs.app = tog('widget-applemusic-app', 'Also show the Apple Music app', same ? same.app !== false : true, 'When nothing is playing inside Lumen but the Apple Music app on this computer is (iTunes on Windows too), show it, with its own buttons. On a Mac, macOS asks once to let Lumen control Music.');
+        const modeRow = block('How to show Apple Music', 'Status card: Apple Music plays inside Lumen, and the card shows what is playing with play, pause, next, previous and seek, your recent plays and playlists, and a search. You sign in on Apple’s site once. Web player: Apple’s own site in the card.', inputs.mode);
+        const statusNote = h('p', { class: 'wf-foot', text: 'Apple Music plays in a hidden page inside Lumen (Apple’s own MusicKit), in your normal Lumen session, so the music keeps playing when you leave the new-tab page. Search works without signing in (30-second previews); sign in for your library and full songs. Lumen never sees your Apple ID or password.' });
+        const showBox = section('Show', [inputs.art, inputs.app]);
+        const syncMode = () => { statusNote.hidden = showBox.hidden = inputs.mode.value !== 'status'; };
+        inputs.mode.addEventListener('change', syncMode);
+        syncMode();
+        fields.replaceChildren(section('Mode', [modeRow]), statusNote, showBox, section('Music', [inputs.react]));
+      } else if (type === 'files') {
+        fields.replaceChildren(section(tr('settings.files.group', 'Files'), [h('div', { class: 'row' }, h('span', { class: 'note', text: tr('widgets.files.desc', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.') }))]));
+      } else if (type === 'routines') {
+        fields.replaceChildren(section('Routines', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows what your routines run next and what they did last. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'aistatus') {
         fields.replaceChildren(section('AI status', [h('div', { class: 'row' }, h('span', { class: 'note', text: 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer: nothing is sent anywhere.' }))]));
       } else if (type === 'countdown') {
@@ -1541,9 +2069,11 @@ async function buildWidgets(card) {
           showDone: val(inputs.showDone), overdueRed: val(inputs.overdueRed), showCount: val(inputs.showCount), quick: inputs.quick.value, quickProjectId: q?.value || '',
         } };
       }
-      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art) };
+      if (type === 'spotify') return { ...base, mode: inputs.mode.value, clientId: inputs.clientId.value, art: val(inputs.art), react: val(inputs.react) };
+      if (type === 'applemusic') return { ...base, mode: inputs.mode.value, art: val(inputs.art), app: val(inputs.app), react: val(inputs.react) };
       if (type === 'gmail') {
-        return { ...base, clientId: inputs.clientId.value, clientSecret: inputs.clientSecret.value, count: Number(inputs.count.value), snippets: val(inputs.snippets) };
+        const own = inputs.mode.value === 'oauth';
+        return { ...base, mode: own ? 'oauth' : 'google', account: Number(inputs.account.value) || 0, clientId: own ? inputs.clientId.value : '', clientSecret: own ? inputs.clientSecret.value : '', count: Number(inputs.count.value), snippets: val(inputs.snippets) };
       }
       if (type === 'slack') {
         return { ...base, token: inputs.token.value, slack: { channels: [...inputs.slackPicked].map(([id, name]) => ({ id, name })), dms: val(inputs.dms), mentions: val(inputs.mentions), count: Number(inputs.count.value) } };
@@ -1618,6 +2148,8 @@ async function buildWidgets(card) {
       h('div', { class: 'widget-head' }, existing ? widgetIcon(existing.type) : null, h('div', { class: 'grow' },
         h('h2', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
         h('span', { class: 'note', text: existing ? `${WS.kindName(existing.type)} · ${WS.widgetSummary(existing, ws)}` : 'Pick what to show, then set it up.' }))),
+      // The new-tab page's Add widget sent us here for a kind that needs a key or a sign-in: say what to paste, and where to get it.
+      !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
       existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
       fields,
       section('Card', [
@@ -1683,9 +2215,29 @@ async function buildWidgets(card) {
     h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
-  const target = ws.edit && ws.widgets.find((w) => w.id === ws.edit);
-  if (target) { openForm(target); forceRoute = 'widgets'; } // a card's gear on the new-tab page
-  else if (ws.create && ws.types.some((t) => t.type === ws.create)) { openForm(null, ws.create); forceRoute = 'widgets'; } // its Add widget picker
+  // A card's gear on the new-tab page opens that widget's editor; its Add widget picker opens the form for a new one.
+  // Returns whether it opened one (the page was built with a request pending, or Settings was already open and was told).
+  const applyEdit = (state) => {
+    const target = state.edit && state.widgets.find((w) => w.id === state.edit);
+    if (target) openForm(target);
+    else if (state.create && state.types.some((t) => t.type === state.create)) openForm(null, state.create);
+    else return false;
+    forceRoute = 'widgets';
+    return true;
+  };
+  applyEdit(ws);
+  // Settings already open: the new-tab page's gear sends this instead of reloading the tab (and the tab is reused, never duplicated).
+  S.widgets.onEdit?.(async () => {
+    const fresh = await S.widgets.state().catch(() => null);
+    if (!fresh) return;
+    ws = fresh;
+    renderList();
+    if (!applyEdit(fresh)) return;
+    if (location.hash === '#widgets') route(); else location.hash = '#widgets'; // (hashchange routes)
+    const form = formHost.firstElementChild;
+    if (form) { form.classList.remove('flash-target'); void form.offsetWidth; form.classList.add('flash-target'); setTimeout(() => form.classList.remove('flash-target'), 1800); }
+  });
+  window.__widgetEditRoute = { applyEdit }; // (the units drive this)
 }
 function alertLine(host, text) {
   host.querySelector('.note.error')?.remove();
@@ -1696,12 +2248,12 @@ async function buildSearch(card) {
   const ai = await S.ai.get();
   const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
-  card.append(row('Search engine used in the address bar', 'Also used by the new-tab page and “Search for…” in the context menu.', el));
+  card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));
 }
 
 function buildStartup(card) {
   const list = h('div', { class: 'list', id: 'startup-pages' });
-  const input = h('input', { type: 'url', class: 'grow', id: 'startup-add', placeholder: 'https://example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
+  const input = h('input', { type: 'text', inputmode: 'url', class: 'grow', id: 'startup-add', placeholder: 'example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
   const renderPages = () => list.replaceChildren(...st.prefs.startupPages.map((url, i) => h('div', { class: 'item' },
     h('span', { class: 'grow mono', text: url }),
     h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
@@ -1710,18 +2262,26 @@ function buildStartup(card) {
     return h('label', { class: 'check' }, r, text);
   });
   renderPages();
+  const addNote = h('span', { class: 'note', id: 'startup-add-status', role: 'status' });
+  // A bare "example.com" is fine (https:// is added); anything that isn't a web address says so instead of doing nothing.
+  const addPage = async () => {
+    let url = input.value.trim();
+    if (!url) { flash(addNote, 'Type the address of a page first.', 'err'); return; }
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = `https://${url}`;
+    let ok = false;
+    try { const u = new URL(url); ok = /^https?:$/.test(u.protocol) && (u.hostname.includes('.') || u.hostname === 'localhost'); } catch {}
+    if (!ok) { flash(addNote, 'That isn’t a web address. Try something like example.com.', 'err'); return; }
+    if (st.prefs.startupPages.includes(url)) { flash(addNote, 'That page is already in the list.', 'err'); return; }
+    await save('startupPages', [...st.prefs.startupPages, url]);
+    input.value = '';
+    addNote.textContent = '';
+    renderPages();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPage(); } });
+  input.addEventListener('input', () => { addNote.textContent = ''; });
   card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
-    h('div', { class: 'controls' }, input, h('button', {
-      text: 'Add page',
-      onclick: async () => {
-        const url = input.value.trim();
-        if (!/^https?:\/\//i.test(url)) return;
-        await save('startupPages', [...st.prefs.startupPages, url]);
-        input.value = '';
-        renderPages();
-      },
-    }))));
+    h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
 }
 
 async function buildPrivacy(card) {
@@ -1734,9 +2294,8 @@ async function buildPrivacy(card) {
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
-    h('div', { class: 'controls' }, result, h('button', {
-      class: 'primary', id: 'clear-go', text: 'Clear data',
-      onclick: async () => {
+    h('div', { class: 'controls' }, result, armedButton(tr('settings.clear.go', 'Clear data'), tr('settings.clear.sure', 'Clear it? Click again'), async () => {
+        flash(result, '');
         const done = await S.clearData({ range: range.value, history: $('clear-history').checked, cookies: $('clear-cookies').checked, cache: $('clear-cache').checked, downloads: $('clear-downloads').checked });
         const parts = [];
         if (done.history !== undefined) parts.push(`${done.history} history entr${done.history === 1 ? 'y' : 'ies'}`);
@@ -1744,18 +2303,31 @@ async function buildPrivacy(card) {
         if (done.cache) parts.push('cache');
         if (done.downloads !== undefined) parts.push(`${done.downloads} download${done.downloads === 1 ? '' : 's'}`);
         flash(result, parts.length ? `Cleared ${parts.join(', ')}.` : 'Nothing selected.');
-      },
-    }))));
+      }, 'primary', 'clear-go'))));
 
+  card.group(tr('settings.private.group', 'Private windows')).append(withKeywords(row(tr('settings.private.label', 'Private windows (incognito)'), tr('settings.private.desc', 'Press Ctrl+Shift+N, or use New Private Window in the menu. A private window doesn’t save history, cookies, passwords or its tabs, and forgets everything when you close it. Downloads stay in your Downloads folder, and sites and your network can still see you.')), 'incognito inprivate private browsing window shortcut ctrl+shift+n'));
   card.group('Tracking and connections').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
     toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
-    toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'),
+    withKeywords(toggle('hideTabActivity', tr('settings.privacy.hideTab', 'Hide when you leave the tab'), tr('settings.privacy.hideTabDesc', '')), 'visibility focus blur switch tab window away exit intent proctoring track'),
+    withKeywords(toggle('hideWindowSize', tr('settings.privacy.hideSize', 'Hide your window size'), tr('settings.privacy.hideSizeDesc', '')), 'split screen window size screen resolution fingerprint'),
+    withKeywords(toggle('fingerprintProtection', tr('settings.privacy.fingerprint', 'Protect against fingerprinting'), tr('settings.privacy.fingerprintDesc', '')), 'fingerprint canvas webgl audio battery tracking unique identify'),
+    withKeywords(toggle('webrtcIpProtection', tr('settings.privacy.webrtc', 'Hide your IP address from WebRTC'), tr('settings.privacy.webrtcDesc', '')), 'webrtc ip address leak vpn local network'),
+    withKeywords(toggle('stripTrackingParams', tr('settings.privacy.stripParams', 'Remove tracking from links'), tr('settings.privacy.stripParamsDesc', '')), 'utm fbclid gclid query parameters url clean'),
+    withKeywords(toggle('blockTrackingPings', tr('settings.privacy.pings', 'Block tracking pings'), tr('settings.privacy.pingsDesc', '')), 'beacon sendbeacon ping hyperlink auditing analytics'),
+    withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
+  );
+
+  // [files] The remembered files live in General > Files (buildFiles); a pointer here, for people who look for them under Privacy.
+  card.group(tr('settings.files.group', 'Files')).append(
+    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Remember and clear them in General > Files.'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
   await buildPasswords(card);
+  buildPasskeys(card);
 
   // Safe Browsing (features/safe-browsing.js)
   const sbNote = status('safe-browsing-status');
@@ -1820,10 +2392,24 @@ async function buildPrivacy(card) {
       h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.revokePermission(p.origin, p.permission); renderGranted(); } })))
       : [h('span', { class: 'note', text: 'No sites have asked yet.' })]));
   };
-  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone location notifications revoke');
-  permissions.append(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults));
-  permissions.append(stackRow('Site permissions', 'What you allowed or blocked. Revoke to be asked again.', granted));
+  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission');
+  withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
+  permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
+  permissions.append(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted));
   renderGranted();
+  // [devices] The hardware picked in a site's chooser (WebHID, WebUSB, Web Serial), with Remove (features/device-chooser.js).
+  const devices = h('div', { class: 'list', id: 'device-grants' });
+  const renderDevices = async () => {
+    const list = await S.deviceGrants();
+    devices.replaceChildren(...(list.length ? list.map((g) => {
+      const name = g.name || tr('device.unknown', 'Unknown device');
+      return h('div', { class: 'item', 'data-origin': g.origin, 'data-key': g.key },
+        h('span', { class: 'grow' }, g.origin, h('span', { class: 'note', text: ` · ${name} (${tr(`settings.devices.type.${g.type}`, g.type.toUpperCase())})` })),
+        h('button', { text: tr('settings.devices.remove', 'Remove'), class: 'revoke', 'aria-label': tr('settings.devices.removeFor', 'Remove {device} for {site}', { device: name, site: g.origin }), onclick: async () => { await S.removeDeviceGrant(g.origin, g.key); renderDevices(); } }));
+    }) : [h('span', { class: 'note', text: tr('settings.devices.none', 'No devices yet.') })]));
+  };
+  permissions.append(withKeywords(stackRow(tr('settings.devices.label', 'Devices sites can use'), tr('settings.devices.desc', 'Keyboards and other hardware you let a site connect to. Remove to be asked again.'), devices), 'usb hid serial bluetooth keyboard gamepad controller hardware'));
+  renderDevices();
 
   // [site data] Every site that keeps cookies, with Remove (features/site-data.js).
   const sites = h('div', { class: 'list', id: 'site-data' });
@@ -1847,6 +2433,23 @@ async function buildPrivacy(card) {
 // [passwords] Privacy and security → Passwords: the Save passwords switch, and a sub-page listing saved
 // logins (site and username; Show and Copy ask for Touch ID or a confirmation first), with Edit, Delete,
 // Import from a CSV export and Delete all. Passwords stay in the main process except the one being shown.
+// [passkeys] Passkeys, Windows Hello and security keys (features/passkeys.js): Windows draws the prompt and keeps the
+// credentials. On where Windows' WebAuthn is there; off (or anywhere else), sites see no passkey API and offer a
+// password or a code instead.
+function buildPasskeys(card) {
+  const info = st.passkeys || {};
+  const label = tr('settings.passkeys.label', 'Use passkeys and security keys (Windows Hello)');
+  const desc = tr('settings.passkeys.desc', 'Sites can ask you to sign in or register with a passkey: Windows Security asks for your face, fingerprint or PIN, a security key, or your phone. Windows keeps the passkeys; Lumen stores nothing, and the AI can’t start or approve a passkey prompt. Off: sites offer a password or a code instead.');
+  let note = '';
+  if (info.platform && info.platform !== 'win32') note = tr('settings.passkeys.otherPlatform', 'Not available in Lumen on this system yet. Sites offer a password or a code instead.');
+  else if (info.available === false) note = tr('settings.passkeys.unavailable', 'Not available on this computer (needs Windows 10 version 1903 or later). Sites offer a password or a code instead.');
+  else if (info.available && !info.uvpaa) note = tr('settings.passkeys.noHello', 'Windows Hello isn’t set up here: security keys and passkeys on your phone still work. Set up Windows Hello in Windows Settings to keep passkeys on this computer.');
+  const r = toggle('passkeys', label, desc);
+  if (note) r.querySelector('.text').append(h('span', { class: 'note', id: 'passkeys-status', text: note }));
+  if (info.platform && info.platform !== 'win32') r.querySelector('input').disabled = true;
+  card.group(tr('settings.passkeys.group', 'Passkeys')).append(r);
+}
+
 async function buildPasswords(card) {
   const P = S.passwords;
   let pw = await P.state();
@@ -1899,12 +2502,18 @@ async function buildPasswords(card) {
         hideTimer = setTimeout(hide, 30000); // shown for 30 seconds at most
       },
     });
+    // A saved login can't be got back, so Delete asks twice (a second click within 4 seconds), like Delete all.
+    const deleteLogin = (l) => {
+      const w = armedButton(tr('settings.passwords.delete', 'Delete'), tr('settings.passwords.deleteSure', 'Delete? Click again'), async () => { logins = await P.remove(l.id); renderLogins(false); }, 'danger');
+      w.button.setAttribute('aria-label', tr('settings.passwords.deleteLogin', 'Delete the login for {site}', { site: l.site }));
+      return w;
+    };
     const el = h('div', { class: 'item', 'data-site': l.site },
       h('span', { class: 'grow' }, l.site, h('span', { class: 'note', text: ` · ${l.username || 'no username'}` })),
       secret, showBtn,
       h('button', { text: 'Copy', 'aria-label': `Copy the password for ${l.site}`, onclick: async () => { if (await P.copy(l.id).catch(() => false)) flash(result, 'Copied. The clipboard is cleared in 30 seconds.'); } }),
       h('button', { text: 'Edit', 'aria-label': `Edit the login for ${l.site}`, onclick: () => el.replaceWith(editor(l)) }),
-      h('button', { class: 'danger', text: 'Delete', 'aria-label': `Delete the login for ${l.site}`, onclick: async () => { logins = await P.remove(l.id); renderLogins(false); } }));
+      deleteLogin(l));
     return el;
   };
   const editor = (l) => {
@@ -1922,6 +2531,7 @@ async function buildPasswords(card) {
     if (reload) logins = await P.list().catch(() => []);
     const q = search.value.trim().toLowerCase();
     const shown = logins.filter((l) => !q || l.site.includes(q) || l.username.toLowerCase().includes(q));
+    deleteAll.button.disabled = logins.length === 0; // nothing to delete
     list.replaceChildren(...(shown.length ? shown.map(item) : [h('span', { class: 'note', text: logins.length ? 'No saved passwords match.' : 'No saved passwords.' })]));
     pw = await P.state();
     renderNote();
@@ -1938,7 +2548,8 @@ async function buildPasswords(card) {
     empty: 'That file is empty.', 'too-big': 'That file is too big for a passwords export.', unreadable: 'Lumen couldn’t read that file.',
     unavailable: 'Your system’s secure storage isn’t available, so nothing was imported.',
   };
-  page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask for Touch ID where the Mac has it, and for a confirmation otherwise.',
+  const deleteAll = armedButton(tr('settings.passwords.deleteAll', 'Delete all saved passwords'), tr('settings.passwords.deleteAllSure', 'Delete all? Click again'), async () => { pw = await P.removeAll(); renderLogins(); }, 'danger', 'passwords-delete-all');
+  page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask you to confirm first (Touch ID, Windows Hello or your system password).',
     h('div', { class: 'controls' }, search), list,
     h('div', { class: 'controls' }, result,
       h('button', { id: 'passwords-import', text: 'Import from CSV…', onclick: async () => {
@@ -1948,9 +2559,54 @@ async function buildPasswords(card) {
         else flash(result, `Imported ${r.added} new, ${r.updated} updated${r.unchanged ? `, ${r.unchanged} already saved` : ''}${r.skipped ? `, ${r.skipped} skipped (not a secure web site)` : ''}. Delete the CSV file now: it isn’t encrypted.`);
         renderLogins();
       } }),
-      h('button', { class: 'danger', id: 'passwords-delete-all', text: 'Delete all saved passwords', onclick: async () => { pw = await P.removeAll(); renderLogins(); } }))));
+      deleteAll)));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
   renderLogins();
+}
+
+// [memory] Settings → AI and agents → Memory. The entries live in memory.json in the profile (encrypted); this page lists them, edits
+// and deletes them. The AI adds them only in chats, from what you tell it.
+function buildMemory(group) {
+  const M = S.memory;
+  const list = h('div', { class: 'list', id: 'memory-list' });
+  const result = status('memory-result');
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let view = { entries: [] };
+  const KIND = { 'about-you': tr('settings.ai.memoryKindAbout', 'About you'), note: tr('settings.ai.memoryKindNote', 'Note') };
+  const item = (e) => {
+    const el = h('div', { class: 'item', 'data-id': e.id },
+      h('span', { class: 'grow' }, e.text, h('span', { class: 'note', text: ` · ${KIND[e.kind] || KIND.note}` })),
+      h('button', { text: tr('settings.ai.memoryEdit', 'Edit'), 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory'), onclick: () => el.replaceWith(editor(e)) }),
+      h('button', { class: 'danger', text: tr('settings.ai.memoryDelete', 'Delete'), 'aria-label': tr('settings.ai.memoryDeleteOne', 'Delete this memory'), onclick: async () => { try { view = await M.remove(e.id); render(); } catch (err) { flash(result, errText(err), 'err'); } } }));
+    return el;
+  };
+  const editor = (e) => {
+    const box = h('input', { type: 'text', class: 'grow', value: e.text, maxlength: 300, 'aria-label': tr('settings.ai.memoryEditOne', 'Edit this memory') });
+    const err = status();
+    return h('div', { class: 'item', 'data-id': e.id }, box,
+      h('button', { class: 'primary', text: tr('settings.ai.memorySave', 'Save'), onclick: async () => { try { view = await M.update(e.id, box.value); render(); } catch (x) { flash(err, errText(x), 'err'); } } }),
+      h('button', { text: tr('settings.ai.memoryCancel', 'Cancel'), onclick: () => render() }), err);
+  };
+  // [memory] Shown only while the file can't be read: it is renamed memory.json.bad (kept) and memory starts empty.
+  const startOver = armedButton(tr('settings.ai.memoryStartOver', 'Start over'), tr('settings.ai.memoryStartOverSure', 'Start over? Click again'), async () => { try { view = await M.startOver(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-start-over');
+  const deleteAll = armedButton(tr('settings.ai.memoryDeleteAll', 'Delete all memory'), tr('settings.ai.memoryDeleteAllSure', 'Delete all? Click again'), async () => { try { view = await M.removeAll(); render(); } catch (err) { flash(result, errText(err), 'err'); } }, 'danger', 'memory-delete-all');
+  function render() {
+    const entries = view.entries || [];
+    deleteAll.button.disabled = entries.length === 0;
+    list.replaceChildren(...(entries.length ? entries.map(item) : [h('span', { class: 'note', text: tr('settings.ai.memoryEmpty', 'Nothing saved yet. With Memory on, tell the AI “remember that …”.') })]));
+    startOver.button.hidden = !view.readOnly;
+    if (view.readOnly) flash(result, tr('settings.ai.memoryReadOnly', 'Your saved memory can’t be read on this computer (the system keychain, or a damaged file), so it can’t be changed. Start over sets the file aside and starts empty.'), 'err');
+    else if (result.classList.contains('err')) flash(result, '', '');
+  }
+  const load = async (open) => { if (!open) return; view = await M.list().catch(() => ({ entries: [] })); render(); };
+  group.append(
+    toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
+    toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
+  );
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  details.addEventListener('toggle', () => load(details.open)); // (read again when opened: the AI may have saved something since)
+  group.append(details);
+  M.list().then((v) => { view = v; render(); }).catch(() => render());
 }
 
 // Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
@@ -1986,19 +2642,87 @@ function buildAntigravity(slot, refreshModels) {
   };
   const agyRow = row(tr('settings.ai.agy', 'Antigravity'), tr('settings.ai.agyDesc', 'Google’s coding agent (replaces Gemini CLI), signed in with your own Google account; Lumen never sees the login.'), agyButtons);
   agyRow.querySelector('.text').append(agyCommand, agyNote);
-  S.ai.antigravityStatus(false).then(renderAgy).catch(() => {});
+  later(() => S.ai.antigravityStatus(false)).then(renderAgy).catch(() => {});
   slot.append(agyRow);
 }
 
+// [telegram] AI and agents > Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
+function buildTelegram(slot) {
+  const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
+  const stateNote = status('telegram-state');
+  const botNote = status('telegram-bot');
+  const tokenControls = h('div', { class: 'controls' });
+  const pairNote = status('telegram-pair-status');
+  const pairControls = h('div', { class: 'controls' });
+  const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let timer = 0;
+  const render = (s) => {
+    stateNote.textContent = tr(`settings.telegram.state.${s.state}`, s.state);
+    stateNote.className = `note${['retrying', 'conflict', 'bad-token'].includes(s.state) ? ' err' : ''}`;
+    botNote.textContent = s.bot ? tr('settings.telegram.bot', 'Bot: @{bot}', { bot: s.bot.username }) : tr('settings.telegram.noBot', 'No bot yet.');
+    const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
+    const tokenNote = status();
+    const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      save.disabled = true;
+      try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
+    } });
+    const remove = s.hasToken ? armedButton(tr('settings.telegram.remove', 'Remove bot'), tr('settings.telegram.removeSure', 'Remove? Click again'), async () => render(await S.ai.telegram.remove()), 'danger', 'telegram-remove') : null;
+    tokenControls.replaceChildren(...[input, save, remove, tokenNote].filter(Boolean));
+    const pairing = s.pairing;
+    pairNote.className = 'note';
+    pairNote.textContent = pairing ? tr('settings.telegram.pairCode', 'Send /pair {code} to @{bot} in Telegram. The code works for 10 minutes.', { code: pairing.code, bot: s.bot?.username || '' })
+      : s.owner ? tr('settings.telegram.pairedWith', 'Paired with {name}.', { name: s.owner.name }) : tr('settings.telegram.notPaired', 'Not paired.');
+    const pairErr = status();
+    const buttons = [];
+    if (pairing) buttons.push(h('button', { id: 'telegram-pair-cancel', text: tr('settings.telegram.cancel', 'Cancel'), onclick: async () => render(await S.ai.telegram.cancelPair()) }));
+    else if (s.hasToken) {
+      // A paired chat is unpaired first: a new pairing never replaces it on its own.
+      if (!s.owner) buttons.push(h('button', { id: 'telegram-pair', class: 'primary', text: tr('settings.telegram.pair', 'Pair'), onclick: async () => {
+        try { render(await S.ai.telegram.pair()); } catch (err) { flash(pairErr, errText(err), 'err'); }
+      } }));
+      else buttons.push(h('button', { id: 'telegram-unpair', class: 'danger', text: tr('settings.telegram.unpair', 'Unpair'), onclick: async () => render(await S.ai.telegram.unpair()) }));
+    }
+    pairControls.replaceChildren(...buttons, pairErr);
+    // While a code is shown, look again every 2 s so "Paired with …" appears as soon as the phone sends it.
+    clearTimeout(timer);
+    if (pairing) timer = setTimeout(() => S.ai.telegram.status().then(render).catch(() => {}), 2000);
+  };
+  const refresh = () => S.ai.telegram.status().then(render).catch(() => {});
+  const channel = toggle('telegramChannel', tr('settings.telegram.channel', 'Take requests from my Telegram bot'), tr('settings.telegram.channelDesc', ''), refresh);
+  channel.querySelector('.text').append(stateNote);
+  const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
+  const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+  later(refresh);
+}
+
+// [files] The Files widget and Ctrl+Shift+F (features/files.js): only names, places, sizes and times are kept, never what is inside a file.
+async function buildFiles(card) {
+  const filesNote = status('files-clear-status');
+  card.append(
+    withKeywords(toggle('filesRemember', tr('settings.files.remember', 'Remember files I open'), tr('settings.files.rememberDesc', 'Lumen remembers names and places of files you open, on this computer only. Never their contents.')), 'files recent opened history pdf documents pinned folder'),
+    withKeywords(row(tr('settings.files.clear', 'Clear Files list'), tr('settings.files.clearDesc', 'Forgets the recent files and the pinned ones. The files themselves are not touched.'),
+      filesNote, armedButton(tr('settings.files.clearGo', 'Clear Files list'), tr('settings.files.clearSure', 'Clear it? Click again'), async () => {
+        flash(filesNote, '');
+        try { await S.files.clear(); flash(filesNote, tr('settings.files.cleared', 'Cleared.')); } catch (err) { flash(filesNote, String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
+      }, 'danger', 'files-clear')), 'files recent pinned forget clear remove list'),
+  );
+}
+
 async function buildDownloads(card) {
-  const where = h('span', { class: 'mono', id: 'download-dir' });
+  const where = h('span', { class: 'mono desc', id: 'download-dir' });
   const showDir = () => { where.textContent = st.prefs.downloadDir || st.defaultDownloadDir; };
   showDir();
+  // The folder under the label, its two buttons on the same line at the right.
+  const locationRow = row('Location', null, h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
+    h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }));
+  locationRow.querySelector('.text').append(where);
   card.append(
-    stackRow('Location', null, where, h('div', { class: 'controls' },
-      h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
-      h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }))),
+    locationRow,
     toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
+    withKeywords(row(tr('settings.print.label', 'Printing'), tr('settings.print.desc', 'Lumen has no print settings. Press Ctrl+P on any page to preview it, then print it or save it as a PDF.')), 'print printer printing pdf paper page ctrl+p save as pdf'),
+    select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
   );
   const list = h('div', { class: 'list', id: 'downloads-list' });
   const render = async () => {
@@ -2010,14 +2734,14 @@ async function buildDownloads(card) {
       : [h('span', { class: 'note', text: 'No downloads yet.' })]));
   };
   card.append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
-    h('button', { id: 'downloads-clear', text: 'Clear list', onclick: async () => { await S.clearDownloads(); render(); } }))));
+    armedButton(tr('settings.downloads.clear', 'Clear list'), tr('settings.downloads.clearSure', 'Clear the list? Click again'), async () => { await S.clearDownloads(); render(); }, '', 'downloads-clear'))));
   render();
 }
 
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', anthropic: 'Claude (API key)' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -2056,6 +2780,37 @@ function grokUsageRows(u, refresh) {
       h('button', { id: 'usage-budget-save', text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value }); refresh(); } }))));
   return rows;
 }
+// Codex CLI: what Codex itself reports (its session logs; ai/codex-usage.js): the plan's 5-hour and weekly windows and token totals.
+// It reports no price, and an API-key sign-in has no plan windows: those cases say so instead of showing made-up numbers.
+function codexUsageRows(u) {
+  const c = u.codex;
+  if (!c) return [];
+  const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const rows = [row('Codex CLI', 'Read from Codex’s own session logs on this computer (numbers only, never your prompts). Codex doesn’t report a price, so there is no dollar figure.')];
+  if (c.reached) rows.push(row('Codex limit reached', c.reached.resetsAt ? `Resets ${when(c.reached.resetsAt)}.` : 'Codex didn’t say when it resets.'));
+  const plan = c.planType ? ` (${c.planType[0].toUpperCase()}${c.planType.slice(1)} plan)` : '';
+  const win = (label, w) => (w ? (w.expired ? row(label, 'Reset since the last reading; the next Codex reply shows the new one.') : meterRow(label, w.percent, w.resetsAt ? `Resets ${when(w.resetsAt)}` : null)) : null);
+  const five = win(`Codex 5-hour limit${plan}`, c.fiveHour);
+  const week = win('Codex weekly limit', c.weekly);
+  rows.push(...[five, week].filter(Boolean));
+  if (!five && !week) rows.push(row('Codex plan limits', c.note || 'Codex hasn’t reported its plan limits yet.'));
+  else if (c.readAt) rows.push(row('', `As of ${when(c.readAt)}, the last Codex reply on this computer. Limits are shared with Codex on other devices and in the cloud.`));
+  const line = (label, w) => `${label}: ${w.sessions} session${w.sessions === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens (${tokens(w.cached)} cached, ${tokens(w.output)} output)`;
+  rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
+  return rows;
+}
+// [usage bars] The provider's plan bar on its row (renderer/usage-bars.js): empty (nothing shown) until there is data, then kept current.
+function usageChip(provider) {
+  const chip = h('span', { class: 'usage-chip' });
+  if (!provider || !window.usageBars) return chip;
+  const draw = () => {
+    const d = window.usageBars.forProvider(provider, window.usageBars.state());
+    chip.replaceChildren(...(d ? [window.usageBars.element(d, { label: `${ENGINE_NAMES[provider] || provider} usage` })] : []));
+  };
+  window.addEventListener('lumen-usage-bars', draw);
+  window.usageBars.load(false).then(draw);
+  return chip;
+}
 async function buildUsage(card) {
   const body = h('div', { class: 'usage' });
   const render = async (refresh) => {
@@ -2091,12 +2846,13 @@ async function buildUsage(card) {
         h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
       : [h('span', { class: 'note', text: 'Nothing yet.' })]);
     parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
-    parts.push(...grokUsageRows(u, () => render(false)));
+    parts.push(...providerUsageRows(u, () => render(false)));
     parts.push(row('', null,
       h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
       h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.clearUsage(); render(false); } })));
     body.replaceChildren(...parts);
   };
+  card.append(toggle('usageBars', tr('settings.usage.bars', 'Show usage bars in pickers'), tr('settings.usage.barsDesc', 'A thin bar beside each provider in the model menus, the AI status card and here under Accounts, with how much of its plan window is used and when it resets. It uses the numbers Lumen already has and never asks the network. Models that are out of usage are marked too.'), () => window.usageBars?.load(true)));
   card.append(row('What counts', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.'), body);
   render(false);
 }
@@ -2120,7 +2876,7 @@ function buildLanguages(card) {
   };
   add.addEventListener('change', async () => { if (!add.value) return; await save('languages', [...st.prefs.languages, add.value]); render(); });
   render();
-  card.append(stackRow('Preferred languages', 'Websites see these, in this order, when they choose a language (the Accept-Language header).', list, h('div', { class: 'controls' }, preview, add)));
+  card.append(stackRow('Preferred languages', 'Websites see these, in this order, when they choose a language (the Accept-Language header).', list, h('div', { class: 'controls' }, add, preview)));
 
   card.append(toggle('spellcheck', 'Check spelling when you type', 'Misspelled words are underlined; right-click one for suggestions.', () => renderSpell()));
   const spell = h('div', { class: 'list', id: 'spellcheck-languages' });
@@ -2149,7 +2905,7 @@ function buildLanguages(card) {
   };
   spellSummary();
   spellDetails.addEventListener('change', () => setTimeout(spellSummary, 0));
-  card.append(h('div', { class: 'row stack' }, spellDetails));
+  card.append(h('div', { class: 'row stack flush' }, spellDetails));
   buildTranslate(card);
 }
 
@@ -2196,20 +2952,7 @@ function buildTranslatePacks(card) {
   let busy = false;
   let downloadingCode = '';
   // Delete asks twice (a second click within 4 seconds): a pack is 20 to 55 MB of download.
-  const confirmDelete = (label, confirmLabel, action, cls = 'danger', id) => {
-    const b = h('button', { class: cls, text: label, 'aria-label': label, ...(id ? { id } : {}) }); // the name stays put; the live region says "Click again"
-    const announce = h('span', { class: 'sr-only', role: 'status', 'aria-live': 'polite' }); // screen readers hear "Click again" (one region per button)
-    const wrap = h('span', { class: 'confirm-delete' }, b, announce);
-    wrap.style.display = 'contents';
-    let timer = 0;
-    const reset = () => { clearTimeout(timer); timer = 0; b.textContent = label; b.removeAttribute('data-armed'); announce.textContent = ''; };
-    b.addEventListener('click', () => {
-      if (!timer) { b.textContent = confirmLabel; b.dataset.armed = '1'; announce.textContent = confirmLabel; timer = setTimeout(reset, 4000); return; }
-      reset();
-      action();
-    });
-    return wrap;
-  };
+  const confirmDelete = armedButton;
   const arrow = (a, b) => `${a === 'en' ? langName('en') : langName(a)} → ${b === 'en' ? langName('en') : langName(b)}`;
   const render = (data) => {
     list.replaceChildren(...(data.installed.length ? data.installed.map((p) => h('div', { class: 'item' },
@@ -2266,9 +3009,28 @@ function buildAccessibility(card) {
     toggle('reduceMotion', 'Reduce motion', 'Turns off animations in Lumen (tabs, sidebar, these pages).'),
     select('minimumFontSize', 'Minimum font size', 'Websites can’t make text smaller than this. Applies to new tabs.', [[0, 'None'], [6, '6'], [9, '9'], [12, '12'], [16, '16'], [20, '20'], [24, '24']], { number: true }),
     toggle('focusRings', 'Show a focus ring', 'Always outline the focused control in Lumen, not only when using the keyboard.'),
+    select('screenReaderSupport', 'Screen reader support', 'Automatic: page accessibility stays on for a screen reader (Narrator, NVDA, JAWS, VoiceOver). Other programs that read windows, like a password manager, get only Lumen’s own buttons, so big pages don’t freeze Lumen. On: always, for a screen reader Lumen doesn’t recognise.', [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']]),
   );
 }
 
+
+// Settings > Advanced > Diagnostics: a recorder for how long switching tabs takes on this computer (features/switch-timing.js). Off by default;
+// the export is a JSON file of numbers (no addresses, titles or sites) saved where the user picks.
+function buildSwitchTiming(slot) {
+  slot.append(toggle('recordSwitchTimings', tr('settings.switchTiming.label', 'Record tab-switch timings'), tr('settings.switchTiming.desc', 'Times each tab switch on this computer (the last 200), to find out why switching feels slow. It records numbers only: no addresses, titles or sites. Nothing is sent anywhere; Export saves a file you choose.')));
+  const note = h('span', { class: 'note', id: 'switch-timing-note', role: 'status', 'aria-live': 'polite' });
+  const count = async () => { const n = await S.switchTiming.count().catch(() => 0); note.textContent = n ? tr('settings.switchTiming.count', '{n} switches recorded.', { n }) : tr('settings.switchTiming.none', 'Nothing recorded yet.'); note.className = 'note'; };
+  const exportBtn = h('button', { type: 'button', id: 'switch-timing-export', text: tr('settings.switchTiming.export', 'Export timings…'), onclick: async () => {
+    const r = await S.switchTiming.export().catch(() => ({ ok: false, reason: 'failed' }));
+    if (r.ok) flash(note, tr('settings.switchTiming.saved', 'Saved {n} switches.', { n: r.count }), 'ok');
+    else if (r.reason === 'empty') flash(note, tr('settings.switchTiming.empty', 'Nothing to export yet: turn the recorder on and switch tabs first.'), 'warn');
+    else if (r.reason !== 'canceled') flash(note, tr('settings.switchTiming.failed', 'Couldn’t save the file.'), 'err');
+  } });
+  const clearBtn = h('button', { type: 'button', id: 'switch-timing-clear', text: tr('settings.switchTiming.clear', 'Clear'), onclick: async () => { await S.switchTiming.clear(); count(); } });
+  slot.append(row(tr('settings.switchTiming.exportLabel', 'Export tab-switch timings'), tr('settings.switchTiming.exportDesc', 'A JSON file with one entry per switch: the times between the click, the page showing and the strip updating, whether the tab was unloaded or frozen, and CPU use.'), exportBtn, clearBtn), row('', '', note));
+  count();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
+}
 function buildSystem(card) {
   card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
   const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
@@ -2283,7 +3045,32 @@ function buildSystem(card) {
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
   card.append(perfRow);
-  card.at('tabs-sleep').append(toggle('tabSleep', 'Put unused tabs to sleep', 'Frees up memory from background tabs left untouched for a while; switching back reloads them.'));
+  // [igpu] Visual effects (the graphicsMode key; was "Graphics"): Automatic (Light on an integrated GPU, decided once at start-up) / Full / Light (settings-backend.js [igpu]).
+  // One status line says what is on right now (with Performance mode), a Restart button when drawing is in software, and a hint on a hybrid-GPU laptop.
+  const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Visual effects'), tr('settings.graphics.desc', 'Light removes the blur behind glass surfaces and runs the new-tab effect lighter, which saves a lot on an integrated GPU or without graphics acceleration. Automatic uses Light on an integrated GPU and in software drawing.'),
+    [['auto', tr('settings.graphics.auto', 'Automatic')], ['full', tr('settings.graphics.full', 'Full')], ['light', tr('settings.graphics.light', 'Light')]], { after: () => showGfxNote() });
+  const gfxNote = h('span', { class: 'note', id: 'graphics-note' });
+  const gfxRestart = h('button', { class: 'primary', id: 'graphics-restart', text: tr('settings.graphics.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
+  const gfxHint = h('span', { class: 'note', id: 'graphics-hint', hidden: true });
+  const showGfxNote = () => {
+    const g = st.graphics;
+    const mode = st.prefs?.graphicsMode || 'auto';
+    const soft = Boolean(g?.drawing) && mode !== 'full';
+    const on = mode === 'light' || (mode === 'auto' && g?.integrated);
+    const perf = tr(st.performance?.active ? 'settings.graphics.status.perfOn' : 'settings.graphics.status.perfOff', st.performance?.active ? 'Performance mode is on.' : 'Performance mode is off.');
+    const effects = soft ? tr('settings.graphics.status.software', 'Right now: software drawing, Light effects, a still background and no blur. Choose Full to keep every effect.')
+      : tr(on ? 'settings.graphics.status.light' : 'settings.graphics.status.full', on ? 'Right now: Light effects{device}.' : 'Right now: Full effects.', { device: g?.device ? ` (${g.device})` : '' });
+    gfxNote.textContent = soft ? effects : `${effects} ${perf}`;
+    gfxRestart.hidden = !soft; // (a restart is what brings hardware drawing back; the next start is normal)
+    const hybrid = mode === 'auto' && on && !soft && st.platform === 'win32' && g?.discrete;
+    gfxHint.hidden = !hybrid;
+    gfxHint.textContent = hybrid ? tr('settings.graphics.hybrid', 'Your PC also has {gpu}. To use it, open Windows Settings > System > Display > Graphics, add Lumen and choose High performance.', { gpu: g.discrete }) : '';
+  };
+  showGfxNote();
+  gfxRow.querySelector('.text').append(gfxNote, gfxRestart, gfxHint);
+  card.append(gfxRow);
+  buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
+  buildSwitchTiming(card.at('advanced-more'));
   if (st.platform === 'darwin') {
     card.at('behavior').append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
   }
@@ -2307,7 +3094,12 @@ function buildSystem(card) {
   card.append(stackRow('Proxy', 'Applies to every tab straight away.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
     h('div', { class: 'controls' }, note, h('button', {
       id: 'proxy-apply', text: 'Apply',
-      onclick: async () => { await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value }); flash(note, 'Applied.'); },
+      onclick: async () => {
+        if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
+        if (mode.value === 'pac_script' && !/^(https?|file):\/\//i.test(pac.value.trim())) { flash(note, 'Enter the address of the script, starting with https://.', 'err'); pac.focus(); return; }
+        await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
+        flash(note, 'Applied.');
+      },
     }))));
 }
 
@@ -2373,8 +3165,21 @@ async function buildAbout(card) {
   };
   slots.get('task-manager').append(stackRow('Task manager', 'Every Lumen process, with memory (working set) and CPU.', table));
   await render();
-  const timer = setInterval(() => { if (visibleNow(table) && !document.hidden && !query()) render(); }, 2000);
-  window.addEventListener('pagehide', () => clearInterval(timer));
+  // Refreshed every 2 s only while the table is on screen: the timer starts when it comes into view (its page opened,
+  // the tab shown, the search cleared) and stops when it leaves or the page closes, so nothing runs in other sections.
+  let timer = null;
+  const stop = () => { clearInterval(timer); timer = null; };
+  const sync = () => {
+    const on = visibleNow(table) && !document.hidden && !query();
+    if (on && !timer) timer = setInterval(() => { if (visibleNow(table) && !document.hidden && !query()) render(); else stop(); }, 2000);
+    else if (!on) stop();
+  };
+  window.addEventListener('hashchange', () => setTimeout(sync, 0));
+  document.addEventListener('visibilitychange', sync);
+  $('search').addEventListener('input', () => setTimeout(sync, 0));
+  window.addEventListener('pagehide', stop);
+  if (window.IntersectionObserver) new IntersectionObserver(sync).observe(table);
+  sync();
 }
 
 async function buildInternals(card) {
@@ -2401,9 +3206,7 @@ function refreshRestartNotes() {
 }
 function applyPageClasses() {
   document.documentElement.classList.toggle('reduce-motion', Boolean(st.prefs.reduceMotion || st.performance?.active));
-  applyPageAccent(); // [look]
 }
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (st) applyPageAccent(); });
 
 // ---------- navigation and search ----------
 
@@ -2413,10 +3216,13 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
   const SS = window.settingsSearch;
   const words = SS.parse(query());
   const searching = words.length > 0;
+  const wasSearching = searchedBefore;
+  searchedBefore = searching;
   document.body.classList.toggle('searching', searching);
   const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
   const hitsBySlot = new Map();
@@ -2432,11 +3238,13 @@ function show() {
     let hits = 0;
     let best = 0;
     for (const g of slot.groups) {
-      const rows = [...g.querySelectorAll('.row')];
+      const rows = searching || wasSearching ? [...g.querySelectorAll('.row')] : [];
       if (!searching) {
-        for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
-        for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
-        g.hidden = false;
+        if (wasSearching) {
+          for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
+          for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
+          g.hidden = false;
+        }
         continue;
       }
       const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
@@ -2482,10 +3290,21 @@ function show() {
     } else badge?.remove();
     if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
-  for (const slot of slots.values()) if (slot.isSub) slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id;
+  for (const slot of slots.values()) if (slot.isSub) { slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id; slot.pane.style.order = searching ? String(-(slot.best || 0)) : ''; } // (a page shown in place ranks with its best row)
+  performance.mark('show:loops');
   syncNavStop();
+  performance.mark('show:nav');
   $('no-results').hidden = !searching || any;
+  const suggest = $('no-results-suggest');
+  if (!suggest.children.length) {
+    for (const [word, text] of [['privacy', tr('settings.suggest.privacy', 'Privacy')], ['theme', tr('settings.suggest.theme', 'Theme')], ['download', tr('settings.suggest.download', 'Downloads')], ['password', tr('settings.suggest.password', 'Passwords')], ['search engine', tr('settings.suggest.searchEngine', 'Search engine')]]) {
+      suggest.append(h('button', { type: 'button', class: 'chip', text, onclick: () => { $('search').value = word; show(); $('search').focus(); } }));
+    }
+  }
   $('no-results-query').textContent = searching && !any ? tr('settings.noResultsFor', 'Nothing matches “{q}”', { q: query() }) : '';
+  highlight(words);
+  performance.mark('show:end');
+  requestAnimationFrame(fitDescs);
 }
 
 // The category list is one Tab stop (the current page, or the first that still matches a search); arrow keys move within it.
@@ -2520,7 +3339,24 @@ function initNavKeys() {
   window.addEventListener('resize', edgeFade);
 }
 
+// The page a link or the remembered category would show, without touching anything: which builders to start before the route is run.
+function guessView() {
+  const id = location.hash.slice(1);
+  const sub = slots.get(id);
+  if (sub?.isSub) return { cat: sub.cat, sub: id };
+  if (categories.has(id)) return { cat: id, sub: null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
+}
+let routeSeq = 0;
 function route() {
+  const seq = ++routeSeq;
+  const r = resolveRoute();
+  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  if (!need.length) finishRoute(r);
+  else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
+}
+function resolveRoute() {
   let id = location.hash.slice(1);
   let focus = null;
   let focusEl = null;
@@ -2532,9 +3368,38 @@ function route() {
   else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
   else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
   remember(view.cat);
+  return { id, focus, focusEl };
+}
+// The first page is laid out with its first screen only: the lists below the fold wait for the next frame (the first layout of a page costs
+// about 1 ms a row, and nothing there can be seen yet). FOLD_ROWS: about what fits above the fold.
+const FOLD_ROWS = 3;
+let foldedGroups = [];
+let firstRouteDone = false;
+function foldBelowTheFirstScreen() {
+  const pane = view.sub ? slots.get(view.sub)?.pane : categories.get(view.cat)?.pane;
+  let rows = 0;
+  const later = [];
+  for (const g of pane ? pane.querySelectorAll('.group') : []) {
+    if (rows >= FOLD_ROWS) { g.classList.add('later'); later.push(g); } else rows += g.querySelectorAll('.row').length;
+  }
+  return later;
+}
+function revealFolded() {
+  if (!foldedGroups.length) return;
+  for (const g of foldedGroups) { g.classList.remove('later'); g.classList.add('lazy'); } // (lazy: laid out when it nears the screen, not all at once)
+  foldedGroups = [];
+  requestAnimationFrame(fitDescs);
+}
+function finishRoute({ id, focus, focusEl }) {
+  revealFolded(); // (a page change before the next frame: everything that was folded is there)
   if (document.activeElement === $('search') && !query()) $('search').blur(); // (#search is also the sidebar field's id: the browser would focus it)
   if (query()) $('search').value = '';
+  if (!firstRouteDone && !ALIASES[id] && !query()) foldedGroups = foldBelowTheFirstScreen(); // (a link to a place further down needs it laid out)
+  firstRouteDone = true;
+  performance.mark('settings:route');
   show();
+  performance.mark('settings:shown');
+  window.__settingsPerf.visibleDone = true; // (the first screen is complete and laid out: it paints next; the lists below it follow in the next frame)
   const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
@@ -2550,8 +3415,18 @@ async function init() {
     $('search').disabled = true;
     return;
   }
-  st = await S.get();
-  window.setI18n?.(await S.strings?.().catch(() => null)); // renderer/i18n.js
+  performance.mark('settings:init');
+  const [first, strings] = await Promise.all([S.get(), S.strings?.().catch(() => null)]);
+  performance.mark('settings:data');
+  st = first;
+  // [subagents] the sidebar's Helpers button changes the same setting: coming back to this page shows what it is now
+  window.addEventListener('focus', async () => {
+    try {
+      const fresh = await S.get();
+      if (st && fresh.prefs.aiSubagents !== st.prefs.aiSubagents) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'aiSubagents' } })); }
+    } catch { /* the page is closing */ }
+  });
+  window.setI18n?.(strings); // renderer/i18n.js
   applyPageClasses();
   // The sidebar and the pages, in order. Titles in the system's language; English (above) when a locale lacks one.
   for (const def of CATEGORIES) {
@@ -2561,7 +3436,8 @@ async function init() {
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
     if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
     $('nav').append(link);
-    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }));
+    const blurb = tr(`settings.blurb.${def.id}`, '');
+    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }), blurb ? h('p', { class: 'pane-desc', text: blurb }) : null);
     categories.set(def.id, { ...def, pane, link });
     $('sections').append(pane);
   }
@@ -2575,39 +3451,108 @@ async function init() {
   }
   // Sub-pages that are whole builders of their own.
   const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
+  mount('ai-agents', 'routines', tr('settings.routines.title', 'Routines'), tr('settings.routines.desc', 'Requests the AI repeats on a schedule.'), 'routine routines schedule scheduled repeat quiet hours templates run history');
   mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
-  mount('ai-more', 'usage', 'Usage', 'Your Claude plan’s limits and how much of them Lumen used.', 'plan limits tokens claude grok cost');
+  mount('ai-more', 'macros', tr('settings.section.macros', 'Macros'), 'Saved step lists you run from the menu, a shortcut or the chat.', 'automation record replay steps shortcut script');
+  mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
+  mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['skills', buildSkills], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
-    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['languages', buildLanguages],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];
-  await Promise.all(BUILDS.map(async ([sid, build]) => {
-    const slot = slots.get(sid);
-    try {
-      await build(slot);
-    } catch (err) {
-      slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), String(err?.message || err)));
+  // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
+  // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
+  const FOOT = {
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
+    'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
+  };
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals']);
+  const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
+  const started = new Map(); // builder id -> promise
+  const finished = new Set();
+  const buildFn = new Map(BUILDS);
+  isBuilt = (sid) => finished.has(sid);
+  neededBuilds = (v) => {
+    const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
+    if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+  };
+  // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
+  // address bar") is said once: a one-row list loses the heading, a longer one keeps it and the row's label is read by screen readers only.
+  const norm = (text) => text.trim().toLowerCase().replace(/[.…:]+$/, '');
+  const tidy = (slot) => {
+    for (const g of slot.groups) {
+      const t = g.querySelector('.group-title');
+      const rows = g.querySelectorAll('.row');
+      const first = rows[0]?.querySelector('.label');
+      if (!t || !first) continue;
+      const a = norm(t.textContent);
+      const b = norm(first.textContent);
+      const same = a === b;
+      const near = b.startsWith(`${a} `) || a.startsWith(`${b} `);
+      if (rows.length === 1 && (same || near)) t.remove();
+      else if (same) first.classList.add('sr-only');
     }
-  }));
-  refreshRestartNotes();
-  // A list of one row whose label is its own title (Default browser, On startup) needs no heading above it.
-  for (const slot of slots.values()) for (const g of slot.groups) {
-    const rows = g.querySelectorAll('.row');
-    const t = g.querySelector('.group-title');
-    if (t && rows.length === 1 && rows[0].querySelector('.label')?.textContent.trim().toLowerCase() === t.textContent.trim().toLowerCase()) t.remove();
-  }
-  $('search').addEventListener('input', show);
+  };
+  // (a list is tidied once every builder that puts rows in it is done)
+  const tidyReady = () => {
+    for (const [sid, slot] of slots) {
+      if (slot.tidied) continue;
+      const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
+      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      if (done) { slot.tidied = true; tidy(slot); }
+    }
+  };
+  buildOne = (sid) => {
+    if (!started.has(sid)) {
+      started.set(sid, (async () => {
+        const slot = slots.get(sid);
+        try {
+          performance.mark('build:' + sid);
+          await buildFn.get(sid)(slot);
+          performance.mark('built:' + sid);
+        } catch (err) {
+          slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
+        }
+        finished.add(sid);
+        tidyReady();
+        refreshRestartNotes();
+      })());
+    }
+    return started.get(sid);
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+  let allBuilt = null;
+  buildAll = () => allBuilt ||= (async () => {
+    for (const [sid] of BUILDS) { if (!started.has(sid)) { await tick(); buildOne(sid); } } // (one section per task: input is answered in between)
+    await Promise.all(BUILDS.map(([sid]) => buildOne(sid)));
+    allDone = true;
+    document.body.dataset.ready = '1';
+  })();
+  // (AI model's builder also makes the sub-pages and rows other pages link to, so it always runs; the page's own builders run beside it)
+  const wanted = guessView();
+  const hash = location.hash.slice(1);
+  const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
+  window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
+  window.addEventListener('resize', fitSoon);
+  document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
+  document.fonts?.ready.then(fitDescs).catch(() => {});
+  $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') || (e.key === '/' && !typing)) {
       e.preventDefault();
+      buildAll();
       $('search').focus();
       $('search').select();
     } else if (e.key === 'Escape' && document.activeElement === $('search') && $('search').value) {
@@ -2618,7 +3563,14 @@ async function init() {
   initNavKeys();
   window.addEventListener('hashchange', route);
   route();
-  document.body.dataset.ready = '1';
+  // shown: the page can be used now; ready: every section is built too (see buildAll)
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.body.dataset.shown = '1';
+    revealFolded();
+    paintedResolve();
+    performance.mark('settings:visible');
+    buildAll();
+  }));
 }
 
 init();

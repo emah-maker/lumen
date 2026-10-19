@@ -18,11 +18,13 @@ const MAX_PAGES = 5000;
 class PdfError extends Error {}
 
 // What the AI is told about read_pdf (agent.js and snapshot.js both use these, so every registry agrees).
-const READ_PDF_DESCRIPTION = `Read a PDF open in a tab; the user is asked once per PDF. Pages come under "--- Page N of M ---" markers. To find the page with some text, use query (one call: matching pages plus snippets). Up to ${MAX_CHARS} chars per call; if cut off, it says which pages to ask for next. Untrusted content.`;
+// The per-call cap (MAX_CHARS) is not stated here: a cut-off read names the pages to ask for next.
+const READ_PDF_DESCRIPTION = 'Read a PDF or .pptx deck in a tab (asks the user once); pages (slides) are marked "--- Page N of M ---"; query finds pages.';
 const READ_PDF_PROPERTIES = {
   tab_id: { type: 'integer' },
   pages: { type: 'string', description: 'e.g. "3", "1-5", "4-"' },
-  query: { type: 'string', description: 'Text to find (case-insensitive)' },
+  from: { type: 'integer' },
+  query: { type: 'string', description: 'Case-insensitive' },
 };
 
 // ---- objects ----
@@ -221,7 +223,12 @@ function pageText(content, fonts) {
   const operands = [];
   let i = 0;
   const newline = () => { if (out && !out.endsWith('\n')) out += '\n'; };
-  const show = (bytes) => { out += decodeBytes(bytes, font); };
+  // Table rows: a Word / LaTeX table puts every cell in its own text object (BT..ET) with a Tm, so the end of one is a line break only
+  // when the next one starts at another height. lastY is the height of the last Tm; etPending is an ET whose break is not decided yet.
+  let lastY = null;
+  let etPending = false;
+  const settle = (sameRow) => { if (!etPending) return; etPending = false; if (sameRow) { if (out && !/\s$/.test(out)) out += ' '; } else newline(); };
+  const show = (bytes) => { settle(false); out += decodeBytes(bytes, font); };
   while (i < s.length) {
     const c = s[i];
     if (WS.test(c)) { i++; continue; }
@@ -270,9 +277,16 @@ function pageText(content, fonts) {
             else if (item.num !== undefined && item.num < -200 && out && !/[\s]$/.test(out)) out += ' ';
           }
           break;
-        case 'Td': case 'TD': if (operands.at(-1)?.num) newline(); else if (out && !/\s$/.test(out)) out += ' '; break;
-        case 'T*': case 'ET': newline(); break;
-        case 'Tm': if (out && !/\s$/.test(out)) out += ' '; break;
+        case 'Td': case 'TD': settle(false); lastY = null; if (operands.at(-1)?.num) newline(); else if (out && !/\s$/.test(out)) out += ' '; break;
+        case 'T*': settle(false); lastY = null; newline(); break;
+        case 'ET': etPending = true; break;
+        case 'Tm': {
+          const y = operands.length >= 6 ? operands.at(-1)?.num : undefined;
+          const same = y !== undefined && lastY !== null && Math.abs(y - lastY) < 0.75;
+          if (etPending) settle(same); else if (y !== undefined && lastY !== null && !same) newline(); else if (out && !/\s$/.test(out)) out += ' ';
+          lastY = y === undefined ? null : y;
+          break;
+        }
         default: break;
       }
       operands.length = 0;
@@ -342,10 +356,10 @@ function findInPage(body, query) {
 // -> { numPages, pages: [n…] (returned), text, truncated, next, hits? }
 // Without `query`: the wanted pages, each under a "--- Page N of M ---" marker, up to maxChars.
 // With `query`: only the pages (within the range) that contain it, with a snippet or two each.
-function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS } = {}) {
+function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS, noun = 'PDF' } = {}) {
   const total = texts.length;
   const wanted = parsePageRange(spec, total);
-  if (!wanted.length) throw new PdfError(`This PDF has ${total} page${total === 1 ? '' : 's'}; that range has none.`);
+  if (!wanted.length) throw new PdfError(`This ${noun} has ${total} page${total === 1 ? '' : 's'}; that range has none.`);
   if (query !== undefined && query !== null && String(query).trim() !== '') {
     const hits = [];
     for (const n of wanted) {
@@ -358,7 +372,7 @@ function formatPages(texts, { pages: spec, query, maxChars = MAX_CHARS } = {}) {
     let text = hits.length
       ? `"${String(query).trim()}" found on ${hits.length} page${hits.length === 1 ? '' : 's'} (${hits.map((h) => h.page).slice(0, MAX_HIT_PAGES).join(', ')}${hits.length > MAX_HIT_PAGES ? ', …' : ''}), searched ${searched}:
 ${lines.join('\n')}`
-      : `"${String(query).trim()}" was not found in ${searched}. ${texts.every((t) => !t) ? 'This PDF has no extractable text (scanned?).' : 'Try a shorter or differently spelled query; text is matched case-insensitively.'}`;
+      : `"${String(query).trim()}" was not found in ${searched}. ${texts.every((t) => !t) ? `This ${noun} has no extractable text${noun === 'PDF' ? ' (scanned?)' : ''}.` : 'Try a shorter or differently spelled query; text is matched case-insensitively.'}`;
     if (hits.length > MAX_HIT_PAGES) text += `
 (${hits.length - MAX_HIT_PAGES} more pages match; narrow with pages:"${shown[shown.length - 1].page + 1}-".)`;
     return { numPages: total, pages: shown.map((h) => h.page), text, truncated: false, next: null, hits: hits.map((h) => ({ page: h.page, count: h.count })) };
@@ -381,6 +395,25 @@ ${lines.join('\n')}`
     used += block.length + 2;
   }
   return { numPages: total, pages: done, text: parts.join('\n\n'), truncated, next };
+}
+
+// The page range read_pdf was asked for: pages, else from:N as "N-" (a bad or missing from reads from page 1).
+function pagesArg(input = {}) {
+  const spec = input.pages;
+  if (spec !== undefined && spec !== null && String(spec).trim() !== '') return String(spec);
+  const from = Math.floor(Number(input.from));
+  return Number.isFinite(from) && from > 1 ? `${from}-` : undefined;
+}
+
+// What the answer says about where it stopped, so the model asks for the rest instead of giving up:
+// "Pages 1-4 of 6 shown. Call read_pdf again with from:5 for the rest." '' when the last page was shown (or for a query).
+function continuation(out, { cut = false } = {}) {
+  if (!out.pages.length || out.hits) return '';
+  const last = out.pages[out.pages.length - 1];
+  const next = out.next ?? (last < out.numPages ? last + 1 : null);
+  if (!next) return '';
+  const first = out.pages[0];
+  return `Pages ${first === last ? first : `${first}-${last}`} of ${out.numPages} shown${cut ? ` (cut off at ${MAX_CHARS} characters)` : ''}. Call read_pdf again with from:${next} for the rest, or use query to find a page.`;
 }
 
 function extractPdfText(buf, opts = {}) {
@@ -467,4 +500,4 @@ async function loadPdfBytes(session, url) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
+module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };

@@ -2,6 +2,7 @@
 // chips, and on send each tab's text goes with the message (labelled, read where the tab is, without
 // switching to it). The AI's read_tabs tool reads several tabs in one call. Private-window tabs are
 // never offered. A fake provider captures what the model is sent; no API tokens, hidden windows.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -23,6 +24,7 @@ const path = require('path');
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabsask-'));
   const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', ANTHROPIC_API_KEY: 'x', OPENAI_API_KEY: 'x' } });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false)); // (these checks count the messages of the chat the sidebar reopens on; test/sidebar-newchat.js covers the new-chat default)
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
@@ -70,6 +72,7 @@ const path = require('path');
   check('a private-window tab is not offered', !offered.some((t) => /secret/.test(t.title)), JSON.stringify(offered));
 
   // "@" opens the picker; typing filters; keyboard picks.
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@');
   await pickerOpen();
@@ -101,6 +104,7 @@ const path = require('path');
   check('the chip is gone after sending', (await chipsNow()).length === 0, '');
 
   // @all tabs attaches every tab of this window, not the private one.
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@all');
   await pickerOpen();
@@ -116,6 +120,7 @@ const path = require('path');
   check('the bubble counts them', /3 tabs attached/.test(await ui.evaluate(() => [...document.querySelectorAll('.msg.user .msg-tabs')].pop()?.textContent || '')), '');
 
   // A chip comes off with Backspace in the empty composer.
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@this');
   await pickerOpen();
@@ -130,6 +135,7 @@ const path = require('path');
   await sleep(300);
   const asleep = await ui.evaluate(() => window.assistant.askTabs());
   check('a sleeping tab is still offered, marked asleep', asleep.find((t) => /beta/.test(t.title || t.host))?.sleeping === true || asleep.some((t) => t.sleeping), JSON.stringify(asleep));
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@beta');
   await pickerOpen();
@@ -150,6 +156,10 @@ const path = require('path');
   const long = await openTab('long');
   await sleep(300);
   const userMsgs = await ui.evaluate(() => document.querySelectorAll('.msg.user').length); // [chat per tab] the new tab may have its own (empty) chat
+  // [sidebar per tab] the sidebar is open or closed tab by tab: a tab opened above came up without it.
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); });
+  await sleep(500);
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@long');
   await pickerOpen();
@@ -189,6 +199,7 @@ const path = require('path');
   // More than 8 tabs: "@all tabs" asks once per chat.
   for (let i = 0; i < 7; i++) await openTab(`extra${i}`);
   await sleep(400);
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@all');
   await pickerOpen();
@@ -200,6 +211,7 @@ const path = require('path');
   await sleep(200);
   check('confirming adds the chip', JSON.stringify(await chipsNow()) === '["@all tabs"]', JSON.stringify(await chipsNow()));
   await ui.click('#tab-chips .tab-chip-remove');
+  await ui.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar').click(); }); await sleep(400); // [sidebar per tab]
   await ui.click('#prompt');
   await ui.keyboard.type('@all');
   await pickerOpen();
@@ -237,6 +249,6 @@ const path = require('path');
   server.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

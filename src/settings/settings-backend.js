@@ -10,10 +10,13 @@ const { pathToFileURL } = require('url');
 const { registrableDomain } = require('../browser/tab-groups');
 const { related } = require('../features/site-activity');
 const { cleanList: cleanWidgets, cleanSizes } = require('../features/widgets');
-const { requestedHints, withHints } = require('../browser/chrome-identity');
+const { requestedHints, withHints, languageLast } = require('../browser/chrome-identity');
 const { createSiteZoom } = require('../features/site-zoom');
 const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
+const permissionMode = require('../features/permission-mode'); // [bypass permissions]
+const TC = require('../features/theme-colors'); // [look] accent colours: the choices and the shades each gives in light and dark
+const BG = require('../features/backgrounds'); // [look] the new-tab backgrounds and effects, Shuffle daily
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
@@ -21,9 +24,9 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids (mapped to a category) and the sub-pages.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'hands-off', 'ai-keys', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
-  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys'];
+const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'memory', 'hands-off', 'ask-before-acting', 'ai-keys', 'telegram', 'voice-input', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
+  'skills', 'macros', 'routines', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
+  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys', 'files'];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -44,6 +47,7 @@ const DEFAULTS = {
   theme: 'system', // nativeTheme.themeSource: also what websites see as prefers-color-scheme
   accentColor: 'blue', // [look] a preset from ACCENTS, or '#rrggbb'
   newTabBackground: 'plain', // [look] plain | aurora | dusk | ocean | forest | sunset | graphite | image
+  newTabShuffle: false, // [look] Shuffle daily: a new gradient background each day (Settings → Appearance → New tab page)
   newTabWidgetGlass: 'solid', // [look] the widget cards' background: solid | frosted (see-through, blurred) | clear (as transparent as it stays readable)
   newTabEffect: 'none', // [look] an animated layer over the background: none | particles | stars | bubbles | snow
   newTabEffectColor: 'auto', // [look] auto (white, or the text color on Plain) | accent | rainbow | #rrggbb
@@ -67,6 +71,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
+  newTabMusicReactive: false, // [look] Music-reactive home screen: the new-tab page's glow, wave and clock follow the sound Lumen's own tabs play (renderer/newtab-music-react.js)
   newTabWidgetsPacked: false, // [widgets] Keep widgets packed: cards slide up into gaps (off: a card stays in the cell it was put in)
   homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
   weatherPlaces: [], // [widgets] places saved from weather widgets (features/weather-view.js); internal
@@ -77,46 +82,136 @@ const DEFAULTS = {
   defaultZoom: 1,
   fontSize: 16,
   showBookmarkButton: true,
+  showAiOffButton: true, // the shield in the address bar that keeps the AI from acting on a tab
   compactTabs: false,
+  tabLayout: 'top', // [tabs] top | side: the tabs across the top of the window or in a list down its left side (renderer/side-tabs.js)
+  sideTabsWidth: 240, // [tabs] the side list's width in px (160 to 420); dragging its edge saves it
+  sideTabsCollapsed: false, // [tabs] the side list shows icons only (it opens out while the pointer is over it)
   startup: 'restore', // restore | newtab | pages
   startupPages: [],
   blockThirdPartyCookies: false,
   sendDoNotTrack: false,
-  sendGpc: false,
+  sendGpc: true, // Sec-GPC: 1, and navigator.globalPrivacyControl (preload/activity-preload.js)
+  hideTabActivity: false, // [hide activity] pages always read as the visible, focused tab; off by default: chat apps would think you are watching (notifications, read receipts) and tab checks misfire (preload/activity-preload.js)
+  hideWindowSize: true, // [hide activity] the screen reads as the window's size: split screen or a small window doesn't show
+  stripTrackingParams: true, // utm_*, fbclid, gclid… are taken off the addresses pages open at (features/tracking-params.js)
+  fingerprintProtection: true, // canvas, WebGL and audio readouts vary per site; the battery reads as a desktop's (preload/activity-preload.js)
+  webrtcIpProtection: false, // off by default (Chromium already hides local IPs behind mDNS, and on it can stop some peer connections from opening): WebRTC uses only the default route's public address: no local or VPN-bypassing IPs (settings-backend.js attachTab)
+  blockTrackingPings: true, // hyperlink-auditing pings (<a ping>) and navigator.sendBeacon reports are not sent (features/adblock.js)
   httpsOnly: false,
+  passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
+  focusSites: ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'], // [focus] the sites blocked while focus mode is on (features/focus.js; test/focus-units.js keeps this the same as its DEFAULT_SITES)
+  focusSchedules: [], // [focus] recurring focus: { id, days, from, to, on } (features/focus.js)
   adblock: true,
   adblockAllow: [],
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
+  projectsDir: '', // [projects] the folder new projects' folders are made in; empty: <Documents>Lumen Projects (main.js projectsParent)
   askWhereToSave: false,
+  pdfViewer: 'lumen', // lumen | chrome: which viewer a PDF opens in (features/pdf-viewer.js)
   spellcheck: true,
   spellcheckLanguages: [],
   languages: [], // Accept-Language, most preferred first; empty = Chromium's default
   reduceMotion: false,
   minimumFontSize: 0,
   focusRings: false,
+  screenReaderSupport: 'auto', // [a11y mode] auto | on | off: how much accessibility another program may switch on (features/a11y-mode.js)
   hardwareAcceleration: true, // restart
-  tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep)
+  tabSleep: true, // free memory from long-unused background tabs (main.js sweepSleep); false = off, whatever the mode
+  tabSleepMode: 'both', // [tabs] off | idle (after tabSleepMinutes) | memory (only when memory is low) | both (features/tab-sleep.js)
+  tabSleepMinutes: 20, // [tabs] idle time before a tab sleeps (1 to 10080)
+  tabSleepHow: 'unload', // [tabs] unload (close the page, reload on return) | freeze (keep it paused in memory)
+  tabSleepFreePercent: 10, // [tabs] memory is low when under this % of the computer's memory is free
+  tabSleepLumenGb: 0, // [tabs] ...or when Lumen itself uses more than this many GB (0: not checked)
+  tabSleepMaxAwake: 0, // [tabs] most background tabs kept awake; the least recently used sleep (0: no limit)
+  tabSleepKeepPinned: true, // [tabs] pinned tabs never sleep
+  tabSleepKeepRecent: 3, // [tabs] the most recently used background tabs stay awake whatever the idle timer says (0: none; features/tab-sleep.js)
+  tabSleepNever: [], // [tabs] sites whose tabs never sleep
+  tabSleepFreezeFirstMinutes: 10, // [tabs] an idle tab that would unload is frozen first for this many minutes (instant to wake); 0: unload at once
+  tabSleepPressure: 'medium', // [tabs] off | low | medium | aggressive: how soon unused tabs unload when memory is low (features/tab-sleep.js PRESSURE_LEVELS)
+  tabSleepKeepAudio: true, // [tabs] tabs playing sound or video never unload
+  tabSleepKeepForms: true, // [tabs] tabs with typed, unsent text (or a page that asks "Leave site?") never unload
+  tabSleepKeepTransfers: true, // [tabs] tabs with a download coming in (or a chosen upload) never unload
+  tabSleepKeepGroups: false, // [tabs] tabs in a tab group never unload
+  tabSleepSoon: [], // [tabs] sites whose tabs unload sooner (their own timer, tabSleepSoonMinutes); patterns, * allowed
+  tabSleepSoonMinutes: 5, // [tabs] ...after this many minutes unused
+  tabSleepDim: true, // [tabs] an unloaded tab shows a dimmed icon in the strip
+  tabSleepShowFreed: true, // [tabs] an unloaded tab's hover card says about how much memory it freed
+  tabSleepOnReturn: 'reload', // [tabs] reload | placeholder: switching to an unloaded tab loads it at once, or shows a page with a Reload button
+  tabReadyRecent: 3, // [tabs] keep this many of the latest background tabs' renderers out of the OS background state (efficiency mode), so a switch to them draws at once; the tab under the pointer always is (0: only that; features/tab-ready.js)
+  tabPreload: 1, // [tabs] after startup, wake this many likely next tabs in the background (0 off; features/tab-wake.js)
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
+  graphicsMode: 'auto', // [look] auto (Light on an integrated GPU) | full | light: no backdrop blur, cheaper effects (settings-backend.js [igpu])
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
   keepRunningInBackground: true, // macOS: keep running with no windows
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
-  maxChatRuns: 3, // [ai] sidebar chats that may work at once (one per tab); more wait their turn (features/tab-chats.js)
-  autoModel: true, // [ai] Claude Code with no model picked: choose haiku / sonnet / opus per message by task difficulty (features/model-route.js)
+  aiSubagents: true, // [ai] the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). The sidebar's Helpers button and Settings > AI are this one setting
+  actingHelpers: false, // [ai] Settings > AI > "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
+  aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
+  maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
+  autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
+  autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
+  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
+  usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
+  recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
+  aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings > AI: Show what the AI couldn't do)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
+  aiSharedFiles: [], // [ai] local files the user let the sidebar's AI see with "Allow always for this file": their file:// addresses (features/shared-files.js); added only from its card
+  claudeCodeSidebar: true, // [ai] Claude Code is offered in the sidebar's model menu once found (features/ai-agents.js modelOptions); off hides it without uninstalling
+  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
+  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
+  aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
+  pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
+  featureCardNever: false, // [offers] "Don't show again" on the New in Lumen card (features/feature-offers.js); Lumen records it itself
+  featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
+  telegramChannel: false, // [telegram] Settings > AI > Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
+  telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
+  bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
+  meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
+  aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
+  aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
+  aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
+  routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
+  routineWebhookPort: 47821, // [routines] the port it listens on (1024-65535)
+  aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
+  filesRemember: true, // [files] Settings > General > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
+  ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
+  codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings > AI)
+  codexFullAccess: false, // [ai] Codex in the sidebar runs with --sandbox danger-full-access and its own shell, patch and web tools on (ai/codex.js FULL_ON)
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
+  grokTerminal: true, // [ai] Grok Build in the sidebar may ask to run terminal commands (approval card each time); off: every call is denied without asking (automation/mcp-http.js terminalDecision)
   grokWarmup: true, // [ai] prepare Grok Build in the background after startup (features/grok-warmup.js); acts only while Grok Build is connected or picked
+  grokKeepConnected: false, // [ai] each Grok Build chat keeps its own `grok agent stdio` process between messages (features/grok-warm.js)
+  codexKeepConnected: true, // [ai] each Codex chat keeps its own `codex app-server` process between messages (features/codex-warm.js); ~80 MB each while it waits
+  grokKeepIdleMinutes: 15, // [ai] an idle kept Grok Build process ends after this many minutes; 0: only when its chat goes
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
+  agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
+  askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
+  bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
+  aiInstructionsOn: true, // [ai] Settings > AI > Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
+  aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
+  aiInstructionsStyle: '', // [ai] "How should Lumen respond"
+  planModeDefault: false, // [ai] [plan mode] new sidebar chats start with the composer's Plan chip on (ai/plan-mode.js, renderer/plan-mode.js)
+  skillsAutoUse: true, // [skills] skills marked "AI can use this on its own" are listed in the system prompt and loaded with use_skill (features/skills.js)
+  skillsFromClaudeCode: false, // [skills] also list ~/.claude/skills/*/SKILL.md, read-only (features/skill-md.js)
+  skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
+  aiMemory: false, // [ai] Settings > AI > Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
+  aiMemoryChatSearch: true, // [ai] ...and, while Memory is on, may search the titles and text of your saved chats (the memory tool's search_chats)
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
+  sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
+  oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
+  aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'off', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js)
+  dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
+  dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language
   translateNever: [], // sites where the offer stays away
@@ -133,21 +228,21 @@ const ZOOMS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const FONT_SIZES = [9, 12, 16, 20, 24];
 // Site storage cleared along with cookies (Clear browsing data).
 const SITE_STORAGES = ['filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
-// [look] Accent colors: Apple's system colors, each with its light- and dark-mode shade.
-const ACCENTS = {
-  blue: ['#007aff', '#0a84ff'], indigo: ['#5856d6', '#5e5ce6'], purple: ['#af52de', '#bf5af2'], pink: ['#ff2d55', '#ff375f'],
-  red: ['#ff3b30', '#ff453a'], orange: ['#ff9500', '#ff9f0a'], green: ['#28a745', '#30d158'], teal: ['#30b0c7', '#40c8e0'], graphite: ['#8e8e93', '#98989d'],
-};
-const NEW_TAB_BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
-const NEW_TAB_EFFECTS = ['none', 'particles', 'stars', 'bubbles', 'snow'];
+// [look] Accent colors (features/theme-colors.js): Apple's system colors and a few more, each with its light- and dark-mode shade,
+// fitted so text, buttons and focus rings pass their contrast rules; 'wallpaper' takes the colour from the new-tab background.
+const ACCENTS = TC.ACCENTS;
+const NEW_TAB_BACKGROUNDS = BG.IDS;
+const NEW_TAB_EFFECTS = BG.EFFECT_IDS;
 const EFFECT_LEVELS = { newTabEffectAmount: ['few', 'normal', 'many'], newTabEffectSpeed: ['slow', 'normal', 'fast'], newTabEffectSize: ['small', 'normal', 'large'] };
 const HEX = /^#[0-9a-f]{6}$/i;
-const accentOf = (value) => (ACCENTS[value] ? { light: ACCENTS[value][0], dark: ACCENTS[value][1] } : HEX.test(value) ? { light: value.toLowerCase(), dark: value.toLowerCase() } : { light: ACCENTS.blue[0], dark: ACCENTS.blue[1] });
+const accentOf = (value, wallpaperHex) => TC.accentOf(value, wallpaperHex); // { light, dark }: the fitted colours ("wallpaper": from wallpaperHex)
 const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 86400e3, all: Infinity };
 
 const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
+const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
+const TS = require('../features/tab-sleep'); // [tabs] the sleep settings' choices
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
@@ -156,7 +251,7 @@ const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 function validate(key, value) {
   switch (key) {
     case 'theme': return pick(value, ['system', 'light', 'dark'], null);
-    case 'accentColor': return ACCENTS[value] || HEX.test(String(value)) ? String(value).toLowerCase() : null;
+    case 'accentColor': return TC.isAccentValue(String(value).toLowerCase()) ? String(value).toLowerCase() : null;
     case 'newTabBackground': return pick(value, NEW_TAB_BACKGROUNDS, null);
     case 'newTabEffect': return pick(value, NEW_TAB_EFFECTS, null);
     case 'newTabWidgetGlass': return pick(value, ['solid', 'frosted', 'clear'], null);
@@ -173,25 +268,58 @@ function validate(key, value) {
     case 'defaultZoom': return pick(Number(value), ZOOMS, null);
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
+    case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
-    case 'maxChatRuns': return pick(Number(value), [1, 2, 3, 4, 6, 8], null);
+    case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
+    case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
+    case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
+    case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
+    case 'aiEffort': return require('../ai/effort').cleanAll(value);
+    case 'aiInstructionsAbout': case 'aiInstructionsStyle': return typeof value === 'string' ? require('../ai/custom-instructions').clean(value) : null;
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'dictationProvider': return pick(value, require('../ai/dictation').SETTINGS, null);
+    case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
+    case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
+    case 'tabLayout': return pick(value, ['top', 'side'], null);
+    case 'sideTabsWidth': return Number.isFinite(Number(value)) ? Math.min(420, Math.max(160, Math.round(Number(value)))) : null;
+    case 'tabSleepMode': return pick(value, TS.MODES, null);
+    case 'tabSleepHow': return pick(value, TS.HOWS, null);
+    case 'tabSleepMinutes': return TS.cleanAfter(value); // 0: Never
+    case 'tabSleepPressure': return pick(value, TS.PRESSURES, null);
+    case 'tabSleepOnReturn': return pick(value, TS.ON_RETURN, null);
+    case 'tabSleepSoonMinutes': return pick(Number(value), TS.SOON_MINUTE_CHOICES, null);
+    case 'tabSleepSoon': return TS.cleanHosts(value);
+    case 'tabSleepFreePercent': return pick(Number(value), TS.FREE_PERCENT_CHOICES, null);
+    case 'tabSleepLumenGb': return pick(Number(value), TS.LUMEN_GB_CHOICES, null);
+    case 'tabSleepMaxAwake': return TS.cleanMaxAwake(value);
+    case 'tabSleepKeepRecent': return pick(Number(value), TS.KEEP_RECENT_CHOICES, null);
+    case 'tabSleepNever': return TS.cleanHosts(value);
+    case 'tabSleepFreezeFirstMinutes': return pick(Number(value), require('../features/tab-wake').FREEZE_FIRST_CHOICES, null);
+    case 'tabReadyRecent': return pick(Number(value), require('../features/tab-ready').RECENT_CHOICES, null);
+    case 'tabPreload': return pick(Number(value), require('../features/tab-wake').PRELOAD_CHOICES, null);
     case 'performanceMode': return pick(value, ['auto', 'on', 'off'], null);
+    case 'graphicsMode': return pick(value, ['auto', 'full', 'light'], null);
+    case 'pdfViewer': return pick(value, ['lumen', 'chrome'], null);
     case 'startupPages':
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
+    case 'aiSharedFiles': return require('../features/shared-files').clean(value);
+    case 'aiDesktopApps': return require('../desktop/policy').clean(value);
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
     case 'translateEngine': return translate.cleanEngine(value);
     case 'translateLocalAuto': return typeof value === 'boolean' ? value : null;
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
+    case 'focusSites': return require('../features/focus').cleanSites(value); // [focus]
+    case 'focusSchedules': return require('../features/focus').cleanSchedules(value);
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
       if (!value || typeof value !== 'object') return null;
       return Object.fromEntries(Object.keys(PERMISSIONS).filter((p) => value[p]).map((p) => [p, pick(value[p], ['ask', 'block'], 'ask')]));
+    case 'projectsDir':
     case 'downloadDir': {
       const dir = String(value || '');
       return dir === '' || (path.isAbsolute(dir) && fs.existsSync(dir)) ? dir : null;
@@ -203,6 +331,7 @@ function validate(key, value) {
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
     case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
+    case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -215,30 +344,103 @@ function validate(key, value) {
 }
 
 // q-weighted Accept-Language: en-US,en;q=0.9,fr;q=0.8
-function acceptLanguage(langs) {
-  const out = [];
-  for (const l of langs) {
-    if (!out.includes(l)) out.push(l);
-    const base = l.split('-')[0];
-    if (base !== l && !langs.includes(base) && !out.includes(base)) out.push(base);
-  }
-  return out.map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
-}
+const acceptLanguage = (langs) => require('../browser/chrome-identity').acceptLanguageHeader(langs);
+const languageList = (langs) => require('../browser/chrome-identity').languageList(langs); // (the one list navigator.languages uses too)
 
 const isLocalHost = (host) => host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '[::1]'
   || /^(10|192\.168)\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || !host.includes('.');
 
+// [chat per tab] "No limit" (0) replaced 3 as the default for maxChatRuns. A profile that still holds the old default
+// moves to the new one, once; a number chosen since (marked by MAX_CHAT_RUNS_MARK) or any other number is kept.
+// Returns the settings to write, or null when nothing changes.
+const MAX_CHAT_RUNS_MARK = 'maxChatRunsNoLimitDefault';
+function migrateMaxChatRuns(settings) {
+  if (!settings || settings[MAX_CHAT_RUNS_MARK] || settings.maxChatRuns === undefined) return null;
+  return { ...settings, ...(Number(settings.maxChatRuns) === 3 ? { maxChatRuns: 0 } : {}), [MAX_CHAT_RUNS_MARK]: true };
+}
+
 // Settings read before the app is ready: GPU and Chromium feature switches only apply at launch.
 function applyAtLaunch(app, settings) {
   const launched = { hardwareAcceleration: settings.hardwareAcceleration !== false, forceDarkWebsites: settings.forceDarkWebsites === true };
-  if (!launched.hardwareAcceleration) app.disableHardwareAcceleration();
+  // --lumen-safe-gpu (the "safe drawing mode" restart of features/gpu-health.js): software drawing for this run only; the setting is untouched.
+  if (!launched.hardwareAcceleration || process.argv.includes('--lumen-safe-gpu')) app.disableHardwareAcceleration();
+  // Chromium gives up on the GPU for the whole session after a few GPU process crashes in a short time (a driver reset, a GPU-mode switch): keep restarting it.
+  else if (!process.env.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT) app.commandLine.appendSwitch('disable-gpu-process-crash-limit'); // (the env: a test that shows what happens without it)
   if (launched.forceDarkWebsites) app.commandLine.appendSwitch('enable-features', 'WebContentsForceDark');
   return launched;
 }
 
+// ---- [igpu] Graphics: Automatic / Full effects / Light (Settings > System). "Light" is Lumen's integrated-GPU path: no backdrop blur
+// (a solid, slightly more opaque tint instead), a cheaper particle effect (fewer particles, a smaller canvas, 24 fps) and no
+// effect that repaints every frame while nothing happens. Automatic picks Light on an integrated GPU.
+//
+// Decided once, at start-up, from the GPU Chromium is really drawing with (app.getGPUInfo) and the setting. It never listens to
+// power, battery or speed-limit events (Performance mode does, features/performance.js; it is not read here), so a power source that
+// flips every few seconds cannot toggle it.
+const GFX_MODES = ['auto', 'full', 'light'];
+const GPU_INTEL = 0x8086;
+const GPU_AMD = 0x1002;
+const GPU_MICROSOFT = 0x1414; // "Microsoft Basic Render Driver": the software fallback, never a real choice
+
+// Is this device an integrated GPU? Intel (except the discrete Arc A/B cards) and GPU_AMD's APU graphics ("Radeon(TM) Graphics", "Radeon 780M",
+// "Vega 8"); not an RX, a Pro or an Instinct card.
+function isIntegratedGpu(d) {
+  const name = String(d.deviceString || d.name || '');
+  const vendor = Number(d.vendorId ?? d.vendor);
+  if (vendor === GPU_INTEL) return !/\bArc\b.*\b[AB]\d{3}\b/i.test(name) && !/\bData Center\b|\bMax\b/i.test(name);
+  if (vendor === GPU_AMD) return /Radeon(?:\(TM\))?\s+(?:Graphics|\d{3}M\b)|Vega\s*\d+\s+Graphics/i.test(name) && !/\bRX\b|\bPro\b|\bInstinct\b/i.test(name);
+  return false;
+}
+
+// devices: getGPUInfo's gpuDevice list. Returns { integrated, why, device }.
+function classifyGpu(devices) {
+  const real = (Array.isArray(devices) ? devices : []).filter((d) => Number(d.vendorId ?? d.vendor) !== GPU_MICROSOFT && (d.deviceString || d.name));
+  if (!real.length) return { integrated: false, why: 'no GPU reported', device: null };
+  const active = real.find((d) => d.active);
+  const device = active || (real.length === 1 ? real[0] : null);
+  if (!device) return { integrated: false, why: 'several GPUs, none reported as active', device: null };
+  const name = device.deviceString || device.name;
+  const other = real.find((d) => d !== device && !isIntegratedGpu(d)); // a discrete card that is not the one drawing (a hybrid laptop): the Settings hint names it
+  const discrete = other ? (other.deviceString || other.name) : null;
+  if (isIntegratedGpu(device)) return { integrated: true, why: 'the active GPU is integrated', device: name, discrete };
+  if (real.length === 1) return { integrated: true, why: 'the only GPU', device: name, discrete: null }; // one GPU shared with the display: the same budget
+  return { integrated: false, why: 'the active GPU is a discrete card', device: name };
+}
+
+// deps: { app, readSettings, onChange? }
+function createGraphics(deps) {
+  const { app, readSettings, onChange } = deps;
+  let detected = { integrated: false, why: 'not checked yet', device: null };
+  let last = null;
+  let softSeen = deps.launchSoftware === true; // drawing is in software: hardware acceleration off at launch (the setting or --lumen-safe-gpu), or Chromium fell back / was started with --disable-gpu
+  let lastSoft = null;
+  const mode = () => (GFX_MODES.includes(readSettings().graphicsMode) ? readSettings().graphicsMode : 'auto');
+  // Software drawing: Automatic is Light, and the software level goes further (no backdrop blur anywhere, a still new-tab effect, the sidebar without a page snapshot,
+  // short transitions). Full effects, chosen by hand, keeps every effect even here. See renderer/prefs.css .pref-gfx-soft, newtab.html body.gfx-soft.
+  const software = () => softSeen && mode() !== 'full';
+  const light = () => mode() === 'light' || (mode() === 'auto' && (detected.integrated || softSeen)) || software();
+  const info = () => ({ mode: mode(), light: light(), software: software(), integrated: detected.integrated, device: detected.device, why: software() ? 'drawing is in software' : detected.why, drawing: softSeen, discrete: detected.discrete || null });
+  const refresh = () => { const now = light(); const soft = software(); if (now !== last || soft !== lastSoft) { last = now; lastSoft = soft; onChange?.(info()); } };
+  // Chromium's feature-status words (app.getGPUFeatureStatus): compositing or rasterization not on the GPU.
+  const softStatus = (st) => Boolean(st) && (/disabled_software|disabled_off|unavailable/i.test(String(st.gpu_compositing ?? '')) || /disabled_software|unavailable/i.test(String(st.rasterization ?? '')));
+  const markSoftware = (on = true) => { softSeen = on === true; refresh(); }; // (gpu-health.js calls this when drawing falls to software during the session)
+  // Once, after the GPU process has reported.
+  async function detect() {
+    try { detected = classifyGpu((await app.getGPUInfo('complete')).gpuDevice); } catch { /* keep "not checked" */ }
+    try { if (softStatus(app.getGPUFeatureStatus?.())) softSeen = true; } catch { /* keep what is known */ }
+    refresh();
+    return detected;
+  }
+  return { mode, light, software, info, refresh, detect, markSoftware, softStatus, setDetected: (d) => { detected = d; refresh(); } };
+}
+
+const graphics = { MODES: GFX_MODES, classify: classifyGpu, isIntegrated: isIntegratedGpu, create: createGraphics };
+
 function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
+  { const moved = migrateMaxChatRuns(readSettings()); if (moved) writeSettings(moved); }
+  { const moved = TS.migrate(readSettings()); if (moved) writeSettings({ ...readSettings(), ...moved }); } // [tabs] the old single sleep choice -> master switch, time and memory level
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
   const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
   const upgraded = new Map(); // webContents id -> { from, to } while an HTTPS-only upgrade loads
@@ -253,14 +455,22 @@ function create(deps) {
     return ownSets.get(ses);
   };
 
+  // Every setting checked, as the app uses them. Callers are many and frequent (the tab strip's state asks for the default zoom on
+  // nearly every tab event; a tab's creation, a request's headers), and checking the home widgets alone re-lays-out the whole home
+  // grid, so the result is worked out once per settings object (main's cache is replaced on every write) and handed out as a copy of
+  // the top level; the values inside are shared, and read-only for every caller.
+  let prefsMemo = null; // { ref, value }
   function prefs() {
-    const s = readSettings();
+    const ref = deps.peekSettings?.();
+    if (ref && prefsMemo?.ref === ref) return { ...prefsMemo.value };
+    const s = ref ? { ...ref } : readSettings();
     const out = {};
     for (const [key, fallback] of Object.entries(DEFAULTS)) {
       const valid = s[key] === undefined ? null : validate(key, s[key]);
       out[key] = valid === null ? structuredClone(fallback) : valid;
     }
-    return out;
+    if (ref) prefsMemo = { ref, value: out };
+    return ref ? { ...out } : out;
   }
   const ses = () => session.defaultSession;
 
@@ -284,7 +494,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, showBookmarkButton: p.showBookmarkButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), accent: accentOf(p.accentColor), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true };
+    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -305,21 +515,34 @@ function create(deps) {
     imageColorsCache = { v: version, colors };
     return colors;
   }
-  function newTabLook() {
-    const p = prefs();
+  // The background shown: Shuffle daily's pick for today, else the chosen one ("Your picture" with no picture left is Plain).
+  function lookBackground(p) {
+    if (p.newTabShuffle === true) return { background: BG.dailyPick(), image: null };
     const image = p.newTabBackground === 'image' && p.newTabImage && fs.existsSync(wallpaperFile())
       ? `${pathToFileURL(wallpaperFile()).href}?v=${p.newTabImage}` : null;
+    return { background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground, image };
+  }
+  // "Match wallpaper": the picture's dominant colour, or the gradient's own.
+  function wallpaperSeed(p) {
+    if (p.accentColor !== TC.MATCH_WALLPAPER) return null;
+    const { background, image } = lookBackground(p);
+    return image ? imageColorsFor(p.newTabImage)[0] || null : BG.byId(background)?.seed || null;
+  }
+  function newTabLook() {
+    const p = prefs();
+    const { background, image } = lookBackground(p);
     return {
-      background: image ? 'image' : p.newTabBackground === 'image' ? 'plain' : p.newTabBackground,
+      background,
       image,
       // Reduce motion draws one still frame; Performance mode keeps the effect sparser and slower.
-      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()),
+      effect: p.newTabEffect, still: Boolean(p.reduceMotion), lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()),
       effectStyle: { color: p.newTabEffectColor, amount: p.newTabEffectAmount, speed: p.newTabEffectSpeed, size: p.newTabEffectSize, interact: p.newTabEffectInteract !== false },
-      accent: accentOf(p.accentColor),
+      accent: accentOf(p.accentColor, wallpaperSeed(p)),
       clock: p.newTabClock, clockSize: p.newTabClockSize, searchWidth: p.newTabSearchWidth, name: p.newTabName,
       clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
+      musicReactive: p.newTabMusicReactive === true,
       widgetGlass: p.newTabWidgetGlass,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };
@@ -340,12 +563,35 @@ function create(deps) {
     fs.writeFileSync(wallpaperFile(), image.toJPEG(88));
     writeSettings({ ...readSettings(), newTabImage: Date.now(), newTabBackground: 'image' });
     deps.refreshNewTabs?.();
+    wallpaperChanged();
     return state();
+  }
+  // With the accent set to Match wallpaper, a new picture is a new accent.
+  function wallpaperChanged() {
+    if (prefs().accentColor !== TC.MATCH_WALLPAPER) return;
+    deps.refreshAccent?.();
+    if (deps.broadcastUi) deps.broadcastUi('prefs:ui', uiPrefs()); else deps.ui()?.send('prefs:ui', uiPrefs());
+  }
+  // The picker's preview of "Your picture": a 360 px copy as a data: URL (Settings' page may not load files) and the colours sampled for the page.
+  let previewCache = { v: 0, shot: null };
+  function wallpaperPreview() {
+    const v = prefs().newTabImage;
+    if (!v || !fs.existsSync(wallpaperFile())) return null;
+    if (previewCache.v !== v) {
+      let shot = null;
+      try {
+        const small = require('electron').nativeImage.createFromPath(wallpaperFile()).resize({ width: 360, quality: 'good' });
+        shot = { url: `data:image/jpeg;base64,${small.toJPEG(70).toString('base64')}`, colors: imageColorsFor(v) };
+      } catch (err) { console.error('[lumen] could not make the picture preview:', err.message); }
+      previewCache = { v, shot };
+    }
+    return previewCache.shot;
   }
   function removeWallpaper() {
     try { fs.rmSync(wallpaperFile(), { force: true }); } catch (err) { console.error('[lumen] could not remove the background picture:', err.message); }
     writeSettings({ ...readSettings(), newTabImage: 0, newTabBackground: prefs().newTabBackground === 'image' ? 'plain' : prefs().newTabBackground });
     deps.refreshNewTabs?.();
+    wallpaperChanged();
     return state();
   }
 
@@ -394,7 +640,8 @@ function create(deps) {
   }
   const hintOrigins = new Set(); // origins whose responses asked for Sec-CH-Prefers-Color-Scheme
   const originOf = (url) => { try { return new URL(url).origin; } catch { return ''; } };
-  const wantsColorHint = (url) => hintOrigins.has(originOf(url)) || /^https:\/\/([a-z0-9-]+\.)*google\.[a-z.]+$/i.test(originOf(url));
+  const GOOGLE_ORIGIN = /^https:\/\/([a-z0-9-]+\.)*google\.[a-z.]+$/i;
+  const wantsColorHint = (origin) => hintOrigins.has(origin) || GOOGLE_ORIGIN.test(origin);
   // Called with every response's headers (from the ad blocker's onHeadersReceived wrapper in main.js).
   const uaHintOrigins = new Map(); // origin -> the user-agent hints (Sec-CH-UA-Arch…) its responses asked for
   function noteResponseHeaders(details) {
@@ -416,13 +663,8 @@ function create(deps) {
     }
   }
   // Chrome sends client hints only to secure origins: https, and http on localhost.
-  function sendsClientHints(url) {
-    try {
-      const u = new URL(url);
-      return u.protocol === 'https:' || u.protocol === 'wss:' || (/^(http|ws):$/.test(u.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname));
-    } catch {
-      return false;
-    }
+  function sendsClientHints(u) {
+    return u.protocol === 'https:' || u.protocol === 'wss:' || (/^(http|ws):$/.test(u.protocol) && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname));
   }
   // Every request asks: the prefs are worked out again only when the settings change (a new cache object).
   let hot = null;
@@ -432,29 +674,41 @@ function create(deps) {
     if (hot?.ref !== ref) hot = { ref, value: prefs() };
     return hot.value;
   };
-  const googleAuth = require('../browser/google-auth-identity'); // Google sign-in is Firefox's identity, not Chrome's
-  const firefoxProfile = googleAuth.firefoxProfile(process.platform);
+  // Accept-Language is not a per-request job: Chrome sends the q-weighted list of the browser's languages (Electron's
+  // default is the bare "en-US"), and Chromium builds that header itself from the session's list, so it is set once
+  // here and again when Settings → Languages changes. The list is the one navigator.languages uses (and is cut to the
+  // 128 bytes that keep the header a CORS-safelisted one, chrome-identity.js); Chromium adds the same q-weights.
+  function applyAcceptLanguage(target) {
+    const p = prefs();
+    const list = p.languages.length ? p.languages : deps.systemLanguages ? deps.systemLanguages() : null;
+    if (!list) return;
+    try { target.setUserAgent(target.getUserAgent(), languageList(list).join(',')); } catch (err) { console.error('Accept-Language:', err.message); }
+  }
+  // The one onBeforeSendHeaders listener of a session. It stays registered for every request because Chrome's own
+  // Sec-CH-UA hints and the color-scheme hint are added here; the work per
+  // request is a single parse of the address and nothing else unless a setting or a rule above applies.
   function setupHeaders(target = ses()) {
+    applyAcceptLanguage(target);
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = hotPrefs();
       let headers = details.requestHeaders;
-      if (deps.chromeHintHeaders && sendsClientHints(details.url)) {
+      let u = null;
+      try { u = new URL(details.url); } catch { /* not a URL: no hints, no origin */ }
+      const origin = u ? u.origin : '';
+      if (deps.chromeHintHeaders && u && sendsClientHints(u)) {
         // Every Sec-CH-UA* hint is ours (Chromium's own list names no "Google Chrome"), first in the list as in Chrome.
-        const asked = deps.chromeHighEntropy && uaHintOrigins.get(originOf(details.url));
+        const asked = deps.chromeHighEntropy && uaHintOrigins.get(origin);
         headers = withHints(headers, asked ? { ...deps.chromeHintHeaders, ...deps.chromeHighEntropy(asked) } : deps.chromeHintHeaders);
       }
       if (p.sendDoNotTrack) headers.DNT = '1';
       if (p.sendGpc) headers['Sec-GPC'] = '1';
-      if (p.languages.length) headers['Accept-Language'] = acceptLanguage(p.languages);
       // Electron has no client-hints store, so Chromium never sends this hint itself; Google (which
       // renders its theme on the server) and sites that asked for it get it from here.
-      if (wantsColorHint(details.url)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
+      if (wantsColorHint(origin)) headers['Sec-CH-Prefers-Color-Scheme'] = nativeTheme.shouldUseDarkColors ? '"dark"' : '"light"';
       if (p.blockThirdPartyCookies && isThirdParty(details)) {
         for (const name of Object.keys(headers)) if (name.toLowerCase() === 'cookie') delete headers[name];
       }
-      // Google's sign-in hosts see Firefox (Firefox's User-Agent, no client hints), last so nothing above adds one back.
-      if (googleAuth.isAuthUrl(details.url)) headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile);
-      callback({ requestHeaders: headers });
+      callback({ requestHeaders: languageLast(headers) });
     });
   }
 
@@ -463,11 +717,18 @@ function create(deps) {
     for (const [key, allowed] of Object.entries(readSettings().sitePermissions || {})) {
       if (typeof allowed === 'boolean') decisions.set(key, allowed);
     }
+    if (require('../browser/site-permissions').migrate(decisions)) savePermissions(decisions); // one camera-and-microphone entry -> one each
   }
   function savePermissions(decisions) {
     writeSettings({ ...readSettings(), sitePermissions: Object.fromEntries(decisions) });
   }
-  const permissionDefault = (permission) => prefs().permissionDefaults[permission] || 'ask';
+  // The devices the user picked for sites (WebHID, WebUSB, Web Serial: features/device-chooser.js), a plain array.
+  const loadDeviceGrants = () => (Array.isArray(readSettings().deviceGrants) ? readSettings().deviceGrants : []);
+  function saveDeviceGrants(rows) {
+    writeSettings({ ...readSettings(), deviceGrants: rows });
+  }
+  // (one default, "Camera and microphone", covers both devices)
+  const permissionDefault = (permission) => prefs().permissionDefaults[permission === 'camera' || permission === 'microphone' ? 'media' : permission] || 'ask';
 
   // ---- HTTPS-only ----
   // The ad blocker owns onBeforeRequest, so upgrades happen at navigation start: the https address
@@ -513,7 +774,15 @@ function create(deps) {
   }
 
   // Every ordinary tab: default zoom, HTTPS-only.
+  // WebRTC (video calls, and pages that use it only to learn your addresses): with the setting on, only the public
+  // address of the default route is offered, so a page can't read your local network address or the real one behind
+  // a VPN that doesn't take all traffic. Calls still connect (through the default route, or a relay).
+  function webrtcPolicy(wc) {
+    try { wc.setWebRTCIPHandlingPolicy(prefs().webrtcIpProtection ? 'default_public_interface_only' : 'default'); } catch (err) { console.error('WebRTC policy:', err.message); }
+  }
   function attachTab(wc) {
+    pinchZoom(wc);
+    webrtcPolicy(wc);
     wc.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) upgrade(wc, details.url);
     });
@@ -524,8 +793,15 @@ function create(deps) {
       // The upgraded load committed (maybe after an https redirect elsewhere on the site): done.
       if (upgraded.has(wc.id) && /^https:/i.test(url)) upgraded.delete(wc.id);
       applyDefaultZoom(wc);
+      pinchZoom(wc);
     });
     wc.once('destroyed', () => upgraded.delete(wc.id));
+  }
+  // A trackpad pinch (and a touch screen's) magnifies the page in place as in Chrome, without reflowing it; Electron turns this
+  // visual zoom off by default. Set again after each navigation: a new renderer process starts with Electron's 1..1 limits.
+  function pinchZoom(wc) {
+    const max = prefs().pinchZoom === false ? 1 : 3;
+    wc.setVisualZoomLevelLimits(1, max).catch(() => {}); // (a page going away mid-call)
   }
   // `level`: the zoom level the page is being set to, remembered for its host (features/site-zoom.js).
   function noteUserZoom(wc, level) {
@@ -596,29 +872,57 @@ function create(deps) {
     switch (key) {
       case 'theme': applyTheme(); reloadGoogleTabs(); break;
       case 'defaultZoom': for (const wc of deps.tabContents()) applyDefaultZoom(wc); break;
+      case 'pinchZoom': for (const wc of deps.tabContents()) pinchZoom(wc); break;
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
+      case 'languages': for (const target of [ses(), ...mirrored]) applyAcceptLanguage(target); break;
       case 'proxy': return applyProxy();
+      case 'routineWebhooks': case 'routineWebhookPort': return deps.onRoutineWebhooksChange?.(); // [routines] the web links' listener starts, stops or moves
       // The blocker reads these on every request, so the change applies to whatever loads next.
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
       case 'adblock': case 'adblockAllow': break;
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
+      case 'focusSites': case 'focusSchedules': deps.onFocusChange?.(); break; // [focus]
+      case 'telegramChannel': deps.onTelegramChange?.(); break; // [telegram]
       case 'performanceMode': deps.performance?.refresh(); break;
+      case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
+      case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
+      case 'screenReaderSupport': deps.onScreenReaderChange?.(); break;
+      case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
+      case 'tabPreload': deps.onTabPreloadChange?.(key); break;
+      case 'tabReadyRecent': deps.onTabReadyChange?.(); break;
+      case 'recordSwitchTimings': deps.onSwitchTimingChange?.(); break;
+      case 'hideTabActivity': case 'hideWindowSize': case 'fingerprintProtection': case 'sendGpc': deps.onHideActivityChange?.(); break;
+      case 'webrtcIpProtection': for (const wc of deps.tabContents()) webrtcPolicy(wc); break; // [hide activity] pages loaded from now on
       default: break;
     }
-    if (['compactTabs', 'showBookmarkButton', 'reduceMotion', 'focusRings', 'accentColor', 'aiHandsOff', 'hideAiTabs'].includes(key)) (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
-    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
+    const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
+    if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
+    if (wallpaperAccent || ['compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'planModeDefault' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
 
   async function set(key, value) {
+    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI's Ask / Auto-allow / Bypass choice: both settings change together
+      const patch = permissionMode.patchOf(value);
+      if (!patch) throw new Error(`Invalid value for ${key}`);
+      writeSettings({ ...readSettings(), ...patch });
+      await apply('bypassPermissions');
+      return state();
+    }
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
+    if ((key === 'focusSites' || key === 'focusSchedules') && deps.focusLocked?.()) throw new Error('Focus mode is on: its sites and schedules can be changed when it ends.'); // [focus] (editing the list is not a way out of a session)
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
+    if (key === 'featureCardNever') throw new Error('Lumen records the offers itself'); // [offers]
+    if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
+    if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
+    if (key === 'aiDesktopApps') throw new Error('Apps are added from the AI\'s approval card and removed with settings:remove-desktop-app'); // [desktop apps]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);
     if (valid === null) throw new Error(`Invalid value for ${key}`);
-    writeSettings({ ...readSettings(), [key]: valid });
+    writeSettings({ ...readSettings(), [key]: valid, ...(key === 'maxChatRuns' ? { [MAX_CHAT_RUNS_MARK]: true } : {}) }); // (a 3 chosen now is not the old default)
     await apply(key);
     return state();
   }
@@ -626,14 +930,17 @@ function create(deps) {
   function state() {
     const p = prefs();
     return {
-      prefs: p,
+      prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
       performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
-      accent: accentOf(p.accentColor), // [look]
+      graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
+      passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
+      accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES, readyRecent: require('../features/tab-ready').RECENT_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
       fontSizes: FONT_SIZES,
-      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, // [look] Settings → Home's pickers
+      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, clockPx: WS.CLOCK_PX, // [look] Settings → Home's pickers
       permissions: PERMISSIONS,
       defaultDownloadDir: app.getPath('downloads'),
       spellcheckAvailable: process.platform === 'darwin' ? [] : ses().availableSpellCheckerLanguages,
@@ -753,9 +1060,13 @@ function create(deps) {
     setTimeout(() => { if (!tab.wc.isDestroyed()) tab.wc.reload(); }, 300);
     return true;
   }
+  // The graphics devices never change while Lumen runs, but asking for them costs the main thread ~30 ms (Settings builds Internals as it opens):
+  // asked once, and every later Settings tab reads the answer.
+  let gpuInfo = null;
+  const gpuInfoOnce = () => (gpuInfo ||= Promise.resolve().then(() => app.getGPUInfo('basic')).catch(() => null));
   async function internals() {
     const s = ses();
-    const gpu = await app.getGPUInfo('basic').catch(() => null);
+    const gpu = await gpuInfoOnce();
     const cookieCount = await s.cookies.get({}).then((c) => c.length).catch(() => null);
     return {
       gpuFeatures: app.getGPUFeatureStatus(),
@@ -789,11 +1100,20 @@ function create(deps) {
   }
 
   // ---- reset ----
+  // The page-unloading section's own "Reset to defaults": its settings only.
+  async function resetSleep() {
+    const s = readSettings();
+    for (const key of TS.KEYS) delete s[key];
+    writeSettings(s);
+    for (const key of TS.KEYS) await apply(key);
+    return state();
+  }
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'siteZoom']) if (key !== 'lastSeenVersion') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen' && key !== 'featureCardNever') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
+    deps.deviceGrants?.clear();
     userZoomed.clear();
     httpAllowed.clear();
     for (const key of Object.keys(DEFAULTS)) await apply(key);
@@ -816,8 +1136,17 @@ function create(deps) {
       const d = deps.downloads.find((x) => x.id === id);
       if (d?.state === 'completed') shell.showItemInFolder(d.path);
     });
+    // [tabs] Settings > Tabs > Page unloading: the status panel, the "unload everything now" button, "Add current site", and its own reset
+    handle('prefs:sleep-status', () => deps.tabSleep?.status() ?? null);
+    handle('prefs:sleep-unload-all', () => deps.tabSleep?.unloadAll() ?? 0);
+    handle('prefs:sleep-site', () => deps.tabSleep?.currentSite() ?? '');
+    handle('prefs:sleep-reset', resetSleep);
+    handle('prefs:switch-timing-count', () => deps.switchTiming?.count() ?? 0); // [diagnostics] Settings > Advanced > Record tab-switch timings
+    handle('prefs:switch-timing-export', () => deps.switchTiming?.export() ?? { ok: false, reason: 'unavailable' });
+    handle('prefs:switch-timing-clear', () => deps.switchTiming?.clear());
     handle('prefs:pick-wallpaper', pickWallpaper); // [look]
     handle('prefs:remove-wallpaper', removeWallpaper);
+    handle('prefs:wallpaper-preview', wallpaperPreview);
     // [widgets] the new-tab page's widgets (features/widgets.js): tokens go in, never come back out
     handle('prefs:widgets', () => deps.widgets.state());
     handle('prefs:widget-test', (input) => deps.widgets.test(input));
@@ -826,39 +1155,70 @@ function create(deps) {
     handle('prefs:widget-gmail-connect', async (input) => { const out = await deps.widgets.gmailConnect(input); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });
+    // Gmail's default mode: sign in to Google in a Lumen tab, which accounts are signed in, and the client-file reader of the Advanced setup.
+    handle('prefs:widget-gmail-signin', () => deps.widgets.gmailOpenSignIn());
+    handle('prefs:widget-gmail-accounts', () => deps.widgets.gmailAccounts());
+    handle('prefs:widget-gmail-parse-client', (text) => require('../features/google-client').parseClientJson(typeof text === 'string' ? text : ''));
     handle('prefs:widget-projects', (token) => deps.widgets.projects(token));
     handle('prefs:widget-tv-lists', () => deps.widgets.tradingviewLists());
     // A "Where do I get this?" link on a widget's page: only these fixed addresses, chosen by name, open in the browser.
     const WIDGET_HELP = {
       todoist: 'https://app.todoist.com/app/settings/integrations/developer', github: 'https://github.com/settings/personal-access-tokens', twelvedata: 'https://twelvedata.com/account/api-keys',
       coingecko: 'https://www.coingecko.com/en/api', muse: 'https://dev.meta.ai', spotify: 'https://developer.spotify.com/dashboard', gmail: 'https://console.cloud.google.com/apis/credentials',
+      // The guided setup of Gmail's Advanced mode (your own Google Cloud client), one page per step.
+      gmailProject: 'https://console.cloud.google.com/projectcreate', gmailApi: 'https://console.cloud.google.com/apis/library/gmail.googleapis.com',
+      gmailConsent: 'https://console.cloud.google.com/apis/credentials/consent', gmailClient: 'https://console.cloud.google.com/apis/credentials/oauthclient',
       slack: 'https://api.slack.com/apps', calendar: 'https://support.google.com/calendar/answer/37648',
     };
     handle('prefs:widget-help', (key) => { const url = Object.hasOwn(WIDGET_HELP, key) ? WIDGET_HELP[key] : null; if (url) shell.openExternal(url).catch(() => {}); return Boolean(url); });
-    // Slack sign-in: Open Slack (the approval page opens in the default browser), then the pasted address finishes it.
+    // Slack setup (features/slack-setup.js, features/slack-view.js explains the flow). Slack's pages open in a
+    // small Lumen window that only shows slack.com; when Slack sends it to the app's redirect address, the
+    // address is taken from the navigation (no pasting) and checked against the pending state.
+    const slackSetup = require('../features/slack-setup').create({ BrowserWindow: deps.BrowserWindow, clipboard: deps.clipboard });
+    const slackTokenSeen = (token) => { slackSetup.close(); deps.widgets.slackAuto('token', token); };
+    const slackOwner = () => { try { return require('os').userInfo().username; } catch { return ''; } };
+    handle('prefs:slack-create-app', (opts) => {
+      const url = SLACK.manifestUrl({ name: slackOwner() });
+      if (opts && opts.browser === true) shell.openExternal(url).catch(() => {}); // for a sign-in the setup window can't do (SSO): the default browser
+      else slackSetup.open(url, { followToTokenPage: true });
+      slackSetup.watchClipboard(slackTokenSeen);
+      return deps.widgets.state();
+    });
     handle('prefs:slack-start', (input) => {
       const out = deps.widgets.slackStart(input);
-      if (!out.url.startsWith('https://slack.com/oauth/v2/authorize?')) throw new Error('Not allowed');
-      shell.openExternal(out.url).catch(() => {});
+      slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
       return { redirectUri: out.redirectUri, state: deps.widgets.state() };
     });
-    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); return { message: out.message, state: deps.widgets.state() }; });
-    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); return deps.widgets.state(); });
-    handle('prefs:slack-disconnect', async () => { await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
+    handle('prefs:slack-paste', async (text) => {
+      const out = await deps.widgets.slackPaste(text);
+      if (out.kind === 'approve') slackSetup.open(out.url, { redirectUri: out.redirectUri, onRedirect: (address) => { deps.widgets.slackAuto('address', address); } });
+      else if (out.kind === 'connected') { slackSetup.stopWatch(); slackSetup.close(); }
+      return { kind: out.kind, message: out.message || '', missing: out.missing || '', state: deps.widgets.state() };
+    });
+    handle('prefs:slack-finish', async (pasted) => { const out = await deps.widgets.slackFinish(pasted); slackSetup.close(); return { message: out.message, state: deps.widgets.state() }; });
+    handle('prefs:slack-cancel', () => { deps.widgets.slackCancel(); slackSetup.stopWatch(); slackSetup.close(); return deps.widgets.state(); });
+    handle('prefs:slack-disconnect', async () => { slackSetup.stopWatch(); slackSetup.close(); await deps.widgets.slackDisconnect(); return deps.widgets.state(); });
     handle('prefs:slack-channels', () => deps.widgets.slackChannels());
     handle('prefs:widget-search', (query) => deps.widgets.search(query));
     handle('prefs:widget-saved-places', (list) => { deps.widgets.setSavedPlaces(list); return deps.widgets.state(); });
     handle('prefs:widget-location', (choice) => { deps.widgets.setLocationConsent(String(choice)); return deps.widgets.state(); });
     handle('prefs:widget-reset-layout', () => { deps.widgets.resetLayout(); return deps.widgets.state(); });
     handle('prefs:widget-move', (id, delta) => { deps.widgets.move(String(id), Number(delta)); return deps.widgets.state(); });
+    handle('prefs:pick-projects-dir', async () => {
+      const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: prefs().projectsDir || app.getPath('documents') });
+      return canceled || !filePaths[0] ? state() : set('projectsDir', filePaths[0]);
+    });
     handle('prefs:pick-download-dir', async () => {
       const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { properties: ['openDirectory', 'createDirectory'], defaultPath: downloadDir() });
       return canceled || !filePaths[0] ? state() : set('downloadDir', filePaths[0]);
     });
     handle('prefs:site-permissions', () => [...deps.permissionDecisions].map(([key, allowed]) => {
       const i = key.lastIndexOf('|');
-      return { origin: key.slice(0, i), permission: key.slice(i + 1), label: PERMISSIONS[key.slice(i + 1)] || key.slice(i + 1), allowed };
+      return { origin: key.slice(0, i), permission: key.slice(i + 1), label: { ...PERMISSIONS, camera: 'Camera', microphone: 'Microphone' }[key.slice(i + 1)] || key.slice(i + 1), allowed };
     }));
+    // [devices] What each site may use: the devices picked in the chooser (WebHID, WebUSB, Web Serial), and removing one.
+    handle('prefs:device-grants', () => (deps.deviceGrants ? deps.deviceGrants.list() : []));
+    handle('prefs:remove-device-grant', (origin, key) => (deps.deviceGrants ? deps.deviceGrants.remove(String(origin), String(key)) : false));
     // Site data (features/site-data.js): the sites with cookies, and removing one of them.
     handle('prefs:site-data', async () => siteData.groupCookies(await ses().cookies.get({}), registrableDomain));
     handle('prefs:clear-site', async (site) => ({ removed: await siteData.clearSite(ses(), String(site || '')), list: siteData.groupCookies(await ses().cookies.get({}), registrableDomain) }));
@@ -906,7 +1266,7 @@ function create(deps) {
     handle('prefs:reset', reset);
     handle('prefs:relaunch', () => {
       if (require('../test-mode').isTest()) return false; // tests check the saved value instead
-      app.relaunch();
+      app.relaunch({ args: process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu') }); // (a restart from safe drawing is a normal start, as gpu:restart's)
       app.quit();
       return true;
     });
@@ -915,9 +1275,10 @@ function create(deps) {
     handle('prefs:task-manager', taskManager);
     handle('prefs:restart-tab', restartTabProcess);
     handle('prefs:internals', internals);
-    handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh) }) ?? null); // [usage]
+    handle('prefs:usage', (options) => deps.usage?.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }) ?? null); // [usage]
     handle('prefs:clear-usage', () => { deps.usage?.clear(); return true; });
-    handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget) ?? null); // [usage] the Grok budget
+    handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget, budget && typeof budget.engine === 'string' ? budget.engine : 'grokbuild') ?? null); // [usage] a provider's budget (Grok's when no engine is named)
+    handle('prefs:cli-info', () => (deps.cliInfo ? deps.cliInfo() : [])); // [ai] version, path, sign-in and menu state of each CLI
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)
   }
 
@@ -932,9 +1293,9 @@ function create(deps) {
 
   return {
     prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
-    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, permissionDefault,
+    noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };
 }
 
-module.exports = { create, validate, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

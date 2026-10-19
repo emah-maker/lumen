@@ -5,6 +5,7 @@
 // (read_page shows no password, run_script refused after a fill), research tabs and private windows
 // never offered, Never for this site, the settings page list with Show behind re-authentication, and
 // turning it off (Keep by default). A throwaway profile; windows stay invisible (LUMEN_TEST_BACKGROUND).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -87,6 +88,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
     server.close();
     process.exit(failures ? 1 : 0);
   }
+  await waitFor(() => settingsJson().savePasswords === true); // (settings are written to disk a moment after the change)
   check('turns on when OS encryption is available', on.enabled && settingsJson().savePasswords === true, JSON.stringify(on));
 
   // ---- the save offer ----
@@ -161,6 +163,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await signIn(t4, 'bob@example.com', 'bob-pw-123');
   await waitFor(async () => (await stateOf(t4))?.offer);
   await app.evaluate((_e, i) => { global.__agent.browser.switchTab(i); global.__passwords.act(global.__translate.tab(i), 'never'); }, t4);
+  await waitFor(() => (settingsJson().passwordsNever || []).includes(site));
   check('Never for this site is remembered (site only) and nothing is saved', (settingsJson().passwordsNever || []).includes(site) && (await app.evaluate(() => global.__passwords.vault.count())) === 1, JSON.stringify(settingsJson().passwordsNever));
   const t5 = await open(`${base}/login`);
   await sleep(400);
@@ -179,12 +182,17 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   await app.evaluate(() => { global.__passwordsReauth = async () => true; });
   await sWc('[...document.querySelectorAll("#passwords-list button")].find((b) => b.textContent === "Show").click()');
   check('Show after re-authentication shows the password', await waitFor(async () => (await sWc('document.getElementById("passwords-list").textContent')).includes(SECRET)), '');
+  await sWc('document.querySelector("#passwords-list .item button.danger").click()');
+  await sleep(300);
+  check('Delete on one login asks "Click again" and keeps it after one click', (await sWc('document.querySelector("#passwords-list .item button.danger")?.textContent')) === 'Delete? Click again' && (await app.evaluate(() => global.__passwords.vault.count())) === 1, await sWc('document.querySelector("#passwords-list .item button.danger")?.textContent'));
+  check('...and its accessible name still says which login', /^Delete the login for /.test(await sWc('document.querySelector("#passwords-list .item button.danger")?.getAttribute("aria-label")')), '');
   const pageApi = await inTab(t3, 'typeof window.lumenSettings');
   check('web pages have no settings API', pageApi === 'undefined', pageApi);
 
   // ---- turning it off ----
   await app.evaluate(() => { global.__passwordsConfirm = async ({ buttons }) => { global.__pwConfirmButtons = buttons; return 0; }; });
   const off = await app.evaluate(() => global.__passwords.setEnabled(false));
+  await waitFor(() => settingsJson().savePasswords === false);
   check('turning off asks, and Keep (the default) keeps the saved passwords', !off.enabled && off.count === 1 && fs.existsSync(vaultFile) && settingsJson().savePasswords === false, JSON.stringify(off));
   await app.evaluate((_e, i) => global.__agent.browser.switchTab(i), t2);
   check('off: the key button goes', await waitFor(() => ui.$eval('#passwords-btn', (b) => b.hidden)), '');
@@ -195,7 +203,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

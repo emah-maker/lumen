@@ -5,6 +5,7 @@
 // in two tabs on one Agent without sharing a tab, a page text or an approval.
 const TC = require('../src/features/tab-chats');
 const { Agent } = require('../src/ai/agent');
+const { DEFAULTS, validate } = require('../src/settings/settings-backend');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
@@ -109,10 +110,10 @@ const J = (v) => JSON.stringify(v);
 // ---- run slots: the cap and the waiting line
 {
   const started = [];
-  const mk = (max, cliMax) => TC.createRunSlots({ max, cliMax });
+  const mk = (max) => TC.createRunSlots({ max });
   const go = (slots, id, kind = 'api') => slots.request(id, { kind, start: () => started.push(id) });
   let s = mk(3);
-  check('slots: the default cap is three', TC.DEFAULT_MAX_RUNS === 3 && s.limit === 3);
+  check('slots: a cap of three holds three', s.limit === 3);
   check('slots: three chats start at once', go(s, 'a') === 'started' && go(s, 'b') === 'started' && go(s, 'c') === 'started' && J(started) === '["a","b","c"]', J(started));
   check('slots: the fourth waits, with a visible state', go(s, 'd') === 'queued' && s.state('d') === 'queued' && s.state('a') === 'running' && s.reason('d') === 'limit', `${s.state('d')} ${s.reason('d')}`);
   check('slots: a fifth waits behind it', go(s, 'e') === 'queued' && J(s.waitingIds()) === '["d","e"]');
@@ -128,21 +129,45 @@ const J = (v) => JSON.stringify(v);
   check('slots: ... and then only up to the cap', s.state('g') === 'queued' && s.size() === 2, J(s.runningIds()));
   s.release('d');
   check('slots: ... the waiting one starts once there is room', s.state('g') === 'running');
-  check('slots: the cap is clamped to 1..8', TC.clampRuns(0) === 1 && TC.clampRuns(99) === 8 && TC.clampRuns('x') === 3 && TC.clampRuns(2.4) === 2);
+  check('slots: the cap is clamped to 1..8', TC.clampRuns(99) === 8 && TC.clampRuns(2.4) === 2 && TC.clampRuns(1) === 1);
+  check('slots: 0 / "unlimited" mean no cap', TC.clampRuns(0) === Infinity && TC.clampRuns('0') === Infinity && TC.clampRuns('unlimited') === Infinity && TC.clampRuns(Infinity) === Infinity && TC.clampRuns(-2) === Infinity && TC.clampRuns('x') === Infinity && TC.clampRuns(undefined) === Infinity);
+  {
+    const u = mk(0);
+    const many = Array.from({ length: 25 }, (_, i) => `u${i}`);
+    const kinds = many.map((id, i) => go(u, id, i % 2 ? TC.slotKind('claudecode:default') : TC.slotKind('grokbuild:default')));
+    check('slots: with no cap, 25 Claude Code / Grok Build chats all start at once', kinds.every((k) => k === 'started') && u.size() === 25 && u.waitingIds().length === 0, J(kinds));
+    many.forEach((id) => u.release(id));
+    check('slots: ...and every slot is given back when they end', u.size() === 0);
+    u.setMax(2);
+    check('slots: a cap set later applies again', go(u, 'v1') === 'started' && go(u, 'v2') === 'started' && go(u, 'v3') === 'queued');
+  }
 
-  // CLI engines take turns
+  {
+    // no limit (0, the default)
+    started.length = 0;
+    const n = TC.createRunSlots({ cliMax: 99 });
+    check('slots: the default is no limit', TC.DEFAULT_MAX_RUNS === 0 && n.limit === Infinity);
+    for (const id of ['n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8', 'n9', 'n10']) go(n, id);
+    check('slots: with no limit every chat starts at once, none waits', n.size() === 10 && n.waitingIds().length === 0 && started.length === 10, J({ r: n.runningIds(), w: n.waitingIds() }));
+    n.setMax(2);
+    check('slots: a limit set while many run makes the next one wait', go(n, 'n11') === 'queued' && n.reason('n11') === 'limit');
+    n.setMax(0);
+    check('slots: going back to no limit starts the waiting one at once', n.state('n11') === 'running' && n.waitingIds().length === 0);
+  }
+
+  // Claude Code, Grok Build and Antigravity all run side by side; only the cap makes a chat wait
   started.length = 0;
   s = mk(3);
-  check('slots: slotKind tells a CLI engine from an API model', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
-  go(s, 'cc1', 'cli');
-  check('slots: a second Claude Code / Grok Build chat waits even with room, and says why', go(s, 'cc2', 'cli') === 'queued' && s.reason('cc2') === 'cli', s.reason('cc2'));
-  check('slots: an API chat still starts beside a CLI chat', go(s, 'api1') === 'started' && s.size() === 2);
-  s.release('cc1');
-  check('slots: the CLI chat in line starts when the CLI chat ends', s.state('cc2') === 'running', J(started));
-  // a CLI chat waiting does not block API chats that fit
+  check('slots: slotKind: Claude Code / Grok Build / Antigravity are CLI chats', TC.slotKind('claudecode:opus') === 'cli' && TC.slotKind('grokbuild:default') === 'cli' && TC.slotKind('antigravity:default') === 'cli' && TC.slotKind('antigravity:gemini-3.1-pro-high') === 'cli' && TC.slotKind('claude-opus-5') === 'api' && TC.slotKind('openai:gpt-5.6') === 'api' && TC.slotKind(undefined) === 'api');
+  check('slots: Claude Code and Grok Build chats start together, up to the cap', go(s, 'ccA', 'cli') === 'started' && go(s, 'gbB', 'cli') === 'started' && go(s, 'ccC', 'cli') === 'started' && go(s, 'ccD', 'cli') === 'queued' && s.reason('ccD') === 'limit', s.reason('ccD'));
+  s.cancel('ccD'); s.release('ccA'); s.release('gbB'); s.release('ccC');
+  go(s, 'ag1', TC.slotKind('antigravity:default'));
+  check('slots: a second Antigravity chat starts at once beside the first (no Antigravity-only line)', go(s, 'ag2', TC.slotKind('antigravity:default')) === 'started' && s.reason('ag2') === null && s.size() === 2, J({ state: s.state('ag2'), reason: s.reason('ag2') }));
+  check('slots: past the cap an Antigravity chat waits for the cap only, never "cli"', go(s, 'ag3', 'cli') === 'started' && go(s, 'ag4', 'cli') === 'queued' && s.reason('ag4') === 'limit', s.reason('ag4'));
+  s.release('ag1');
+  check('slots: ... and starts when any chat ends', s.state('ag4') === 'running', J(started));
+  check('slots: unlimited (the default): many Antigravity chats at once', (() => { const u = mk(0); for (let i = 0; i < 6; i++) go(u, `agu${i}`, 'cli'); return u.size() === 6 && u.waitingIds().length === 0; })());
   s = mk(3); started.length = 0;
-  go(s, 'cc1', 'cli'); go(s, 'cc2', 'cli');
-  check('slots: a CLI chat in line does not hold up the API chats behind it', go(s, 'x') === 'started' && s.state('cc2') === 'queued', J(started));
   // a start that throws gives its place back
   s = mk(1);
   s.request('boom', { start: () => { throw new Error('x'); } });
@@ -241,14 +266,14 @@ const J = (v) => JSON.stringify(v);
   const cp = fs.readFileSync(path.join(dir, 'chat-page.css'), 'utf8');
   check('list: the open chat on the chat page does not force its action bar visible over its title', !/chat-item\.current \.chat-actions/.test(cp));
   check('list: touch devices (no hover) get the buttons always, with room left in the title', /@media \(hover: none\) \{ \.chat-actions \{ opacity: 1; pointer-events: auto; \}/.test(css) && /@media \(hover: none\)[^\n]*\.chat-title \{ padding-right: min\(var\(--actions-w/.test(css));
-  check('list: the title leaves room for the floating buttons, and for the armed Delete? pill', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /chat-delete\.armed\) \.chat-title \{ padding-right: min\(calc/.test(css) && /--actions-w/.test(items));
+  check('list: the title leaves room for the floating buttons', /chat-item:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w/.test(css) && /--actions-w/.test(items));
   check('list: the "go there" arrow shows only on rows a click takes you to the tab of (working ones)', /is\(\.has-running, \.has-queued, \.has-approval\) \.chat-place:not\(\.here\)::after/.test(css) && !/\n\.chat-place:not\(\.here\)::after/.test(css));
   check('list: forced-colors selectors are as specific as the state rules they override', /forced-colors: active\) \{\s*\.chat-badge, \.chat-badge\.queued, \.chat-badge\.unread/.test(css) && /\.tab-chat-mark, \.tab-chat-mark\.waiting, \.tab-chat-mark\.done \{ color: CanvasText/.test(css));
   check('list: "Exported" goes in its own span (the state word stays) and the badge is hidden from screen readers', /say\(tr\('chats\.exported'/.test(items) && /metaText\.textContent = text/.test(items) && !/[^a-zA-Z]meta\.textContent =/.test(items) && /badge\.setAttribute\('aria-hidden', 'true'\)/.test(items) && !/badge\.setAttribute\('aria-label'/.test(items));
   check('list: the usage line is AA like the meta line', /\.chat-usage \{[^}]*color-mix\(in srgb, var\(--muted\) 55%/.test(css));
   check('list: a narrow list drops "move here" from an idle chat in another tab and the title padding follows', /@container chatlist \(max-width: 240px\)[^]*drops-one \.chat-act-drop \{ display: none/.test(css) && /drops-one:hover \.chat-title[^{]*\{ padding-right: min\(var\(--actions-w-narrow\)/.test(css) && /setProperty\('--actions-w-narrow'/.test(items) && /setProperty\('--actions-w',/.test(items) && /chat-act-drop/.test(items));
   check('list: the title padding eases in with the bar (same --t-fast)', /\.chat-title \{ transition: padding-right var\(--t-fast\)/.test(css) && /\.chat-actions \{[^}]*top: 3px/.test(css));
-  check('list: the armed Delete? pill keeps a border under forced-colors', /forced-colors: active[^]*chat-delete\.armed \{ border: 1px solid CanvasText/.test(css));
+  check('list: the Undo bar keeps a border under forced-colors', /forced-colors: active[^]*chat-undo-toast \{ background: Canvas; border: 1px solid CanvasText/.test(css));
   check('list: export, delete, stop and open-tab report a failure instead of staying silent, and a passing note reverts', /exportFailed/.test(items) && /deleteFailed/.test(items) && /stopFailed/.test(items) && /tabFailed/.test(items) && /setTimeout\(\(\) => \{ metaText\.textContent = original/.test(items) && /stop\.disabled = true/.test(items) && /del\.disabled = true/.test(items));
   check('list: an idle chat in another tab says that a click moves it here', /clickMoves/.test(items) && ['clickMoves', 'exportFailed', 'deleteFailed', 'stopFailed', 'stopping', 'tabFailed'].every((k) => en['chats.' + k]));
   { // the real export handler's answers, and what the list does with each
@@ -284,20 +309,21 @@ const J = (v) => JSON.stringify(v);
       for (const sel of m[1].split(',').map((x) => x.trim()).filter((x) => /\.chat-title\b/.test(x))) rules.push({ sel, at: n, spec: spec(sel), val: (m[2].match(/padding-right:\s*([^;]+)/) || [])[1] });
     }
     const find = (needle, not) => rules.filter((r) => r.sel.includes(needle) && (!not || !r.sel.includes(not)));
-    const hover = find('.chat-item:hover .chat-title')[0], armed = find('.chat-delete.armed', 'drops-one')[0];
-    const nHover = find('.drops-one:hover .chat-title')[0], nArmed = find('.drops-one:has(.chat-delete.armed) .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
-    check('padding rules: every one of them was found', [hover, armed, nHover, nArmed, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
-    check('padding rules: the narrow hover rule outranks the plain hover rule, the armed rules come after their hover rules and are not weaker', cmp(nHover.spec, hover.spec) > 0 && armed.at > hover.at && cmp(armed.spec, hover.spec) >= 0 && nArmed.at > nHover.at && cmp(nArmed.spec, nHover.spec) >= 0, J({ hover: hover.spec, nHover: nHover.spec, armed: armed.spec, nArmed: nArmed.spec }));
+    const hover = find('.chat-item:hover .chat-title')[0];
+    const nHover = find('.drops-one:hover .chat-title')[0], nTouch = find('.drops-one .chat-title', ':')[0];
+    check('padding rules: every one of them was found', [hover, nHover, nTouch].every(Boolean), J(rules.map((r) => r.sel)));
+    check('padding rules: the narrow hover rule outranks the plain hover rule', cmp(nHover.spec, hover.spec) > 0, J({ hover: hover.spec, nHover: nHover.spec }));
     check('padding rules: the narrow touch rule outranks the plain touch rule', cmp(nTouch.spec, find('.chat-title', ':').filter((r) => r.sel === '.chat-title')[0].spec) > 0);
-    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nArmed, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && [hover, armed].every((r) => /--actions-w\b(?!-)/.test(r.val)));
+    check('padding rules: the narrow ones read --actions-w-narrow and the plain ones --actions-w', [nHover, nTouch].every((r) => /--actions-w-narrow/.test(r.val)) && /--actions-w\b(?!-)/.test(hover.val));
   }
   { // deleting a chat refreshes the Chats button, the list and the tab marks (a stale green "done" mark otherwise)
     const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf('// The chat as Markdown'));
+    const del = mainSrc.slice(mainSrc.indexOf("ipcMain.handle('chats:delete'"), mainSrc.indexOf("ipcMain.handle('chats:undo-delete'"));
     check('delete: both branches (the open chat and another) push attention after the chat is gone', (del.match(/pushAttention\(\)/g) || []).length === 2 && del.indexOf('unbindChat') < del.indexOf('pushAttention()'), String((del.match(/pushAttention\(\)/g) || []).length));
     const tell = mainSrc.slice(mainSrc.indexOf('function tellUser(run, kind)'), mainSrc.indexOf('function tellUser(run, kind)') + 400);
     check('deleted chat: a run that ends after its chat was deleted adds no unread mark and sends no notification', /if \(run\.deleted\) \{ unreadChats\.delete\(run\.chatId\);[^}]*return; \}/.test(tell) && tell.indexOf('run.deleted') < tell.indexOf('unreadChats.add'));
-    check('queue: why a chat waits is asked again when its text is made', /const waitingText = \(run\) => t\(\(run\.queued \? runSlots\.reason\(run\.chatId\)/.test(mainSrc));
+    check('queue: a waiting chat waits only for room (no "Antigravity works on one chat at a time" line)', /const waitingText = \(\) => t\('agent\.waiting', \{ n: runSlots\.size\(\) \}\)/.test(mainSrc) && !/agent\.waitingCli/.test(mainSrc));
+    check('delete: a deleted chat\'s Antigravity home goes with it', /removeChatHome\(app\.getPath\('userData'\), id\)/.test(del));
   }
   check('marks: the tab mark and the list badge are the same size (12px)', /\.tab-chat-mark \{[^}]*width: 12px; height: 12px/.test(css) && /\.chat-badge \{[^}]*width: 12px; height: 12px/.test(css));
 }
@@ -324,11 +350,28 @@ const J = (v) => JSON.stringify(v);
   check('place: where a chat lives', TC.chatPlace({}) === 'none' && TC.chatPlace({ tabId: 2 }) === 'other' && TC.chatPlace({ tabId: 2, here: true }) === 'here');
   const b = TC.createBindings();
   b.bind(1, 'c1');
-  const plan = (tabId, open, idle = true) => TC.followPlan({ tabId, chatOf: b.chatOf, claimed: b.claimed, openChatId: open, openIdle: idle });
+  const plan = (tabId, open, idle = true, carry = true) => TC.followPlan({ tabId, chatOf: b.chatOf, claimed: b.claimed, openChatId: open, openIdle: idle, carry });
   check('follow: a tab shows its own chat', J(plan(1, 'c9')) === '{"chat":"c1"}');
-  check('follow: a new tab gets its own empty chat while the open chat belongs to another tab', J(plan(2, 'c1')) === '{"fresh":true}');
-  check('follow: the one chat no tab holds (the last chat after a restart) is adopted by the tab you are on', J(plan(2, 'orphan')) === '{"adopt":"orphan"}');
-  check('follow: ... unless it is working: it is never taken from the run that started it', J(plan(2, 'orphan', false)) === '{"fresh":true}');
+  check('follow: a tab with no chat of its own carries the open chat on, even one another tab holds', J(plan(2, 'c1')) === '{"carry":"c1"}');
+  check('follow: ... also a chat that is working (the sidebar keeps showing it)', J(plan(2, 'c1', false)) === '{"carry":"c1"}');
+  check('follow: ... and the chat no tab holds', J(plan(2, 'orphan')) === '{"carry":"orphan"}');
+  check('follow: with no open chat there is nothing to carry', J(plan(2, null)) === '{"fresh":true}');
+  check('follow (one chat per tab): a tab with no chat gets its own empty chat while the open chat belongs to another tab', J(plan(2, 'c1', true, false)) === '{"fresh":true}');
+  check('follow (one chat per tab): the one chat no tab holds is adopted by the tab you are on', J(plan(2, 'orphan', true, false)) === '{"adopt":"orphan"}');
+  check('follow (one chat per tab): ... unless it is working', J(plan(2, 'orphan', false, false)) === '{"fresh":true}');
+  check('follow (one chat per tab): a tab with its own chat still shows it', J(plan(1, 'c9', true, false)) === '{"chat":"c1"}');
+  check('setting: One chat per tab is off by default and a real on/off setting', DEFAULTS.oneChatPerTab === false && validate('oneChatPerTab', true) === true && validate('oneChatPerTab', 'yes') === null, J([DEFAULTS.oneChatPerTab, validate('oneChatPerTab', true), validate('oneChatPerTab', 'yes')]));
+  // Carrying a chat into a new tab (bind with share), then sending from it (bind: the home moves) and closing tabs
+  const c = TC.createBindings();
+  c.bind(1, 'x');
+  c.bind(2, 'x', { share: true });
+  check('carry: the new tab joins the chat; the home stays until a message is sent there', c.chatOf(2) === 'x' && c.homeOf('x') === 1);
+  c.bind(2, 'x');
+  check('carry: a message sent in the new tab makes it the working tab (the AI acts on the tab in front)', c.homeOf('x') === 2 && J(c.tabsOf('x')) === '[1,2]', J(c.entries()));
+  c.unbindTab(2);
+  check('carry: closing that tab leaves the chat in the other tab, with a home', c.chatOf(1) === 'x' && c.homeOf('x') === 1);
+  c.bind(3, 'y'); c.bind(4, 'x', { share: true });
+  check('carry: a tab with its own chat is left alone when another tab joins a chat', c.chatOf(3) === 'y' && c.chatOf(4) === 'x');
 }
 
 // ---- the agent: tools go to the chat's own tab, two chats run side by side
@@ -349,6 +392,20 @@ const newAgent = (state) => {
 const chat = () => { const m = []; m.settings = { model: 'claude-opus-5' }; return m; };
 
 (async () => {
+  { // a model picked in an empty chat belongs to that chat (not to whichever empty chat was picked in last)
+    const global = { model: 'claude-opus-5' }; // the saved default, as main.js writes it before agent.setModel
+    const agent = new Agent(fakeBrowser({ active: 1, open: new Set([1]) }), () => null, () => ({ ...global }));
+    const e1 = []; const e2 = [];
+    agent.messages = e1; global.model = 'claudecode:default'; agent.setModel('claudecode:default');
+    agent.messages = e2; global.model = 'grokbuild:default'; agent.setModel('grokbuild:default');
+    check('empty chats: each keeps the model picked in it', e1.settings?.model === 'claudecode:default' && e2.settings?.model === 'grokbuild:default', J([e1.settings, e2.settings]));
+    check('empty chats: a pick makes settings but no message, so the chat still counts as empty', e1.length === 0 && agent.snapshot(e1).messages.length === 0);
+    check('empty chats: the pick is kept in the snapshot of the chat it is run from', agent.snapshot(e1).settings.model === 'claudecode:default');
+    const seen = [];
+    agent.runTask = async function (messages) { seen.push(messages.settings.model); };
+    await agent.run('hi', () => {}, [], { messages: e1, hosts: new Set() });
+    check('empty chats: sending in the first one still uses its own pick', seen[0] === 'claudecode:default' && e1.settings.model === 'claudecode:default', J(seen));
+  }
   {
     const state = { active: 2, open: new Set([1, 2, 3]) };
     const agent = newAgent(state);

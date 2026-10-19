@@ -4,6 +4,7 @@
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const path = require('path');
+const TC = require('../src/features/theme-colors'); // the shades an accent really has (fitted so text and focus rings stay readable)
 
 (async () => {
   let failures = 0;
@@ -19,10 +20,11 @@ const path = require('path');
   check('an accent preset is accepted', (await set('accentColor', 'orange')) === 'ok', 'refused');
   await sleep(300);
   const uiAccent = await ui.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
-  check('the browser UI takes the accent (light or dark shade)', uiAccent === (dark ? '#ff9f0a' : '#ff9500'), uiAccent);
+  check('the browser UI takes the accent (light or dark shade)', uiAccent === (dark ? TC.accentOf('orange').dark : TC.accentOf('orange').light), uiAccent);
   check('a custom #rrggbb accent is accepted', (await set('accentColor', '#12AB34')) === 'ok', 'refused');
   await sleep(300);
-  check('…and applied', (await ui.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim())) === '#12ab34', 'not applied');
+  const custom = await ui.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+  check('…and applied', custom === (dark ? TC.accentOf('#12ab34').dark : TC.accentOf('#12ab34').light), `${custom} (dark ${dark})`);
   check('anything else is refused', (await set('accentColor', 'red; background:url(x)')).startsWith('ERROR') && (await set('accentColor', '#fff')).startsWith('ERROR'), 'accepted');
 
   // ---- the new-tab page
@@ -129,7 +131,7 @@ const path = require('path');
   await sp("document.querySelector('#effect-options [data-color=\"#30d158\"]').click()");
   fi = await until(async () => { const x = await info(); return x?.colors?.[0] === '48, 209, 88' && x; });
   check('Settings: a swatch sets the color on an open new-tab page', Boolean(fi), JSON.stringify(await info()));
-  await sp("(() => { const s = document.getElementById('pref-newTabEffect'); s.value = 'none'; s.dispatchEvent(new Event('change')); })()");
+  await sp("document.querySelector('#pref-newTabEffect [data-value=\"none\"]').click()");
   await sleep(300);
   check('Settings: choosing None hides the options', await sp("document.getElementById('effect-options').hidden"), 'shown');
   await app.evaluate((_e, id) => { global.__agent.browser.closeTab(id); global.__agent.browser.switchTab(global.__lookTab.id); }, sid);

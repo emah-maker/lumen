@@ -40,7 +40,7 @@ function viewChecks(check) {
   }
   check('spotify PKCE: the verifier is 43 to 128 URL-safe characters and the challenge is its SHA-256 (S256)', /^[A-Za-z0-9_-]{43,128}$/.test(p.verifier) && p.challenge === crypto.createHash('sha256').update(p.verifier).digest('base64url') && SV.pkce().verifier !== p.verifier && /^[0-9a-f]{32}$/.test(p.state), p.verifier);
   const u = new URL(SV.authorizeUrl('https://accounts.spotify.com', { clientId: CLIENT, challenge: p.challenge, state: p.state }));
-  check('spotify authorize address: code flow, PKCE, the loopback redirect, only the two playback scopes, no secret', u.origin + u.pathname === 'https://accounts.spotify.com/authorize' && u.searchParams.get('response_type') === 'code' && u.searchParams.get('code_challenge_method') === 'S256' && u.searchParams.get('code_challenge') === p.challenge && u.searchParams.get('redirect_uri') === SV.REDIRECT_URI && /^http:\/\/127\.0\.0\.1:\d+\/callback$/.test(SV.REDIRECT_URI) && u.searchParams.get('scope') === 'user-read-playback-state user-modify-playback-state' && !u.search.includes('secret'), u.href);
+  check('spotify authorize address: code flow, PKCE, the loopback redirect, the two playback scopes plus the library ones (playlists, recent plays, saved songs, followed artists) and top artists for the Home tab, no secret', u.origin + u.pathname === 'https://accounts.spotify.com/authorize' && u.searchParams.get('response_type') === 'code' && u.searchParams.get('code_challenge_method') === 'S256' && u.searchParams.get('code_challenge') === p.challenge && u.searchParams.get('redirect_uri') === SV.REDIRECT_URI && /^http:\/\/127\.0\.0\.1:\d+\/callback$/.test(SV.REDIRECT_URI) && u.searchParams.get('scope') === 'user-read-playback-state user-modify-playback-state playlist-read-private playlist-read-collaborative user-read-recently-played user-library-read user-library-modify user-follow-read user-top-read' && !/streaming|user-read-private|user-read-email/.test(u.searchParams.get('scope')) && !u.search.includes('secret'), u.href);
   const f = new URLSearchParams(SV.tokenForm('code', { clientId: CLIENT, code: 'C', verifier: 'V' }));
   const r = new URLSearchParams(SV.tokenForm('refresh', { clientId: CLIENT, refresh: 'R' }));
   check('spotify token requests: a form with the verifier and no client secret', f.get('grant_type') === 'authorization_code' && f.get('code_verifier') === 'V' && f.get('redirect_uri') === SV.REDIRECT_URI && r.get('grant_type') === 'refresh_token' && r.get('refresh_token') === 'R' && !f.has('client_secret') && !r.has('client_secret'), '');
@@ -138,7 +138,7 @@ async function connectorChecks(check) {
   const before = fake.log.length;
   const test = await w.test({ type: 'spotify', clientId: CLIENT });
   check('spotify Settings: Check says who is connected (one call, the access token from sign-in)', test.ok && /Connected as Ann/.test(test.message) && fake.log.length === before + 1 && fake.log.at(-1).path === '/v1/me', plain(test));
-  const noClient = await w.test({ type: 'spotify', clientId: '' });
+  const noClient = await w.test({ type: 'spotify', mode: 'api', clientId: '' });
   check('spotify Settings: no Client ID of the user’s own falls back to Lumen’s built-in app', noClient.ok && /Connected as Ann/.test(noClient.message) && SV.pickClientId({}) === SV.BUILTIN_SPOTIFY_CLIENT_ID && /^[0-9a-f]{32}$/.test(SV.BUILTIN_SPOTIFY_CLIENT_ID), plain(noClient));
   const saved = await w.save({ type: 'spotify', clientId: CLIENT, art: true, colors: 'match' });
   const id = saved.widget.id;
@@ -255,14 +255,14 @@ async function connectorChecks(check) {
 async function webChecks(check) {
   check('spotify web: an explicit mode wins', SW.cleanMode({ mode: 'web', clientId: CLIENT }) === 'web' && SW.cleanMode({ mode: 'api' }) === 'api', '');
   check('spotify web: a widget saved before modes existed stays the API card', SW.cleanMode({ clientId: CLIENT, art: true }) === 'api' && SW.cleanMode({ art: false }) === 'api', '');
-  check('spotify web: a new widget (no mode, no API fields) or a bad mode is web', SW.cleanMode({}) === 'web' && SW.cleanMode(null) === 'web' && SW.cleanMode({ mode: 'evil' }) === 'web', '');
+  check('spotify web: a new widget (no mode, no API fields) or a bad mode is the engine card (status)', SW.cleanMode({}) === 'status' && SW.cleanMode(null) === 'status' && SW.cleanMode({ mode: 'evil' }) === 'status', '');
   const list = cleanList([
     { id: 'wold1', type: 'spotify', clientId: CLIENT, art: true },
     { id: 'wnew1', type: 'spotify', mode: 'web' },
     { id: 'wbad1', type: 'spotify', mode: '<x>' },
   ]);
   const by = Object.fromEntries(list.map((x) => [x.id, x]));
-  check('spotify web: cleanList keeps saved widgets as api, web as web, garbage as web', by.wold1.mode === 'api' && by.wnew1.mode === 'web' && by.wbad1.mode === 'web' && by.wold1.clientId === CLIENT, JSON.stringify(list.map((x) => x.mode)));
+  check('spotify web: cleanList keeps saved widgets as api, web as web, garbage as status', by.wold1.mode === 'api' && by.wnew1.mode === 'web' && by.wbad1.mode === 'status' && by.wold1.clientId === CLIENT, JSON.stringify(list.map((x) => x.mode)));
   check('spotify web: cleanList does not drop the widget for lacking a Client ID', Boolean(by.wnew1) && by.wnew1.clientId === '', '');
 
   const ok = ['https://open.spotify.com/', 'https://open.spotify.com/playlist/abc?si=1', 'https://accounts.spotify.com/en/login?continue=x'];

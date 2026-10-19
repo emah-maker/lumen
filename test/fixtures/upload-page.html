@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Job application</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 24px; }
+  p { margin: 10px 0; }
+  .btn { display: inline-block; padding: 6px 12px; border: 1px solid #888; border-radius: 6px; cursor: pointer; }
+  #zone { padding: 20px; border: 2px dashed #888; border-radius: 8px; margin: 12px 0; }
+  #log { background: #f3f3f3; padding: 8px; min-height: 40px; white-space: pre-wrap; }
+</style>
+<h1>Job application</h1>
+<form id="f" onsubmit="return false">
+  <p><label for="plain">Cover letter</label> <input type="file" id="plain"></p>
+  <p><label id="lab" for="hid3" class="btn">Upload photo</label><input type="file" id="hid3" hidden accept="image/*"></p>
+  <p><button type="button" id="btn" onclick="document.getElementById('hid2').click()">Browse resume</button><input type="file" id="hid2" hidden accept=".pdf"></p>
+  <p><label for="pdfonly">Transcript (PDF only)</label> <input type="file" id="pdfonly" accept=".pdf"></p>
+  <p><label for="multi">Supporting documents</label> <input type="file" id="multi" multiple></p>
+</form>
+<div id="zone" role="button" tabindex="0" onclick="pickZone()">Drop files here or click to choose (PDF or text)</div>
+<h2>Upload log</h2>
+<div id="log"></div>
+<script>
+  const log = (line) => { document.getElementById('log').textContent += line + '\n'; };
+  for (const input of document.querySelectorAll('input[type=file]')) {
+    const seen = [];
+    input.addEventListener('input', () => seen.push('input'));
+    input.addEventListener('change', () => { log(input.id + ': ' + [...input.files].map((f) => f.name).join(', ') + ' [' + [...seen, 'change'].join('+') + ']'); seen.length = 0; });
+  }
+  // A drop zone with no input in the page: the click makes one and opens its file chooser.
+  function pickZone() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,.txt';
+    input.multiple = true;
+    input.addEventListener('change', () => log('zone: ' + [...input.files].map((f) => f.name).join(', ')));
+    input.click();
+  }
+</script>

@@ -78,7 +78,8 @@ code, pre, kbd { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 .btn.ghost:hover { border-color: var(--accent); }
 
 /* ---- hero ---- */
-.hero { padding: 72px 0 40px; text-align: center; }
+.hero { padding: 72px 24px 40px; text-align: center; }
+@media (max-width: 600px) { .hero { padding-left: 16px; padding-right: 16px; } }
 .eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--accent); background: var(--accent-soft); padding: 5px 12px; border-radius: 999px; }
 .hero h1 { font-size: clamp(40px, 7vw, 72px); line-height: 1.04; letter-spacing: -0.035em; margin: 18px 0 16px; font-weight: 750; }
 .hero h1 .grad { background: linear-gradient(120deg, var(--accent), #7c5cff 55%, #ff5c93); -webkit-background-clip: text; background-clip: text; color: transparent; }

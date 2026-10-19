@@ -2,6 +2,7 @@
 // settings file, Safari import, the Grok Build engine's argv/env/home and its own tool check (runs
 // against a fake grok child), and both CLI engines' model choice (--model in the argv, `grok models`
 // parsing, the picker entries).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -111,7 +112,7 @@ try {
   check('the unreadable file is kept aside for recovery', aside.length === 1 && fs.readFileSync(path.join(dir, aside[0]), 'utf8') === '{broken', aside.join(','));
 } finally {
   console.error = quiet;
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Safari import (macOS): Bookmarks.plist as XML (what plutil produces) and History.db
@@ -142,7 +143,7 @@ try {
   check('Safari bookmarks are read (web only, folders kept, Reading List left out)', JSON.stringify(data.bookmarks) === JSON.stringify([{ url: 'https://swift.org/', title: 'Swift & Co' }, { url: 'https://soup.example/', title: 'Soup', folder: 'Recipes' }]), JSON.stringify(data.bookmarks));
   check('Safari history is read with its dates', data.history.length === 1 && data.history[0].url === 'https://www.apple.com/' && data.history[0].last === Date.UTC(2026, 8, 1) && data.history[0].visits === 9, JSON.stringify(data.history));
 } finally {
-  fs.rmSync(safari, { recursive: true, force: true });
+  fs.rmSync(safari, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Grok Build engine: argv, env and its own GROK_HOME (grok-build.js)
@@ -180,7 +181,7 @@ try {
   const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
   check('Grok Build config.toml has only the lumen MCP server', JSON.stringify(servers) === '["lumen"]', JSON.stringify(servers));
   check('Grok Build config.toml reaches Lumen over HTTP with the token from the env, no secret on disk', toml.includes('url = "${LUMEN_MCP_URL}"') && toml.includes('"Bearer ${LUMEN_MCP_TOKEN}"') && !/Lumen\.exe/.test(toml) && !/[a-f0-9]{40}/.test(toml), toml);
-  check('Grok Build config.toml runs Lumen\'s gate on every prompt and every tool call (no matcher)', toml.includes('[[hooks.UserPromptSubmit]]\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && toml.includes('[[hooks.PreToolUse]]\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && !/matcher/.test(toml), toml);
+  check('Grok Build config.toml runs Lumen\'s gate on every prompt and on every tool call but Lumen\'s own (PRE_TOOL_MATCHER)', toml.includes('[[hooks.UserPromptSubmit]]\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && toml.includes('[[hooks.PreToolUse]]\nmatcher = ' + JSON.stringify(require('../src/ai/grok-build').PRE_TOOL_MATCHER) + '\nhooks = [{ type = "command", command = "C:\\\\Lumen\\\\grok-home\\\\lumen-gate.cmd", timeout = 30 }]') && (toml.match(/matcher/g) || []).length === 1, toml);
   check('Grok Build gate script: a gate it can\'t reach is a deny (exit 2), on Windows and elsewhere', /curl\.exe" -s -f .*"%LUMEN_HOOK_URL%" \|\| exit \/b 2\r\n$/.test(gb.gateScript('win32')) && /^#!\/bin\/sh\ncurl -s -f .*"\$LUMEN_HOOK_URL" \|\| exit 2\n$/.test(gb.gateScript('darwin')), gb.gateScript('win32') + gb.gateScript('linux'));
   const gd = require('../src/automation/mcp-http').gateDecision;
   const names = ['navigate', 'read_page'];
@@ -191,6 +192,8 @@ try {
 
   // Sign-in: only auth.json is shared, and a refreshed token goes back to the user's file.
   const userHome = path.join(gbData, 'user-grok');
+  // A refresh always lands later than the link; on a fast disk the test's writes can share one timestamp tick, so say so explicitly.
+  const laterMtime = (file, seconds) => { const t = new Date(Date.now() + seconds * 1000); fs.utimesSync(file, t, t); };
   const home = gb.grokHomeFor(gbData);
   fs.mkdirSync(userHome); fs.mkdirSync(home);
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-1');
@@ -200,23 +203,26 @@ try {
   check('Grok Build does not copy the user\'s config.toml', !fs.existsSync(path.join(home, 'config.toml')), fs.readdirSync(home).join(','));
   fs.rmSync(path.join(home, 'auth.json')); // Grok replacing the file on a token refresh
   fs.writeFileSync(path.join(home, 'auth.json'), 'token-2');
+  laterMtime(path.join(home, 'auth.json'), 1);
   check('Grok Build copies a refreshed token back when the user\'s file is unchanged', gb.settleAuth(userHome, home, before) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-2', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
   const again = gb.linkAuth(userHome, home);
   fs.rmSync(path.join(home, 'auth.json'));
   fs.writeFileSync(path.join(home, 'auth.json'), 'token-3');
+  laterMtime(path.join(home, 'auth.json'), 2);
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'token-new-login-longer'); // the user signed in again meanwhile
   check('Grok Build never overwrites a newer sign-in of the user\'s', !gb.settleAuth(userHome, home, again) && fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8') === 'token-new-login-longer', fs.readFileSync(path.join(userHome, 'auth.json'), 'utf8'));
   fs.rmSync(path.join(userHome, 'auth.json'));
   gb.linkAuth(userHome, home);
   check('Grok Build signed out: no auth.json is left in its home', !fs.existsSync(path.join(home, 'auth.json')), fs.readdirSync(home).join(','));
 } finally {
-  fs.rmSync(gbData, { recursive: true, force: true });
+  fs.rmSync(gbData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // Grok Build runs against a fake grok child: `script` is the stream it prints (one JSON object per
 // line; a function in it runs instead, e.g. to bring Lumen's tools up), or a list of those, one per
 // spawn; a kill ends it (close with no exit code), as taskkill would. Resolves the run's result, the
 // events it emitted, the kills and the spawn calls. Nothing touches the user's own ~/.grok.
+// A successful turn ends the process tree at its `result` line (grok-build.js exitLater), so a clean run has exactly one kill: the others are Lumen's own.
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
@@ -263,7 +269,7 @@ async function fakeGrokRun(script, { run = {}, engine: extra = {} } = {}) {
     return { out, events, kills, spawned, spawns, data, engine, gate };
   } finally {
     if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
-    fs.rmSync(data, { recursive: true, force: true });
+    fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 }
 const gbEv = (event) => ({ type: 'stream_event', event });
@@ -360,6 +366,34 @@ async function grokTerminalApproval() {
   } finally {
     stuckGate.stop();
   }
+
+  // Settings > AI "Let Grok Build ask to run terminal commands" off (grokTerminal: false): every call is
+  // denied without a card, even in a chat that already said "always"; back on, that chat's "always" holds again.
+  let terminalOn = true;
+  const offAsked = [];
+  const offGate = await require('../src/automation/mcp-http').startHttp({
+    tools: [],
+    callTool: async () => ({ content: [], isError: false }),
+    onTerminalApproval: async (_tag, command) => { offAsked.push(command); return 'always'; },
+    terminalEnabled: () => terminalOn,
+    terminalHoldMs: 500,
+  });
+  try {
+    const orun1 = offGate.open('o1', 'chatD');
+    const first = await term(orun1); // asked once, the user says "always"
+    offGate.close('o1');
+    terminalOn = false;
+    const orun2 = offGate.open('o2', 'chatD');
+    const offRes = await post(orun2.hookUrl, { hook_event_name: 'PreToolUse', tool_name: 'run_terminal_command', tool_input: { command: 'echo hi' } });
+    offGate.close('o2');
+    check('Grok gate: with the terminal turned off, run_terminal_command is denied without asking, even after "always"', first === 'allow' && offRes.body?.hookSpecificOutput?.permissionDecision === 'deny' && /turned off/.test(offRes.body?.reason || '') && offAsked.length === 1, JSON.stringify({ first, offRes: offRes.body, offAsked }));
+    terminalOn = true;
+    const orun3 = offGate.open('o3', 'chatD');
+    check('Grok gate: turned back on, the chat\'s earlier "always" applies again', await term(orun3) === 'allow' && offAsked.length === 1, JSON.stringify(offAsked));
+    offGate.close('o3');
+  } finally {
+    offGate.stop();
+  }
 }
 
 async function grokRuns() {
@@ -376,7 +410,7 @@ async function grokRuns() {
     // terminalDecision) is what judges it now, per call, before it ever runs -- this stream-level
     // check (the last-resort layer) just needs to leave it alone once it's been reported.
     const { out, events, kills } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Running it.'), gbEv({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'run_terminal_command', input: {} } }), ...gbText(2, ' Done.'), gbDone('Running it. Done.')]);
-    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 0 && out.failed !== true && out.text === 'Running it.\n\n Done.', JSON.stringify({ out, events, kills }));
+    check('Grok Build run: run_terminal_command in the stream is not killed here (the gate already judged it)', kills.length === 1 && out.failed !== true && out.text === 'Running it.\n\n Done.', JSON.stringify({ out, events, kills }));
   }
   {
     const { out, spawned, gate } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')]);
@@ -398,7 +432,7 @@ async function grokRuns() {
   }
   {
     const { out, kills, events } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbUse(0, 'lumen__read_page'), { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'c0', content: 'ok' }] } }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), gbDone('The page says hi.')]);
-    check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 0 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
+    check('Grok Build run: Lumen\'s own tools run to the end untouched', kills.length === 1 && !out.failed && out.text === 'The page says hi.' && out.sessionId === 'id-1' && !events.some((e) => e.type === 'error'), JSON.stringify({ out, kills, events }));
   }
 
   // A chat's first message waits for Lumen's tools. Grok's own log line about its MCP wait decides
@@ -415,7 +449,7 @@ async function grokRuns() {
       [{ stderr: late }, () => { ready = true; }, gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'Lumen is still connecting'), ...gbText(1, 'BLIND'), gbDone('BLIND')],
       [{ stderr: onTime }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }],
     ], { engine: { lumenReady: () => ready } });
-    check('Grok Build first message: grok\'s log saying lumen was late means a retry, even if the bridge came up since', spawns.length === 2 && kills.length === 1 && out.text === 'The page says hi.' && out.sessionId === 'id-2' && !events.some((e) => /BLIND|still connecting/.test(e.text || '')), JSON.stringify({ out, events, n: spawns.length }));
+    check('Grok Build first message: grok\'s log saying lumen was late means a retry, even if the bridge came up since', spawns.length === 2 && kills.length === 2 && out.text === 'The page says hi.' && out.sessionId === 'id-2' && !events.some((e) => /BLIND|still connecting/.test(e.text || '')), JSON.stringify({ out, events, n: spawns.length }));
   }
   {
     const { out, events, spawns } = await fakeGrokRun([{ stderr: onTime }, gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Hi.'), gbDone('Hi.')], { engine: { lumenReady: () => false } });
@@ -426,7 +460,7 @@ async function grokRuns() {
     const blind = [gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'no tools?'), ...gbText(1, 'BLIND: I cannot see your page.'), gbDone('BLIND')];
     const warm = [() => { ready = true; }, { ...gbInit, session_id: 'id-2' }, gbEv({ type: 'message_start' }), ...gbText(0, 'The page says hi.'), { ...gbDone('The page says hi.'), session_id: 'id-2' }];
     const { out, events, kills, spawns } = await fakeGrokRun([blind, warm], { engine: { lumenReady: () => ready } });
-    check('Grok Build first message: a reply begun before Lumen\'s tools are up is stopped and sent again', spawns.length === 2 && kills.length === 1 && kills[0] === spawns[0].child.pid && out.text === 'The page says hi.' && !out.failed, JSON.stringify({ out, kills, n: spawns.length }));
+    check('Grok Build first message: a reply begun before Lumen\'s tools are up is stopped and sent again', spawns.length === 2 && kills.length === 2 && kills[0] === spawns[0].child.pid && out.text === 'The page says hi.' && !out.failed, JSON.stringify({ out, kills, n: spawns.length }));
     check('Grok Build first message: nothing of the stopped try reaches the sidebar', !events.some((e) => /BLIND|no tools/.test(e.text || '')) && !events.some((e) => e.type === 'error' || e.type === 'notice'), JSON.stringify(events));
     check('Grok Build first message: the second try is a new session with the same prompt file', flag(spawns[0].argv, '--session-id') === 'id-1' && flag(spawns[1].argv, '--session-id') !== 'id-1' && /^[0-9a-f-]{36}$/.test(flag(spawns[1].argv, '--session-id')) && flag(spawns[1].argv, '--prompt-file') === flag(spawns[0].argv, '--prompt-file') && out.sessionId === 'id-2', JSON.stringify(spawns.map((s) => s.argv.slice(-4))));
   }
@@ -434,7 +468,7 @@ async function grokRuns() {
     let ready = false;
     const { out, events, kills, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...thinking(0, 'first thought'), () => { ready = true; }, gbEv({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: ' then more' } }), ...gbText(1, 'Hello.'), gbDone('Hello.')], { engine: { lumenReady: () => ready } });
     const shown = events.filter((e) => e.type === 'thinking' || e.type === 'text').map((e) => e.text);
-    check('Grok Build first message: held thinking is shown, in order, once Lumen\'s tools are up', spawns.length === 1 && kills.length === 0 && JSON.stringify(shown) === '["first thought"," then more","Hello."]' && out.text === 'Hello.', JSON.stringify({ shown, kills }));
+    check('Grok Build first message: held thinking is shown, in order, once Lumen\'s tools are up', spawns.length === 1 && kills.length === 1 && JSON.stringify(shown) === '["first thought"," then more","Hello."]' && out.text === 'Hello.', JSON.stringify({ shown, kills }));
   }
   {
     const { out, events, spawns } = await fakeGrokRun([gbInit, gbEv({ type: 'message_start' }), ...gbText(0, 'Resumed.'), gbDone('Resumed.')], { run: { resume: true }, engine: { lumenReady: () => false } });
@@ -474,7 +508,7 @@ async function grokRuns() {
     } finally {
       if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
       if (savedDefault === undefined) delete process.env.GROK_DEFAULT_MODEL; else process.env.GROK_DEFAULT_MODEL = savedDefault;
-      fs.rmSync(data, { recursive: true, force: true });
+      fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
   }
   {
@@ -538,7 +572,7 @@ async function grokRuns() {
       check('fallback list: picker entries grouped under the Grok account', JSON.stringify(opts.map((o) => o.id)) === JSON.stringify(['grokbuild:default', ...gb.FALLBACK_MODELS.map((m) => `grokbuild:${m}`)]) && opts.every((o) => o.group === 'Your Grok account'), JSON.stringify(opts.map((o) => o.id)));
     } finally {
       if (savedHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = savedHome;
-      fs.rmSync(data, { recursive: true, force: true });
+      fs.rmSync(data, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
   }
   {
@@ -572,7 +606,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('[full access] off by default: the lockdown flags stay', JSON.stringify(plain) === JSON.stringify(cc.buildArgs({ ...base, fullAccess: false })) && plain.includes('--system-prompt'), plain.join(' '));
   check('[full access] on: no --tools/--allowedTools/--strict-mcp-config, bypassPermissions, Lumen prompt appended', !full.includes('--tools') && !full.includes('--allowedTools') && !full.includes('--strict-mcp-config') && flag(full, '--permission-mode') === 'bypassPermissions' && flag(full, '--append-system-prompt') === 'S' && !full.includes('--system-prompt') && flag(full, '--mcp-config') === 'm.json' && flag(full, '--model') === 'opus', full.join(' '));
   check('[full access] a kept CLI is not reused across the setting', cc.procKey({ bin: 'b', ...base }) !== cc.procKey({ bin: 'b', ...base, fullAccess: true }), 'same key');
-  check('[full access] built-in tool rows get readable labels', cc.builtinLabel('Bash', { command: 'npm test', description: 'Run the tests' }) === 'Run the tests' && cc.builtinLabel('Bash', { command: 'ls' }) === 'Running ls' && cc.builtinLabel('Edit', { file_path: '/a/b/c.js' }) === 'Editing c.js' && cc.builtinLabel('mcp__playwright__browser_click', {}) === 'Using playwright: browser click' && cc.builtinLabel('Weird', {}) === 'Using Weird', cc.builtinLabel('Edit', { file_path: '/a/b/c.js' }));
+  check('[full access] built-in tool rows get readable labels', cc.builtinLabel('Bash', { command: 'npm test', description: 'Run the tests' }) === 'Run the tests' && cc.builtinLabel('Bash', { command: 'ls' }) === 'Listing files' && cc.builtinLabel('Edit', { file_path: '/a/b/c.js' }) === 'Editing c.js' && cc.builtinLabel('mcp__playwright__browser_click', {}) === 'Using playwright' && cc.builtinLabel('Weird', {}) === 'Using a tool', cc.builtinLabel('Edit', { file_path: '/a/b/c.js' }));
   check('Claude Code models: default first, then the CLI\'s aliases', JSON.stringify(cc.MODELS.map((m) => m.id)) === '["default","fable","opus","sonnet","haiku"]', JSON.stringify(cc.MODELS));
 
   const g = { promptFile: 'p.json', sessionId: 'id', resume: false, systemPrompt: 'sys', cwd: 'cwd' };
@@ -623,7 +657,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     zu.launchSwap({ staged: fakeStaged, execPath: 'C:/A/Lumen/Lumen.exe', errFile: 'x', platform: 'win32', pid: 1, spawnFn: (...a) => { spawned.push(a); return { unref() {} }; } });
     check('zip update (win): launching writes no .cmd/.bat/.ps1/.vbs and starts no script host', spawned.length === 1 && !/(cmd|powershell|wscript|cscript|pwsh)(\.exe)?$/i.test(spawned[0][0]) && !spawned[0][1].some((x) => /\.(cmd|bat|ps1|vbs)$/i.test(x)) && fs.readdirSync(swapDir).length === before.length, JSON.stringify(spawned));
   }
-  fs.rmSync(swapDir, { recursive: true, force: true });
+  fs.rmSync(swapDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   {
     // A helper folder left by an earlier attempt (on Windows it can stay locked) never blocks the next one.
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-helper-unit-'));
@@ -634,7 +668,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     const b = zu.prepareHelper(fakeExe, null, base);
     const left = fs.readdirSync(base).filter((f) => f.startsWith('lumen-update-helper'));
     check('zip update (win): each helper copy gets its own folder and earlier ones are cleared', a.dir !== b.dir && fs.existsSync(b.exe) && fs.existsSync(b.script) && JSON.stringify(left) === JSON.stringify([path.basename(b.dir)]), JSON.stringify({ a: a.dir, b: b.dir, left }));
-    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(base, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const swapSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'swap-helper.js'), 'utf8');
   check('zip update (win): the relaunched Lumen doesn\'t start in the helper\'s temp folder', /spawn\(exe, args, \{[^}]*cwd: require\('os'\)\.homedir\(\)/.test(swapSrc), 'no cwd');
@@ -648,7 +682,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     const mk = (name, head, size) => { const f = path.join(d, name); const b = Buffer.alloc(size); b.write(head, 'latin1'); fs.writeFileSync(f, b); return f; };
     check('staged exe check: a real-sized MZ file passes', checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)) === null, checkExe(mk('ok.exe', 'MZ', 11 * 1024 * 1024)));
     check('staged exe check: too small, no MZ header, or missing is refused', /too small/.test(checkExe(mk('small.exe', 'MZ', 1000)) || '') && /isn't a Windows executable/.test(checkExe(mk('bad.exe', 'PK', 11 * 1024 * 1024)) || '') && /missing/.test(checkExe(path.join(d, 'nope.exe')) || ''), 'checks');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   // the NSIS uninstaller travels with the update
   {
@@ -657,7 +691,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fs.writeFileSync(path.join(d, 'old', 'Uninstall Lumen.exe'), 'u'); fs.writeFileSync(path.join(d, 'old', 'other.txt'), 'o');
     zu.carryOver(path.join(d, 'old'), path.join(d, 'new'));
     check('zip update: the NSIS uninstaller is carried into the new folder, nothing else', fs.existsSync(path.join(d, 'new', 'Uninstall Lumen.exe')) && !fs.existsSync(path.join(d, 'new', 'other.txt')), fs.readdirSync(path.join(d, 'new')).join());
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   // macOS
   const mp = zu.swapPaths('/Applications/Lumen.app/Contents/MacOS/Lumen', 'darwin');
@@ -689,7 +723,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('staged update: an unreadable marker is not trusted', zu.readStaged(exe, 'win32', ok) === null && zu.readMarker(exe) === null, 'garbage');
     fs.writeFileSync(path.join(sp.staging, 'staged.json'), JSON.stringify({ version: '9.9.9', root: 'files/Gone' }));
     check('staged update: a missing folder is not reused', zu.readStaged(exe, 'win32', ok) === null, 'gone');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const macTree = { flat: ['__MACOSX', 'Lumen.app'], none: ['a.txt'] };
   const macLs = (d) => (macTree[d] || []).map((n) => ({ name: n, isDirectory: () => !n.endsWith('.txt') }));
@@ -709,7 +743,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fs.mkdirSync(path.join(d, 'Lumen'));
     check('install location: the real probe passes on a temp install and leaves nothing behind', zu.canReplace(path.join(d, 'Lumen', 'Lumen.exe'), 'win32') && fs.readdirSync(d).join() === 'Lumen' && fs.readdirSync(path.join(d, 'Lumen')).length === 0, fs.readdirSync(d).join());
     check('install location: a folder that does not exist can not be replaced', !zu.canReplace(path.join(d, 'gone', 'Lumen.exe'), 'win32'), 'gone');
-    fs.rmSync(d, { recursive: true, force: true });
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   const { disabledReason, installKind, updateMode, isNewer, stageAsset, manualAsset } = require('../src/features/updates');
   check('updates: off in a development run', disabledReason({ packaged: false, test: false }) === 'dev', disabledReason({ packaged: false }));
@@ -769,6 +803,31 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   const committed = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n') : '');
   check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
   check('ui bundle: no inline script (the CSP allows none)', !/<script>/.test(out.html), '');
+  const set = require('../scripts/bundle-renderer').bundle('settings');
+  check('settings bundle: settings.html, settings.bundle.js and settings.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('settings.html') === set.html && committed('settings.bundle.js') === set.js && committed('settings.bundle.css') === set.css, '');
+  check('settings bundle: no inline script (the CSP allows none)', !/<script>/.test(set.html), '');
+
+  // JS comments are stripped from the bundles: only comments go, never text that looks like one.
+  const { stripJsComments } = require('../scripts/bundle-renderer');
+  const acorn = require('acorn');
+  const BT = '`';
+  const strip = (c) => stripJsComments(c, 'case');
+  const ast = (c) => JSON.stringify(acorn.parse(c, { ecmaVersion: 'latest', sourceType: 'script' }), (k, v) => (k === 'start' || k === 'end' || k === 'raw' ? undefined : v));
+  const same = (c) => ast(strip(c)) === ast(c);
+  const eq = (label, input, want) => { const got = strip(input); check(`strip js: ${label}`, got === want, JSON.stringify(got)); };
+  eq('line and block comments go', 'var a = 1; // one\n/* two */ var b = 2;\n', 'var a = 1;\n var b = 2;\n');
+  eq('"//" and "/*" inside strings stay', "var u = 'http://x.test/a'; var v = \"/* not */\"; // c\n", "var u = 'http://x.test/a'; var v = \"/* not */\";\n");
+  eq('regex literals (/\\/\\*/, /[/*]/, /\\//) stay', 'var r = /\\/\\*/; var q = /[/*]/g; var p = /\\//; // c\n', 'var r = /\\/\\*/; var q = /[/*]/g; var p = /\\//;\n');
+  eq('a template literal keeps its text and a comment inside ${} goes', `var t = ${BT}a // b /* c */ \${x /* gone */ + 1} d${BT}; // c\n`, `var t = ${BT}a // b /* c */ \${x  + 1} d${BT};\n`);
+  eq('a template inside a ${} inside a template', `var t = ${BT}\${${BT}// \${1 /* x */}${BT}}${BT};`, `var t = ${BT}\${${BT}// \${1 }${BT}}${BT};`);
+  eq('"*/" inside a string after a block comment, and "*/" in a line comment', "/* a */ var s = '*/'; // x */ y\nvar z;\n", " var s = '*/';\nvar z;\n");
+  eq('a multi-line block comment keeps its line breaks (ASI, line numbers)', 'var a = 1 /* x\ny */ var b = 2\n', 'var a = 1\n var b = 2\n');
+  check('strip js: a/**/b keeps its tokens apart', strip('var a = 1 +/**/+ 2;').includes('+ +') && same('function f() { return/**/1; }'), strip('var a = 1 +/**/+ 2;'));
+  check('strip js: /*! and @license comments stay', strip('/*! keep */ var a; /** @license MIT */ var b; /* drop */\n').includes('/*! keep */') && strip('/** @license MIT */ var b;').includes('@license') && !strip('/* drop */ var c;').includes('drop'), '');
+  check('strip js: no trailing blanks where a comment ended a line', !/[ \t]\n/.test(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')), JSON.stringify(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')));
+  check('strip js: a tricky file parses to the same program', same(`var a = '//'; /* c */ var b = /\\/\\*/.test('x'); var c = a // d\n + b; var d = ${BT}\${'/*'}\${/* e */ 1}${BT};\nfunction g() { return // x\n}\n`), '');
+  const srcLen = out.scripts.reduce((n, f) => n + fs.readFileSync(path.join(dir, f), 'utf8').length, 0);
+  check('strip js: the ui bundle is well under its sources (no comments)', out.js.length < srcLen * 0.85, `${out.js.length} of ${srcLen}`);
 }
 
 // ---- launcher.js: the first process hands over to the launcher (macOS: with the links it was sent)
@@ -850,7 +909,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     fixShortcutIcons(fakeApp(true), shell);
     check('icon: a shortcut naming an .ico that no longer exists is pointed at one that does', updates.length === 1 && updates[0].f === path.join(desktop, 'Lumen.lnk') && fs.existsSync(updates[0].icon), JSON.stringify(updates));
   }
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Electron fuses: packaged macOS builds turn off NODE_OPTIONS and --inspect; Windows is untouched
@@ -917,7 +976,12 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     check('cli args: Grok always has a cap: the chosen one, else 100', flag(gbArgs(120)) === '120' && flag(gbArgs(0)) === '100' && !gb.ARGS_BASE.includes('--max-turns'), '');
     const { DEFAULTS } = require('../src/settings/settings-backend');
     check('setting: maxSteps defaults to unlimited', DEFAULTS.maxSteps === 0, '');
-    check('setting: three chats work at once by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 3 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 3, '');
+    check('setting: chats working at once has no limit by default (one per tab, features/tab-chats.js)', DEFAULTS.maxChatRuns === 0 && require('../src/features/tab-chats').DEFAULT_MAX_RUNS === 0, '');
+    const SBm = require('../src/settings/settings-backend');
+    check('setting: "No limit" (0) is a valid choice for chats working at once', SBm.validate('maxChatRuns', 0) === 0 && SBm.validate('maxChatRuns', 3) === 3 && SBm.validate('maxChatRuns', 5) === null, '');
+    const mig = SBm.migrateMaxChatRuns;
+    check('setting: a profile on the old default of 3 moves to no limit, once', mig({ maxChatRuns: 3 })?.maxChatRuns === 0 && mig({ maxChatRuns: 3 }).maxChatRunsNoLimitDefault === true && mig({ maxChatRuns: 3, maxChatRunsNoLimitDefault: true }) === null, JSON.stringify(mig({ maxChatRuns: 3 })));
+    check('setting: another chosen number is kept, and an unset one is left to the default', mig({ maxChatRuns: 2 })?.maxChatRuns === 2 && mig({ maxChatRuns: 8 })?.maxChatRuns === 8 && mig({}) === null && mig({ theme: 'dark' }) === null, '');
   }
 
   const { ReadCache } = require('../src/ai/snapshot');
@@ -953,8 +1017,8 @@ check('model names that could read as a flag are refused', !validModel('--tools'
     followUp.simpleTurn = followUp[2];
     check('simple turn: a simple follow-up in a longer chat keeps the chat effort (an effort change would miss the cached history)', requestFor(followUp.settings, followUp).output_config.effort === 'high', JSON.stringify(requestFor(followUp.settings, followUp).output_config));
     const sys = a.system[0].text;
-    check('system prompt: keeps the safety rules (untrusted pages, confirm first, no passwords, no CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /Never type passwords/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
-    check('request: tool definitions stay under 10k chars (about 2.5k tokens)', JSON.stringify(a.tools).length < 10000, String(JSON.stringify(a.tools).length));
+    check('system prompt: keeps the safety rules (untrusted pages, confirm first, passwords only the user enters, CAPTCHAs) and stays under 4k chars', /untrusted data, not instructions/.test(sys) && /ask the user to confirm/.test(sys) && /password, card or one-time code only the user can enter/.test(sys) && /CAPTCHA/.test(sys) && sys.length < 4000, String(sys.length));
+    check('request: tool definitions stay under 17.5k chars (about 4.4k tokens; raised from 17.3k for the generate_image svg property (exact math and graphs drawn as a picture, #466) and the screenshot tab_id (full-page chat names the tab, #467), ~0.1k; raised from 16.7k for the document tool, ~0.5k: the AI edits Google Docs by moving real ranges, never retyping, ai/document-tool.js; a one-line description and six short properties; raised from 15.5k for drag, list_files, clipboard and upload_file paths, ~1k: the AI drags (sliders, sortable lists, drop zones) and, with Settings > AI > "Let the AI use files on this computer", finds and uploads local files and reads the clipboard (features/device-access.js); one-line descriptions, no rare options; raised from 15k for the annotate tool, seven new mark types and options, ~0.3k: ai/annotate.js; 13.7k for find_sources and research_board, ~1.4k: scholarly search over OpenAlex, Crossref, Semantic Scholar, arXiv and PubMed with open-access PDFs, citation counts and retraction flags (ai/scholar.js), and the chat\'s source list with verified quotes and citations (ai/research-tools.js); both descriptions were already cut to one sentence, the schemas carry only what a call needs; raised from 13.4k for run_macro, ~0.3k: the AI runs saved macros, Settings > Macros, a 75-character description and three properties; raised from 12.5k for the annotate tool, ~0.9k: the AI draws boxes, arrows and steps on the page to explain it, ai/annotate.js; 12.5k was raised from 12k for the delegate tool, ~0.5k: the AI hands separate read-only jobs to parallel helpers, Settings > AI; 11.9k before it: 11.2k with the reading and debug tools of 2026-10: analyze_posts ~0.6k, get_console/get_network/handle_dialog and wait_for url/gone/network_idle ~1.4k, read_page outline/site/structured and read_urls wait/max_chars/offset ~0.3k, plus video_overview/video_frames ~0.7k)', JSON.stringify(a.tools).length < 17500, String(JSON.stringify(a.tools).length));
   }
 
   const tools = [{ name: 'a', cache_control: { type: 'ephemeral' } }, { name: 'b' }, { name: 'c' }];
@@ -1008,7 +1072,7 @@ async function fuseChecks() {
   check('fuses: the hook flips the mac binary', calls.length === 1 && on(FuseV1Options.EnableNodeOptionsEnvironmentVariable) === '0' && on(FuseV1Options.EnableNodeCliInspectArguments) === '0' && on(FuseV1Options.RunAsNode) === '1', JSON.stringify(wire));
   await afterPack.default({ appOutDir: out, electronPlatformName: 'linux', packager });
   check('fuses: the hook never flips a non-mac build', calls.length === 1, JSON.stringify(calls));
-  fs.rmSync(out, { recursive: true, force: true });
+  fs.rmSync(out, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- A new topic starts a new chat (renderer/chat-topic.js): only when nothing ties it to the chat so far
@@ -1137,7 +1201,7 @@ async function fuseChecks() {
   check('site activity: forget() drops cleared domains', a.get('new.example') === undefined && a.since(0).length === 1, JSON.stringify(a.since(0)));
   check('site activity: a cookie domain matches its subdomains and parents', related('example.com', 'www.example.com') && related('www.example.com', 'example.com') && related('a.b', 'a.b'), 'related');
   check('site activity: unrelated domains don\'t match', !related('example.com', 'badexample.com') && !related('ample.com', 'example.com'), 'unrelated');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- the sidebar usage bar (features/usage.js barFor, cli-utils usageOf)
@@ -1191,7 +1255,7 @@ async function fuseChecks() {
 
   check('chats: the title is the first message without Lumen\'s additions', autoTitle(chat('<browser_state>\nx\n</browser_state>\n\n<untrusted_page_content title="t">page</untrusted_page_content>\n\nWhat is up?')) === 'What is up?', autoTitle(chat('<browser_state>x</browser_state> What is up?')));
   const long = autoTitle(chat('word '.repeat(40)));
-  check('chats: a long first message is cut to a short title', long.length === 60 && long.endsWith('…'), long);
+  check('chats: a long first message is cut to a short title', long.length <= 60 && long.length > 40 && long.endsWith('…'), long);
   check('chats: an image-only first message is titled "Image"', autoTitle({ messages: [{ role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'The user attached the image(s) above without a message.' }] }] }) === 'Image', 'image');
 
   const ids = [0, 1, 2, 3].map(() => store.newId());
@@ -1201,12 +1265,12 @@ async function fuseChecks() {
   check('chats: the newest `limit` chats are kept, plus the open one', store.list().map((c) => c.title).join() === 'chat 3,chat 2,chat 1,chat 0', store.list().map((c) => c.title).join());
   store.setCurrent(ids[3]);
   store.save(ids[3], chat('chat 3'));
-  check('chats: past the limit, the oldest chat and its file go', store.list().length === 3 && !store.list().some((c) => c.id === ids[0]) && !fs.existsSync(path.join(dir, `${ids[0]}.json`)), store.list().map((c) => c.title).join());
+  check('chats: past the limit, the oldest chat is archived, never deleted (the open one stays)', store.list().length === 4 && store.list().find((c) => c.id === ids[1])?.archived === true && !store.list().find((c) => c.id === ids[0]).archived && fs.existsSync(path.join(dir, `${ids[1]}.json`)) && !store.list().find((c) => c.id === ids[3]).archived, store.list().map((c) => `${c.title}:${c.archived}`).join());
   const disk = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
   check('chats: the index and chats are written encrypted', disk.includes('"enc"') && !/chat 1|claude-opus-5/.test(disk), disk.slice(0, 120));
-  check('chats: an empty chat is not saved', store.save(store.newId(), { messages: [] }) === true && store.list().length === 3, store.list().length);
+  check('chats: an empty chat is not saved', store.save(store.newId(), { messages: [] }) === true && store.list().length === 4, store.list().length);
   check('chats: a chat loads back', store.load(ids[2])?.messages?.[0]?.content?.[0]?.text === 'chat 2', JSON.stringify(store.load(ids[2])).slice(0, 100));
-  check('chats: an id that is not in the list does not load', store.load('../index') === null && store.load(ids[0]) === null, 'loaded');
+  check('chats: an id that is not in the list does not load', store.load('../index') === null && store.load('0000000000000000') === null && store.load(ids[0]) !== null, 'loaded');
 
   check('chats: rename cleans the title', store.rename(ids[2], '  My\n  trip\u0007 ') && store.list().find((c) => c.id === ids[2]).title === 'My trip', store.list().find((c) => c.id === ids[2])?.title);
   store.save(ids[2], chat('chat 2 again'));
@@ -1214,7 +1278,7 @@ async function fuseChecks() {
   check('chats: a blank rename is refused', store.rename(ids[2], '   ') === false && store.rename('nope', 'x') === false, 'renamed');
 
   const reopened = createChatStore({ dir, encrypt: enc, decrypt: dec, limit: 3 });
-  check('chats: the list and open chat survive a restart', reopened.list().length === 3 && reopened.current() === ids[3] && reopened.list()[0].id === ids[2], JSON.stringify(reopened.list().map((c) => c.title)));
+  check('chats: the list and open chat survive a restart', reopened.list().length === 4 && reopened.current() === ids[3] && reopened.list()[0].id === ids[2], JSON.stringify(reopened.list().map((c) => c.title)));
   check('chats: delete removes the entry and its file', reopened.remove(ids[1]) && !reopened.list().some((c) => c.id === ids[1]) && !fs.existsSync(path.join(dir, `${ids[1]}.json`)), 'still there');
   check('chats: deleting the open chat clears which one is open', reopened.remove(ids[3]) && reopened.current() === null, reopened.current());
   check('chats: deleting an unknown chat does nothing', reopened.remove('0000000000000000') === false, 'removed');
@@ -1239,15 +1303,16 @@ async function fuseChecks() {
     { role: 'assistant', text: 'Here are **three**.', images: [], steps: 2 },
   ]);
   check('chats: export Markdown has the title, date, model, usage and each turn', md.startsWith('# Trip plan\n\n_2026-09-28 14:05 · Model: claude-opus-5 · Usage: 1.2k tokens · ~$0.01_') && md.includes('## You\n\n_1 image attached (not included)_\n\nFind flights') && md.includes('## Assistant\n\n_Used 2 browser actions_\n\nHere are **three**.') && !md.includes('base64'), md);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.rmSync(legacyDir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(legacyDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- [ai controls] "Turn off AI on this site" (features/ai-sites.js): one switch per registrable domain
 {
   const { createAiSites, siteOf, siteFromInput } = require('../src/features/ai-sites');
   check('ai-sites: a subdomain belongs to its site', siteOf('https://mail.example.co.uk/inbox?x=1') === 'example.co.uk', siteOf('https://mail.example.co.uk/inbox'));
-  check('ai-sites: non-web addresses have no site', siteOf('file:///C:/x.html') === '' && siteOf('about:blank') === '' && siteOf('not a url') === '', 'site for non-web');
+  check('ai-sites: addresses that are neither web nor files have no site', siteOf('about:blank') === '' && siteOf('not a url') === '' && siteOf('file:///C:/app/src/renderer/newtab.html') === '', 'site for non-web');
+  check('ai-sites: files on this computer are one site, and a PDF in the viewer is the site of the PDF itself', siteOf('file:///C:/x.txt') === 'file://' && siteOf(`lumen-pdf://app/viewer.html?u=${encodeURIComponent('file:///C:/Users/a/x.pdf')}`) === 'file://' && siteOf(`lumen-pdf://app/viewer.html?u=${encodeURIComponent('https://mail.example.co.uk/x.pdf')}`) === 'example.co.uk' && siteFromInput('local files') === 'file://' && siteFromInput('file://') === 'file://', siteOf('file:///C:/x.txt'));
   check('ai-sites: typed names and full addresses both work', siteFromInput('www.Example.com') === 'example.com' && siteFromInput('https://a.b.example.com/x') === 'example.com', siteFromInput('www.Example.com'));
   let saved = {};
   const changes = [];
@@ -1453,7 +1518,7 @@ async function safeBrowsingRuns() {
   make().gate({ resourceType: 'mainFrame', url: evil, webContents: null }, (r) => { passed = r; });
   check('safe browsing: the gate lets pages through when inactive', JSON.stringify(passed) === '{}', JSON.stringify(passed));
   for (const s of services) s.stop();
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- read_pdf: text extraction and the per-chat permission gate (features/pdf-text.js)
@@ -1551,7 +1616,7 @@ async function usageShareRuns() {
   mkfile('C--proj-other', 'new.jsonl', 1000);
   check('other Claude activity: a recent transcript elsewhere does', (await otherClaudeActivity(since, root)) === true, 'missed');
   check('other Claude activity: no projects folder is not activity', (await otherClaudeActivity(since, path.join(root, 'nope'))) === false, 'counted');
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   const run = async (other) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-share-u-'));
@@ -1561,7 +1626,7 @@ async function usageShareRuns() {
     u.record('claudecode', turn(0.16));
     await new Promise((r) => setTimeout(r, 30));
     const points = (await u.summary({ refresh: false })).lumen?.window?.limitPoints;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     return points;
   };
   const alone = await run(false);
@@ -1580,7 +1645,7 @@ async function fewerCallRuns() {
     check('fewer calls: navigate takes read + wait_for, open_tab read, read_page extract + selector', props.navigate.read && props.navigate.wait_for && props.open_tab.read && props.read_page.extract?.enum.join() === 'tables,links,lists' && props.read_page.selector, '');
     check('fewer calls: click, click_at, type_text and press_key take observe', ['click', 'click_at', 'type_text', 'press_key'].every((n) => props[n].observe && snap.OBSERVE_TOOLS.has(n)), '');
     const agentSrc2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'ai', 'agent.js'), 'utf8');
-    check('fewer calls: navigate / open_tab read:true counts as reading page content (taints the run)', /input\?\.read && \(name === 'navigate' \|\| name === 'open_tab'\)+ this\.markTainted/.test(agentSrc2), '');
+    check('fewer calls: navigate / open_tab return the page head, so they count as reading page content (taint the run) unless read:false', /\(name === 'navigate' \|\| name === 'open_tab'\) && input\?\.read !== false\)+ this\.markTainted/.test(agentSrc2), '');
 
     // read_page extract runs in the page: a fake DOM with one table and some links.
     const cell = (t) => ({ innerText: t });
@@ -1636,7 +1701,7 @@ async function speedRuns() {
   const before = probes;
   await u.summary({ refresh: false });
   check('usage: the after-reply refresh skips /usage while the 5-hour reading is fresh', probes === before && before === 1, `${before} ${probes}`);
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- lumen://chat (features/chat-page.js): the URL guard, who may call what, and which tab the AI works in
@@ -1725,9 +1790,10 @@ async function chatPageRuns() {
   check('chat runtime: a frame that is not the chat page\'s top frame (a subframe, another URL) is not trusted', !rt.isChatSender({ sender: chatWc, senderFrame: { url: CHAT } }) && !rt.isChatSender({ sender: chatWc, senderFrame: { url: 'https://x.test/' } }), 'trusted');
   check('chat runtime: the allowlist applies only to the chat page', rt.allows(pageAsk, 'agent:ask') && !rt.allows(pageAsk, 'settings:set-provider-key') && !rt.allows(sidebarAsk, 'agent:ask'), 'allows');
   const fromChat = rt.beginRun(pageAsk, { text: 'go', runId: 3, images: [{ media_type: 'image/png', data: 'AAA' }] });
-  check('chat runtime: a run from the chat page works in the tab last looked at, never the chat tab', fromChat && rt.runTarget() === 2, String(rt.runTarget()));
+  check('chat runtime: a run from the chat page has no tab until a tool takes one (the one looked at last, never the chat tab)', fromChat && rt.runFromPage() && rt.runTarget() === null && rt.pick() === 2 && !chatWc.sent.some(([c, info]) => c === 'chat:target' && info), String(rt.runTarget()));
+  rt.retarget(2);
   check('chat runtime: the sidebar hears a page run start (with its images), the page does not echo it', uiWc.sent.some(([c, p]) => c === 'chat:run-start' && p.runId === 3 && p.text === 'go' && p.images[0].data === 'AAA') && !chatWc.sent.some(([c]) => c === 'chat:run-start'), JSON.stringify(uiWc.sent));
-  check('chat runtime: the page shows which tab it works in', chatWc.sent.some(([c, p]) => c === 'chat:target' && p.id === 2), JSON.stringify(chatWc.sent.map((s) => s[0])));
+  check('chat runtime: once a tool takes a tab, the page shows which tab it works in', chatWc.sent.some(([c, p]) => c === 'chat:target' && p && p.id === 2), JSON.stringify(chatWc.sent.map((s) => s[0])));
   rt.emit(chatWc, 'agent:event', { type: 'text', runId: 3 });
   check('chat runtime: a run\'s events reach both views', uiWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text') && chatWc.sent.some(([c, p]) => c === 'agent:event' && p.type === 'text'), 'events');
   rt.retarget(1);
@@ -1736,7 +1802,7 @@ async function chatPageRuns() {
   check('chat runtime: after the run there is no pin', rt.runTarget() === null, String(rt.runTarget()));
   tabsList = tabsList.filter((t) => t.managerPage === 'chat');
   const alone = rt.beginRun(pageAsk, { text: 'again', runId: 4, images: [] });
-  check('chat runtime: with no ordinary tab a run from the page opens one, out of sight', alone && opened.length === 1 && opened[0].opts.background === true && rt.runTarget() === 50, JSON.stringify(opened));
+  check('chat runtime: with no ordinary tab a run from the page opens nothing by itself (its own open_tab does) and names no tab', alone && opened.length === 0 && rt.runTarget() === null && rt.pick() === null, JSON.stringify(opened));
   rt.endRun();
   rt.broadcast('chat:sync', { view: { items: [] } }, chatWc);
   check('chat runtime: a chat switch reaches the other view, not the one that made it', uiWc.sent.some(([c]) => c === 'chat:sync') && !chatWc.sent.some(([c]) => c === 'chat:sync'), 'sync');
@@ -2021,7 +2087,7 @@ async function inprocRuns() {
     check('automation plan: LUMEN_AUTOMATION_INPROC=1 forces it on Windows', forced.inproc === true && !forced.relaunch && !switches.some((s) => /remote-debugging/.test(s)), JSON.stringify(forced));
     const win = prepareAutomation(app, on, { platform: 'win32', env: {} });
     check('automation plan: Windows and Linux still hand over to the pipe launcher', win.relaunch === true && !inProcessAutomation('linux', {}) && inProcessAutomation('darwin', {}) && inProcessAutomation('freebsd', { LUMEN_AUTOMATION_INPROC: '1' }) && !inProcessAutomation('win32', { LUMEN_AUTOMATION_INPROC: '0' }), JSON.stringify(win));
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   const fakeTab = (id, targetId, url = 'http://a.example/', title = 'A') => {
@@ -2603,7 +2669,7 @@ async function swapHelperRuns() {
   mk('Lumen.update/files/Lumen.exe', 'tiny');
   const r4 = await swap(opts({ relaunch: false, minBytes: 1000 }), start);
   check('swap helper: quit-apply keeps the old version and writes the error file, without relaunching', r4 === 'kept' && fs.existsSync(path.join(d, 'err.txt')) && /^the update looked incomplete \(.*too small.*\)\n$/.test(fs.readFileSync(path.join(d, 'err.txt'), 'utf8')) && started.length === 1 && fs.readFileSync(path.join(d, 'Lumen', 'Lumen.exe'), 'utf8') === 'MZ newer', r4);
-  fs.rmSync(d, { recursive: true, force: true });
+  fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- screenshot and QR helpers (features/screenshot.js, features/qr.js)
@@ -2878,9 +2944,9 @@ async function tabsAskRuns() {
   const file = path.join(dirS, 'skills.json');
   let store = skills.createStore({ file });
   const builtinNames = skills.BUILTINS.map((b) => b.name);
-  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
-  check('skills: only fact-check may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
-  check('skills: every built-in prompt fits the cap and names only known variables', store.list().every((s) => s.prompt.length < 700 && [...s.prompt.matchAll(/\{\{(\w+)\}\}/g)].every((m) => skills.VARIABLES.includes(m[1]))), '');
+  check('skills: a fresh store holds every built-in, with the names the spec lists', builtinNames.join() === 'summarize,tldr,explain,translate,rewrite,actions,reply,factcheck,proofread,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening,research,watch-video' && store.list().length === builtinNames.length && store.list().every((s) => s.source === 'builtin'), store.list().map((s) => s.name).join());
+  check('skills: only fact-check, watch-video and the research skills may use tools by default', store.list().filter((s) => s.mode === 'agent').map((s) => s.name).join() === 'factcheck,comment-mining,competitor-brief,outlier-finder,transcript-breakdown,social-listening,research,watch-video' && store.list().filter((s) => s.mode === 'no-tools').length === 8, '');
+  check('skills: every built-in prompt fits the cap and names only known variables', store.list().every((s) => s.prompt.length < (s.name === 'research' ? 4000 : 700) && /* /research carries a whole workflow (plan, delegate, register, cite, gaps): see test/research-units.js */ [...s.prompt.matchAll(/\{\{(\w+)\}\}/g)].every((m) => skills.VARIABLES.includes(m[1]))), '');
   const made = store.save({ name: 'mine', title: 'Mine', prompt: 'Do {{input}}' });
   check('skills: a new skill saves, as a user skill', made.ok && made.skill.source === 'user' && store.get(made.skill.id).name === 'mine', JSON.stringify(made));
   check('skills: a duplicate name is refused, on create and on rename', !store.save({ name: 'mine', prompt: 'x' }).ok && !store.save({ id: made.skill.id, name: 'summarize', prompt: 'x' }).ok, '');
@@ -2895,13 +2961,13 @@ async function tabsAskRuns() {
   store = skills.createStore({ file });
   check('skills: a deleted built-in stays deleted after a restart', !store.byName('summarize'), '');
   const all = store.resetBuiltins();
-  check('skills: reset built-ins brings back deleted ones and keeps your own', all.reset === 9 && store.byName('summarize') && store.byName('mine') && store.list().length === 10, JSON.stringify(all));
+  check('skills: reset built-ins brings back deleted ones and keeps your own', all.reset === builtinNames.length && store.byName('summarize') && store.byName('mine') && store.list().length === builtinNames.length + 1, JSON.stringify(all));
   store.remove(store.byName('tldr').id);
   store.save({ name: 'tldr', title: 'Mine instead', prompt: 'x' });
   const clash = store.resetBuiltins();
   check('skills: reset leaves alone a user skill that took a built-in\'s name', clash.skipped.join() === 'tldr' && store.byName('tldr').title === 'Mine instead', JSON.stringify(clash));
   fs.writeFileSync(file, '{ not json');
-  check('skills: a corrupt skills.json starts over from the built-ins', skills.createStore({ file }).list().length === 9, '');
+  check('skills: a corrupt skills.json starts over from the built-ins', skills.createStore({ file }).list().length === builtinNames.length, '');
   // the 200-skill cap
   const capFile = path.join(dirS, 'cap.json');
   const capped = skills.createStore({ file: capFile });
@@ -2997,7 +3063,7 @@ async function tabsAskRuns() {
   // a skill's message in a chat's title
   const { autoTitle } = require('../src/features/chat-store');
   check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate: French', '');
-  fs.rmSync(dirS, { recursive: true, force: true });
+  fs.rmSync(dirS, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 })();
 
 // ---- background tasks: model, allowed sites, schedules, queue, watching, state machine, store (features/background-agents.js)
@@ -3161,7 +3227,7 @@ async function bgTaskRuns() {
   const after = before.map((t) => bg.recoverAfterRestart(t, NOW2));
   check('bg restart message: only tasks this restart interrupted are counted', bg.newlyInterrupted(before, after).map((t) => t.id).join() === '0000000000000001', bg.newlyInterrupted(before, after).map((t) => t.id).join());
   check('bg unseen: counts finished tasks not looked at, not running ones', bg.unseenCount([mk({ status: 'done', unseen: true }), mk({ status: 'running', unseen: true }), mk({ status: 'done' }), mk({ status: 'failed', unseen: true })]) === 2, '');
-  fs.rmSync(dir2, { recursive: true, force: true });
+  fs.rmSync(dir2, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- Grok Build's usage bar: the real result format, rolling windows, budget, limit messages
@@ -3275,7 +3341,8 @@ async function grokUsageRuns() {
   us.record('grokbuild', { usage: null, limit: { text: 'Usage limit reached. Resets at noon', resetsAt: T + 2 * H } });
   sm = await us.summary();
   check('state: a limit message turns the bar red with its reset time', sm.bars.grokbuild.kind === 'limit' && sm.bars.grokbuild.resetsAt === T + 2 * H && sm.grok.limit.text.startsWith('Usage limit reached'), JSON.stringify(sm.bars.grokbuild));
-  await new Promise((r) => setTimeout(r, 700)); // usage.json is saved half a second after a change
+  for (let i = 0; i < 100 && !fs.existsSync(path.join(dir, 'usage.json')); i++) await new Promise((r) => setTimeout(r, 100)); // usage.json is saved half a second after a change (then fsynced: slow on some disks)
+  await new Promise((r) => setTimeout(r, 300));
   const again = mk({ grokSession: () => session });
   again.load();
   check('state: the limit is kept across a restart', (await again.summary()).bars.grokbuild.kind === 'limit', '');
@@ -3320,16 +3387,16 @@ async function grokUsageRuns() {
   check('budget bar: the new day starts from its own use (90%, amber) and resets at the next midnight', bm.level === 'warn' && Math.round(bm.percent) === 90 && bm.resetsAt === new Date(2026, 9, 2).getTime(), JSON.stringify(bm));
   bu.setBudget({ unit: 'usd', daily: 0, weekly: 0 });
   check('budget: cleared, the bar is the context fill again', (await bu.summary()).bars.grokbuild.kind === 'context', '');
-  await new Promise((res) => setTimeout(res, 700));
-  const kept = mk();
-  kept.load();
+  // (saved half a second after the change, then fsynced: poll, a slow disk takes longer than a fixed wait)
+  let kept = mk();
+  for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 100)); kept = mk(); kept.load(); if (JSON.stringify(kept.budget()) === '{"unit":"usd","daily":0,"weekly":0}') break; }
   check('budget: the settings survive a restart', JSON.stringify(kept.budget()) === '{"unit":"usd","daily":0,"weekly":0}', JSON.stringify(kept.budget()));
   bu.setBudget({ unit: 'tokens', daily: 0, weekly: 5000 });
-  await new Promise((res) => setTimeout(res, 700));
-  const kept2 = mk();
-  kept2.load();
+  // (saved half a second after the change, then fsynced: poll, a slow disk takes longer than a fixed wait)
+  let kept2 = mk();
+  for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 100)); kept2 = mk(); kept2.load(); if (JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}') break; }
   check('budget: a saved weekly token budget loads back', JSON.stringify(kept2.budget()) === '{"unit":"tokens","daily":0,"weekly":5000}', JSON.stringify(kept2.budget()));
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---- background tasks on Claude Code / Grok Build: the parts that need no Electron
@@ -3348,8 +3415,9 @@ async function bgCliRuns() {
     { id: 'grokbuild:default', label: 'Grok Build (experimental)', signedIn: 'unknown' },
   ];
   const list = bg.taskModels(options);
-  check('bg models: API and CLI models are offered, "more" and chat-only are not', list.map((m) => m.id).join() === 'claude-opus-5,claudecode:sonnet,claudecode:default,grokbuild:default', list.map((m) => m.id).join());
-  check('bg models: a signed-out CLI is unavailable; signed in and unknown are available; API models always are', JSON.stringify(list.map((m) => m.available)) === '[true,true,false,true]' && list.map((m) => m.engine).join() === 'api,claudecode,claudecode,grokbuild', JSON.stringify(list));
+  check('bg models: Auto first, then the API and CLI models; "more" and chat-only are not offered', list.map((m) => m.id).join() === 'auto,claude-opus-5,claudecode:sonnet,claudecode:default,grokbuild:default', list.map((m) => m.id).join());
+  check('bg models: a signed-out CLI is unavailable; signed in and unknown are available; API models (and Auto, which uses them) always are', JSON.stringify(list.map((m) => m.available)) === '[true,true,true,false,true]' && list.map((m) => m.engine).join() === 'api,api,claudecode,claudecode,grokbuild', JSON.stringify(list));
+  check('bg models: Auto is offered only when an API model is connected, and is an API task', bg.taskModels([{ id: 'claudecode:sonnet', label: 'Claude Code · Sonnet', signedIn: true }]).every((m) => m.id !== 'auto') && bg.engineOfModel('auto') === 'api' && bg.makeTask({ prompt: 'x', model: 'auto', now: NOW }).engine === 'api', '');
   check('bg models: the engine of a model id', bg.engineOfModel('claudecode:opus') === 'claudecode' && bg.engineOfModel('grokbuild:grok-4.7') === 'grokbuild' && bg.engineOfModel('claude-opus-5') === 'api' && bg.engineOfModel('openrouter:a/b') === 'api' && bg.isCliModel('grokbuild:default') && !bg.isCliModel(undefined), '');
   const ready = { claudecode: { installed: true, signedIn: true }, grokbuild: { installed: true, signedIn: 'unknown', enabled: true } };
   check('bg models: a CLI that is set up and signed in (or not known to be signed out) has no problem; API models never have one', bg.cliProblem('claudecode:sonnet', ready) === null && bg.cliProblem('grokbuild:default', ready) === null && bg.cliProblem('claude-opus-5', {}) === null, '');
@@ -3394,11 +3462,11 @@ async function bgCliRuns() {
       check('bg cli (grok): a background run is killed at once if it reports a terminal command', kills.length === 1 && out.failed === true && out.sessionId === null && /isn't one of Lumen's \(run_terminal_command\)/.test(events.find((e) => e.type === 'error')?.text || ''), JSON.stringify({ out, kills, events }));
       check('bg cli (grok): it runs in its own GROK_HOME and working folder, with the deny in its argv', spawned.opts.env.GROK_HOME === home && spawned.opts.cwd === dir && spawned.opts.env.HOME === dir && fs.existsSync(path.join(home, 'config.toml')) && denied(spawned.argv).includes('run_terminal_command') && argAfter(spawned.argv, '--cwd') === dir, JSON.stringify({ env: spawned.opts.env.GROK_HOME, cwd: spawned.opts.cwd }));
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     }
     const sidebar = await fakeGrokRun(terminalStream);
-    check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 0 && !sidebar.out.failed, JSON.stringify(sidebar.out));
+    check('bg cli (grok): the sidebar run with the same stream is not killed (the gate judged it)', sidebar.kills.length === 1 && !sidebar.out.failed, JSON.stringify(sidebar.out));
   }
 
   // Engines made per run share no live state: their own active run, so the same MCP tag never belongs to two.
@@ -3458,9 +3526,13 @@ async function bgCliRuns() {
   const sum = await u.summary({ refresh: false });
   check('bg usage: the sidebar\'s "last turn" context is its own turn\'s, not the background run\'s', sum.engines.claudecode.last.contextTokens === 5000 && sum.engines.grokbuild.last.contextTokens === 700, JSON.stringify(sum.engines));
   check('bg usage: background tokens count toward Lumen\'s totals and are counted apart; the 5-hour share keeps chaining', sum.engines.claudecode.today.turns === 2 && sum.engines.claudecode.background.turns === 1 && sum.engines.grokbuild.background.turns === 1 && sum.lumen.window.background === 1 && Math.abs(sum.lumen.window.limitPoints - 4) < 0.01, JSON.stringify({ e: sum.engines, w: sum.lumen.window }));
-  const saved = await new Promise((r) => setTimeout(() => r(JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')).records), 700));
+  // (the log is saved 500 ms after the last record, then fsynced: on a slow disk that is well over 700 ms, so wait for the file)
+  const usageFile = path.join(dir, 'usage.json');
+  for (let i = 0; i < 100 && !fs.existsSync(usageFile); i++) await new Promise((r) => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 200));
+  const saved = JSON.parse(fs.readFileSync(usageFile, 'utf8')).records;
   check('bg usage: only the background records carry the tag on disk', saved.filter((r) => r.background).length === 2 && saved.filter((r) => !r.background).length === 2, JSON.stringify(saved.map((r) => r.background)));
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // The AI sidebar over the new-tab page: the view narrows, the page keeps its full-width layout (pure logic, no window).
@@ -3535,7 +3607,7 @@ async function bgCliRuns() {
     check('research tabs: that partition is memory-only, and neither the private windows\' nor the hidden reader\'s', typeof R.RESEARCH_PARTITION === 'string' && R.RESEARCH_PARTITION.length > 0 && !R.RESEARCH_PARTITION.startsWith('persist:') && !/^(lumen-private|claude-reader)/.test(R.RESEARCH_PARTITION), R.RESEARCH_PARTITION);
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src/main.js'), 'utf8');
     check('research tabs: main.js honours only that partition, keeps such tabs out of History, the saved session and Reopen, and passes it to links opened from them',
-      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated, \.\.\.fromAiTab\(\) \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && \(isWebUrl/.test(src) && /!isInternal\(url\) && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
+      /isolatedPartition = \(p\) => \(p === RESEARCH_PARTITION \? p : null\)/.test(src) && /partition: tab\.isolated, \.\.\.fromAiTab\(\) \}\)\); \/\/ a link from a research tab/.test(src) && /!t\.isolated && savedOf\(t\)/.test(src) && /reopenUrl && !tab\.isolated/.test(src) && /if \(!tab\.isolated\) recordVisit/.test(src), 'main.js wiring changed');
   }
   {
     const { r, log } = make();
@@ -3592,6 +3664,7 @@ async function backgroundChatRuns() {
   check('chat runs: finished with the sidebar closed: notification and the unread mark', CR.plan('done', { settings: on, ...away }).os && CR.plan('done', { settings: on, ...away }).unread, '');
   check('chat runs: finished while the user is on another tab, or Lumen is not in front: notification', CR.plan('done', { settings: on, ...watching, onRunTab: false }).os && CR.plan('done', { settings: on, ...watching, focused: false }).os && !CR.plan('done', { settings: on, ...watching, onRunTab: false }).unread, '');
   check('chat runs: finished in a chat that is not open: notification, and the chat is marked unread', CR.plan('done', { settings: on, ...watching, chatOpen: false }).os && CR.plan('done', { settings: on, ...watching, chatOpen: false }).unread, '');
+  check('chat runs: on the chat\'s own tab with Lumen in front, no notification, even while the AI worked in another tab or the sidebar is closed', !CR.plan('done', { settings: on, ...watching, onRunTab: false, chatHere: true }).os && !CR.plan('done', { settings: on, ...away, chatHere: true }).os && CR.plan('done', { settings: on, ...watching, focused: false, chatHere: true }).os, '');
   check('chat runs: Stop never notifies', !CR.plan('stopped', { settings: on, ...away }).os && !CR.plan('stopped', { settings: on, ...away }).unread, '');
   check('chat runs: uses the Background tasks setting: off means no notification; "finished" alone can be off', !CR.plan('done', { settings: { notifications: false }, ...away }).os && !CR.plan('done', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('approval', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('failed', { settings: { ...on, notifyDone: false }, ...away }).os, '');
   check('chat runs: no setting saved yet means notify', CR.plan('done', { settings: undefined, ...away }).os, '');
@@ -3653,7 +3726,7 @@ async function backgroundChatRuns() {
   check('agent: once that run ends the tab is free again', agent.runTabIds().length === 0, JSON.stringify(agent.runTabIds()));
 }
 
-backgroundChatRuns().catch((err) => check('background chats', false, err.stack)).then(() => schedulerRuns()).catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./clock-style-units')(check)).catch((err) => check('new-tab clock styles and greeting fonts', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./widget-stack-units')(check)).catch((err) => check('new-tab Smart Stack (model, auto-rotate, smart rotate, motion, page actions)', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(() => require('./tradingview-units')(check)).catch((err) => check('TradingView widget', false, err.stack)).then(() => require('./local-custom-units')(check)).catch((err) => check('custom, notes, countdown and timer widgets', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => require('./small-screen-units')(check)).catch((err) => check('app menu on small screens', false, err.stack)).then(() => require('./signed-in-units')(check)).catch((err) => check('signed-in sites (read_urls as_user)', false, err.stack)).then(() => require('./whats-new-units')(check)).catch((err) => check('what\'s new after an update', false, err.stack)).then(() => require('./password-units')(check)).catch((err) => check('saved passwords', false, err.stack)).then(() => require('./window-merge-units')(check)).catch((err) => check('merging windows and tab selection', false, err.stack)).then(() => require('./safe-browsing-units')(check)).catch((err) => check('Safe Browsing list files (async load/save, old-format cache)', false, err.stack)).then(() => {
+backgroundChatRuns().catch((err) => check('background chats', false, err.stack)).then(() => schedulerRuns()).catch((err) => check('tool scheduler', false, err.stack)).then(fuseChecks).catch((err) => check('fuses: after-pack hook', false, err.stack)).then(pdfRuns).catch((err) => check('read_pdf text and permission', false, err.stack)).then(safeBrowsingRuns).catch((err) => check('Safe Browsing against a fake Google', false, err.stack)).then(fewerCallRuns).catch((err) => check('fewer-call options', false, err.stack)).then(speedRuns).catch((err) => check('sidebar speed checks', false, err.stack)).then(usageShareRuns).catch((err) => check('usage share checks', false, err.stack)).then(grokRuns).catch((err) => check('Grok Build runs against a fake grok', false, err.stack)).then(organizeAiRuns).catch((err) => check('organize with AI', false, err.stack)).then(swapHelperRuns).catch((err) => check('swap helper quit-apply', false, err.stack)).then(chatPageRuns).catch((err) => check('lumen://chat', false, err.stack)).then(tabsAskRuns).catch((err) => check('ask across tabs', false, err.stack)).then(inprocRuns).catch((err) => check('in-process automation backend', false, err.stack)).then(bgTaskRuns).catch((err) => check('background tasks', false, err.stack)).then(() => require('./widget-units')(check)).catch((err) => check('new-tab widgets (layout, snap, Todoist, weather, colors)', false, err.stack)).then(() => require('./clock-style-units')(check)).catch((err) => check('new-tab clock styles and greeting fonts', false, err.stack)).then(() => require('./spotify-units')(check)).catch((err) => check('new-tab Spotify widget', false, err.stack)).then(() => require('./widget-summary-units')(check)).catch((err) => check('widget settings summaries', false, err.stack)).then(() => require('./widget-stack-units')(check)).catch((err) => check('new-tab Smart Stack (model, auto-rotate, smart rotate, motion, page actions)', false, err.stack)).then(() => require('./gmail-units')(check)).catch((err) => check('Gmail widget and OAuth helper', false, err.stack)).then(() => require('./gmail-atom-units')(check)).catch((err) => check('Gmail through the Google sign-in (Atom feed, accounts, client JSON)', false, err.stack)).then(() => require('./github-units')(check)).catch((err) => check('GitHub widget (view and connector)', false, err.stack)).then(() => require('./markets-units')(check)).catch((err) => check('stocks and crypto widgets (paper trading, connectors)', false, err.stack)).then(() => require('./tradingview-units')(check)).catch((err) => check('TradingView widget', false, err.stack)).then(() => require('./local-custom-units')(check)).catch((err) => check('custom, notes, countdown and timer widgets', false, err.stack)).then(bgCliRuns).catch((err) => check('background CLI tasks', false, err.stack)).then(grokUsageRuns).catch((err) => check('Grok usage bar', false, err.stack)).then(() => require('./small-screen-units')(check)).catch((err) => check('app menu on small screens', false, err.stack)).then(() => require('./signed-in-units')(check)).catch((err) => check('signed-in sites (read_urls as_user)', false, err.stack)).then(() => require('./whats-new-units')(check)).catch((err) => check('what\'s new after an update', false, err.stack)).then(() => require('./password-units')(check)).catch((err) => check('saved passwords', false, err.stack)).then(() => require('./window-merge-units')(check)).catch((err) => check('merging windows and tab selection', false, err.stack)).then(() => require('./safe-browsing-units')(check)).catch((err) => check('Safe Browsing list files (async load/save, old-format cache)', false, err.stack)).then(() => {
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 });

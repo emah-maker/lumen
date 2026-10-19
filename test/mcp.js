@@ -1,5 +1,6 @@
 // AI agents over MCP: start Lumen, then start the bridge exactly as a CLI agent would
 // (`electron . --mcp`) and speak MCP over its stdio.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const { spawn } = require('child_process');
@@ -107,24 +108,27 @@ const os = require('os');
   const unknown = await request('tools/call', { name: 'format_disk', arguments: {} });
   check('unknown tool is a JSON-RPC error', unknown.error?.code === -32602, JSON.stringify(unknown));
 
-  // The user sees the agent: pill text + step rows in the sidebar.
+  // [quiet MCP] The agent works in a window of its own: its steps and the "driven by" pill stay out of the user's window.
   await ui.waitForTimeout(300);
-  const pill = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), text: document.querySelector('#agent-pill span:not(.agent-dot)')?.textContent }));
-  check('pill says Lumen is being driven by Claude Code', pill.active && pill.text === 'Lumen is being driven by Claude Code', JSON.stringify(pill));
-  const steps = await ui.$$eval('.mcp-step', (els) => els.map((e) => e.textContent));
-  check('tool calls appear as sidebar steps', steps.some((s) => s.startsWith('Claude Code:')), JSON.stringify(steps));
+  const mine = await ui.evaluate(() => ({ active: document.body.classList.contains('mcp-active'), steps: [...document.querySelectorAll('.mcp-step')].map((e) => e.textContent) }));
+  check('the user window shows no pill and no step rows for an outside agent', !mine.active && mine.steps.length === 0, JSON.stringify(mine));
 
   // Approval: with auto-approve off, a click shows the card; denying returns isError.
+  // Outside agents act without a card in their own window by default (08ec84a, setting agentsNoAsk); turning it off brings the card back.
+  await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false));
   await app.evaluate(() => { global.__agent.browser.autoApprove = () => false; });
   const clickPromise = call('click', { text: 'More information' });
-  await ui.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});
-  // An outside agent's card is quiet: it never opens the sidebar by itself (the AI button gets its badge); the user opens it to answer.
-  check('an agent approval card does not open the sidebar', await ui.evaluate(() => document.body.classList.contains('sidebar-hidden') && document.getElementById('toggle-sidebar').classList.contains('approval-pending')), 'sidebar opened or no badge');
-  await ui.evaluate(() => window.showSidebar(true));
-  await ui.waitForSelector('.approval:not(.resolved)', { timeout: 10000 }).catch(() => {});
-  const cardTitle = await ui.$eval('.approval:not(.resolved) .approval-title', (e) => e.textContent).catch(() => '');
-  check('approval card names the external agent', cardTitle === 'An external agent (Claude Code) wants to interact with example.com', cardTitle);
-  await ui.click('.approval:not(.resolved) .btn:not(.primary)');
+  // [agents out of sight] An outside agent works in a window of its own, and so does its approval card: the user's window only gets a passive
+  // count in the toolbar (#agents-pending) and opens nothing.
+  const agentUi = async () => { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window')).catch(() => false)) return p; return null; };
+  let aui = null;
+  for (let i = 0; i < 100 && !aui; i++) { aui = await agentUi(); if (!aui) await ui.waitForTimeout(100); }
+  await aui?.waitForSelector('.approval:not(.resolved)', { state: 'attached', timeout: 10000 }).catch(() => {});
+  await ui.waitForSelector('#agents-pending:not([hidden])', { state: 'attached', timeout: 5000 }).catch(() => {});
+  check('an agent approval card does not open the sidebar (or take anything over) in the user window; it shows a count in the toolbar', await ui.evaluate(() => document.body.classList.contains('sidebar-hidden') && !document.getElementById('agents-pending').hidden && !document.querySelector('.approval:not(.resolved)')), 'sidebar opened, no count, or the card is in the user window');
+  const cardTitle = await aui?.$eval('.approval:not(.resolved) .approval-title', (e) => e.textContent).catch(() => '');
+  check('approval card, in the agent own window, names the external agent', cardTitle === 'An external agent (Claude Code) wants to interact with example.com', cardTitle);
+  await aui?.click('.approval:not(.resolved) .btn:not(.primary)');
   r = await clickPromise;
   check('denying the card returns isError to the agent', r.result.isError === true && /did not allow Claude Code/.test(text(r)), JSON.stringify(r));
 

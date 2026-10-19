@@ -31,7 +31,8 @@ function updateView(u) {
   switch (u.status) {
     case 'checking': return { note: ut('checking'), cls: '' };
     case 'up-to-date': return plainMove ? { ...plainMove, note: `${ut('upToDate')} ${plainMove.note}` } : { note: ut('upToDate'), cls: 'ok' };
-    case 'downloading': return u.queued
+    case 'downloading': if (u.retrying) return { note: ut('retrying', { reason: u.retrying }), cls: '', action: own ? window.t('updates.restart') : undefined };
+      return u.queued
       ? { note: ut('downloadingQueued', { version: u.version, progress: u.progress || 0 }), cls: '' }
       : { note: ut('downloading', { version: u.version, progress: u.progress || 0 }), cls: '', action: own ? window.t('updates.restart') : undefined };
     case 'downloaded': return { note: ut('ready', { version: u.version }), cls: 'ok', action: window.t('updates.restart') };
@@ -70,7 +71,8 @@ async function buildUpdates(card) {
     clickError = '';
     try { u = await fn(); } catch (err) { clickError = String(err?.message || '').replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, '').split(/\r?\n/)[0] || ut('unknownError'); } finally { busy = false; u = await U.state(); render(); }
   };
-  const action = h('button', { class: 'primary', id: 'updates-apply', hidden: true, onclick: () => click(() => U.apply()) });
+  // (a plain button like Check for updates beside it: the blue tint read as a link, not as the next step)
+  const action = h('button', { id: 'updates-apply', hidden: true, onclick: () => click(() => U.apply()) });
   const checkBtn = h('button', { id: 'updates-check', text: ut('action.check'), onclick: () => click(() => U.check()) });
   const r = row(ut('row.title'), '', action, checkBtn);
   const desc = h('span', { class: 'desc', id: 'updates-desc' });

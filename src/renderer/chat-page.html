@@ -2,85 +2,141 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src 'self'" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chat</title>
+  <link rel="stylesheet" href="tokens.css" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="picker.css" />
   <link rel="stylesheet" href="chats.css" />
   <link rel="stylesheet" href="prefs.css" />
   <link rel="stylesheet" href="extras.css" />
   <link rel="stylesheet" href="chat-page.css" />
+  <link rel="stylesheet" href="chat-actions.css" />
+  <link rel="stylesheet" href="desktop-card.css" />
+  <link rel="stylesheet" href="step-ui.css" />
+  <link rel="stylesheet" href="tab-ref.css" />
   <link rel="stylesheet" href="slash.css" />
+  <link rel="stylesheet" href="chat-canvas.css" />
+  <link rel="stylesheet" href="chat-page-tools.css" />
+  <link rel="stylesheet" href="routines-chat.css" />
 </head>
 <!-- lumen://chat: the sidebar's conversation as a full page. The conversation half is the sidebar's own
      markup and code (chat-core.js); "chat-full" is the sidebar stylesheet's wide layout. -->
-<body class="chat-page chat-full">
-  <nav class="cp-list" aria-label="Chats" data-i18n-aria-label="sidebar.chats">
-    <div class="cp-list-head">
+<body class="chat-page chat-full cp-booting">
+  <div class="cp-scrim" id="cp-scrim" hidden></div>
+  <nav class="cp-list" id="cp-rail" aria-label="Chats" data-i18n-aria-label="sidebar.chats">
+    <div class="cp-rail-top">
+      <button class="icon-btn" id="cp-rail-close" type="button" title="Hide chat list (Ctrl+Shift+S)" aria-label="Hide chat list" aria-controls="cp-rail" aria-expanded="true" data-i18n-title="chatpage.rail.hide" data-i18n-aria-label="chatpage.rail.hide">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/></svg>
+      </button>
       <h1 data-i18n="sidebar.chats">Chats</h1>
-      <button class="btn primary" id="new-chat" type="button" data-i18n="sidebar.newChat">New chat</button>
     </div>
+    <button class="cp-new" id="new-chat" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5zM9 5l2.5 2.5"/></svg>
+      <span class="cp-new-label" data-i18n="sidebar.newChat">New chat</span>
+      <kbd class="cp-kbd" id="cp-new-kbd">Ctrl+Shift+O</kbd>
+    </button>
+    <div class="cp-projects" id="cp-projects"></div>
     <ul class="chat-items" id="cp-items" aria-label="Saved chats" data-i18n-aria-label="chatpage.saved"></ul>
     <p class="chat-list-empty" id="cp-empty" hidden data-i18n="chatpage.noChats">No saved chats yet. Chats appear here after the first reply.</p>
+    <div class="cp-rail-foot">
+      <button class="cp-archived" id="cp-archived" type="button" hidden aria-pressed="false">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>
+        <span id="cp-archived-label">Archived</span>
+      </button>
+    </div>
   </nav>
 
   <main class="cp-main">
     <section id="chat-root" class="sidebar" data-chat-root aria-label="Conversation" data-i18n-aria-label="chatpage.conversation">
       <header class="sidebar-head">
+        <button class="icon-btn" id="cp-rail-open" type="button" title="Show chat list (Ctrl+Shift+S)" aria-label="Show chat list" aria-controls="cp-rail" aria-expanded="false" hidden data-i18n-title="chatpage.rail.show" data-i18n-aria-label="chatpage.rail.show">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/></svg>
+        </button>
         <div class="model-picker">
           <select id="model" aria-label="Model" data-i18n-aria-label="sidebar.model"></select>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 6.5 8 9.5l3-3"/></svg>
+        </div>
+        <div class="cp-title-wrap">
+          <button class="cp-title" id="cp-title" type="button" hidden title="Rename chat" aria-label="Rename chat" data-i18n-title="chatpage.rename" data-i18n-aria-label="chatpage.rename"></button>
+          <span class="cp-temp-badge" id="cp-temp-badge" hidden data-i18n="chatpage.temp.badge">Temporary</span>
         </div>
         <div class="cp-target" id="cp-target" role="status" aria-live="polite">
           <img class="cp-target-icon" id="cp-target-icon" alt="" hidden />
           <span class="cp-target-text" id="cp-target-text"></span>
         </div>
         <div class="sidebar-actions">
-          <button class="icon-btn cp-back" id="cp-back" type="button" title="Back to sidebar (Ctrl+Shift+L)" aria-label="Back to sidebar" data-i18n-title="chatpage.back.title" data-i18n-aria-label="chatpage.back">
-            <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
-            <span class="cp-back-label" data-i18n="chatpage.back">Back to sidebar</span>
+          <button class="icon-btn" id="cp-export" type="button" title="Export chat as Markdown" aria-label="Export chat as Markdown" data-i18n-title="chatpage.export" data-i18n-aria-label="chatpage.export">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>
+          </button>
+          <button class="icon-btn" id="cp-home" type="button" title="New tab page (Alt+Home)" aria-label="New tab page" data-i18n-title="chatpage.home.title" data-i18n-aria-label="chatpage.home">
+            <svg viewBox="0 0 16 16"><path d="M2.5 7.5 8 2.8l5.5 4.7"/><path d="M4 6.5v6.2c0 .4.3.8.8.8h6.4c.5 0 .8-.4.8-.8V6.5"/><path d="M6.8 13.5V9.8h2.4v3.7"/></svg>
           </button>
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
-          <button class="icon-btn" id="open-settings" type="button" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
-            <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
-          </button>
+          <div class="cp-more-wrap">
+            <button class="icon-btn" id="cp-more" type="button" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" aria-controls="cp-more-menu" data-i18n-title="chatpage.more" data-i18n-aria-label="chatpage.more">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>
+            </button>
+            <div class="cp-menu" id="cp-more-menu" role="menu" aria-label="More" data-i18n-aria-label="chatpage.more" hidden>
+              <button class="icon-btn" id="cp-temp" type="button" role="menuitem" aria-label="Temporary chat" data-i18n-aria-label="chatpage.temp">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke-dasharray="2.2 2"/></svg>
+                <span class="cp-menu-label" data-i18n="chatpage.temp">Temporary chat</span>
+              </button>
+              <button class="icon-btn" id="cp-copy-md" type="button" role="menuitem" aria-label="Copy chat as Markdown" data-i18n-aria-label="chatpage.copyMd">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>
+                <span class="cp-menu-label" data-i18n="chatpage.copyMd">Copy chat as Markdown</span>
+              </button>
+              <button class="icon-btn" id="cp-export-pdf" type="button" role="menuitem" aria-label="Export chat as PDF" data-i18n-aria-label="chatpage.exportPdf">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h5l3 3v8h-8zM9 2.5v3h3"/></svg>
+                <span class="cp-menu-label" data-i18n="chatpage.exportPdf">Export chat as PDF</span>
+              </button>
+              <button class="icon-btn cp-back" id="cp-back" type="button" role="menuitem" title="Back to sidebar (Ctrl+Shift+L)" aria-label="Back to sidebar" data-i18n-title="chatpage.back.title" data-i18n-aria-label="chatpage.back">
+                <svg viewBox="0 0 16 16"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/></svg>
+                <span class="cp-back-label" data-i18n="chatpage.back">Back to sidebar</span>
+              </button>
+              <button class="icon-btn" id="open-settings" type="button" role="menuitem" title="AI settings (opens Settings)" aria-label="AI settings" data-i18n-title="sidebar.settings.title" data-i18n-aria-label="sidebar.settings">
+                <svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.75" class="knob"/><circle cx="5.5" cy="11.5" r="1.75" class="knob"/></svg>
+                <span class="cp-menu-label" data-i18n="sidebar.settings">AI settings</span>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
       <div id="chat-usage" class="chat-usage" hidden></div>
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
-        <div class="empty" id="empty">
-          <p class="empty-title" >Ask anything, or give Lumen a task on the tab you were just on.</p>
-          <div class="setup" id="setup" hidden>
-            <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
-            <p class="setup-pending" id="setup-pending" role="status" hidden></p>
-            <button class="setup-option" type="button" id="setup-claude-code">
-              <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
-              <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
-            </button>
-            <a class="setup-get" id="setup-claude-code-get" href="https://claude.com/claude-code" target="_blank" rel="noopener" hidden data-i18n="setup.claudeCode.get">Get Claude Code</a>
-            <button class="setup-option" type="button" id="setup-openrouter">
-              <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
-              <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
-            </button>
-            <button class="setup-option" type="button" id="setup-keys">
-              <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
-              <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
-            </button>
-          </div>
-          <div class="chips">
-            <button class="chip" type="button" data-prompt="Summarize this page." data-i18n="chips.summarize">Summarize this page</button>
-            <button class="chip" type="button" data-prompt="What are the key takeaways from this page?" data-i18n="chips.takeaways">Key takeaways</button>
-            <button class="chip" type="button" data-prompt="Explain this page in simple terms." data-i18n="chips.explain">Explain simply</button>
-            <button class="chip" type="button" data-all-tabs="1" data-prompt="Summarize my open tabs." data-i18n="tabs.quick.summarize">Summarize my open tabs</button>
-            <button class="chip" type="button" data-all-tabs="1" data-prompt="Compare these tabs and tell me how they differ." data-i18n="tabs.quick.compare">Compare these tabs</button>
-          </div>
-        </div>
       </div>
 
+      <div class="empty" id="empty">
+        <h2 class="empty-title">What can I help with?</h2>
+        <div class="setup" id="setup" hidden>
+          <p class="setup-title" data-i18n="setup.title">Set up an AI</p>
+          <p class="setup-pending" id="setup-pending" role="status" hidden></p>
+          <button class="setup-option" type="button" id="setup-claude-code">
+            <span class="setup-name" data-i18n="setup.claudeCode">Use your own Claude Code</span>
+            <span class="setup-detail" id="setup-claude-code-detail" data-i18n="setup.claudeCode.detail">Through Claude Code, with your own login (including school or work).</span>
+          </button>
+          <a class="setup-get" id="setup-claude-code-get" href="https://claude.com/claude-code" target="_blank" rel="noopener" hidden data-i18n="setup.claudeCode.get">Get Claude Code</a>
+          <button class="setup-option" type="button" id="setup-openrouter">
+            <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
+            <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
+          </button>
+          <button class="setup-option" type="button" id="setup-keys">
+            <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
+            <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
+          </button>
+        </div>
+        <div class="chips">
+          <button class="chip" type="button" data-prompt="Summarize this page." data-i18n="chips.summarize">Summarize this page</button>
+          <button class="chip" type="button" data-prompt="What are the key takeaways from this page?" data-i18n="chips.takeaways">Key takeaways</button>
+          <button class="chip" type="button" data-prompt="Explain this page in simple terms." data-i18n="chips.explain">Explain simply</button>
+          <button class="chip" type="button" data-all-tabs="1" data-prompt="Summarize my open tabs." data-i18n="tabs.quick.summarize">Summarize my open tabs</button>
+          <button class="chip" type="button" data-all-tabs="1" data-prompt="Compare these tabs and tell me how they differ." data-i18n="tabs.quick.compare">Compare these tabs</button>
+        </div>
+      </div>
       <form id="composer" class="composer">
         <button type="button" class="hands-off-badge" id="hands-off" hidden title="Hands-off mode: the AI reads your tabs but won’t click, type or navigate in them. It works in tabs it opens itself. Change this in Settings." data-i18n-title="composer.handsOff.title"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 6V3.2a1 1 0 0 1 2 0V6M5 6V2.4a1 1 0 0 1 2 0V6M7 6V3a1 1 0 0 1 2 0v3.6c0 2-1.2 3.4-3 3.4S3 8.6 3 7.2V6"/></svg><span data-i18n="composer.handsOff">Hands-off</span></button>
         <div class="tabs-picker" id="tabs-picker" role="listbox" aria-label="Open tabs" data-i18n-aria-label="tabs.picker" hidden></div>
@@ -89,34 +145,62 @@
         <div class="attachments" id="attachments" hidden></div>
         <div class="attachment-note" id="attachment-note" role="status" aria-live="polite" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
-        <input type="file" id="attach-input" accept="image/*,.heic,.heif" multiple hidden tabindex="-1" aria-hidden="true" />
-        <button class="attach-btn" id="attach" type="button" title="Attach images (up to 5)" aria-label="Attach images" data-i18n-aria-label="composer.attach">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="5.8" cy="6" r="1.1"/><path d="m2.5 12 3.3-3.3 2.4 2.4 2-2L13.5 12"/></svg>
+        <input type="file" id="attach-input" multiple hidden tabindex="-1" aria-hidden="true" />
+        <button class="attach-btn" id="attach" type="button" title="Attach files (up to 10)" aria-label="Attach files" data-i18n-aria-label="composer.attach">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>
         </button>
+        <button class="send-now" id="send-now" type="button" title="Stop the reply and send this now (Ctrl+Enter)" data-i18n="composer.sendNow" data-i18n-title="composer.sendNow.title" hidden>Send now</button>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
           <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
         </button>
       </form>
+      <p class="cp-disclaimer"><span class="cp-hint" data-i18n="chatpage.hint">Enter to send, Shift+Enter for a new line, Up to edit your last message.</span><span data-i18n="chatpage.disclaimer">Lumen can make mistakes. Check important info.</span></p>
     </section>
   </main>
 
   <script src="i18n.js"></script>
   <script src="markdown.js"></script>
+  <script src="usage-bars.js"></script>
+  <script src="usage-popover.js"></script>
   <script src="picker-match.js"></script>
   <script src="picker.js"></script>
   <script src="model-catalog.js"></script>
   <script src="highlight.js"></script>
+  <script src="code-extras.js"></script>
   <script src="gen-images.js"></script>
+  <script src="run-state.js"></script>
+  <script src="step-time.js"></script>
+  <script src="step-labels.js"></script>
+  <script src="step-ui.js"></script>
+  <script src="chat-drafts.js"></script>
+  <script src="../ai/screen-intent.js"></script>
+  <script src="agent-pill.js"></script>
+  <script src="chat-canvas.js"></script>
+  <script src="ai-files.js"></script>
+  <script src="desktop-card.js"></script>
+  <script src="tab-marker.js"></script>
+  <script src="tab-ref.js"></script>
   <script src="chat-core.js"></script>
+  <script src="chat-actions.js"></script>
   <script src="tabs-ask-core.js"></script>
   <script src="tabs-ask.js"></script>
   <script src="chat-items.js"></script>
+  <script src="dictation.js"></script>
+  <script src="offer-card.js"></script>
+  <script src="chat-projects.js"></script>
+  <script src="chat-project-drag.js"></script>
+  <script src="chat-page-tools.js"></script>
   <script src="chat-page.js"></script>
   <script src="chat-extras.js"></script>
+  <script src="chat-folders.js"></script>
   <script src="slash-match.js"></script>
   <script src="slash.js"></script>
   <script src="skills.js"></script>
   <script src="chat-commands.js"></script>
+  <script src="../ai/plan-mode.js"></script>
+  <script src="plan-mode.js"></script>
+  <script src="routine-phrase.js"></script>
+  <script src="chat-routines.js"></script>
   <script src="ui-prefs.js"></script>
 </body>
 </html>

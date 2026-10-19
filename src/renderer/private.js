@@ -14,6 +14,13 @@ const findText = document.getElementById('find-text');
 const findCount = document.getElementById('find-count');
 let edited = false; // typed in since it was focused: a page loading then leaves the box alone
 let last = { tabs: [], url: '' };
+// Per-tab address-bar drafts (omnibox-draft.js), in memory only: text typed and not submitted stays with its tab.
+const drafts = window.omniboxDraft.createDraftStore();
+let activeTabId = null;
+let leavingFocused = false; // a press on the tab strip left the address while it had focus (it blurs before the tab switches)
+let leavingTimer = 0;
+let restoring = false; // a restored draft keeps its caret: only a fresh focus selects the whole address
+let showingDraft = false; // the field shows a restored draft without focus: a page loading must not rewrite it
 
 if (api.platform === 'darwin') document.body.classList.add('mac');
 const tr = (key, fallback, vars) => { const out = t(key, vars); return out === key ? fallback : out; };
@@ -21,6 +28,7 @@ const tr = (key, fallback, vars) => { const out = t(key, vars); return out === k
 const svg = (paths) => `<svg viewBox="0 0 16 16" aria-hidden="true">${paths}</svg>`;
 const GLOBE = svg('<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.6 1.6 2.3 3.5 2.3 5.5S9.6 11.9 8 13.5M8 2.5C6.4 4.1 5.7 6 5.7 8s.7 3.9 2.3 5.5"/>');
 const LOCK = svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/>');
+const INFO = svg('<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.4M8 5.1v.1"/>'); // a page on this computer (http://localhost): neither lock nor warning, as in a normal window
 const WARN = svg('<path d="M8 2.5 14 13H2z"/><path d="M8 6.5v3M8 11.3v.1"/>');
 const SPEAKER = svg('<path d="M3 6.5h2.2L8.5 4v8L5.2 9.5H3z"/><path d="M10.7 6a2.8 2.8 0 0 1 0 4M12.3 4.5a5 5 0 0 1 0 7"/>');
 const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
@@ -109,22 +117,37 @@ function markNarrow() {
 new ResizeObserver(markNarrow).observe(tabsEl);
 
 function renderSecurity(state) {
-  const kind = state.security || '';
+  // An address on this computer is not "Not secure": nothing crosses a network (the same rule as a normal window).
+  const kind = state.security === 'insecure' && window.chromeHelpers?.isLoopbackUrl(state.url) ? 'local' : state.security || '';
   security.className = `security ${kind}`;
   const label = {
     secure: tr('private.security.secure', 'Connection is secure'),
     mixed: tr('private.security.mixed', 'Parts of this page are not secure'),
     insecure: tr('private.security.notSecure', 'Not secure'),
     broken: tr('private.security.notSecure', 'Not secure'),
+    local: tr('private.security.local', 'This page is on your own computer'),
   }[kind] || '';
-  security.innerHTML = kind === 'secure' || kind === 'mixed' ? LOCK : kind ? `${WARN}<span>${label}</span>` : '';
+  security.innerHTML = kind === 'secure' || kind === 'mixed' ? LOCK : kind === 'local' ? INFO : kind ? `${WARN}<span>${label}</span>` : '';
   security.title = label;
   security.setAttribute('aria-label', label);
   security.setAttribute('aria-hidden', String(!kind));
 }
 
 function render(state) {
+  const prev = last;
   last = state;
+  const nowId = state.tabs.find((tab) => tab.active)?.id ?? null;
+  drafts.prune(state.tabs.map((tab) => tab.id));
+  let draft = null;
+  if (nowId !== activeTabId) {
+    // The field still holds what the tab just left was showing (or the user typed over it): keep an edit with that tab.
+    if (activeTabId != null) drafts.save(activeTabId, { value: address.value, start: address.selectionStart, end: address.selectionEnd, focused: leavingFocused || document.activeElement === address }, prev.url);
+    activeTabId = nowId;
+    leavingFocused = false;
+    draft = drafts.get(nowId);
+    edited = Boolean(draft);
+    showingDraft = false;
+  }
   const ids = new Set(state.tabs.map((tab) => tab.id));
   for (const [id, entry] of tabEls) if (!ids.has(id)) { entry.el.remove(); tabEls.delete(id); }
   state.tabs.forEach((tab, i) => {
@@ -148,7 +171,15 @@ function render(state) {
   const reloadLabel = state.loading ? tr('private.stop', 'Stop loading') : tr('private.reload', 'Reload');
   reloadBtn.title = reloadLabel;
   reloadBtn.setAttribute('aria-label', reloadLabel);
-  if (!edited || document.activeElement !== address) address.value = state.url;
+  if (draft) {
+    // Back on a tab with an unsent edit: its text, caret and focus return as they were left.
+    address.value = draft.text;
+    restoring = true;
+    if (draft.focused) address.focus();
+    restoring = false;
+    address.setSelectionRange(draft.start, draft.end);
+    showingDraft = !draft.focused;
+  } else if (!leavingFocused && !showingDraft && (!edited || document.activeElement !== address)) address.value = state.url;
   renderSecurity(state);
   const zoomed = state.url && /^https?:/i.test(state.url) && state.zoom && state.zoom !== (state.defaultZoom || 100);
   zoomChip.hidden = !zoomed;
@@ -206,12 +237,19 @@ downloadsBtn.addEventListener('click', () => {
   const r = downloadsBtn.getBoundingClientRect();
   api.send('private:downloads', { x: r.left, y: r.bottom });
 });
-address.addEventListener('focus', () => address.select());
+tabsEl.addEventListener('pointerdown', () => {
+  leavingFocused = document.activeElement === address && document.hasFocus();
+  clearTimeout(leavingTimer);
+  leavingTimer = setTimeout(() => { leavingFocused = false; }, 1500);
+}, true);
+address.addEventListener('focus', () => { showingDraft = false; if (!restoring) address.select(); });
 address.addEventListener('input', () => { edited = true; });
 address.addEventListener('blur', () => { edited = false; });
 address.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   // Escape puts the address back as it was; a second one (or one on an untouched box) returns to the page.
+  drafts.clear(activeTabId);
+  showingDraft = false;
   if (address.value !== last.url) { address.value = last.url; edited = false; address.select(); return; }
   address.blur();
   if (last.url) api.send('private:focus-page');
@@ -220,6 +258,8 @@ document.getElementById('address-form').addEventListener('submit', (e) => {
   e.preventDefault();
   if (!address.value.trim()) return;
   api.send('private:go', address.value);
+  drafts.clear(activeTabId);
+  showingDraft = false;
   edited = false;
   address.blur();
 });

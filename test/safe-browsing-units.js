@@ -1,6 +1,7 @@
 // Plain Node checks for the Safe Browsing list files (features/safe-browsing.js): the big-endian
 // byte swap, loading a cache written in the old format, damaged/partial files, and the atomic async save.
 // No Electron. Run from test/units.js (or on its own: node test/safe-browsing-units.js).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -106,7 +107,7 @@ module.exports = async function safeBrowsingUnits(check) {
     check('sb save: a failing save is swallowed and the lists stay usable in memory', !saveThrew && s4.status().entries === 4, saveThrew?.stack || JSON.stringify(s4.status()));
   } finally {
     for (const s of services) s.stop();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 };
 

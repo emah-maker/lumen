@@ -22,16 +22,26 @@
   // First row inside the floating composer (it is absolutely positioned, so a sibling would sit under it).
   $('composer')?.prepend(chip);
 
+  // The chip is drawn from what it shows; a state that shows the same as the last draw writes nothing. Every tab event (a title tick,
+  // a loading flag, a favicon) arrives here, and each used to rewrite the chip's text nodes and attributes: a layout of the composer
+  // (its height moved with the text), which set --composer-h and restyled the whole chat, about 40 ms of the sidebar's work per tab switch.
+  let drawn = '';
   function renderChip(state = lastState) {
     lastState = state;
     const tab = state?.tabs?.find((t) => t.id === state.activeId);
     const web = Boolean(tab?.url) && /^https?:/i.test(tab.url);
-    chip.hidden = !web;
-    if (!web) return;
+    if (!web) { if (!chip.hidden) { chip.hidden = true; drawn = ''; } return; }
     const aiOff = siteState.url === tab.url && siteState.off;
     if (siteState.url !== tab.url || siteStale) { siteStale = false; refreshSite(tab.url); }
+    // The site button stays while the answer for the new tab is on its way (it used to hide and come back: the chip wrapped to a second row and
+    // back, so the composer changed height twice on every tab switch, and the whole chat was restyled each time).
+    const known = Boolean(siteState.site) && (siteState.url === tab.url || asking === tab.url);
+    const view = JSON.stringify([aiOff, known ? siteState.site : '', include, aiOff ? '' : tab.title || tab.url, aiOff ? '' : tab.url, aiOff ? '' : tab.favicon || '']);
+    if (view === drawn && !chip.hidden) return;
+    drawn = view;
+    chip.hidden = false;
     chip.classList.toggle('ai-off', aiOff);
-    siteToggle.hidden = siteState.url !== tab.url || !siteState.site;
+    siteToggle.hidden = !known;
     siteToggle.textContent = aiOff ? window.t('context.aiOn') : window.t('context.aiOff');
     siteToggle.title = aiOff ? window.t('context.aiOn.title', { site: siteState.site }) : window.t('context.aiOff.title', { site: siteState.site });
     siteToggle.setAttribute('aria-pressed', String(aiOff));
@@ -60,8 +70,10 @@
   let siteState = { url: null, site: '', off: false };
   let siteStale = false;
   let asking = null;
+  let askedAt = 0;
   function refreshSite(url) {
     asking = url;
+    askedAt = Date.now();
     extras.aiSiteState?.(url).then((state) => {
       if (asking !== url) return;
       asking = null;
@@ -75,7 +87,10 @@
     siteStale = true;
     renderChip();
   });
-  window.browser.onTabs?.(() => { siteStale = true; }); // re-ask after each change
+  // Re-asked when the front tab changes, and at most every 2 s while its events keep coming (a title tick is no reason to ask again): a change
+  // made in Settings shows once the person is back on the tab.
+  let askedFor = null;
+  window.browser.onTabs?.((state) => { if (state?.activeId !== askedFor || Date.now() - askedAt > 2000) siteStale = true; askedFor = state?.activeId ?? null; });
 
   toggle.addEventListener('click', async () => {
     include = !include;
@@ -105,8 +120,8 @@
     return result;
   };
   const resolveBase = window.resolveApproval;
-  window.resolveApproval = function resolveApproval(approvalId, ok) {
-    const result = resolveBase(approvalId, ok);
+  window.resolveApproval = function resolveApproval(approvalId, ok, ...rest) {
+    const result = resolveBase(approvalId, ok, ...rest);
     pending.delete(approvalId);
     syncBadge();
     return result;

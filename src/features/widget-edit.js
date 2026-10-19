@@ -17,16 +17,27 @@ const STRINGS = {
   'newtab.edit.done': 'Done',
   'newtab.edit.add': 'Add widget',
   'newtab.edit.add.title': 'Add a widget or show a section again',
+  'newtab.edit.setupOpening': 'Opening Settings to set up {title}. {note}',
   'newtab.edit.undo': 'Undo',
   'newtab.edit.undo.title': 'Undo the last change (Ctrl+Z)',
   'newtab.edit.reset': 'Reset layout',
   'newtab.edit.reset.title': 'Put the sections back in the center and every widget at its default size',
   'newtab.edit.bar': 'Edit layout',
-  'newtab.edit.hint': 'Drag a card to move it, or focus it and use the arrow keys. Shift and arrows resize it. Drag the clock’s corner or the search bar’s edges to size them; double-click one to reset it. Ctrl+Z undoes.',
+  'newtab.edit.hint': 'Drag a card to move it, or focus it and use the arrow keys. Shift and arrows resize. Ctrl+Z undoes.',
   'newtab.edit.tile': 'Add widget',
   'newtab.edit.tile.empty': 'Nothing here yet. Add the weather, your calendar, your tasks or any web page.',
   'newtab.edit.picker': 'Add to this page',
   'newtab.edit.picker.section': 'Show again',
+  'newtab.edit.picker.filter': 'Filter widgets',
+  'newtab.edit.picker.filter.ph': 'Search widgets',
+  'newtab.edit.picker.nomatch': 'No widget matches “{q}”.',
+  'newtab.edit.picker.group.stack': 'Starter',
+  'newtab.edit.picker.group.time': 'Time and weather',
+  'newtab.edit.picker.group.work': 'Work and mail',
+  'newtab.edit.picker.group.music': 'Music',
+  'newtab.edit.picker.group.news': 'News and markets',
+  'newtab.edit.picker.group.other': 'More',
+  'newtab.edit.picker.group.section': 'Show again',
   'newtab.edit.picker.none': 'Everything is already on the page.',
   'newtab.edit.picker.close': 'Close',
   'newtab.edit.firstRun': 'Make this page yours: move Favorites, or add the weather and your tasks.',
@@ -123,6 +134,8 @@ const STRINGS = {
   'newtab.edit.type.worldclock.hint': 'Times, dates and sunrise for places',
   'newtab.edit.type.spotify': 'Spotify',
   'newtab.edit.type.spotify.hint': 'What is playing, with controls',
+  'newtab.edit.type.applemusic': 'Apple Music',
+  'newtab.edit.type.applemusic.hint': 'What is playing in Apple Music, with controls',
   'newtab.edit.type.gmail': 'Gmail',
   'newtab.edit.type.gmail.hint': 'Unread count and latest messages',
   'newtab.edit.type.slack': 'Slack',
@@ -147,6 +160,10 @@ const STRINGS = {
   'newtab.edit.type.timer.hint': 'A timer or Pomodoro focus and break',
   'newtab.edit.type.aistatus': 'AI status',
   'newtab.edit.type.aistatus.hint': 'Which AIs are ready, working or at a limit',
+  'newtab.edit.type.routines': 'Routines',
+  'newtab.edit.type.routines.hint': 'What your routines run next and their latest results',
+  'newtab.edit.type.files': 'Files',
+  'newtab.edit.type.files.hint': 'Pinned and recent files, opened with a click',
   'newtab.edit.type.custom': 'Custom',
   'newtab.edit.type.custom.hint': 'Your own card from a JSON recipe',
   'newtab.edit.type.other.hint': 'Set up in Settings',
@@ -158,6 +175,7 @@ const TYPE_INFO = {
   todoist: ['newtab.edit.type.todoist', 'newtab.edit.type.todoist.hint'],
   worldclock: ['newtab.edit.type.worldclock', 'newtab.edit.type.worldclock.hint'],
   spotify: ['newtab.edit.type.spotify', 'newtab.edit.type.spotify.hint'],
+  applemusic: ['newtab.edit.type.applemusic', 'newtab.edit.type.applemusic.hint'],
   gmail: ['newtab.edit.type.gmail', 'newtab.edit.type.gmail.hint'],
   slack: ['newtab.edit.type.slack', 'newtab.edit.type.slack.hint'],
   github: ['newtab.edit.type.github', 'newtab.edit.type.github.hint'],
@@ -170,6 +188,8 @@ const TYPE_INFO = {
   countdown: ['newtab.edit.type.countdown', 'newtab.edit.type.countdown.hint'],
   timer: ['newtab.edit.type.timer', 'newtab.edit.type.timer.hint'],
   aistatus: ['newtab.edit.type.aistatus', 'newtab.edit.type.aistatus.hint'],
+  routines: ['newtab.edit.type.routines', 'newtab.edit.type.routines.hint'],
+  files: ['newtab.edit.type.files', 'newtab.edit.type.files.hint'],
   custom: ['newtab.edit.type.custom', 'newtab.edit.type.custom.hint'],
   embed: ['newtab.edit.type.embed', 'newtab.edit.type.embed.hint'],
 };
@@ -200,6 +220,26 @@ const survivesEditExit = (e) => Boolean(e) && (e.kind === 'config' || e.kind ===
 // A config or removal the browser has let go of (ttl ms after it happened) can no longer be undone.
 const timedOut = (e, now, ttl) => Boolean(e) && (e.kind === 'config' || e.kind === 'remove') && now - e.at > ttl;
 const rectKey = (it) => `${it.x},${it.y},${it.w},${it.h},${it.snap || ''}`;
+// Edit layout frees the page's sections into cards, which shrinks the centre column's obstacle, so a card the column
+// was pushing down would jump up. holdBase(view, items, isSystem) notes, for each real card (not snapped), where it is
+// drawn now (`to`) and the saved rect that put it there (`from`); holdItems(items, base) then keeps drawing it there
+// for as long as its saved rect is unchanged (a change sends every card, and the saved rects take over).
+function holdBase(view, items, isSystem) {
+  const saved = new Map(items.map((i) => [i.id, i]));
+  const base = new Map();
+  for (const v of view) {
+    const s = saved.get(v.id);
+    if (s && !v.snap && !s.snap && !isSystem(v.id)) base.set(v.id, { from: rectKey(s), to: { x: v.x, y: v.y, w: v.w, h: v.h } });
+  }
+  return base;
+}
+function holdItems(items, base) {
+  if (!base) return items;
+  return items.map((it) => {
+    const b = base.get(it.id);
+    return b && !it.snap && rectKey(it) === b.from ? { ...it, ...b.to } : it;
+  });
+}
 // To go from the layout `cur` back to `prev` (both: [{ id, x, y, w, h, snap? }], system cards that are
 // free included): `items` are the cards to send (only those that differ, and only ones that still
 // exist), `dock` the system cards that were untouched then and have been changed since (their stored
@@ -243,19 +283,41 @@ function guides(rect, others, limit = 8) {
 
 // ---- the Add widget picker ----
 const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1);
+const PICKER_GROUPS = ['stack', 'time', 'work', 'music', 'news', 'other', 'section']; // the order the picker lists them in
+const TYPE_GROUP = {
+  weather: 'time', worldclock: 'time', countdown: 'time', timer: 'time',
+  calendar: 'work', todoist: 'work', gmail: 'work', slack: 'work', github: 'work', notes: 'work', files: 'work',
+  spotify: 'music', applemusic: 'music',
+  feed: 'news', stocks: 'news', crypto: 'news', tradingview: 'news',
+};
+const groupOf = (type) => TYPE_GROUP[type] || 'other';
+// Does an entry match what was typed in the picker's filter? Every word must appear in its name, line or group.
+function matchesFilter(entry, query) {
+  const words = String(query || '').toLowerCase().split(/[ \t]+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = `${entry.label} ${entry.hint} ${entry.groupLabel || ''}`.toLowerCase();
+  return words.every((w) => hay.includes(w));
+}
+// What a kind that needs a key or a sign-in asks for, and where to get it: renderer/widget-summary.js (Settings shows it too).
+const WSUM = typeof module !== 'undefined' && module.exports ? require('../renderer/widget-summary') : globalThis.WidgetSummary;
+const SETUP_NOTES = WSUM ? WSUM.SETUP_NOTES : {};
+const setupNote = (type) => (WSUM ? WSUM.setupNote(type) : '');
+
 // types: the kinds of widget the page can draw; hidden: [{ id, label }] sections that are switched off;
 // table: the page's string table, if any; stack: offer a Smart Stack (a stack of starter widgets, first among the kinds).
-// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, label, hint }]
+// -> [{ kind: 'section' | 'stack' | 'widget', id?, type?, group, groupLabel, label, hint }] grouped (Starter, Time and weather, Work and mail,
+// Music, News and markets, More, Show again), each group in the order the kinds were given.
 function pickerEntries({ types = [], hidden = [], table, stack = false } = {}) {
   const out = [];
-  if (stack) out.push({ kind: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
+  if (stack) out.push({ kind: 'stack', group: 'stack', label: text('newtab.edit.type.smartstack', null, table), hint: text('newtab.edit.type.smartstack.hint', null, table) }); // first: it is the way in
   for (const type of types) {
     const info = TYPE_INFO[type];
-    out.push({ kind: 'widget', type, label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
+    out.push({ kind: 'widget', type, group: groupOf(type), label: info ? text(info[0], null, table) : cap(type), hint: text(info ? info[1] : 'newtab.edit.type.other.hint', null, table) });
   }
   // After the widgets: a few "Show again" rows must not push real widgets below the fold.
-  for (const h of hidden) out.push({ kind: 'section', id: h.id, label: h.label, hint: text('newtab.edit.picker.section', null, table) });
-  return out;
+  for (const h of hidden) out.push({ kind: 'section', id: h.id, group: 'section', label: h.label, hint: text('newtab.edit.picker.section', null, table) });
+  for (const e of out) e.groupLabel = text(`newtab.edit.picker.group.${e.group}`, null, table);
+  return out.map((e, i) => [e, i]).sort((a, b) => PICKER_GROUPS.indexOf(a[0].group) - PICKER_GROUPS.indexOf(b[0].group) || a[1] - b[1]).map(([e]) => e);
 }
 
 // ---- where floating things go ----
@@ -349,7 +411,7 @@ function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, rectKey, placePanel, placeToast, overlapArea };
+const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, matchesFilter, setupNote, SETUP_NOTES, PICKER_GROUPS, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();

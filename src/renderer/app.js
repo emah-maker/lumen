@@ -8,17 +8,35 @@ let lastBounds = '';
 // While the sidebar springs, the page view holds its final size: resizing a native page every
 // frame makes the site reflow its whole layout each frame, which is what made pages stutter.
 let heldRect = null;
-function reportBounds() {
+// A sidebar that opens or closes without a slide (the new-tab page, reduced motion) tells main its new page size in a set order, so the
+// native page view and the sidebar are never both missing from, or both drawn over, the same strip: see applyStill(). Until then the
+// size is not reported.
+let boundsHeld = false;
+function currentBounds() {
   const r = heldRect || viewport.getBoundingClientRect();
-  const inset = document.body.classList.contains('agent-active') ? 2 : 0;
+  const inset = 0; // (the page meets the sidebar, the toolbar and the window edge, and is the same size before, during and after a run: an inset that came and went with a run resized and reflowed the page at its start and end, and a constant one left a gap at the sidebar. The AI's frame, behind the page, is covered; the tab mark and the toolbar pill show the run)
   const bounds = { x: r.left + inset, y: r.top + inset, width: r.width - inset * 2, height: r.height - inset * 2 };
   // The page area's width with the sidebar closed: the new-tab page keeps laying itself out at this
   // width while the sidebar covers its right side (main.js layout(), features/sidebar-overlay.js).
   bounds.fullWidth = Math.max(bounds.width, Math.round(document.querySelector('.body').getBoundingClientRect().right - r.left - inset * 2));
+  return bounds;
+}
+function sendBounds(bounds) {
   const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)},${Math.round(bounds.fullWidth)}`;
   if (key === lastBounds) return; // called every frame during animations; only send changes
   lastBounds = key;
   window.browser.setContentBounds(bounds);
+}
+function reportBounds() {
+  if (!boundsHeld) sendBounds(currentBounds());
+}
+// sendBounds, resolved once main has resized the page view (never rejects; resolves at once when the size is the one main has).
+function sendBoundsAck(bounds) {
+  const key = `${Math.round(bounds.x)},${Math.round(bounds.y)},${Math.round(bounds.width)},${Math.round(bounds.height)},${Math.round(bounds.fullWidth)}`;
+  if (key === lastBounds) return Promise.resolve();
+  lastBounds = key;
+  if (!window.browser.setContentBoundsAck) { window.browser.setContentBounds(bounds); return Promise.resolve(); } // (an older main)
+  return Promise.resolve(window.browser.setContentBoundsAck(bounds)).catch(() => {});
 }
 new ResizeObserver(reportBounds).observe(viewport);
 window.addEventListener('resize', reportBounds);
@@ -66,14 +84,21 @@ function springTo(from, to, { response = 0.34, damping = 1, velocity = 0, onUpda
 
 const address = $('address');
 let addressDirty = false;
+// Per-tab address-bar drafts (omnibox-draft.js): what was typed and not submitted stays with its tab, in memory only.
+const addressDrafts = window.omniboxDraft.createDraftStore();
+let draftShowing = false; // the field shows a restored draft without focus: tab updates must not rewrite it
+let focusOnLeave = false; // a press on the tab strip left the address bar while it had focus (it blurs before the tab switches)
+let focusOnLeaveTimer = 0;
 let currentUrl = '';
 let currentError = false;
 let currentSecurity = null; // 'broken' (past a certificate warning) | 'mixed' (http content loaded) | null
 let currentLumenPage = false; // Reader mode / View Source: Lumen's own page for a web address
+let aiOffTabCtx = { page: false, kept: false }; // [ai off-tab] the tab in front: a web page the AI could act on, and whether it is kept off
 let lastActiveId = null;
 
 const GLOBE = '<path d="M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM1.75 8h12.5M8 1.75c1.7 1.8 2.5 3.9 2.5 6.25S9.7 12.45 8 14.25C6.3 12.45 5.5 10.35 5.5 8S6.3 3.55 8 1.75Z"/>';
 const LOCK = '<svg viewBox="0 0 12 12"><rect x="2.5" y="5.25" width="7" height="5" rx="1"/><path d="M4 5.25V4a2 2 0 0 1 4 0v1.25"/></svg>';
+const INFO = '<svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.75"/><path d="M6 5.4v2.9M6 3.7v.01"/></svg>'; // a page on this computer (http://localhost): neither lock nor warning
 const WARN = '<svg viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 5v2.25M6 8.75v.01"/></svg>';
 
 // Lumen's own pages: a gear for Settings, a clock for History.
@@ -84,8 +109,18 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
+  // A tab that shows a file with no icon of its own (tab.fileKind: features/file-tabs.js iconKind): a page with a folded corner, marked by what the file is.
+  'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
+  'file-pdf': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25M6 11.75h4M6 9.5h4"/>',
+  'file-slides': '<rect x="2.25" y="3.25" width="11.5" height="7.5" rx="1"/><path d="M8 10.75v2.5M5.5 13.25h5"/>',
+  'file-mail': '<rect x="2.25" y="3.5" width="11.5" height="9" rx="1.25"/><path d="m2.75 4.75 5.25 4 5.25-4"/>',
+  'file-image': '<rect x="2.25" y="3" width="11.5" height="10" rx="1.25"/><circle cx="5.9" cy="6.3" r="1"/><path d="m2.5 12 3.6-3.4 2.4 2.2 1.7-1.5 3.3 2.7"/>',
+  'file-sheet': '<rect x="2.25" y="2.75" width="11.5" height="10.5" rx="1"/><path d="M2.25 6.25h11.5M2.25 9.75h11.5M6.25 2.75v10.5"/>',
+  'file-code': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="m6.6 8.2-1.4 1.6 1.4 1.6M9.4 8.2l1.4 1.6-1.4 1.6"/>',
 };
+const fileIcon = (tab) => (tab.fileKind ? `file-${tab.fileKind}` : null);
 
 function globeIcon(page = null) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -93,6 +128,27 @@ function globeIcon(page = null) {
   svg.setAttribute('class', `tab-favicon globe${PAGE_ICONS[page] ? ' page-icon' : ''}`);
   svg.innerHTML = PAGE_ICONS[page] || GLOBE;
   return svg;
+}
+
+// A page with no icon of its own: a monogram (the first letter of its site on a color taken from the site), so a row of
+// tabs without favicons doesn't read as a row of identical globes. Not for Lumen's own pages (they have their own icons).
+function siteHostOf(url) {
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.replace(/^www\./i, '');
+    // An address of numbers (127.0.0.1, [::1]) has no site name to take a letter from: "1" on a green tile reads as a glitch, so it keeps the globe.
+    return /^https?:$/.test(u.protocol) && !/^[\d.]+$/.test(host) && !host.startsWith('[') ? host : '';
+  } catch { return ''; }
+}
+function monogramIcon(host) {
+  const span = document.createElement('span');
+  span.className = 'tab-favicon monogram';
+  span.setAttribute('aria-hidden', 'true');
+  span.textContent = (host.match(/[\p{L}\p{N}]/u)?.[0] || '?').toUpperCase();
+  let hash = 0;
+  for (const c of host.split('.').slice(-2).join('.')) hash = (hash * 31 + c.charCodeAt(0)) >>> 0; // subdomains share their site's color
+  span.style.setProperty('--mono-hue', String(hash % 360));
+  return span;
 }
 
 // Unfocused address bar shows a trimmed URL; the full URL returns on focus.
@@ -118,10 +174,12 @@ function setSecurityName(el, name) {
   el.tabIndex = 0;
 }
 
-function showAddress() {
+function showAddress(keepText = false) { // keepText: refresh the lock only, the field holds a draft
   const security = $('security');
-  if (document.activeElement === address) return;
-  address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  if (!keepText) {
+    if (document.activeElement === address) return;
+    address.value = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  }
   if (currentError || currentLumenPage) {
     security.hidden = true; // an error page (or Lumen's own reader/source page) has no connection to vouch for
   } else if (currentUrl.startsWith('https:') && currentSecurity === 'broken') {
@@ -138,6 +196,11 @@ function showAddress() {
     security.className = 'security';
     setMarkup(security, LOCK);
     setSecurityName(security, t('security.secure'));
+    security.hidden = false;
+  } else if (currentUrl.startsWith('http:') && window.chromeHelpers.isLoopbackUrl(currentUrl)) {
+    security.className = 'security';
+    setMarkup(security, INFO);
+    setSecurityName(security, t('security.local'));
     security.hidden = false;
   } else if (currentUrl.startsWith('http:')) {
     security.className = 'security insecure';
@@ -162,12 +225,14 @@ let selectedTabs = new Set();
 
 // A strip still sliding (a tab just closed, opened or dropped): finish that first, so what is measured is where
 // the tabs actually are, and the drag's own transform isn't overridden by an animation.
+// [side tabs] Tab layout: Side: the list (#tabs) sits in a column on the left (renderer/side-tabs.js). Its drag is vertical and is worked out there.
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch { /* infinite: leave it */ } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
   // Losing the pointer (another app or the system took it) cancels the drag: nothing moves on a guess.
@@ -190,6 +255,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -424,7 +490,7 @@ function createGhostTab(tab) {
   el.className = 'tab-drop-ghost';
   const inner = Object.assign(document.createElement('div'), { className: 'tab-inner' });
   const urls = (Array.isArray(tab.favicons) ? tab.favicons : []).filter((u) => typeof u === 'string');
-  let icon = globeIcon(tab.page || null);
+  let icon = globeIcon(tab.page || fileIcon(tab));
   if (urls.length) {
     icon = Object.assign(document.createElement('img'), { className: 'tab-favicon', alt: '' });
     let i = 0;
@@ -628,6 +694,7 @@ function tabStripRoom() {
   let count = 0;
   for (const el of bar.children) {
     if (el === strip) { count++; continue; }
+    if (el.classList.contains('drag-gutter')) { others += parseFloat(getComputedStyle(el).minWidth) || 0; count++; continue; } // (its room is reserved, not what it grows to)
     if (el.getBoundingClientRect().width > 0) { others += el.getBoundingClientRect().width; count++; }
   }
   return Math.max(80, bar.clientWidth - pad - others - gap * Math.max(0, count - 1));
@@ -762,13 +829,15 @@ function handOffTabDrag(e) {
   // x, y: the cursor in this window (it holds its place if the whole window is dragged). pressY:
   // where the tab was grabbed. layout: where that point will sit in the new strip, so the window
   // opens with it under the cursor even when this strip is scrolled or other tabs travel along.
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+  // (the side list: the new window's list starts where this one's does, so the grab point is the tab's offset into it)
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; } // main moves the card (or window) with it
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -899,6 +968,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
   // Escape, a cancelled pointer or a lost one: nothing moves.
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped); // (a drop in the side list is worked out there; a tab taken out of it ends below as any other)
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
   // A single tab released over a different slot lands there. The same slot it already occupied is
@@ -1033,8 +1103,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0; // (the side list moves tabs up and down)
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
       // A new group's chip takes its room in the strip at once while the tabs around it are still sliding in from where they were: it stays
       // invisible (and under them) until they have mostly settled, then fades in, so it never overlaps a tab's icon mid-slide.
@@ -1123,11 +1195,15 @@ function createTabEl(id) {
   });
   el.addEventListener('pointerleave', () => { closePressed = false; });
   close.onclick = (e) => { e.stopPropagation(); if (e.detail === 0) window.browser.closeTab(id); }; // detail 0: Enter/Space
-  // [ai manners] a tab the AI opened: a small sparkle after its title (updateTabEl; styles.css .tab-ai-mark)
+  // [ai manners] a tab the AI opened: a small sparkle on its favicon's corner (updateTabEl; styles.css .tab-ai-mark)
   const aiMark = Object.assign(document.createElement('span'), { className: 'tab-ai-mark' });
   aiMark.setAttribute('aria-hidden', 'true');
   aiMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1l1.2 3.8L11 6 7.2 7.2 6 11 4.8 7.2 1 6l3.8-1.2z"/></svg>';
-  inner.append(globeIcon(), chatMark, title, aiMark, close);
+  // [ai off-tab] a tab the user keeps the AI from acting on: a small shield after the title (styles.css .tab-off-mark)
+  const offMark = Object.assign(document.createElement('span'), { className: 'tab-off-mark' });
+  offMark.setAttribute('aria-hidden', 'true');
+  offMark.innerHTML = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1 10 2.4v3c0 2.3-1.6 3.9-4 5-2.4-1.1-4-2.7-4-5v-3Z"/><path class="off-spark" d="M6 3.7l.5 1.4 1.4.5-1.4.5L6 7.5l-.5-1.4-1.4-.5 1.4-.5Z"/></svg>';
+  inner.append(globeIcon(), aiMark, chatMark, title, offMark, close); // (aiMark sits right after the icon: it is drawn over the icon's corner)
   el.append(inner);
   el.onclick = (e) => { if (!suppressClick && !closedByPress) clickTab(e, id); };
   // A middle press would otherwise start Chromium's autoscroll, which swallows the auxclick.
@@ -1146,19 +1222,19 @@ function createTabEl(id) {
 // icons are tried once more a little later, since a failure may be a passing one (a server error,
 // the network dropping for a moment); an <img> that failed would otherwise stay a globe for good.
 const FAVICON_RETRY_MS = 3000;
-function faviconImg(el, key, urls, retried = false) {
+function faviconImg(el, key, urls, retried = false, fallback = globeIcon) {
   const img = document.createElement('img');
   img.className = 'tab-favicon';
   let i = 0;
   img.onerror = () => {
     if (++i < urls.length) { img.src = urls[i]; return; }
-    const globe = globeIcon();
+    const globe = fallback();
     img.replaceWith(globe);
     if (retried) return;
     setTimeout(() => {
       // Only if the tab still wants these icons and still shows the globe that replaced them.
       if (el.dataset.icon !== key || !globe.isConnected) return;
-      const again = faviconImg(el, key, urls, true);
+      const again = faviconImg(el, key, urls, true, fallback);
       // Swapped in only once it has loaded, so a second failure doesn't flash an empty image.
       again.addEventListener('load', () => { if (el.dataset.icon === key && globe.isConnected) globe.replaceWith(again); }, { once: true });
     }, FAVICON_RETRY_MS);
@@ -1183,8 +1259,14 @@ function updateTabEl(el, tab, group, activeId) {
   el.setAttribute('aria-selected', String(active));
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, chatNote, tab.aiOpened ? t('tabs.aiOpened') : ''].filter(Boolean).join(', '));
-  el.classList.toggle('ai-opened', Boolean(tab.aiOpened)); // [ai manners]
+  // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
+  el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
+  el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
+  el.classList.toggle('split-left', tab.split === 'left'); // [split view] a pair is drawn as joined tabs
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -1194,7 +1276,9 @@ function updateTabEl(el, tab, group, activeId) {
   }
   // The icon is only swapped when it changes: a new <img> on every update restarted its fade-in.
   const favicons = tab.favicons?.length ? tab.favicons : tab.favicon ? [tab.favicon] : [];
-  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || ''}`;
+  const monoHost = tab.page || tab.fileKind ? '' : siteHostOf(tab.url);
+  const fallbackIcon = () => (monoHost ? monogramIcon(monoHost) : globeIcon(tab.page || fileIcon(tab)));
+  const iconKey = tab.loading || tab.aiReading ? 'loading' : favicons.length && !tab.error ? `img:${favicons.join(' ')}` : `page:${tab.page || fileIcon(tab) || ''}:${monoHost}`;
   if (el.dataset.icon !== iconKey) {
     el.dataset.icon = iconKey;
     let icon;
@@ -1202,9 +1286,9 @@ function updateTabEl(el, tab, group, activeId) {
       icon = document.createElement('span');
       icon.className = 'tab-favicon spinner';
     } else if (favicons.length && !tab.error) {
-      icon = faviconImg(el, iconKey, favicons);
+      icon = faviconImg(el, iconKey, favicons, false, fallbackIcon);
     } else {
-      icon = globeIcon(tab.page);
+      icon = fallbackIcon();
     }
     el.querySelector('.tab-favicon').replaceWith(icon);
   }
@@ -1259,7 +1343,28 @@ $('tabs').addEventListener('wheel', (e) => {
   e.preventDefault();
   strip.scrollLeft += e.deltaMode === 1 ? delta * 40 : delta; // line-based wheels report lines, not pixels
 }, { passive: false });
-new ResizeObserver(updateOverflow).observe($('tabs'));
+// A strip that gets narrower (the window shrinks, a button appears beside it) can leave the tab in front scrolled out
+// of sight, with nothing to show where it went; it comes back into view, but only when it was visible before, so a strip
+// the user scrolled away on purpose stays put.
+let stripWidth = 0;
+let activeWasVisible = true;
+$('tabs').addEventListener('scroll', () => { activeWasVisible = activeTabVisible(); }, { passive: true });
+function activeTabVisible() {
+  const strip = $('tabs');
+  const el = strip.querySelector('.tab.active');
+  if (!el) return true;
+  const s = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  return r.left >= s.left - 1 && r.right <= s.right + 1;
+}
+new ResizeObserver(() => {
+  updateOverflow();
+  const width = $('tabs').clientWidth;
+  const shrank = stripWidth && width < stripWidth - 1;
+  stripWidth = width;
+  if (shrank && activeWasVisible && !activeTabVisible()) $('tabs').querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  activeWasVisible = activeTabVisible();
+}).observe($('tabs'));
 
 function startRename(groupId) {
   const label = $('tabs').querySelector(`.group-label[data-group="${groupId}"]`);
@@ -1347,10 +1452,12 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key]; // (the side list also steps with Up and Down)
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
+  else if (isTab && (e.key === 'm' || e.key === 'M') && el.querySelector('.tab-audio')) window.browser.toggleMute(id); // the speaker button isn't a stop of its own
   else if (isTab && e.key === 'Delete') {
     const next = items[i + 1] || items[i - 1];
     if (next) focusStripItem(next);
@@ -1389,7 +1496,12 @@ function clickTab(e, id) {
   });
   selectionAnchor = r.anchor;
   setSelection(r.selection);
-  if (r.activate != null) window.browser.switchTab(r.activate);
+  if (r.activate != null) { window.browser.switchTab(r.activate); showActiveNow(r.activate); }
+}
+// The strip answers the click at once; main's state, a moment later, confirms it (or puts the highlight back where the switch did not happen).
+function showActiveNow(id) {
+  for (const el of $('tabs').querySelectorAll('.tab:not(.tab-ghost)')) el.classList.toggle('active', Number(el.dataset.id) === id);
+  placeIndicator(!motionReduced());
 }
 
 // Escape ends the selection (when the strip, not a page, has the keyboard).
@@ -1439,8 +1551,10 @@ function fillHoverCard(el) {
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
   hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
-  if (tab.aiOpened) hostEl.textContent = [hostEl.textContent, t('tabs.aiOpened')].filter(Boolean).join(' · '); // [ai manners]
-  hostEl.hidden = !host && !tab.aiOpened;
+  if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
+  if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
+  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
+  hostEl.hidden = !host && !tab.aiOpened && !tab.openedByApp && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
 
@@ -1479,6 +1593,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return; // (the list shows the titles; a card would sit under the page view)
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -1510,6 +1625,23 @@ $('tabs').addEventListener('pointerover', (e) => {
 $('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
 $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
+
+// ---------- waking a sleeping tab ahead of the click (main.js, features/tab-wake.js) ----------
+// The pointer resting on a sleeping tab (150 ms, timed in main) or pressing it starts the page loading; leaving first cancels. On a loaded tab
+// the same two messages keep its renderer out of the operating system's background state for the click that follows (main.js, features/tab-ready.js).
+let wakeHoverId = null;
+const sleepingTabOf = (target) => { const el = target.closest?.('.tab'); return el && !el.classList.contains('active') ? Number(el.dataset.id) : null; };
+$('tabs').addEventListener('pointerover', (e) => {
+  if (e.pointerType === 'touch') return;
+  const id = sleepingTabOf(e.target);
+  if (id === wakeHoverId) return;
+  if (wakeHoverId != null) window.browser.tabHover?.(wakeHoverId, false);
+  wakeHoverId = id;
+  if (id != null) window.browser.tabHover?.(id, true);
+});
+$('tabs').addEventListener('pointerleave', () => { if (wakeHoverId != null) window.browser.tabHover?.(wakeHoverId, false); wakeHoverId = null; });
+$('tabs').addEventListener('pointerdown', (e) => { if (e.button !== 0) return; const id = sleepingTabOf(e.target); if (id != null) window.browser.tabDown?.(id); }, true);
+
 // Backstop for a leave that isn't reported (the window-drag area around the strip takes the mouse).
 document.addEventListener('pointermove', (e) => { if (hoverCardTab && !$('tabs').contains(e.target)) hideHoverCard(); }, { passive: true });
 window.addEventListener('blur', hideHoverCard);
@@ -1524,6 +1656,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return; // (rows are the list's full width: nothing widens into a gap)
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -1568,6 +1701,31 @@ organizeBtn.onclick = () => {
   window.browser.organizeTabs();
 };
 window.browser.onOrganizing?.(showOrganizing);
+// [gpu health] main (features/gpu-health.js): the GPU is recovering from a driver reset or a display change. For a few seconds nothing is
+// captured for the sidebar (it changes without a slide: applyStill) and the new-tab effects pause (those run in the page; main tells them).
+let gpuCalm = false;
+window.browser.onGpuCalm?.((on) => { gpuCalm = Boolean(on); document.documentElement.toggleAttribute('data-gpu-calm', gpuCalm); window.setBackdropCalm?.(gpuCalm); });
+// The one-time notice: a reset left Lumen drawing in software. It has a Restart button (never an automatic restart); same note as Organize's.
+window.browser.onGpuLost?.(() => { if (snapshot) thawPage(); });
+const showGpuNote = (info) => {
+  const safe = info?.kind === 'safe'; // this session started in safe drawing: a strip says so, with a way back to normal
+  const unstable = info?.kind === 'unstable'; // the driver keeps failing: offer safe drawing mode (this run only) instead of a plain restart
+  const old = document.querySelector('.gpu-note');
+  if (old && !safe && old.dataset.kind !== 'safe' && (old.dataset.kind === 'unstable' || !unstable)) return;
+  if (old && safe) return;
+  old?.remove();
+  const note = Object.assign(document.createElement('div'), { className: 'organize-note gpu-note', role: 'status' });
+  const words = Object.assign(document.createElement('span'), { className: 'organize-note-text gpu-note-text', textContent: t(safe ? 'gpu.safeOn' : unstable ? 'gpu.unstable' : 'gpu.softwareMode') });
+  note.title = words.textContent;
+  note.dataset.kind = safe ? 'safe' : unstable ? 'unstable' : 'software';
+  const restart = Object.assign(document.createElement('button'), { textContent: t(safe ? 'gpu.safeOff' : unstable ? 'gpu.safeMode' : 'gpu.restart'), title: t(safe ? 'gpu.safeOff.title' : unstable ? 'gpu.safeMode.title' : 'gpu.restart.title'), onclick: () => { restart.disabled = true; window.browser.gpuRestart(unstable); } });
+  const dismiss = Object.assign(document.createElement('button'), { textContent: '×', title: t('gpu.dismiss'), onclick: () => note.remove() });
+  dismiss.setAttribute('aria-label', t('gpu.dismiss'));
+  note.append(words, restart, dismiss);
+  (document.querySelector('.organize-note') ? document.querySelector('.organize-note') : organizeBtn).after(note);
+};
+window.browser.onGpuNote?.(showGpuNote);
+window.lumenPrefs?.get().then((p) => { if (p?.safeDrawing) showGpuNote({ kind: 'safe' }); }).catch(() => {}); // (a safe-drawing session says so once the UI is up; Restart normally drops the flag)
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
 window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo }) => {
   document.querySelector('.organize-note')?.remove();
@@ -1636,7 +1794,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -1653,33 +1811,60 @@ function hideAiSummary(state) {
   const on = window.lumenHideAiTabs === true;
   const ai = (state?.tabs || []).filter((x) => x.aiOpened);
   const hidden = ai.filter((x) => aiHiddenTab(x, state)).length;
-  return { on, total: ai.length, hidden, shown: on ? ai.length - hidden : 0 };
+  // [ai tabs] A hidden tab that needs you (an approval to answer, a dialog waiting, an error page) must not be invisible: the chip says so and a click shows it.
+  const needs = ai.filter((x) => aiHiddenTab(x, state) && aiTabNeedsYou(x)).map((x) => x.id);
+  return { on, total: ai.length, hidden, shown: on ? ai.length - hidden : 0, needs };
 }
+function aiTabNeedsYou(tab) { return tab.chat === 'approval' || Boolean(tab.alert) || Boolean(tab.error); }
 function syncHideAiToggle(state) {
   if (!hideAiButton) return;
-  const { on, total, hidden: out, shown } = hideAiSummary(state);
+  const { on, total, hidden: out, shown, needs } = hideAiSummary(state);
   const count = on ? out : total;
   hideAiButton.hidden = !on && total === 0; // nothing to hide: no button (it stays while the toggle is on, so it can be turned off)
   hideAiButton.setAttribute('aria-pressed', String(on));
   const plural = (n) => (n === 1 ? 'one' : 'other');
   const label = !on ? t(`sidebar.hideAiTabs.off.${plural(total)}`, { count: total })
+    : needs.length > 0 ? t(`sidebar.hideAiTabs.needs.${plural(needs.length)}`, { count: needs.length })
     : out > 0 && shown > 0 ? t(`sidebar.hideAiTabs.more.${plural(out)}`, { count: out })
       : out > 0 ? t(`sidebar.hideAiTabs.on.${plural(out)}`, { count: out })
         : shown > 0 ? t(`sidebar.hideAiTabs.inView.${plural(shown)}`, { count: shown })
           : t('sidebar.hideAiTabs.on.none');
   hideAiButton.title = label;
+  // (the name stays "Hide AI tabs", the state is aria-pressed; only a tab that needs you is spoken as a description)
+  if (needs.length > 0) hideAiButton.setAttribute('aria-description', label); else hideAiButton.removeAttribute('aria-description');
+  hideAiButton.dataset.needs = needs.join(','); // (the click shows the first of them instead of switching the toggle)
+  hideAiButton.classList.toggle('needs-you', needs.length > 0);
   const badge = $('hide-ai-tabs-count');
   // While the toggle is hiding or sparing tabs the button says so in words ("2 hidden", "2 more hidden" beside the AI tab in front, "1 in view"), not just with a number:
   // nothing in the strip says tabs went missing otherwise
   const chip = $('hide-ai-tabs-label');
-  const words = on && (out > 0 || shown > 0);
+  const words = on && (out > 0 || shown > 0 || needs.length > 0);
   chip.hidden = !words;
-  chip.textContent = !words ? '' : out > 0 ? t(shown > 0 ? 'sidebar.hideAiTabs.chipMore' : 'sidebar.hideAiTabs.chip', { count: out }) : t('sidebar.hideAiTabs.chipInView', { count: shown });
+  chip.textContent = !words ? '' : needs.length > 0 ? t(`sidebar.hideAiTabs.chipNeeds.${plural(needs.length)}`, { count: needs.length }) : out > 0 ? t(shown > 0 ? 'sidebar.hideAiTabs.chipMore' : 'sidebar.hideAiTabs.chip', { count: out }) : t('sidebar.hideAiTabs.chipInView', { count: shown });
   hideAiButton.classList.toggle('has-label', words);
   badge.hidden = count === 0 && !(on && shown > 0); // (the stylesheet hides it while the words show, and brings it back in a narrow window)
   badge.textContent = count > 99 ? '99+' : String(count || shown);
 }
+// Hide, or close them outright. The Menu key and Shift+F10 open the same menu (under the button, since there is no pointer to put it at).
+let hideAiMenuKeyAt = 0;
+function openHideAiMenu(fromKeyboard) {
+  const r = hideAiButton.getBoundingClientRect();
+  window.browser.hideAiTabsMenu?.(fromKeyboard ? { x: Math.round(r.left), y: Math.round(r.bottom) } : undefined);
+}
+hideAiButton?.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (Date.now() - hideAiMenuKeyAt < 500) return; // (the key's own contextmenu event right after its keydown)
+  openHideAiMenu(e.clientX === 0 && e.clientY === 0 && e.button !== 2);
+});
+hideAiButton?.addEventListener('keydown', (e) => {
+  if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+  e.preventDefault();
+  hideAiMenuKeyAt = Date.now();
+  openHideAiMenu(true);
+});
 hideAiButton?.addEventListener('click', async () => {
+  const needs = (hideAiButton.dataset.needs || '').split(',').filter(Boolean).map(Number);
+  if (needs.length) { window.browser.switchTab(needs[0]); return; } // a hidden tab needs you: show it (it is in front, so the strip then draws it)
   const on = await Promise.resolve(window.browser.hideAiTabs?.(window.lumenHideAiTabs !== true)).catch(() => window.lumenHideAiTabs === true);
   if (typeof on === 'boolean' && window.lumenHideAiTabs !== on) { window.lumenHideAiTabs = on; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
 });
@@ -1720,7 +1905,7 @@ function renderTabsNow(state) {
   // strip scrolls). It collapses to a bare dot only when the chips themselves would take most of the strip: so many groups that names cannot all be shown.
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6; // (an estimate: the text, the padding and the gap beside it)
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
   // Shown when Organize would do something: 4+ tabs it may regroup (main counts them: not pinned, not in the user's own
   // groups; automatic groups' tabs count). 4 is the bar automatic by-topic grouping uses: fewer is easy to do by hand.
@@ -1797,13 +1982,21 @@ function finishTabsRender(state, before, container, switched) {
 
   // Scrolled into view when the active tab changes, not on every update: a page loading in the
   // active tab kept yanking the strip back while you scrolled it to reach another tab.
+  if (switched && window.lumenSwitchTiming) { const shownId = state.activeId; requestAnimationFrame(() => window.browser.switchStripDrawn?.(shownId, performance.timeOrigin + performance.now())); } // (Settings > Advanced > Record tab-switch timings)
   const activeEl = container.querySelector('.tab.active');
   if (activeEl && (switched || !before.has(activeId))) activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: motionReduced() ? 'auto' : 'smooth' });
 
   const active = state.tabs.find((t) => t.id === state.activeId);
+  addressDrafts.prune(state.tabs.map((t) => t.id));
+  let restoredDraft = null;
   if (state.activeId !== lastActiveId) {
+    saveAddressDraft(lastActiveId); // before the field is rewritten for the tab now in front
     lastActiveId = state.activeId;
     closeFind();
+    hideSuggestions();
+    restoredDraft = addressDrafts.get(state.activeId);
+    draftShowing = false;
+    if (!restoredDraft) addressDirty = false; // this tab shows its URL, whatever the last one was doing
   }
   currentError = Boolean(active?.error);
   currentSecurity = active?.security || null;
@@ -1812,18 +2005,38 @@ function finishTabsRender(state, before, container, switched) {
   $('zoom').hidden = !zoomed;
   $('zoom').textContent = `${zoom}%`;
   document.body.classList.toggle('zoomed', zoomed);
-  const lumenPage = active?.page === 'reader' || active?.page === 'source'; // shows a web address, but is Lumen's own page
+  const lumenPage = Boolean(active?.page); // Lumen's own page (Reader, View Source, Settings, History, Bookmarks, Downloads): no connection to vouch for, nothing to bookmark
   currentLumenPage = lumenPage;
   const reader = $('reader');
   reader.hidden = !(active?.readerable || active?.page === 'reader') || currentError;
   reader.setAttribute('aria-pressed', String(active?.page === 'reader'));
-  reader.title = active?.page === 'reader' ? 'Leave reader mode' : 'Reader mode';
+  reader.title = t(active?.page === 'reader' ? 'toolbar.reader.leave' : 'toolbar.reader.title');
+  // [ai off-tab] The AI control (a shield with a sparkle, filled once on): makes this tab read-only for every AI path (main.js setKeepOff).
+  // Always shown on a web page (not on Lumen's own pages); Settings can hide it (prefs.css pref-no-ai-off-button) unless the tab is kept off.
+  const offTab = $('ai-off-tab');
+  const kept = Boolean(active?.aiKeepOff);
+  aiOffTabCtx = { page: Boolean(active?.url) && !currentError && !lumenPage, kept };
+  syncAiOffTab();
+  offTab.setAttribute('aria-pressed', String(kept));
+  offTab.title = t(kept ? 'toolbar.aiOffTab.on' : 'toolbar.aiOffTab.off');
+  offTab.setAttribute('aria-label', offTab.title);
   const star = $('bookmark');
   star.hidden = !active?.url || currentError || lumenPage;
   star.setAttribute('aria-pressed', String(Boolean(active?.bookmarked)));
   star.title = active?.bookmarked ? t('bookmark.remove.title') : t('bookmark.add.title');
   star.setAttribute('aria-label', active?.bookmarked ? t('bookmark.remove') : t('bookmark.add'));
-  if (active && (!addressDirty || document.activeElement !== address)) {
+  if (active && restoredDraft) {
+    // Back on a tab with an unsent edit: its text, caret and (as in Chrome) focus return as they were left.
+    currentUrl = active.url;
+    address.value = restoredDraft.text;
+    addressDirty = true;
+    draftShowing = !restoredDraft.focused;
+    if (restoredDraft.focused) { window.browser.addressTouched?.(); address.focus(); }
+    address.setSelectionRange(restoredDraft.start, restoredDraft.end);
+    showAddress(true);
+  } else if (active && draftShowing) {
+    currentUrl = active.url; // the restored text stays until the user focuses the field or submits
+  } else if (active && (!addressDirty || (document.activeElement !== address && !focusOnLeave))) { // (focusOnLeave: a tab switch is under way, its draft is read from the field)
     currentUrl = active.url;
     addressDirty = false;
     // Focused: only rewrite a changed URL, and keep a full selection. Assigning .value (even the same
@@ -1909,7 +2122,9 @@ async function updateSuggestions(typed, deleting) {
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
-  suggest = { items: /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search], selected: -1, typed };
+  const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
+  // The top page from history is pre-selected (Enter goes to it, as in Chrome), unless what is typed is an address or was completed in place.
+  suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
   renderSuggestions();
 }
 
@@ -1922,8 +2137,29 @@ function moveSelection(step) {
   renderSuggestions();
 }
 
+// Remember the unsent text in the address bar for tab `id` (see addressDrafts). Only an edit counts: the field
+// still showing the URL is not a draft.
+function saveAddressDraft(id) {
+  if (id == null) return;
+  if (!addressDirty) { addressDrafts.clear(id); return; } // the field was showing the URL: nothing is left to restore
+  const shown = /^https?:/.test(currentUrl) ? prettyUrl(currentUrl) : currentUrl;
+  const focused = (document.activeElement === address && document.hasFocus()) || focusOnLeave;
+  addressDrafts.save(id, { value: address.value, start: address.selectionStart, end: address.selectionEnd, focused }, shown);
+}
+function dropAddressDraft() {
+  if (lastActiveId != null) addressDrafts.clear(lastActiveId);
+  draftShowing = false;
+}
+// A press on the tab strip is how the address bar usually loses focus to a tab switch: note it was focused.
+$('tabs').addEventListener('pointerdown', () => {
+  focusOnLeave = document.activeElement === address && document.hasFocus();
+  clearTimeout(focusOnLeaveTimer);
+  focusOnLeaveTimer = setTimeout(() => { focusOnLeave = false; }, 1500);
+}, true);
+
 function navigate(target) {
   hideSuggestions();
+  dropAddressDraft();
   addressDirty = false;
   if (target) window.browser.go(target);
   address.blur();
@@ -1937,11 +2173,13 @@ window.browser.onSuggestionPicked(({ index, listId }) => {
 
 address.addEventListener('input', (e) => {
   addressDirty = true;
+  draftShowing = false;
   updateSuggestions(address.value, e.inputType?.startsWith('delete'));
 });
 address.addEventListener('focus', () => {
   // Focus coming back while you type (a loading page briefly took it) must not select the typed
   // text, or the next key would replace it.
+  draftShowing = false;
   if (addressDirty) return;
   address.value = currentUrl;
   address.select();
@@ -1968,6 +2206,12 @@ $('omnibox').addEventListener('mousedown', (e) => {
   if (!wasFocused) address.select();
   else address.setSelectionRange(address.value.length, address.value.length);
 });
+// Right-click: Cut / Copy / Paste and Paste and Go (main.js 'address:menu'), with the field focused as it is in Chrome.
+address.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (document.activeElement !== address) address.focus();
+  window.browser.addressMenu?.({ x: e.clientX, y: e.clientY }, address.selectionStart !== address.selectionEnd);
+});
 address.addEventListener('blur', () => {
   // When the page (another view) takes focus, activeElement stays on the address bar, so check
   // hasFocus too: otherwise the suggestion view stayed up over the page and swallowed clicks.
@@ -1981,6 +2225,7 @@ address.addEventListener('keydown', (e) => {
     const text = address.value.trim();
     hideSuggestions();
     if (text) { showSidebar(true); askInNewChat(text); }
+    dropAddressDraft();
     addressDirty = false;
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!suggest.items.length) return;
@@ -1992,6 +2237,7 @@ address.addEventListener('keydown', (e) => {
       hideSuggestions();
       return;
     }
+    dropAddressDraft();
     addressDirty = false;
     address.blur();
     showAddress();
@@ -2007,10 +2253,43 @@ $('omnibox').addEventListener('submit', (e) => {
 
 $('back').onclick = () => window.browser.back();
 $('forward').onclick = () => window.browser.forward();
+// Right-click (or the menu key) on Back / Forward: the pages behind / ahead, as in Chrome and Edge.
+for (const dir of ['back', 'forward']) {
+  $(dir).addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if ($(dir).disabled) return;
+    const r = $(dir).getBoundingClientRect();
+    window.browser.navMenu?.(dir, { x: r.left, y: r.bottom + 2 });
+  });
+}
 $('reload').onclick = () => window.browser.reload();
 $('zoom').onclick = () => window.browser.resetZoom?.();
 $('bookmark').onclick = () => window.browser.toggleBookmark?.();
 $('reader').onclick = () => window.browser.toggleReader?.();
+function syncAiOffTab() {
+  const wasHidden = $('ai-off-tab').hidden;
+  $('ai-off-tab').hidden = !aiOffTabCtx.page;
+  if (wasHidden !== $('ai-off-tab').hidden) $('omnibox').style.setProperty('--omnibox-end-w', `${Math.ceil($('omnibox').querySelector('.omnibox-end').offsetWidth)}px`);
+}
+// The first time it is turned on, a short note says what it does (once per install: localStorage 'aiOffHintSeen').
+function showAiOffHint() {
+  try { if (localStorage.getItem('aiOffHintSeen')) return; localStorage.setItem('aiOffHintSeen', '1'); } catch { /* no storage: show it each time */ }
+  document.querySelector('.ai-off-hint')?.remove();
+  const r = $('ai-off-tab').getBoundingClientRect();
+  const note = Object.assign(document.createElement('div'), { className: 'ai-off-hint', textContent: t('toolbar.aiOffTab.hint') });
+  note.setAttribute('role', 'status');
+  note.style.top = `${Math.round(r.bottom + 6)}px`;
+  note.style.right = `${Math.max(8, Math.round(window.innerWidth - r.right - 4))}px`;
+  document.body.append(note);
+  const close = () => { note.remove(); document.removeEventListener('pointerdown', close, true); };
+  setTimeout(close, 7000);
+  document.addEventListener('pointerdown', close, true);
+}
+$('ai-off-tab').onclick = () => {
+  if (lastTabState?.activeId == null) return;
+  if (!aiOffTabCtx.kept) showAiOffHint(); // about to turn on
+  window.browser.toggleAiOffTab?.(lastTabState.activeId); // [ai off-tab]
+};
 $('new-tab').onclick = () => window.browser.newTab(); // the new tab's search box takes the keyboard
 // The lock (or "Not secure") opens the site's page info under it.
 function openPageInfo() {
@@ -2019,6 +2298,7 @@ function openPageInfo() {
 }
 $('security').addEventListener('click', openPageInfo);
 $('security').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPageInfo(); } });
+$('app-menu').addEventListener('pointerdown', () => window.browser.prepareSettings?.()); // [settings intent] a press is about 100 ms before the click, and Settings is the most common pick
 $('app-menu').onclick = () => {
   const r = $('app-menu').getBoundingClientRect();
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
@@ -2054,7 +2334,7 @@ $('app-menu').onclick = () => {
     window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
   });
 }
-$('agent-stop').onclick = () => window.assistant.stop();
+$('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
 // from --omnibox-end-w. A fixed 62px only cleared two, and the URL ran under the rest.
@@ -2072,7 +2352,13 @@ const findInput = $('find-input');
 // The bar opens by growing its row, so the page view (which follows the viewport) eases down with it.
 let findHideTimer = null;
 
-function openFind() {
+// `opts.step` (F3 / Ctrl+G: 1 next, -1 previous): with the bar open it goes to the next match; closed, it opens the bar on the last search.
+// `opts.text` (Ctrl+F with text selected on the page): the bar starts from it, as in Chrome; not while you are typing in the bar.
+function openFind(opts) {
+  const step = opts && typeof opts === 'object' ? Number(opts.step) || 0 : 0;
+  if (step && !findbar.hidden && findbar.classList.contains('open') && findInput.value) { findStep(step > 0); return; }
+  const text = opts && typeof opts === 'object' && typeof opts.text === 'string' ? opts.text : '';
+  if (text && !(findbar.classList.contains('open') && document.activeElement === findInput)) findInput.value = text;
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
@@ -2181,29 +2467,28 @@ let snapshot = null;
 let freezeToken = 0;
 let earlyFreeze = null; // a snapshot started on pointerdown
 
-// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers.
+// Average colour of the snapshot's right edge: fills the strip a closing sidebar uncovers. Async: only the 2 px strip is decoded, off the
+// main thread (drawing the whole decoded snapshot and reading it back cost ~9 ms inside the frame that shows a freeze).
 function edgeColor(img) {
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 24;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, 0, 0, 1, 24);
+  return createImageBitmap(img, img.naturalWidth - 2, 0, 2, img.naturalHeight, { resizeWidth: 1, resizeHeight: 24, resizeQuality: 'low' }).then((bitmap) => {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    ctx.canvas.width = 1;
+    ctx.canvas.height = 24;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
     const d = ctx.getImageData(0, 0, 1, 24).data;
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
     const n = d.length / 4;
     return `rgb(${Math.round(r / n)}, ${Math.round(g / n)}, ${Math.round(b / n)})`;
-  } catch {
-    return '';
-  }
+  }).catch(() => '');
 }
 
 // fade: the snapshot eases in over --t-press (a shortcut-started spring, where the capture lands mid-animation).
 // The last page edge colour seen: a resize drag shows it in the area the page hasn't caught up with yet,
 // before its own snapshot (50-200 ms) is ready.
 let lastSnapshotEdge = '';
-async function freezePage({ fade = false } = {}) {
+async function freezePage() {
   const token = ++freezeToken;
   // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
   const r = heldRect || viewport.getBoundingClientRect();
@@ -2226,10 +2511,20 @@ async function freezePage({ fade = false } = {}) {
   }
   if (snapshot) { snapshot.remove(); URL.revokeObjectURL(snapshot.src); }
   snapshot = img;
-  if (fade) img.classList.add('fade-in');
-  lastSnapshotEdge = edgeColor(img);
-  viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge);
+  edgeColor(img).then((colour) => { if (!colour || img !== snapshot) return; lastSnapshotEdge = colour; viewport.style.setProperty('--snapshot-edge', colour); });
   viewport.append(img);
+  // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
+  // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
+  await new Promise((done) => afterPaint(done));
+  if (token !== freezeToken) return; // thawed meanwhile
+  window.browser.freezeShown?.();
+}
+// Runs fn once the UI has painted what it just changed: two frames, or a short timer where no frames are drawn (a minimized window).
+function afterPaint(fn) {
+  let done = false;
+  const run = () => { if (done) return; done = true; clearTimeout(timer); fn(); };
+  const timer = setTimeout(run, 80);
+  requestAnimationFrame(() => requestAnimationFrame(run));
 }
 
 const SNAPSHOT_REMOVE_DELAY_MS = 80; // the live page is back a moment before the still image leaves, so no blank frame shows
@@ -2258,38 +2553,64 @@ function reportTabSidebar(open, tabId = null) { // (no tab named: main's front t
 
 // visible: the wish. fromTab: following the tab in front (no report to main, the prompt keeps the focus it has).
 // instant: no spring (the first state of a window, a full-page chat docking back to a closed tab).
-async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
+// newTab: the tab in front is the new-tab page (default: look). It never slides: see the rule below.
+//
+// How the sidebar moves (one source of truth: the page view's bounds are only ever sent from here, in this order):
+//   - Web pages: the page becomes a snapshot first (freezePage; main hides the live view only once the snapshot is painted), the
+//     sidebar springs over it, then the live view comes back at its final size (one reflow, none per frame). If the snapshot
+//     isn't there within STILL_FREEZE_WAIT_MS, the change is made without a slide.
+//   - The new-tab page, reduced motion, and anything above that failed: no slide, no snapshot, one instant resize like Chrome's side
+//     panel (applyStill). The new-tab page doesn't reflow when its view narrows (main.js layout(): it keeps its full-width layout),
+//     so it has nothing to protect with a snapshot, and its cards and widgets are never hidden and brought back.
+let showSeq = 0; // each call is numbered: a call that is overtaken while it waits gives way to the newer one
+let sidebarWanted = !document.body.classList.contains('sidebar-hidden'); // what was last asked for, set the moment it is asked
+const STILL_FREEZE_WAIT_MS = 180; // a snapshot later than this isn't worth waiting for (a heavy page's capture): the change is made at once instead
+const activeOnNewTab = () => { const t = lastTabState?.tabs.find((x) => x.id === lastTabState.activeId); return Boolean(t) && !t.url && !t.page && !t.error; };
+let settleStill = null; // a no-slide change whose last step waits for the UI's paint; called early when another change arrives first
+async function showSidebar(visible, { fromTab = false, instant = false, newTab = activeOnNewTab() } = {}) {
   const body = document.body;
-  const still = instant || motionReduced(); // (no motion: the single reportBounds() in finish() sends the final size)
+  const seq = ++showSeq;
+  sidebarWanted = visible;
   $('sidebar').classList.remove('prewarm'); // never animate from the warm-up layout
   $('toggle-sidebar').setAttribute('aria-pressed', String(visible));
   window.assistant.sidebarState?.(visible); // main: when to notify about a reply, and the unread mark
   if (!fromTab) reportTabSidebar(visible);
-  const wasEarly = Boolean(earlyFreeze);
-  if (earlyFreeze) {
-    const pending = earlyFreeze;
-    earlyFreeze = null;
-    await pending;
+  settleStill?.(); // (an earlier no-slide change is finished first, so this one starts from a settled layout)
+  const early = earlyFreeze; // a snapshot started on pointerdown
+  earlyFreeze = null;
+  const still = instant || newTab || motionReduced() || gpuCalm || window.lumenSoftwareGfx === true; // (gpuCalm: no snapshot while the GPU recovers; lumenSoftwareGfx: drawing is in software, a capture is a CPU readback)
+  let frozen = false;
+  if (!still) {
+    const pending = early || (snapshot ? null : freezePage());
+    if (pending) await Promise.race([pending, new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
+    if (seq !== showSeq) return; // toggled again while waiting: that call carries on
+    frozen = Boolean(snapshot);
+  } else if (early) { // (pressed on a page that no longer slides: drop the snapshot it started)
+    await early;
+    if (seq !== showSeq) return;
   }
-  // No head start (a keyboard shortcut): the spring doesn't wait for the capture. The page area stays its
-  // background colour or the live page until the snapshot lands, and swaps in then (at the end of this function).
-  const lateFreeze = !wasEarly && !revealAnim && !still && !snapshot;
   const velocity = revealAnim?.velocity || 0;
   const interrupted = Boolean(revealAnim);
   revealAnim?.stop();
   revealAnim = null;
+  if (!frozen) { // no slide
+    applyStill(visible, { fade: !instant && !fromTab && !motionReduced() });
+    if (visible && !fromTab) focusPrompt(seq);
+    return;
+  }
   const wasHidden = body.classList.contains('sidebar-hidden');
   if (visible && wasHidden) body.classList.remove('sidebar-hidden');
   const target = visible ? 1 : 0;
   // Opening: the page takes its narrower size now and the sidebar slides over the space.
   // Closing: the page keeps its size until the sidebar has gone, then widens once.
   // (Interrupted mid-spring, the page area is already floating at full size: keep the size held.)
+  // The live view is hidden behind the snapshot by now, so resizing it here shows nothing.
   if (!(interrupted && heldRect)) {
     body.classList.remove('sidebar-moving'); // measure the settled layout
     heldRect = viewport.getBoundingClientRect();
   }
   if (visible && wasHidden) setReveal(0);
-  if (!still) body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
+  body.classList.add('sidebar-moving'); // styles.css: the sidebar floats and slides by transform
   reportBounds();
   const finish = () => {
     revealAnim = null;
@@ -2301,24 +2622,93 @@ async function showSidebar(visible, { fromTab = false, instant = false } = {}) {
     reveal = target;
     reportBounds();
   };
-  // Reduced motion: no spring, so heldRect is set above only to be cleared by finish() in the same tick;
-  // the single reportBounds() inside finish() then sends the final size and nothing animates.
-  if (still) finish();
-  else {
-    // Starting from rest: let the first layout/paint of the sidebar and snapshot land before
-    // motion begins, so any slow frame is a still frame, not a jump.
-    revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
-  }
-  if (lateFreeze && revealAnim) freezePage({ fade: true }); // sized from heldRect, the page's final size, already set above
-  if (visible && !fromTab) $('prompt').focus({ preventScroll: true });
+  revealAnim = springTo(reveal, target, { response: visible ? SPRING_OPEN_RESPONSE : SPRING_CLOSE_RESPONSE, velocity, onUpdate: setReveal, onDone: finish });
+  if (visible && !fromTab) focusPrompt(seq);
 }
+// The message box takes the keyboard when the sidebar opens. A sidebar that was just opened is still visibility:hidden for a frame or two
+// after its class comes off (with Reduce motion or Performance mode on, a 10 microsecond transition holds it), and focus() on a hidden
+// element is ignored: asked again every 16 ms until it has it (not for long, and not once the sidebar was toggled again).
+function focusPrompt(seq) {
+  const box = $('prompt');
+  box.focus({ preventScroll: true });
+  let tries = 0;
+  const again = () => {
+    if (document.activeElement === box || seq !== showSeq || ++tries > 25 || document.body.classList.contains('sidebar-hidden')) return;
+    box.focus({ preventScroll: true });
+    setTimeout(again, 16);
+  };
+  if (document.activeElement !== box) setTimeout(again, 16);
+}
+// The no-slide change. Opening: the sidebar takes its column in the UI at once and the page view stays full-size for the two frames the
+// UI needs to paint it (the sidebar is under the view for that moment, unseen), then the view narrows. Closing is the other way round: the
+// view widens first, over the sidebar, and the sidebar leaves the UI two frames later. Either way no frame shows a gap (nothing drawn
+// in the strip) or the view over a sidebar that should be showing.
+function applyStill(visible, { fade = false } = {}) {
+  const body = document.body;
+  heldRect = null;
+  body.classList.remove('sidebar-moving');
+  clearReveal();
+  reveal = visible ? 1 : 0;
+  if (snapshot) thawPage();
+  const hidden = body.classList.contains('sidebar-hidden');
+  if (visible === !hidden) { boundsHeld = false; reportBounds(); return; } // (already so)
+  const settle = () => {
+    if (settleStill !== settle) return;
+    settleStill = null;
+    boundsHeld = false;
+    if (!visible) body.classList.add('sidebar-hidden');
+    reportBounds();
+    // A short fade, on the sidebar alone (no layout, no page involved): it arrives rather than popping in.
+    if (visible && fade) $('sidebar').animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: 'ease-out' });
+  };
+  boundsHeld = false;
+  let widened = Promise.resolve();
+  if (visible) {
+    body.classList.remove('sidebar-hidden');
+  } else {
+    const b = currentBounds();
+    widened = sendBoundsAck({ ...b, width: b.fullWidth }); // the page view's size with the sidebar gone, now
+  }
+  boundsHeld = true;
+  settleStill = settle;
+  widened.then(() => afterPaint(settle)); // (closing: the sidebar goes once main has widened the view over it)
+}
+// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
+// starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
+// this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
+// open stays in History, and a reply still being written there carries on.
+// [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
+// closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+let toggleSeq = 0;
+async function toggleSidebarByHand() {
+  // What the toggle does is decided at the press, from what was last asked for (not from what the button shows yet): five quick
+  // presses are five flips, however long opening waits for main's answer below.
+  const opening = !sidebarWanted;
+  sidebarWanted = opening;
+  const mine = ++toggleSeq;
+  if (opening) {
+    let target = null;
+    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    if (mine !== toggleSeq || sidebarWanted !== opening) return; // pressed again (or changed by something else) while main answered: that decides
+    if (target?.view) window.chatTakeView?.(target.view);
+    const plan = window.sidebarOpenPlan({
+      setting: window.lumenSidebarNewChat !== false,
+      busy: Boolean(target),
+      empty: !$('empty').hidden,
+      intent: $('toggle-sidebar').dataset.attention === 'approval' || $('toggle-sidebar').classList.contains('approval-pending'), // a run is waiting for an OK in its chat
+    });
+    if (plan === 'new') $('new-chat').click();
+  }
+  showSidebar(opening);
+}
+window.showSidebarFor = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); }; // tasks.js, research.js: opening the sidebar for their panel is not "a new chat"
 $('toggle-sidebar').onclick = () => {
   if (chatFull) { exitFull(); return; } // the toggle docks a full chat back rather than closing it
-  showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true');
+  toggleSidebarByHand();
 };
 // Start the page snapshot as soon as the button is pressed; the click arrives a little later.
 $('toggle-sidebar').addEventListener('pointerdown', (e) => {
-  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced()) earlyFreeze = freezePage();
+  if (e.button === 0 && !revealAnim && !snapshot && !motionReduced() && !gpuCalm && window.lumenSoftwareGfx !== true && !activeOnNewTab()) earlyFreeze = freezePage(); // (the new-tab page never slides: nothing to capture)
 });
 
 // Resizable from the sidebar's left edge; the width is remembered. Double-click resets it.
@@ -2326,7 +2716,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null; // the width the user chose; a narrow window may hold it smaller for now
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420)); // the page keeps 420px
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0))); // the page keeps 420px (the side list, if there is one, comes out of the rest)
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
@@ -2349,40 +2739,18 @@ resizer.addEventListener('pointerdown', (e) => {
   const startWidth = $('sidebar').getBoundingClientRect().width;
   resizer.setPointerCapture(e.pointerId);
   document.body.classList.add('resizing');
-  // The page is a native view: once the pointer is over it, it takes the mouse moves (the drag
-  // stalls and the cursor changes). For the drag it is shown as a snapshot, like during the spring.
-  const frozen = !snapshot && !motionReduced() ? freezePage() : null;
-  // Until the snapshot is up (a full-page capture takes 50-200 ms) the page is still live, and resizing it
-  // every frame made the site reflow on each one: the first moments of a drag stuttered. Its size is held for
-  // the whole drag and sent once at the end, as the sidebar's spring does (heldRect).
-  let ended = false;
-  const held = frozen && !heldRect;
-  if (held) {
-    heldRect = viewport.getBoundingClientRect();
-    if (lastSnapshotEdge) viewport.style.setProperty('--snapshot-edge', lastSnapshotEdge); // body.resizing paints it behind the held page
-    frozen.then(() => { if (!ended && !snapshot && heldRect) { heldRect = null; reportBounds(); } }); // no snapshot came: don't leave the page at a stale size
-  }
+  // The live page follows the edge: no still picture stands in for it. Its size goes to main once per frame at most (move waits for
+  // the frame, and reportBounds sends only a size that changed), and the area it has not caught up with is the page's own background
+  // colour (main.js pageBackground() on the view, the window and the UI's viewport), never the default black.
   let frame = 0;
-  // A still pointer sends no moves, and main thaws a freeze that has been quiet for 6 s: keep it alive until the drag ends.
-  // Capped (freeze-keepalive.js): a pointer held for over a minute stops pinging and main thaws the page.
-  const alive = freezeKeepAlive(freezeAlive);
   const move = (ev) => {
     cancelAnimationFrame(frame);
-    freezeAlive();
     frame = requestAnimationFrame(() => setSidebarWidth(startWidth + (startX - ev.clientX)));
   };
-  const up = async () => {
-    ended = true;
-    alive.stop();
+  const up = () => {
     resizer.removeEventListener('pointermove', move);
     document.body.classList.remove('resizing');
-    localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)));
-    if (frozen) {
-      await frozen;
-      if (held) { heldRect = null; reportBounds(); } // the page's final size, once, while it is still hidden
-      thawPage();
-    }
-    if (!snapshot) viewport.style.removeProperty('--snapshot-edge');
+    requestAnimationFrame(() => localStorage.setItem('sidebarWidth', String(Math.round($('sidebar').getBoundingClientRect().width)))); // (after the last move's frame)
   };
   resizer.addEventListener('pointermove', move);
   // Fires after pointerup or pointercancel, and if capture is lost any other way: the drag always ends.
@@ -2396,7 +2764,7 @@ resizer.addEventListener('keydown', (e) => {
   const width = setSidebarWidth($('sidebar').getBoundingClientRect().width + (e.key === 'ArrowLeft' ? 20 : -20));
   localStorage.setItem('sidebarWidth', String(width));
 });
-window.browser.onToggleSidebar(() => showSidebar($('toggle-sidebar').getAttribute('aria-pressed') !== 'true'));
+window.browser.onToggleSidebar(() => toggleSidebarByHand());
 // Ctrl+Shift+K: the New chat button, opening the sidebar first (a run in progress keeps going in its own chat).
 window.browser.onNewSidebarChat(async () => {
   if ($('toggle-sidebar').getAttribute('aria-pressed') !== 'true') await showSidebar(true);
@@ -2406,6 +2774,9 @@ window.browser.onNewSidebarChat(async () => {
   const focusPrompt = () => $('prompt').focus({ preventScroll: true });
   focusPrompt();
   requestAnimationFrame(focusPrompt); // the new chat's reset can re-render the prompt area
+  // A sidebar that was just opened is still visibility:hidden for a frame or two after the class comes off, and focus() on a hidden
+  // element is ignored: keep trying until the prompt really has focus (the keyboard shortcut used to leave focus on the toggle button).
+  for (let i = 0; i < 30 && document.activeElement !== $('prompt'); i++) { await new Promise((r) => requestAnimationFrame(r)); focusPrompt(); }
 });
 
 // ---------- full-page chat ("Ask AI" from the homepage) ----------
@@ -2420,6 +2791,7 @@ const isNewTabPage = (tab) => Boolean(tab) && !tab.url && !tab.page && !tab.erro
 
 function enterFull() {
   if (chatFull) return;
+  settleStill?.(); // (a sidebar change still waiting for its paint is finished first: it would otherwise hide the sidebar again under the full chat)
   chatFull = true;
   document.body.classList.add('chat-full');
   window.browser.setChatFull?.(true); // main hides the tab's native view; see layout() in main.js
@@ -2478,7 +2850,7 @@ function followTabSidebar(state) {
   if (chatFull) return; // a full-page chat is the sidebar open (watchFullChatTab docks it back when its tab is left)
   if (sidebarPending > 0 && (!switched || first)) return; // (a state sent before this window's own answer, which it already carries: the welcome, a click before the first state)
   const want = Boolean(state.sidebar);
-  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first });
+  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) }); // (the state's own front tab: the strip may not have drawn it yet)
 }
 window.browser.onTabs(followTabSidebar);
 
@@ -2509,9 +2881,52 @@ window.browser.onAttachImage?.(async (base64) => {
   showSidebar(true);
   try {
     const bytes = Uint8Array.from(atob(String(base64)), (c) => c.charCodeAt(0));
-    await addImages([new File([bytes], 'screenshot.png', { type: 'image/png' })]);
+    await addFiles([new File([bytes], 'screenshot.png', { type: 'image/png' })]);
     prompt.focus();
   } catch { /* an unreadable image is skipped, as with a pasted one */ }
+});
+
+// [files] The quick picker (Ctrl+Shift+F; files-picker.js and .css, 19 KB) is loaded in an idle moment after start, or by the first key that
+// asks for it, instead of being part of the bundle every window parses: the key opens it once it is there.
+let filesPickerLoad = null;
+function loadFilesPicker() {
+  filesPickerLoad ||= new Promise((resolve) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
+    document.head.append(css);
+    document.body.append(js);
+  });
+  return filesPickerLoad;
+}
+window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
+setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
+
+// The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
+// "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
+
+// [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
+window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
+  showSidebar(true);
+  try {
+    await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);
+    prompt.focus();
+  } catch { /* an unreadable file is skipped, as with a dropped one */ }
 });
 
 // ---------- settings: in lumen://settings; the sidebar keeps the search engine in sync ----------
@@ -2576,6 +2991,7 @@ window.browser.onDownloads?.((list) => {
     : latest.state === 'completed' ? t('downloads.done') : ['cancelled', 'interrupted'].includes(latest.state) ? t(`downloads.${latest.state}`) : latest.state;
   downloadsBtn.title = `${latest.name} — ${status}`;
 });
+for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
@@ -2583,6 +2999,15 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+// [agents out of sight] The one passive place for an outside agent's approvals: a count in the toolbar. It opens nothing by itself.
+window.browser.onAgentsPending?.(({ count } = {}) => {
+  const b = $('agents-pending');
+  if (!b) return;
+  b.hidden = !(count > 0);
+  const n = $('agents-pending-count');
+  if (n) n.textContent = count > 99 ? '99+' : String(count || 0);
+});
+$('agents-pending')?.addEventListener('click', () => window.browser.focusPendingAgent?.());
 // [agent window] This window is an outside agent's own (Claude Code, Codex…): a badge in the toolbar says whose it is.
 window.browser.onAgentWindow?.((info) => {
   const chip = $('agent-window-chip');
@@ -2618,9 +3043,11 @@ window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install
 chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
-  button.title = `${who.name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
+  const name = who.setup ? t('toolbar.aiSetup') : who.name; // nothing connected: the button says what it is for
+  button.title = `${name} (${navigator.platform.startsWith('Mac') ? '⌘J' : 'Ctrl+J'})`;
   button.dataset.assistant = who.name;
-  button.setAttribute('aria-label', who.name);
+  button.classList.toggle('needs-setup', Boolean(who.setup));
+  button.setAttribute('aria-label', name);
   button.style.setProperty('--assistant-tint', who.tint);
   const swap = () => {
     button.querySelector('svg')?.remove();
@@ -2650,17 +3077,60 @@ startChat();
 // External agents (Claude Code, Codex, Antigravity…) drive the browser; their calls show here.
 
 const mcpSteps = new Map(); // step id -> row
+// "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
+const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
+
+// ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
+// A pill per app that is working (or paused), with Stop and Take over; and a bar under the toolbar when an app that has not been allowed
+// yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
+(() => {
+  const pills = $('external-pills');
+  const bar = $('external-bar');
+  if (!pills || !bar || !window.assistant.externalApps) return;
+  const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
+  const button = (cls, label, onclick) => Object.assign(el('button', cls, label), { type: 'button', onclick });
+  function render(state) {
+    const active = state?.active || [];
+    pills.replaceChildren(...active.map((a) => {
+      const pill = el('div', 'external-pill' + (a.paused ? ' paused' : ''));
+      pill.setAttribute('role', 'status');
+      pill.dataset.appId = a.id;
+      const text = el('span', 'external-pill-text', t(a.paused ? 'external.paused' : 'external.using', { client: a.name }));
+      pill.title = text.textContent;
+      pill.append(el('span', 'agent-dot'), text,
+        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalApps.send('resume', a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalApps.send('takeover', a.id)),
+        button('external-stop', t('external.stop'), () => window.assistant.externalApps.send('stop', a.id)));
+      return pill;
+    }));
+    pills.hidden = !active.length;
+    const ask = (state?.prompts || [])[0];
+    if (!ask) { bar.hidden = true; bar.replaceChildren(); delete bar.dataset.promptId; return; }
+    if (bar.dataset.promptId === ask.id) return;
+    bar.dataset.promptId = ask.id;
+    const answer = (decision) => window.assistant.externalApps.answer(ask.id, decision);
+    bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
+      button('primary', t('external.allow'), () => answer('allow')),
+      button('', t('external.deny'), () => answer('deny')));
+    bar.hidden = false;
+  }
+  window.assistant.externalApps.on(render);
+  window.assistant.externalApps.state().then(render).catch(() => {});
+})();
 let mcpPillText = null;
 // The pill says an outside agent is acting: a tool call of an MCP agent is running, or a CDP client (Playwright)
 // is attached. A connected-but-idle MCP agent (Claude Code keeps its session open all day) and Lumen's own
 // engine sessions don't count. It holds for a moment after the last call so a run of calls doesn't flicker,
 // and the chat gets one line the first time each agent connects in this window, never one per session.
 const MCP_PILL_HOLD_MS = 1500;
-const mcpAnnounced = new Set();
 const mcpRunning = new Set(); // ids of the MCP tool calls in flight
 let mcpCdpActive = false;
 let mcpWho = '';
 let mcpPillTimer = null;
+// [quiet MCP] An outside agent works in a window of its own (features/agent-windows.js), and its steps are sent only
+// there. In that window they are the pill's text (the latest step, replacing the one before), never rows in a chat; nothing
+// of them reaches the window the user is working in. mcpStepNow is the label shown; mcpLastRow lets a repeat collapse.
+let mcpStepNow = '';
+let mcpLastRow = null;
 
 function mcpPillRefresh() {
   const driving = mcpCdpActive || mcpRunning.size > 0;
@@ -2669,7 +3139,8 @@ function mcpPillRefresh() {
     const text = document.querySelector('#agent-pill span:not(.agent-dot)');
     if (!text) return;
     if (mcpPillText === null) mcpPillText = text.textContent;
-    text.textContent = driving ? t('mcp.driving', { client: mcpWho }) : mcpPillText;
+    text.textContent = driving ? (document.body.classList.contains('agent-window') && mcpStepNow ? mcpStepNow : t('mcp.driving', { client: mcpWho })) : mcpPillText;
+    $('agent-pill').title = text.textContent; // (the tooltip carries the full words when a compact toolbar shows only a short label)
   };
   clearTimeout(mcpPillTimer);
   if (driving) showPill();
@@ -2677,13 +3148,25 @@ function mcpPillRefresh() {
 }
 
 function mcpStepRow(event) {
-  const label = event.label || (TOOL_LABELS[event.name] || (() => event.name))(event.input || {});
+  const label = event.label || (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
+  if (document.body.classList.contains('agent-window')) { mcpStepNow = `${event.clientName}: ${label}`; return; } // the pill says it; no chat row
   const step = document.createElement('div');
   step.className = 'step running mcp-step';
   step.innerHTML = '<span class="step-detail"></span>';
   step.firstChild.textContent = `${event.clientName}: ${label}`;
   step.title = step.firstChild.textContent;
   mcpSteps.set(event.id, step);
+  // The same step again straight after itself is one line with a count, not a column of copies.
+  const prev = mcpLastRow;
+  if (prev && prev.isConnected && prev.dataset.mcpText === step.title && prev === $('messages').lastElementChild) {
+    prev.dataset.mcpCount = String(Number(prev.dataset.mcpCount || 1) + 1);
+    prev.firstChild.textContent = `${step.title} ×${prev.dataset.mcpCount}`;
+    prev.className = 'step running mcp-step';
+    mcpSteps.set(event.id, prev);
+    return;
+  }
+  step.dataset.mcpText = step.title;
+  mcpLastRow = step;
   append(step);
 }
 
@@ -2692,12 +3175,7 @@ window.assistant.onMcpEvent?.((event) => {
     case 'session': {
       // MCP sessions carry `engine` (null for an outside agent) and only announce; the CDP proxy's don't and drive the pill.
       if (!('engine' in event)) { mcpCdpActive = Boolean(event.active || event.remaining > 0); if (mcpCdpActive) mcpWho = event.clientName; mcpPillRefresh(); }
-      if (event.engine) break; // Lumen's own engine, not an outside agent
-      if (event.active && !mcpAnnounced.has(event.clientName)) {
-        mcpAnnounced.add(event.clientName);
-        append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('mcp.connected', { client: event.clientName }) }));
-      }
-      break;
+      break; // an outside agent connecting says nothing in the user's chat (it has a window of its own; the chip there names it)
     }
     case 'tool':
       mcpStepRow(event);
@@ -2706,10 +3184,12 @@ window.assistant.onMcpEvent?.((event) => {
       mcpPillRefresh();
       break;
     case 'tool_update': { // the specific label of a step already shown (an outside agent's usually came in its 'tool' event)
+      if (document.body.classList.contains('agent-window')) { if (event.label) { mcpStepNow = `${event.clientName}: ${event.label}`; mcpPillRefresh(); } break; }
       const step = mcpSteps.get(event.id);
-      if (!step || !event.label || !step.firstChild) break;
+      if (!step || !event.label || !step.firstChild || step.dataset.mcpCount) break;
       step.firstChild.textContent = `${event.clientName}: ${event.label}`;
       step.title = step.firstChild.textContent;
+      step.dataset.mcpText = step.title;
       break;
     }
     case 'tool_done': {
@@ -2725,21 +3205,58 @@ window.assistant.onMcpEvent?.((event) => {
     case 'approval': {
       // (An outside agent's card is quiet: with the sidebar closed the AI button carries a badge instead, and the card waits for the user.)
       if (document.body.classList.contains('sidebar-hidden') && !event.quiet) showSidebar(true);
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, upload: event.upload });
       const card = approvals.get(event.approvalId)?.card;
       const title = card?.querySelector('.approval-title');
       const vars = { client: event.clientName, host: event.host, file: event.host, query: event.query };
-      if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
+      const uploading = event.action === 'upload' || event.action === 'upload-pick'; // [uploads]
+      if (title && uploading) title.textContent = t(event.action === 'upload' ? 'mcp.approval.upload' : 'mcp.approval.uploadPick', { ...vars, names: (event.upload?.files || []).map((x) => x.name).join(', ') });
+      else if (title) title.textContent = t(event.query !== undefined ? 'mcp.approval.search' : event.action === 'open' ? 'mcp.approval.open' : event.action === 'pdf' ? 'mcp.approval.pdf' : event.action === 'script' ? 'mcp.approval.script' : 'mcp.approval.interact', vars);
       card?.querySelector('.approval-always')?.remove(); // auto-allow is for the sidebar's AI only
       if (event.action === 'open' && event.query === undefined) { const detail = card?.querySelector('.approval-detail'); if (detail) detail.textContent = t('mcp.approval.detail.open'); }
       card?.setAttribute('aria-label', title?.textContent || '');
       break;
     }
     case 'approval_done':
-      resolveApproval(event.approvalId, event.ok);
+      resolveApproval(event.approvalId, event.ok, event.names);
       break;
   }
 });
+
+// The toolbar's pills (an update, "<AI> is using this tab") never crowd the address field: the end column goes compact in steps,
+// data-compact 1 (a dot and a short label) then 2 (icons only; extras.css), as far as it takes to fit. It tries each step from the
+// full pills down and keeps the first that leaves every item whole inside the column, clear of the address and inside the window,
+// whatever mix of pills, extension icons and window width there is. (Offsets, not rects: the pills slide in with a transform.)
+(() => {
+  const end = document.querySelector('.toolbar-end');
+  const omni = document.querySelector('.omnibox');
+  if (!end || !omni) return;
+  const fits = () => {
+    const kids = [...end.children].filter((c) => c.getClientRects().length);
+    if (!kids.length) return true;
+    const box = end.getBoundingClientRect();
+    const last = kids[kids.length - 1];
+    return box.left >= omni.getBoundingClientRect().right - 0.5 && box.right <= innerWidth + 0.5
+      && kids[0].offsetLeft >= end.offsetLeft - 0.5 && last.offsetLeft + last.offsetWidth <= end.offsetLeft + end.offsetWidth + 0.5;
+  };
+  let fitting = false;
+  const fitToolbarPills = () => {
+    if (fitting) return;
+    fitting = true;
+    try {
+      let level = 0;
+      end.dataset.compact = '0';
+      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+    } finally { fitting = false; }
+  };
+  const ro = new ResizeObserver(fitToolbarPills);
+  ro.observe(end);
+  ro.observe(document.querySelector('.toolbar'));
+  const mo = new MutationObserver(fitToolbarPills); // (a pill shown or hidden, its words changed, a button toggled)
+  mo.observe(end, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['hidden', 'class', 'style'] });
+  mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  fitToolbarPills();
+})();
 
 // Stop on the pill ends external sessions when the sidebar agent isn't running.
 $('agent-stop')?.addEventListener('click', () => {

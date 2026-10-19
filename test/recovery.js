@@ -2,6 +2,7 @@
 // stops responding can be closed, a frozen tab still closes, the browser UI reloads after a crash
 // with its tabs intact, a background tab's alert waits (with a badge) instead of switching tabs,
 // and a link handed over by a second copy opens in a tab.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

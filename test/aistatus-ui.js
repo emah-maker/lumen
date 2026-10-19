@@ -2,6 +2,7 @@
 // them live without a reload, adapts to the card's size (summary and dots, then rows, then detail and the live strip) and never
 // overflows or clips at any size. The window is off-screen (LUMEN_TEST_BACKGROUND) and the profile a throwaway.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -173,6 +174,13 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     const text = await inTab("document.querySelector('.w-card.aistatus .w-body').innerText");
     check('large: each AI’s state is written out (not only a colour)', /Claude Code[\s\S]*Limit reached/.test(text) && /Signed out/.test(text) && /Not installed/.test(text) && /Connected/.test(text), text);
     check('large: the model in use, the full-access state and a limit’s reset time', /Using Sonnet/.test(text) && /Full access on/.test(text) && /Resets \d{1,2}:\d{2}/.test(text), text);
+    // Every connected AI has its rows: an API provider's tokens and tight rate limit, Antigravity's quota reset, the effort chosen (provider-usage.js numbers, fake here).
+    await setFacts({ ...MANY, engines: { ...MANY.engines, antigravity: { installed: true, signedIn: 'unknown', enabled: true } }, agyLimit: { resetsAt: NOW + 110 * 3600e3 }, today: { ...MANY.today, openai: { turns: 2, costUSD: 0, tokens: 4200 }, gemini: { turns: 1, costUSD: 0.01, tokens: 90 } }, rate: { openai: { percent: 91, label: 'Requests per minute', resetsAt: NOW + 3e4 } }, effort: { openai: 'low', claudecode: 'high' } });
+    await waitFor("/Effort: low/.test(document.querySelector('.w-card.aistatus .w-body').innerText)", 60);
+    const more = await inTab("document.querySelector('.w-card.aistatus .w-body').innerText");
+    check('large: Antigravity shows its quota limit with the reset, OpenAI its tokens and a tight rate limit, and the effort chosen', /Antigravity[\s\S]*Limit reached/.test(more) && /4k tokens today/.test(more) && /Requests per minute 91% used/.test(more) && /Effort: low/.test(more) && /\$0\.01 today/.test(more), more);
+    await setFacts(MANY);
+    await sleep(400);
     check('large: the live strip says chats working, waiting, the AI tabs and Hands-off', /1 of 3 chats working/.test(text) && /2 waiting/.test(text) && /4 AI tabs/.test(text) && /Hands-off on/.test(text), text);
     // Roles and names.
     const aria = await inTab(`(() => { const card = document.querySelector('.w-card.aistatus'); return { role: card.getAttribute('role'), label: card.getAttribute('aria-label'), lists: card.querySelectorAll('ul').length, mark: [...card.querySelectorAll('.ai-mark')].every((m) => m.getAttribute('aria-hidden') === 'true') }; })()`);
@@ -197,6 +205,22 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     const empty = await measure();
     check('empty: nothing overflows at the smallest size', empty.cardY <= 1 && empty.bodyY <= 2 && empty.outside.length === 0 && empty.clipped.length === 0, JSON.stringify(empty));
 
+    // [usage bars] A reading of the 5-hour window is a thin progressbar on the card; no reading, no bar; the setting off, none.
+    await setFacts({ ...MANY, cooling: {}, meter: { percent: 83, resetsAt: NOW + 2 * 3600e3 } });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    const barJs = "(() => { const b = document.querySelector('.ai-ubar-row'); return b ? { role: b.getAttribute('role'), now: b.getAttribute('aria-valuenow'), level: b.dataset.level, text: b.getAttribute('aria-valuetext'), label: b.getAttribute('aria-label'), width: b.firstChild.style.width } : null; })()";
+    check('usage bars: the card draws the 5-hour reading as a progressbar (83%, amber) with words for a screen reader', await waitFor(`Boolean(${barJs})`), '');
+    const bar = await inTab(barJs);
+    check('usage bars: its value, level, label and fill match the reading', bar && bar.role === 'progressbar' && bar.now === '83' && bar.level === 'warn' && /83% of the 5-hour limit used/.test(bar.text) && /Claude Code usage/.test(bar.label) && bar.width === '83%', JSON.stringify(bar));
+    await setFacts({ ...MANY, cooling: {}, meter: null });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    check('usage bars: with no reading the card has no bar', await waitFor("document.querySelectorAll('.ai-ubar').length === 0"), '');
+    await setFacts({ ...MANY, cooling: {}, meter: { percent: 83, resetsAt: NOW + 2 * 3600e3 }, showBars: false });
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+    check('usage bars: with the setting off the card has no bar', await waitFor("document.querySelectorAll('.ai-ubar').length === 0"), '');
+    await setFacts(MANY);
+    await app.evaluate(() => global.__widgets.aiStatusChanged());
+
     // Light, dark and glass ("on-media" is the photo look): the card is readable and contained under each.
     await setFacts(MANY);
     await app.evaluate(() => global.__widgets.aiStatusChanged());
@@ -216,7 +240,7 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     await inTab("document.body.classList.remove('on-media')");
   } finally {
     await app.close().catch(() => {});
-    try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* the temp profile may linger */ }
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* the temp profile may linger */ }
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

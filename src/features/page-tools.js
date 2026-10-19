@@ -94,8 +94,10 @@ function createPageTools(deps) {
   function checkReaderable(tab) {
     const wc = tab.view?.webContents;
     if (!wc || wc.isDestroyed() || !isWebUrl(wc.getURL())) return;
+    // The probe's source goes into a document once (a single-page site is checked after every in-page navigation).
+    const call = (full) => wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: full ? `${readerableSrc}\n;isProbablyReaderable(document)` : `typeof isProbablyReaderable === 'function' ? isProbablyReaderable(document) : 'missing'` }]);
     readerableSrc ??= vendor('Readability-readerable.js');
-    wc.executeJavaScriptInIsolatedWorld(WORLD, [{ code: `${readerableSrc}\n;isProbablyReaderable(document)` }])
+    call(false).then((out) => (out === 'missing' ? call(true) : out))
       .then((yes) => {
         if (wc.isDestroyed() || Boolean(yes) === Boolean(tab.readerable)) return;
         tab.readerable = Boolean(yes);

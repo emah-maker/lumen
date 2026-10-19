@@ -2,6 +2,7 @@
 // opening it in one tab leaves the others as they were, switching restores each tab's own state (toolbar button, aria-pressed,
 // the page area), tabs that share a chat share the state, a new tab starts closed, a moved or torn-off tab takes its state
 // along, a closed tab is forgotten, and the saved session brings the open tabs back open. Run with LUMEN_TEST_BACKGROUND=1.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -28,6 +29,8 @@ const launch = (profile) => electron.launch({
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sidebartabs-'));
   let app = await launch(profile);
+  const oneChatPerTab = () => app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true)); // these checks are about tabs with a chat each (the old behaviour)
+  await oneChatPerTab();
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const errors = [];
@@ -177,6 +180,7 @@ const launch = (profile) => electron.launch({
   await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
   await app.close();
   app = await launch(profile);
+  await oneChatPerTab();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const stateOf = () => app.evaluate(() => { const w = global.__windows.list().find((x) => x.current) || global.__windows.list()[0]; return { active: w.activeId, tabs: w.tabs.map((t) => t.id) }; });

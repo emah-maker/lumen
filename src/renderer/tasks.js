@@ -90,6 +90,14 @@
     badge.classList.toggle('waiting', waiting > 0);
     button.setAttribute('aria-label', count ? `${T('tasks.button')}: ${T('tasks.button.badge', { running, waiting })}` : T('tasks.button'));
     byId('toggle-sidebar').classList.toggle('has-task-attention', waiting > 0);
+    // The tasks button lives in the More menu: its count shows as a dot on More (accent while running, amber when one waits for you).
+    const more = byId('more-actions');
+    if (more) {
+      more.classList.toggle('has-attention', count > 0 || state.unseen > 0);
+      more.classList.toggle('waiting', waiting > 0);
+      more.title = count ? `${T('sidebar.more')}: ${T('tasks.button.badge', { running, waiting })}` : state.unseen > 0 ? `${T('sidebar.more')}: ${T('tasks.button.unseen', { count: state.unseen })}` : T('sidebar.more');
+      more.setAttribute('aria-label', more.title);
+    }
     button.classList.toggle('has-unseen', !count && state.unseen > 0); // finished while you were elsewhere
     if (!count && state.unseen > 0) button.setAttribute('aria-label', `${T('tasks.button')}: ${T('tasks.button.unseen', { count: state.unseen })}`);
     const enabled = state.settings.enabled;
@@ -119,7 +127,7 @@
 
   // ---- the panel
   function showSidebar() {
-    if (document.body.classList.contains('sidebar-hidden')) byId('toggle-sidebar').click();
+    if (document.body.classList.contains('sidebar-hidden')) (window.showSidebarFor || (() => byId('toggle-sidebar').click()))();
   }
   async function openPanel(id = null, { tab } = {}) {
     showSidebar();
@@ -138,7 +146,7 @@
     open = null;
     button.setAttribute('aria-expanded', 'false');
     button.classList.remove('active');
-    if (refocus) button.focus();
+    if (refocus) (button.offsetParent ? button : byId('more-actions') || button).focus(); // the button sits in the closed More menu
   }
 
   async function render() {
@@ -441,7 +449,7 @@
     sites.setAttribute('aria-label', T('tasks.create.sites'));
     let sitesTouched = false;
     sites.addEventListener('input', () => { sitesTouched = true; summarize(); });
-    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: m.group ? `${m.group} · ${m.label}` : m.label, selected: m.id === pv.model, disabled: !m.available })));
+    const model = h('select', { 'aria-label': T('tasks.create.model') }, pv.models.map((m) => h('option', { value: m.id, textContent: window.usageBars ? window.usageBars.annotate(m.group ? `${m.group} · ${m.label}` : m.label, m.id) : (m.group ? `${m.group} · ${m.label}` : m.label), selected: m.id === pv.model, disabled: !m.available })));
     const signedIn = h('input', { type: 'checkbox' });
     const mcp = h('input', { type: 'checkbox' });
     // A Claude Code / Grok Build task has Lumen's browser tools only: the user's MCP tools are for API models.
@@ -531,7 +539,7 @@
   setInterval(() => { if (!panel.hidden && !panel.querySelector('.task-edit') && state.tasks.some((t) => t.status === 'running')) render(); }, 20000);
   api.onState((s) => { state = s; applyState(); if (!panel.hidden) render(); });
   api.onToast(toast);
-  api.onOpen(({ id } = {}) => openPanel(id || null));
+  api.onOpen((p = {}) => (p.routine && window.lumenRoutines ? window.lumenRoutines.fromMain(p) : openPanel(p.id || null))); // (the home card and Settings can ask for the routine editor)
   api.onPropose((spec) => openCreate(spec || {}));
   // What renderer/routines.js builds the Routines view with (same page, loaded after this file).
   window.lumenTasks = {

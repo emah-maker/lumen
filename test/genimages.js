@@ -2,6 +2,7 @@
 // picture in the reply (fit to the bubble, Save / Copy, click to enlarge, right-click menu), it is saved with the chat and drawn again
 // after the chat is reopened and in the full-page chat, a model that can't make pictures says so, a made picture comes out with the
 // export, deleting the chat deletes the file, web pictures wait for a click, and nothing unsafe becomes an <img>.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -64,11 +65,12 @@ const SRC = path.join(__dirname, '..', 'src').split(path.sep).join('/');
   // enlarge: a dialog, Escape closes it and returns focus
   await ui.locator('.gen-img-open').focus();
   await ui.keyboard.press('Enter');
-  const dialog = ui.locator('.gen-lightbox[role=dialog]');
+  const dialog = ui.locator('.civ[role=dialog]'); // (the viewer, chat-image-viewer.js, loads on this first click)
+  await dialog.waitFor({ timeout: 8000 }).catch(() => {});
   check('Enter on the picture enlarges it in a labelled dialog', (await dialog.count()) === 1 && (await dialog.getAttribute('aria-modal')) === 'true' && Boolean(await dialog.getAttribute('aria-label')), await dialog.count());
-  check('focus moves into the dialog', await ui.evaluate(() => document.activeElement?.closest('.gen-lightbox') !== null), 'focus outside');
+  check('focus moves into the dialog', await ui.evaluate(() => document.activeElement?.closest('.civ') !== null), 'focus outside');
   await ui.keyboard.press('Escape');
-  check('Escape closes it and gives focus back to the picture', (await ui.locator('.gen-lightbox').count()) === 0 && await ui.evaluate(() => document.activeElement?.classList.contains('gen-img-open')), 'still open');
+  check('Escape closes it and gives focus back to the picture', (await ui.locator('.civ').count()) === 0 && await ui.evaluate(() => document.activeElement?.classList.contains('gen-img-open')), 'still open');
 
   // right-click menu and copy
   await ui.locator('.gen-img-open').click({ button: 'right' });
@@ -124,11 +126,12 @@ const SRC = path.join(__dirname, '..', 'src').split(path.sep).join('/');
 
   // ---- delete the chat: its picture file goes with it
   const removed = await ui.evaluate((id) => window.assistant.chats.remove(id), chatId);
+  for (let i = 0; i < 150 && fs.existsSync(file); i++) await new Promise((r) => setTimeout(r, 100)); // (erased once the Undo time is up)
   check('deleting the chat removes the picture file', Boolean(removed) && !fs.existsSync(file) && (await app.evaluate((_e, id) => global.__imageStore().read(id) === null, info.block.id)), JSON.stringify(removed));
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

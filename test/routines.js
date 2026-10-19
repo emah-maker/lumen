@@ -5,6 +5,7 @@
 // 'resume'); never two copies at once; the concurrency cap; offline waits; approvals pause it with a
 // notification; a disabled routine doesn't run; history is capped; an AI-off start page fails clearly;
 // /routine and "Save as routine" open the editor; a private window can't reach the routines calls.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -14,7 +15,7 @@ const os = require('os');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-routines-'));
 const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-routines-cli-'));
-const cleanup = () => { for (const dir of [profile, cliDir]) fs.rmSync(dir, { recursive: true, force: true }); };
+const cleanup = () => { for (const dir of [profile, cliDir]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); };
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await sleep(80); } return v; };
 
 (async () => {
@@ -78,28 +79,29 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const runRoutines = () => app.evaluate(() => global.__bg.runRoutines());
 
   // ---- 0. The routines calls answer the browser UI only.
-  const gate = await app.evaluate(() => ['routines:save', 'routines:preview'].map((c) => global.__ipcGate.uiOnly.has(c)));
-  check('routines:save and routines:preview are UI-only IPC channels', gate.every(Boolean), JSON.stringify(gate));
+  const gate = await app.evaluate(() => ['routines:save', 'routines:preview', 'routines:webhook-key'].map((c) => global.__ipcGate.uiOnly.has(c)));
+  check('routines:save, routines:preview and routines:webhook-key are UI-only IPC channels', gate.every(Boolean), JSON.stringify(gate));
   check('with no routines there is no routine timer', await app.evaluate(() => global.__bg.routineTimer() === null), '');
 
   // ---- 1. The Routines tab, and a routine made with the editor.
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
+  await ui.click('#more-actions'); // Background tasks is a row of the More menu
   await ui.click('#tasks-btn');
   await ui.waitForSelector('.task-tabs');
   await ui.click('#task-tab-routines');
   await ui.waitForSelector('.routine-new');
-  const tab = await ui.evaluate(() => ({ text: document.getElementById('task-panel').textContent, selected: document.getElementById('task-tab-routines').getAttribute('aria-selected'), templates: document.querySelectorAll('.routine-templates .routine-template').length }));
-  check('the Routines tab says routines run only while Lumen is open, and offers three templates', tab.selected === 'true' && /while Lumen is open/.test(tab.text) && /No routines yet/.test(tab.text) && tab.templates === 3, JSON.stringify(tab));
+  const tab = await ui.evaluate(() => ({ text: document.getElementById('task-panel').textContent, selected: document.getElementById('task-tab-routines').getAttribute('aria-selected'), templates: document.querySelectorAll('.routine-templates .routine-template').length, cards: document.querySelectorAll('.routine-templates .routine-template-card').length, adds: [...document.querySelectorAll('.routine-template-add')].filter((b) => !b.disabled).length }));
+  check('the Routines tab says routines run only while Lumen is open, and offers five one-click templates and two that need a page', tab.selected === 'true' && /while Lumen is open/.test(tab.text) && /No routines yet/.test(tab.text) && tab.templates === 2 && tab.cards === 5 && tab.adds === 5, JSON.stringify(tab));
   await ui.keyboard.press('ArrowLeft');
   check('arrow keys move between the Tasks and Routines tabs', await waitFor(() => ui.evaluate(() => document.getElementById('task-tab-tasks').getAttribute('aria-selected') === 'true' && document.activeElement?.id === 'task-tab-tasks')), '');
   await ui.click('#task-tab-routines');
   await ui.waitForSelector('.routine-new');
   await ui.click('.routine-new');
   await ui.waitForSelector('.routine-create .task-create-card');
-  check('the editor offers the templates and focuses the request', await ui.evaluate(() => document.querySelectorAll('.routine-template-row .routine-template').length === 3 && document.activeElement?.tagName === 'TEXTAREA'), '');
-  await ui.evaluate(() => [...document.querySelectorAll('.routine-template-row .routine-template')][0].click());
+  check('the editor offers the templates and focuses the request', await ui.evaluate(() => document.querySelectorAll('.routine-template-row .routine-template').length === 7 && document.activeElement?.tagName === 'TEXTAREA'), '');
+  await ui.evaluate(() => [...document.querySelectorAll('.routine-template-row .routine-template')].find((b) => b.textContent === 'Daily news brief').click());
   const tpl = await ui.evaluate(() => ({ name: document.querySelector('.routine-create input[type=text]').value, repeat: document.querySelector('.routine-repeat').value, prompt: document.querySelector('.routine-create textarea').value }));
-  check('the news template fills a name, a weekday schedule and a request', tpl.name === 'Morning news brief' && tpl.repeat === 'weekdays' && /news brief/.test(tpl.prompt), JSON.stringify(tpl));
+  check('the news template fills a name, a daily schedule and a request', tpl.name === 'Daily news brief' && tpl.repeat === 'daily' && /news brief/.test(tpl.prompt), JSON.stringify(tpl));
   await ui.fill('.routine-create input[type=text]', 'My brief');
   await ui.fill('.routine-create textarea', `ROUTINE-A read 127.0.0.1:${port}/a and report it`);
   await ui.selectOption('.routine-repeat', 'daily');

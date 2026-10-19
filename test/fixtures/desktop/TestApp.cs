@@ -1,0 +1,42 @@
+// A tiny WPF window for test/desktop-apps.js: a textbox, a button, a label, a checkbox and a password box. Built by the test with csc and run
+// by PID; it is never activated (ShowActivated = false, no taskbar button) and sits off the user's screen area. WPF, because its controls
+// report real UI Automation types and patterns (Edit, Button, CheckBox) and a PasswordBox reports IsPassword.
+using System;
+using System.Windows;
+using System.Windows.Automation;
+using System.Windows.Controls;
+
+class TestApp {
+  [STAThread] static void Main(string[] args) {
+    string title = args.Length > 0 ? args[0] : "Lumen UIA Test";
+    string[] xy = (args.Length > 1 ? args[1] : "-3000,100").Split(',');
+    Application app = new Application();
+    Window w = new Window { Title = title, Width = 380, Height = 340, ShowActivated = false, ShowInTaskbar = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = double.Parse(xy[0]), Top = double.Parse(xy[1]), WindowStyle = WindowStyle.ToolWindow };
+    StackPanel panel = new StackPanel { Margin = new Thickness(12) };
+    TextBox name = new TextBox { Width = 220, HorizontalAlignment = HorizontalAlignment.Left };
+    AutomationProperties.SetName(name, "Your name"); AutomationProperties.SetAutomationId(name, "txtName");
+    Button go = new Button { Content = "Greet", Width = 100, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
+    AutomationProperties.SetAutomationId(go, "btnGreet");
+    TextBlock result = new TextBlock { Text = "Waiting", Margin = new Thickness(0, 8, 0, 0) };
+    AutomationProperties.SetAutomationId(result, "lblResult");
+    CheckBox agree = new CheckBox { Content = "I agree", Margin = new Thickness(0, 8, 0, 0) };
+    AutomationProperties.SetAutomationId(agree, "chkAgree");
+    PasswordBox pass = new PasswordBox { Password = "s3cret-value", Width = 220, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
+    AutomationProperties.SetName(pass, "Secret"); AutomationProperties.SetAutomationId(pass, "txtSecret");
+    TextBox pin = new TextBox { Text = "4111-plain-looking", Width = 220, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) }; // not a password box (IsPassword is false), but it calls itself a PIN
+    AutomationProperties.SetName(pin, "Card PIN"); AutomationProperties.SetAutomationId(pin, "txtPin");
+    go.Click += delegate { result.Text = "Hello, " + name.Text; w.Title = title + " - greeted " + name.Text; }; // (the title bar paints even where the window's client area does not, so a capture changes too)
+    panel.Children.Add(name); panel.Children.Add(go); panel.Children.Add(result); panel.Children.Add(agree); panel.Children.Add(pass); panel.Children.Add(pin);
+    if (args.Length > 2 && args[2] == "animate") { // (test/desktop-apps.js, the live picture: the window changes by itself, ten times a second, with no help from Lumen)
+      TextBlock ticker = new TextBlock { Text = "Tick 0", FontSize = 28, Margin = new Thickness(0, 8, 0, 0) };
+      AutomationProperties.SetAutomationId(ticker, "lblTick");
+      panel.Children.Add(ticker);
+      int n = 0;
+      System.Windows.Threading.DispatcherTimer t = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+      t.Tick += delegate { n++; ticker.Text = "Tick " + n; ticker.Foreground = (n % 2 == 0) ? System.Windows.Media.Brushes.Black : System.Windows.Media.Brushes.Red; w.Title = title + " - tick " + n; }; // (the title bar is painted by Windows itself and shows in a capture even when the display is asleep or the window is parked off every screen; the client area then stops updating)
+      t.Start();
+    }
+    w.Content = panel;
+    app.Run(w);
+  }
+}

@@ -1,3 +1,4 @@
+// The wording comes from locales/en.json through window.t (i18n.js, with the table error-preload.js fetched).
 const params = new URLSearchParams(location.search);
 const url = params.get('url') || '';
 let host = url;
@@ -6,9 +7,9 @@ try { host = new URL(url).host || url; } catch {}
 // that stopped responding). Reloading starts it fresh.
 const crashed = params.get('kind') === 'crashed';
 if (crashed) {
-  document.title = 'This page crashed';
-  document.querySelector('h1').textContent = 'This page crashed';
-  document.getElementById('retry').textContent = 'Reload';
+  document.title = window.t('errorPage.crashed.title');
+  document.querySelector('h1').textContent = window.t('errorPage.crashed.title');
+  document.getElementById('retry').textContent = window.t('errorPage.reload');
 }
 const desc = params.get('desc');
 // A network error names what went wrong and what to try (renderer/error-kinds.js).
@@ -21,9 +22,34 @@ if (kind) {
   hint.hidden = !kind.hint;
 }
 document.getElementById('message').textContent = crashed
-  ? `Something went wrong while showing ${host ? `“${host}”` : 'this page'}.`
-  : kind ? kind.message : host ? `The browser can't connect to “${host}”.` : "The browser can't connect to the server.";
+  ? window.t('errorPage.crashed.message', { site: host ? `“${host}”` : window.t('errorPage.thisPage') })
+  : kind ? kind.message : host ? window.t('errorPage.kind.general.message', { site: `“${host}”` }) : window.t('errorPage.kind.general.messageNoHost');
 document.getElementById('code').textContent = desc ? `${desc}${params.get('code') ? ` (${params.get('code')})` : ''}` : '';
 const retry = document.getElementById('retry');
 if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);
 else retry.hidden = true;
+// A name that didn't resolve: main passes the default search engine's URL for the host, so the hint's
+// "search for the site instead" is one click (only an http(s) address is followed).
+const searchUrl = params.get('search') || '';
+const searchButton = document.getElementById('search');
+if (!crashed && host && /^https?:\/\//i.test(searchUrl)) {
+  searchButton.textContent = window.t('errorPage.searchFor', { site: host });
+  searchButton.hidden = false;
+  searchButton.onclick = () => location.replace(searchUrl);
+}
+// kind=missingfile: a file tab from the last session whose file is no longer where it was (features/session-files.js).
+if (params.get('kind') === 'missingfile' && window.lumenMissingFile) {
+  let name = url;
+  try { name = decodeURIComponent(new URL(url).pathname.split('/').pop() || '') || url; } catch {}
+  document.title = window.t('errorPage.missingFile.title');
+  document.querySelector('h1').textContent = window.t('errorPage.missingFile.title');
+  document.getElementById('message').textContent = window.t('errorPage.missingFile.message', { name: '“' + name + '”' });
+  document.getElementById('hint').hidden = true;
+  document.getElementById('code').textContent = '';
+  retry.hidden = false;
+  retry.textContent = window.t('errorPage.missingFile.choose');
+  retry.onclick = () => window.lumenMissingFile.choose();
+  searchButton.hidden = false;
+  searchButton.textContent = window.t('errorPage.missingFile.showFolder');
+  searchButton.onclick = () => window.lumenMissingFile.showInFolder();
+}

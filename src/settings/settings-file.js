@@ -9,6 +9,10 @@
 const fs = require('fs');
 const path = require('path');
 
+// What this run last wrote per file, so an unchanged write is skipped and the previous file is copied to .bak without
+// being read and parsed again. It is only trusted while the file on disk still has that text's size (else it is parsed).
+const lastText = new Map();
+
 function parse(file) {
   try {
     return { data: JSON.parse(fs.readFileSync(file, 'utf8')) };
@@ -19,7 +23,7 @@ function parse(file) {
 
 function loadJson(file) {
   const main = parse(file);
-  if (main.data && typeof main.data === 'object') return main.data;
+  if (main.data && typeof main.data === 'object') { lastText.delete(file); return main.data; }
   const missing = main.error?.code === 'ENOENT';
   const backup = parse(`${file}.bak`);
   if (backup.data && typeof backup.data === 'object') {
@@ -38,7 +42,7 @@ async function loadJsonAsync(file) {
   const fsp = fs.promises;
   const read = async (f) => { try { return { data: JSON.parse(await fsp.readFile(f, 'utf8')) }; } catch (error) { return { error }; } };
   const main = await read(file);
-  if (main.data && typeof main.data === 'object') return main.data;
+  if (main.data && typeof main.data === 'object') { lastText.delete(file); return main.data; }
   const missing = main.error?.code === 'ENOENT';
   const backup = await read(`${file}.bak`);
   if (backup.data && typeof backup.data === 'object') {
@@ -65,7 +69,9 @@ function writeJsonAtomic(file, data, space = 2) {
     fs.closeSync(fd);
   }
   // Keep the last good file: only copy it when it still parses, so a bad file never replaces a good backup.
-  if (parse(file).data) { try { fs.copyFileSync(file, `${file}.bak`); } catch {} }
+  const known = lastText.has(file) && (() => { try { return fs.statSync(file).size === Buffer.byteLength(lastText.get(file)); } catch { return false; } })();
+  if (known || parse(file).data) { try { fs.copyFileSync(file, `${file}.bak`); } catch {} }
+  lastText.delete(file); // (set again below once the new text is on disk)
   try {
     fs.renameSync(tmp, file);
   } catch {
@@ -74,6 +80,7 @@ function writeJsonAtomic(file, data, space = 2) {
     fs.writeFileSync(file, text);
     try { fs.unlinkSync(tmp); } catch {}
   }
+  lastText.set(file, text);
 }
 
 // The same write off the main thread (the periodic session save): serialised, one at a time, and skipped at the
@@ -86,17 +93,29 @@ function writeJsonAtomicAsync(file, data, stillLatest = () => true, space = 2) {
     if (!stillLatest()) return; // a newer write is queued: this one has nothing to do
     const text = JSON.stringify(data, null, space);
     const fsp = fs.promises;
+    // Identical to what was last written and still on disk: nothing to do (no temp file, copy, fsync or rename).
+    if (lastText.get(file) === text) {
+      try { if ((await fsp.stat(file)).size === Buffer.byteLength(text)) return; } catch { /* gone: write it again */ }
+    }
     const tmp = `${file}.tmp-async`;
     await fsp.mkdir(path.dirname(file), { recursive: true });
     const fh = await fsp.open(tmp, 'w');
     try { await fh.writeFile(text); await fh.sync(); } finally { await fh.close(); }
     if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
-    try { JSON.parse(await fsp.readFile(file, 'utf8')); await fsp.copyFile(file, `${file}.bak`); } catch { /* no good file to keep */ }
+    // A file this run wrote (and that still has its size) is known to parse; any other is parsed before it replaces the .bak.
+    try {
+      if (!(lastText.has(file) && (await fsp.stat(file)).size === Buffer.byteLength(lastText.get(file)))) JSON.parse(await fsp.readFile(file, 'utf8'));
+      await fsp.copyFile(file, `${file}.bak`);
+    } catch { /* no good file to keep */ }
     if (!stillLatest()) { await fsp.unlink(tmp).catch(() => {}); return; }
+    lastText.delete(file);
+    let wrote = true;
     try { await fsp.rename(tmp, file); } catch {
-      if (stillLatest()) await fsp.writeFile(file, text).catch(() => {}); // (the fallback write is guarded too)
+      wrote = stillLatest() && await fsp.writeFile(file, text).then(() => true, () => false); // (the fallback write is guarded too)
       await fsp.unlink(tmp).catch(() => {});
     }
+    // (a failed write leaves the file unknown, so the next write parses it and writes in full)
+    if (wrote) lastText.set(file, text);
   };
   chain = chain.then(run, run).catch(() => {});
   return chain;

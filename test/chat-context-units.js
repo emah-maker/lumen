@@ -4,6 +4,7 @@
 // (they still show), Regenerate keeping the summary, the API engine's /compact, /context and auto-compact with a fake
 // Claude client, Claude Code's /compact and /context going to the CLI as typed without full access (a fake `claude`
 // speaking stream-json, as checked against Claude Code 2.1.287), and skills named like the new commands.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -24,6 +25,8 @@ const J = (v) => JSON.stringify(v);
   check('context: no usage, no figure', CU.contextTokensOf(null) === 0 && CU.contextTokensOf({}) === 0);
   check('window: what the engine reported wins', CU.windowFor('claudecode:opus', 1_000_000) === 1_000_000 && CU.windowFor('gpt-5', 400_000) === 400_000);
   check('window: a [1m] model is 1M, anything else 200k', CU.windowFor('claudecode:opus[1m]') === 1_000_000 && CU.windowFor('claudecode:default') === 200_000 && CU.windowFor(null) === 200_000);
+  check('window: Codex, Antigravity and Grok Build without a reported window use the engine\'s usual one; a reported one still wins', CU.windowFor('codex:default') === 272_000 && CU.windowFor('codex:gpt-5.5') === 272_000 && CU.windowFor('antigravity:default') === 1_000_000 && CU.windowFor('grokbuild:default') === 256_000 && CU.windowFor('codex:default', 400_000) === 400_000 && CU.windowFor('codex:default', 0) === 272_000);
+  check('window: a codex chat\'s context records against 272k (never 0, so the strip can show a total)', (() => { const s = {}; CU.setContext(s, { tokens: 26_878, model: 'codex:default', estimated: true }); const v = CU.contextView(s.context); return v.window === 272_000 && Math.round(v.percent) === 10 && v.estimated; })());
   const settings = {};
   CU.setContext(settings, { tokens: 50_000, window: 200_000, now: 5 });
   check('setContext: saved on the chat\'s settings', J(settings.context) === J({ tokens: 50000, window: 200000, at: 5 }), J(settings.context));
@@ -110,8 +113,8 @@ const notices = (events) => events.filter((e) => e.type === 'notice').map((e) =>
     let events = await runOn(agent, 'tell me about cats');
     answer = 'OK';
     const ctx = agent.messages.settings.context;
-    check('api: a reply records the chat\'s context (its request\'s whole input)', ctx?.tokens === 31_040 && ctx.window === 200_000 && !ctx.estimated, J(ctx));
-    check('api: ... and the sidebar is told', events.some((e) => e.type === 'context' && e.context.tokens === 31_040 && Math.round(e.context.percent) === 16), J(events.filter((e) => e.type === 'context')));
+    check('api: a reply records the chat\'s context (its request\'s whole input)', ctx?.tokens === 31_040 && ctx.window === 1_000_000 && !ctx.estimated, J(ctx));
+    check('api: ... and the sidebar is told', events.some((e) => e.type === 'context' && e.context.tokens === 31_040 && Math.round(e.context.percent) === 3 && e.context.window === 1_000_000), J(events.filter((e) => e.type === 'context')));
     events = await runOn(agent, '/compact');
     check('api: /compact with one exchange says there is nothing to compact', notices(events).some((n) => /Nothing to compact yet/.test(n)) && agent.messages.length === 2, J(notices(events)));
     await runOn(agent, 'and dogs?');
@@ -129,7 +132,7 @@ const notices = (events) => events.filter((e) => e.type === 'notice').map((e) =>
     const sent = requests[requests.length - 1].messages;
     check('api: the next request starts with the summary', J(sent[0]).includes('earlier_conversation_summary') && J(sent).includes('and birds?') && !J(sent).includes('tell me about cats'), J(sent).slice(0, 200));
     events = await runOn(agent, '/context');
-    check('api: /context reports the chat\'s figure in words, as a reply', /\*\*Tokens:\*\* 31\.0k \/ 200\.0k \(16%\)/.test(textOf(events)) && /Compacted once/.test(textOf(events)) && !J(agent.messages).includes('/context'), textOf(events));
+    check('api: /context reports the chat\'s figure in words, as a reply', /\*\*Tokens:\*\* 31\.0k \/ 1\.0M \(3%\)/.test(textOf(events)) && /Compacted once/.test(textOf(events)) && !J(agent.messages).includes('/context'), textOf(events));
 
     // auto-compact: a history near what one request may carry is summarized first
     agent.contextBudget = () => 200; // (characters: this chat is well over 80% of it)
@@ -238,7 +241,7 @@ process.stdin.on('end', () => setTimeout(() => process.exit(0), 20));
   } finally {
     engine.dispose?.();
     delete process.env.LUMEN_CLAUDE_BIN;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   // ---- skills: the new commands' names are taken, and a skill saved under one is kept, renamed
@@ -252,7 +255,7 @@ process.stdin.on('end', () => setTimeout(() => process.exit(0), 20));
     const store = skills.createStore({ file });
     const kept = store.list().find((s) => s.id === 'u1');
     check('skills: one saved as /context before is kept as /context-skill', kept?.name === 'context-skill' && kept.title === 'My context', J(store.list().map((s) => s.name)));
-    fs.rmSync(sdir, { recursive: true, force: true });
+    fs.rmSync(sdir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

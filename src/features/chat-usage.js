@@ -4,15 +4,15 @@
 // million tokens). A model not in the table still counts tokens; its cost shows as unknown. OpenRouter
 // and the CLI engines report their own cost, which is used as is.
 
-const PRICES_UPDATED = '2026-09-28';
-
 // $ per 1M tokens: input, output, cache write, cache read.
 const PRICES = {
   'claude-fable-5-1': { in: 10, out: 50, cacheWrite: 12.5, cacheRead: 0.25 },
   'claude-opus-5-5': { in: 4, out: 20, cacheWrite: 5, cacheRead: 0.2 },
   'claude-opus-5': { in: 5, out: 25, cacheWrite: 6.25, cacheRead: 0.5 },
-  'claude-sonnet-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 },
-  'claude-haiku-4-5': { in: 1, out: 5, cacheWrite: 1.25, cacheRead: 0.1 },
+  'claude-sonnet-5-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 },
+  'claude-sonnet-5': { in: 2, out: 10, cacheWrite: 2.5, cacheRead: 0.2 }, // (chats saved on Sonnet 5)
+  'claude-haiku-5-5': { in: 0.1, out: 0.5, cacheWrite: 0.125, cacheRead: 0.01 }, // (prompts up to 100K tokens; $0.50 / $2.50 beyond)
+  'claude-haiku-4-5': { in: 1, out: 5, cacheWrite: 1.25, cacheRead: 0.1 }, // (an older chat's saved model)
   'xai:grok-4': { in: 3, out: 15 },
   'gemini:gemini-2.5-pro': { in: 1.25, out: 10 },
   'gemini:gemini-2.5-flash': { in: 0.3, out: 2.5 },
@@ -104,10 +104,15 @@ function contextTokensOf(raw) {
 }
 
 // The window to measure against: what the engine reported (Claude Code's modelUsage, Grok's catalog, the
-// fallback table for API models), else 1M for a `[1m]` model id and 200k for anything else.
+// fallback table for API models), else 1M for a `[1m]` model id, the engine's usual one, and 200k for anything else.
+// Codex's exec stream and Antigravity give tokens but no window: Codex's own session logs name 272k for its GPT-5
+// models, Gemini's models take 1M, and Grok Build's catalog reports its own (256k only before it has).
+const ENGINE_WINDOWS = { 'codex:': 272_000, 'antigravity:': 1_000_000, 'grokbuild:': 256_000 };
 function windowFor(model, reported) {
   if (Number(reported) > 0) return Number(reported);
-  return /\[1m\]/i.test(String(model || '')) ? 1_000_000 : DEFAULT_WINDOW;
+  if (/\[1m\]/i.test(String(model || ''))) return 1_000_000;
+  const prefix = Object.keys(ENGINE_WINDOWS).find((p) => String(model || '').startsWith(p));
+  return prefix ? ENGINE_WINDOWS[prefix] : DEFAULT_WINDOW;
 }
 
 // Records the chat's context on its settings; returns it (null when there is nothing real to record).
@@ -140,4 +145,4 @@ function parseContextReport(text) {
   return tokens != null && window > 0 ? { tokens, window } : null;
 }
 
-module.exports = { PRICES, PRICES_UPDATED, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW };
+module.exports = { PRICES, addUsage, describeUsage, normalize, priceTurn, emptyUsage, contextTokensOf, windowFor, setContext, contextView, parseCount, parseContextReport, shortCount: compact, DEFAULT_WINDOW, ENGINE_WINDOWS };

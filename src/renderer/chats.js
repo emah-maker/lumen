@@ -11,7 +11,10 @@
   const usageLine = $('chat-usage');
 
   function refreshUsage(text) {
-    usageLine.textContent = text || '';
+    // The one usage line under the header: this chat's tokens and cost, said as such ("This chat: 1.5k tokens · ~$0.01").
+    // Today's total is not a second line: it is in the context meter's tooltip and Settings → Usage.
+    usageLine.dataset.usage = text || '';
+    usageLine.textContent = text ? window.chatTr('chats.usage.line', 'This chat: {usage}').replace('{usage}', text) : '';
     usageLine.hidden = !text;
     usageLine.title = text ? window.chatTr('chats.usage.title', 'Tokens and estimated cost of this chat') : '';
   }
@@ -26,13 +29,19 @@
   });
 
   const tools = window.chatListTools;
-  let query = '';
+  let view = 'chats'; // or 'archived'
   let searchBox = null;
+  let redraw = () => {};
+  const search = tools.searcher(api, () => redraw());
+  const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
   async function render() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
-    const { current, chats } = await api.list();
+    const { current, chats: fresh, projects } = await api.list();
+    const names = new Map((projects || []).map((p) => [p.id, p.name]));
+    const chats = live.order(fresh).map((c) => (c.project && names.has(c.project) ? { ...c, projectName: names.get(c.project) } : c)); // (a row says which project it is in)
+    const play = live.flip();
     const head = document.createElement('div');
     head.className = 'chat-list-head';
     const title = Object.assign(document.createElement('h2'), { textContent: window.chatTr('chats.title', 'Chats') });
@@ -40,22 +49,28 @@
     close.onclick = () => closePanel(true);
     head.append(title, close);
 
-    // A search once there are enough chats to need one; what was typed survives a redraw.
+    // The search box is there as soon as there is a chat; what was typed survives a redraw.
     const typing = document.activeElement === searchBox;
-    searchBox = chats.length > 6 ? tools.search((q) => { query = q; drawList(); }) : null;
-    if (!searchBox) query = ''; // (few chats left: no box, so no filter either)
-    if (searchBox) searchBox.value = query;
+    searchBox = chats.length ? tools.search((q) => search.set(q)) : null;
+    if (!searchBox) search.clear(); // (no chats left: no box, so no filter either)
+    if (searchBox) searchBox.value = search.query;
+    const archivedCount = chats.filter((c) => c.archived).length;
+    if (!archivedCount && view === 'archived') view = 'chats';
+    const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
     const list = document.createElement('ul');
     list.className = 'chat-items';
     function drawList() {
-      const shown = chats.filter((c) => tools.matches(c, query));
+      const query = search.query;
+      const shown = tools.pick(chats, { query, view, hits: search.hits });
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);
-      if (query && !shown.length) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: window.chatTr('chats.noMatch', 'No chats match') }));
+      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
     }
+    redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), list);
+    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
       const rows = [...list.querySelectorAll('.chat-item')];
@@ -70,6 +85,7 @@
     const view = await (share ? api.share(id) : api.open(id));
     if (!view) return false; // gone (deleted, or unreadable on this machine): the row says so, then the list redraws (chat-items.js moveHere)
     clearChatView();
+    shownChatId = view.id || null;
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);

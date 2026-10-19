@@ -11,6 +11,7 @@ const path = require('path');
 
   // Fake OpenAI-compatible API: /models and streaming /chat/completions.
   const requests = [];
+  let refused = 0; // requests the stub refused for a wrong key
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
@@ -19,7 +20,7 @@ const path = require('path');
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({ object: 'list', data: [{ id: 'gpt-5.6', object: 'model' }, { id: 'gpt-5.6-mini', object: 'model' }, { id: 'text-embedding-3', object: 'model' }] }));
       }
-      if (req.headers.authorization !== 'Bearer sk-test-123') { res.statusCode = 401; return res.end(JSON.stringify({ error: { message: 'bad key' } })); }
+      if (req.headers.authorization !== 'Bearer sk-test-123') { refused++; res.statusCode = 401; return res.end(JSON.stringify({ error: { message: 'bad key' } })); }
       const parsed = JSON.parse(body);
       requests.push(parsed);
       res.setHeader('Content-Type', 'text/event-stream');
@@ -62,7 +63,7 @@ const path = require('path');
   await ui.evaluate(() => { document.getElementById('toggle-sidebar').click(); });
   await ui.waitForTimeout(600);
   const groups = await ui.$$eval('#model optgroup', (gs) => gs.map((g) => `${g.label}:${[...g.children].map((o) => o.value).join('|')}`));
-  check('OpenAI models appear in the picker (from the key)', groups.some((g) => g === 'OpenAI:openai:gpt-5.6|openai:gpt-5.6-mini'), JSON.stringify(groups));
+  check('OpenAI models appear in the picker (from the key)', groups.some((g) => g === 'OpenAI:openai:auto|openai:gpt-5.6|openai:gpt-5.6-mini'), JSON.stringify(groups));
   check('non-chat models are filtered out', !groups.join().includes('embedding'), JSON.stringify(groups));
   const saved = await ui.evaluate(async () => (await window.assistant.getSettings()).providerKeys.openai.stored);
   check('key is stored (encrypted)', saved === true, saved);
@@ -107,12 +108,13 @@ const path = require('path');
   await ui.evaluate(() => document.getElementById('new-chat').click());
   await ui.evaluate(async () => window.assistant.setProviderKey('openai', 'sk-wrong'));
   await ui.waitForTimeout(800);
+  await ui.evaluate(() => { window.__evs = []; window.assistant.onEvent((e) => window.__evs.push(e.type)); }); // (what the chat was told, for the failure message below)
   await ui.selectOption('#model', 'openai:gpt-5.6');
   await ui.fill('#prompt', 'hi');
   await ui.press('#prompt', 'Enter');
   await ui.waitForSelector('.error', { timeout: 10000 }).catch(() => {});
   const err = await ui.locator('.error').last().innerText().catch(() => '');
-  check('rejected key explains itself', /OpenAI API key was rejected/.test(err), err);
+  check('rejected key explains itself', /OpenAI API key was rejected/.test(err), `${err} | stub refused ${refused} | events ${await ui.evaluate(() => (window.__evs || []).join(',')).catch(() => '?')}`);
 
   // ---- OpenRouter: a local stand-in for openrouter.ai/api/v1 (models list, streaming, a tool call,
   // a chat-only model, and "no credits").

@@ -3,6 +3,7 @@
 // market overview. The account answer is global.__tvLists (main.js only uses it in test mode), so no
 // TradingView sign-in or request is involved in the import; the card's frame is TradingView's own page.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -94,7 +95,7 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     check('Settings: typing over an imported list unlinks it and keeps what was typed', saved && !saved.tv.list && saved.tv.symbols.includes('NYSE:SPY'), JSON.stringify(saved && saved.tv));
   } finally {
     await app.close().catch(() => {});
-    fs.rmSync(profile, { recursive: true, force: true });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

@@ -7,6 +7,8 @@
 // notifications off nothing is shown, and "finished" alone can be off while "needs your OK" and
 // failures still come.
 const bg = require('./background-agents');
+const { plainScripts } = require('../renderer/markdown.js');
+const { plainMath } = require('./plain-math'); // LaTeX as text: a notification can't render math
 
 // The default cap on sidebar runs at once (Settings > AI: Chats working at once; one chat per tab, each
 // driving its own tab). The next one waits its turn (features/tab-chats.js createRunSlots).
@@ -20,10 +22,18 @@ function canStart({ busy = 0, sameChatRunning = false, max = MAX_RUNS } = {}) {
 
 // The first line of a reply, without markdown marks, cut to `max` characters.
 function firstLine(text, max = 90) {
-  const line = String(text || '').split('\n').map((l) => l.trim()).find((l) => l && !/^[-*_=`]{3,}$/.test(l)) || '';
+  // Math first, on the whole reply and before it is split into lines or cut: either can fall inside $…$.
+  const line = plainScripts(plainMath(String(text || ''))).split('\n').map((l) => l.trim()).find((l) => l && !/^[-*_=`]{3,}$/.test(l)) || '';
   const plain = line.replace(/^#{1,6}\s+/, '').replace(/^[-*+]\s+/, '').replace(/\*\*|__|`/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
-  return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
+  return clip(plain, max);
 }
+// Cut to `max` characters with an ellipsis. Always after the math is converted, never inside a math span.
+function clip(text, max) {
+  const t = String(text ?? '');
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+// Any text for a notification (a chat's title, a task's title, a task's message): LaTeX as text, then cut.
+const notifyText = (text, max) => clip(plainMath(String(text ?? '')).trim(), max);
 
 // How a run ended: 'failed' (an error), 'stopped' (the user pressed Stop: nothing to tell), or 'done'.
 function outcome({ error = null, stopped = false } = {}) {
@@ -32,9 +42,10 @@ function outcome({ error = null, stopped = false } = {}) {
   return 'done';
 }
 
-// Can the user see this chat's reply right now? Only with Lumen focused, the sidebar (or the chat page)
-// showing this chat, and the tab the AI works in on screen. `chatOpen`: it is the chat the sidebar shows.
-const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTab = true } = {}) => Boolean(focused && sidebarOpen && chatOpen && onRunTab);
+// Can the user see this chat's reply right now? Only with Lumen focused, and either on the chat's own tab (`chatHere`:
+// the tab the chat lives in is in front, whichever tab the AI worked in) or with the sidebar (or the chat page) showing
+// this chat and the tab the AI works in on screen. `chatOpen`: it is the chat the sidebar shows.
+const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTab = true, chatHere = false } = {}) => Boolean(focused && (chatHere || (sidebarOpen && chatOpen && onRunTab)));
 
 // What to do about an event of a run (kind: done, failed, approval, stopped):
 //   os      show a system notification
@@ -48,15 +59,19 @@ function plan(kind, { settings, ...view } = {}) {
 }
 
 // The system notification's text. t(key, vars) is the UI language (locales/en.json agent.notify.*).
-function notification(kind, { reply = '', error = '', chat = '' } = {}, t = null) {
+// summary: an error's short line (an engine's error event carries one), so the title is not a long sentence cut short.
+function notification(kind, { reply = '', error = '', chat = '', summary = '' } = {}, t = null) {
   const tr = (key, vars, english) => {
     const text = t ? t(key, vars) : '';
     return text && text !== key ? text : english;
   };
   const line = firstLine(reply);
-  const body = chat ? String(chat).slice(0, 120) : '';
+  const body = notifyText(chat, 120); // (a chat's title can hold math too)
   if (kind === 'approval') return { title: tr('agent.notify.approval', {}, 'Lumen needs your OK'), body: body || tr('agent.notify.approvalBody', {}, 'Open the sidebar to answer.') };
-  if (kind === 'failed') return { title: tr('agent.notify.failed', { error: firstLine(error, 80) }, `Lumen stopped: ${firstLine(error, 80)}`), body };
+  if (kind === 'failed') {
+    const what = summary ? firstLine(summary, 80) : firstLine(error, 80);
+    return { title: tr('agent.notify.failed', { error: what }, `Lumen stopped: ${what}`), body: [body, summary ? tr('agent.notify.failedHint', {}, 'Open the chat and press Retry.') : ''].filter(Boolean).join('\n') };
+  }
   return { title: line ? tr('agent.notify.done', { reply: line }, `Lumen finished: ${line}`) : tr('agent.notify.doneEmpty', {}, 'Lumen finished'), body };
 }
 
@@ -77,4 +92,4 @@ function chatBadge({ running = false, queued = false, approvals = 0, unread = fa
   return null;
 }
 
-module.exports = { MAX_RUNS, canStart, firstLine, outcome, inView, plan, notification, attention, chatBadge };
+module.exports = { MAX_RUNS, canStart, firstLine, notifyText, outcome, inView, plan, notification, attention, chatBadge };

@@ -1,0 +1,87 @@
+{
+ "offset": 0,
+ "next": 2,
+ "data": [
+  {
+   "citingPaper": {
+    "paperId": "5631e6641b727d629244205233f602f8d619b224",
+    "externalIds": {
+     "DOI": "10.1016/j.image.2026.117728",
+     "CorpusId": 292690812
+    },
+    "title": "HASNet: Underwater image enhancement via Hierarchical Attention and Serial-Stage Decomposition",
+    "venue": "Signal processing. Image communication",
+    "year": 2027,
+    "citationCount": 0,
+    "openAccessPdf": {
+     "url": "",
+     "status": "CLOSED",
+     "license": null
+    },
+    "authors": [
+     {
+      "authorId": "2268362503",
+      "name": "Xiang-Rong Feng"
+     },
+     {
+      "authorId": null,
+      "name": "Lin-Fang Li"
+     },
+     {
+      "authorId": "2507868849",
+      "name": "Yi-Fan Feng"
+     },
+     {
+      "authorId": "2499936099",
+      "name": "Li-Yuan Zheng"
+     },
+     {
+      "authorId": null,
+      "name": "Guo-Hou Li"
+     }
+    ]
+   }
+  },
+  {
+   "citingPaper": {
+    "paperId": "718fe4c9b1a47cce4ba4d2856e73352e65020491",
+    "externalIds": {
+     "DBLP": "journals/jat/FangSXZZ26",
+     "DOI": "10.1016/j.jat.2026.106332",
+     "CorpusId": 290196331
+    },
+    "title": "On the expressive power of deep 2D ReLU convolutional neural networks",
+    "venue": "Journal of Approximation Theory",
+    "year": 2026,
+    "citationCount": 1,
+    "openAccessPdf": {
+     "url": "",
+     "status": "CLOSED",
+     "license": null
+    },
+    "authors": [
+     {
+      "authorId": "2111828013",
+      "name": "Qin Fang"
+     },
+     {
+      "authorId": "2321669922",
+      "name": "Lei Shi"
+     },
+     {
+      "authorId": "2284228458",
+      "name": "Min Xu"
+     },
+     {
+      "authorId": "2284296180",
+      "name": "Ding-Xuan Zhou"
+     },
+     {
+      "authorId": "2266089480",
+      "name": "Qi-Hang Zhou"
+     }
+    ]
+   }
+  }
+ ]
+}

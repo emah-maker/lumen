@@ -1,5 +1,6 @@
 // OpenRouter's catalog (providers.openRouterCatalog): a stale copy beats an error, a hung request gives up.
 // Plain node: node test/catalog-units.js
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');

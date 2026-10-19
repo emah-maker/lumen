@@ -1,21 +1,33 @@
-// The Bookmarks and Downloads pages' bridge (features/managers.js). Only a tab opened as one of
+// The Bookmarks, Reading list and Downloads pages' bridge (features/managers.js). Only a tab opened as one of
 // those pages gets this preload, and only that page's own document sees the API; main checks the
 // sender again before answering.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const page = location.protocol === 'file:' ? (/\/renderer\/(bookmarks|downloads)\.html$/.exec(location.pathname) || [])[1] : null;
+const page = location.protocol === 'file:' ? (/\/renderer\/(bookmarks|readinglist|downloads)\.html$/.exec(location.pathname) || [])[1] : null;
 const onChange = (channel) => (fn) => { if (typeof fn === 'function') ipcRenderer.on(channel, () => fn()); };
 
+if (page) contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} }); // renderer/i18n.js
 if (page === 'bookmarks') {
   contextBridge.exposeInMainWorld('lumenBookmarks', {
     list: () => ipcRenderer.invoke('bookmarks:list'),
     add: (b) => ipcRenderer.invoke('bookmarks:add', b),
     update: (b) => ipcRenderer.invoke('bookmarks:update', b),
     remove: (url) => ipcRenderer.invoke('bookmarks:remove', url),
+    restore: (b) => ipcRenderer.invoke('bookmarks:restore', b), // Undo of a removal
     open: (url) => ipcRenderer.invoke('bookmarks:open', url),
     exportFile: () => ipcRenderer.invoke('bookmarks:export'),
     importFile: () => ipcRenderer.invoke('bookmarks:import'),
     onChange: onChange('bookmarks:changed'),
+  });
+} else if (page === 'readinglist') {
+  contextBridge.exposeInMainWorld('lumenReadingList', {
+    list: () => ipcRenderer.invoke('readinglist:list'),
+    open: (url) => ipcRenderer.invoke('readinglist:open', url), // marks it read
+    remove: (url) => ipcRenderer.invoke('readinglist:remove', url),
+    restore: (item) => ipcRenderer.invoke('readinglist:restore', item), // Undo of a removal
+    mark: (url, read) => ipcRenderer.invoke('readinglist:mark', url, read),
+    markAllRead: () => ipcRenderer.invoke('readinglist:markall'),
+    onChange: onChange('readinglist:changed'),
   });
 } else if (page === 'downloads') {
   contextBridge.exposeInMainWorld('lumenDownloads', {

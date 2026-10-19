@@ -2,6 +2,7 @@
 // agrees and is not downloaded twice (a one-time link still works); two files with the same name
 // at once get different names; everything goes to the folder chosen in Settings. The toolbar
 // button's panel lists them, acts on them, drags finished files out, and the list survives a restart.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -95,7 +96,7 @@ const os = require('os');
   const texts = same.map((f) => fs.readFileSync(path.join(dlDir, f), 'utf8')).sort();
   check('same-named downloads at once get different names', same.length === 2 && same[0] !== same[1] && texts[0] === 'copy /same?a' && texts[1] === 'copy /same?b', `${same.join(',')} ${texts.join('|')}`);
 
-  const open = await app.evaluate(() => global.__downloads.menu().some((m) => m.label === 'Open Downloads Folder'));
+  const open = await app.evaluate(() => global.__downloads.menu().some((m) => m.label === 'Open downloads folder'));
   check('the menu keeps Open Downloads Folder', open, 'missing');
 
   // ---- the downloads panel (toolbar button)
@@ -109,7 +110,7 @@ const os = require('os');
   const names = (await list()).map((d) => d.name);
   check('the panel lists every download, newest first', JSON.stringify(shown.map((r) => r.name)) === JSON.stringify(names), `${JSON.stringify(shown.map((r) => r.name))} vs ${JSON.stringify(names)}`);
   check('a finished download shows its size and site', /KB|MB|B · 127\.0\.0\.1/.test(shown.find((r) => r.name === 'slow.bin')?.status || ''), JSON.stringify(shown.find((r) => r.name === 'slow.bin')));
-  check('a cancelled download says so', /Cancelled/.test(shown.find((r) => /cancelled/.test(r.cls))?.status || ''), JSON.stringify(shown));
+  check('a cancelled download says so', /Cancell?ed/.test(shown.find((r) => /cancelled/.test(r.cls))?.status || ''), JSON.stringify(shown));
 
   // Drag a finished file out: a native file drag of that file.
   await app.evaluate(() => { const wc = global.__downloads.panel(); global.__dragged = null; wc.startDrag = (o) => { global.__dragged = o.file; }; });
@@ -156,8 +157,8 @@ const os = require('os');
 
   await app.close();
   server.close();
-  fs.rmSync(dlDir, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(dlDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

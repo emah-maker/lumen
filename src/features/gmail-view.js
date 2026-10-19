@@ -12,6 +12,9 @@ const MIN_COUNT = 3;
 const MAX_COUNT = 10;
 const DEFAULT_COUNT = 5;
 const MAX_CLIENT_ID = 200;
+// How the card reads the inbox: 'google' (default) = the Google sign-in already in Lumen, through Gmail's
+// Atom feed (features/gmail-atom.js: no setup); 'oauth' = your own Google Cloud client (the rest of this file).
+const MODES = ['google', 'oauth'];
 
 const flat = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const count = (v, lo, hi) => (Number.isFinite(v) && v >= lo && v <= hi ? Math.floor(v) : null);
@@ -27,14 +30,19 @@ function cleanClientSecret(v) {
   const s = typeof v === 'string' ? v.trim() : '';
   return /^[A-Za-z0-9_-]{8,200}$/.test(s) ? s : '';
 }
-// The stored (or form) config -> a checked one, or null for a Client ID that isn't one. No Client ID
-// ('') means Lumen's built-in Google client signs in (features/google-client.js).
+// The stored (or form) config -> a checked one, or null for a Client ID that isn't one. Without a mode, a
+// widget that has a Client ID of its own is 'oauth' (what older Lumens saved) and any other is 'google'.
+// An 'oauth' widget with no Client ID ('') signs in with Lumen's built-in Google client when this copy has
+// one (features/google-client.js). In 'google' mode no Client ID is kept. account: which signed-in Google
+// account (Gmail's /mail/u/N/) the 'google' mode reads, 0..9.
 function cleanConfig(c) {
   const i = c && typeof c === 'object' ? c : {};
   const raw = typeof i.clientId === 'string' ? i.clientId.trim() : '';
-  const clientId = cleanClientId(raw);
-  if (raw && !clientId) return null;
-  return { clientId, count: count(Number(i.count), MIN_COUNT, MAX_COUNT) ?? DEFAULT_COUNT, snippets: i.snippets !== false };
+  const mode = MODES.includes(i.mode) ? i.mode : raw ? 'oauth' : 'google';
+  const clientId = mode === 'oauth' ? cleanClientId(raw) : '';
+  if (mode === 'oauth' && raw && !clientId) return null;
+  const account = Number.isInteger(Number(i.account)) && Number(i.account) >= 0 && Number(i.account) <= 9 && i.account !== '' && i.account !== null ? Number(i.account) : 0;
+  return { mode, account, clientId, count: count(Number(i.count), MIN_COUNT, MAX_COUNT) ?? DEFAULT_COUNT, snippets: i.snippets !== false };
 }
 
 // ---- Gmail API ----
@@ -135,4 +143,4 @@ function apiError(status, text) {
 // send one again if this account connected before. select_account lets the user pick the mailbox.
 const AUTH_EXTRA = { access_type: 'offline', prompt: 'consent select_account' };
 
-module.exports = { SCOPE, MIN_COUNT, MAX_COUNT, DEFAULT_COUNT, AUTH_EXTRA, cleanClientId, cleanClientSecret, cleanConfig, labelPath, listPath, messagePath, messageIds, isMessageId, decodeWords, decodeEntities, parseSender, normalizeMessage, shape, reconnect, apiError };
+module.exports = { MODES, SCOPE, MIN_COUNT, MAX_COUNT, DEFAULT_COUNT, AUTH_EXTRA, cleanClientId, cleanClientSecret, cleanConfig, labelPath, listPath, messagePath, messageIds, isMessageId, decodeWords, decodeEntities, parseSender, normalizeMessage, shape, reconnect, apiError };

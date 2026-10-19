@@ -43,31 +43,39 @@
 // memory (x.session()), and none of it ever reaches the page, the hash or settings.json in plain text.
 //   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
 //   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
-const ics = require('./ics');
-const FEED = require('./feed');
+// The connector modules load the first time a card of that kind is drawn or its action runs, so a launch
+// that shows only Notes or the page's own sections never reads them (startup module count, test/perf-budget.js).
+const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const ics = lazy(() => require('./ics'));
+const FEED = lazy(() => require('./feed'));
 const WL = require('./widget-layout');
-const TV = require('./todoist-view');
-const GH = require('./github-view');
-const WX = require('./weather-view');
+const TV = lazy(() => require('./todoist-view'));
+const GH = lazy(() => require('./github-view'));
+const WX = lazy(() => require('./weather-view'));
 const WC = require('./widget-colors');
 const SYS = require('./widget-system'); // the page's own sections as cards in this same list (docked until moved)
 const ST = require('./widget-stacks'); // several same-size widgets in one place, shown one at a time
 const { createTrash } = require('./widget-trash'); // removed widgets, held briefly for the page's Undo
-const SV = require('./spotify-view');
-const SW = require('./spotify-web');
-const GV = require('./gmail-view');
-const SL = require('./slack-view');
-const OA = require('./oauth');
-const GC = require('./google-client'); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
-const WCK = require('./worldclock-view');
-const MV = require('./muse-view');
-const MK = require('./markets-view');
-const TVW = require('./tradingview-view');
-const CW = require('./custom-widget');
-const LW = require('./local-widgets');
-const AS = require('./aistatus-view'); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
-const CS = require('./calendar-sources'); // the Calendar card's sources: one or several, merged
-const WCFG = require('./widget-config'); // the home page's own editor: what it may see, and its form laid over what is saved
+const SV = lazy(() => require('./spotify-view'));
+const SW = lazy(() => require('./spotify-web'));
+const SAC = lazy(() => require('./spotify-api-card')); // the Spotify card's bigger sizes in API mode (queue, library, devices, hearts, ...)
+const AMV = lazy(() => require('./apple-music-view'));
+const AMB = lazy(() => require('./apple-music-bridge'));
+const GV = lazy(() => require('./gmail-view'));
+const GA = lazy(() => require('./gmail-atom')); // Gmail through the Google sign-in already in Lumen (the default: no Google Cloud setup)
+const SL = lazy(() => require('./slack-view'));
+const OA = lazy(() => require('./oauth'));
+const GC = lazy(() => require('./google-client')); // Lumen's built-in Google client (one-click Gmail sign-in), when it was built with one
+const WCK = lazy(() => require('./worldclock-view'));
+const MV = lazy(() => require('./muse-view'));
+const MK = lazy(() => require('./markets-view'));
+const TVW = lazy(() => require('./tradingview-view'));
+const CW = lazy(() => require('./custom-widget'));
+const LW = lazy(() => require('./local-widgets'));
+const RC = lazy(() => require('./routines-card')); // the Routines card's data (shaped from the runner's view: deps.routines)
+const AS = lazy(() => require('./aistatus-view')); // the AI status card's data (shaped from facts main.js hands over: deps.aiStatus)
+const CS = lazy(() => require('./calendar-sources')); // the Calendar card's sources: one or several, merged
+const WCFG = lazy(() => require('./widget-config')); // the home page's own editor: what it may see, and its form laid over what is saved
 
 const ENDPOINTS = {
   geocode: 'https://geocoding-api.open-meteo.com/v1/search',
@@ -88,6 +96,63 @@ const ENDPOINTS = {
   twelvedata: 'https://api.twelvedata.com', // Stocks: the user's own free key
   coingecko: 'https://api.coingecko.com/api/v3', // Crypto: keyless, or the user's own Demo key
 };
+// A page action on an engine card (Apple Music's and Spotify's status modes: features/music-engine.js): play, pause, next, previous, seek
+// (seconds), playitem and playnext/playlater (a search result, a recent play, a playlist), esearch, esignin (the sign-in window) and
+// elists (look at the recent plays and playlists again). `am` is the engine's facade (deps.appleMusic, deps.spotifyEngine).
+async function engineAct(am, name, action, x, cached) {
+  if (action.do === 'esignin') { am.signIn(); return { local: true }; }
+  if (action.do === 'eshow') { am.showPlayer(); return { local: true }; }
+  if (action.do === 'elists') { am.refreshLists(); return { local: true }; }
+  if (action.do === 'esearch') { am.search(action.text); return { local: true }; }
+  if (action.do === 'ewarm') { am.warm?.(); return { local: true }; } // the card's search box was focused: the hidden page starts now
+  if (action.do === 'emore') { am.searchMore?.(); return { local: true }; } // more songs for the search shown (Spotify's songs-only list)
+  if (action.do === 'ethumb') { am.loadThumbs?.(action.ids); return { local: true }; } // the pictures of the rows on screen (the engine tells the card when they are in)
+  if (action.do === 'playitem') {
+    if (!am.playItem(action.kind, action.item)) throw new Error(`${name} isn’t ready yet. Try again in a moment.`);
+    return { delay: 1500 };
+  }
+  if (action.do === 'playnext' || action.do === 'playlater') {
+    if (!(action.do === 'playnext' ? am.playNext : am.playLater)(action.kind, action.item)) throw new Error('That can’t be queued here.');
+    return { notice: action.do === 'playnext' ? 'Playing next.' : 'Added to the queue.', local: true };
+  }
+  if (action.do === 'like' || action.do === 'shuffle') { // arg 1 | 0, or none to flip it
+    if (!am.command(action.do, action.arg === '1' ? true : action.arg === '0' ? false : undefined)) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'repeat') {
+    if (!am.command('repeat', action.arg || undefined)) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'volume') {
+    if (!am.command('volume', Number(action.arg))) throw new Error(`${name} can’t do that right now.`);
+    return { local: true };
+  }
+  if (action.do === 'etab') { // the card opened a tab: its data is asked for
+    if (!am.command('tab', action.arg)) throw new Error(`${name} can’t show that here.`);
+    return { local: true };
+  }
+  if (action.do === 'playfrom' || action.do === 'playqueue') { // a row of the album or playlist playing, or of the queue
+    if (!am.command(action.do === 'playfrom' ? 'playFrom' : 'playQueue', { index: Number(action.arg), id: action.item || undefined })) throw new Error(`${name} can’t play that row.`);
+    return { delay: 1500 };
+  }
+  if (action.do === 'seek') {
+    if (!am.seek(action.sec)) return false;
+    cached.progressMs = Math.round(action.sec * 1000);
+    cached.at = x.now();
+    return { local: true };
+  }
+  const button = AMV.actionOf(action.do);
+  if (!button) return false;
+  if (!(await am.control(button))) throw new Error(`${name} didn’t answer. Is it ready?`);
+  if ((button === 'play' || button === 'pause') && (cached.state === 'playing' || cached.state === 'paused')) {
+    cached.progressMs = Math.round(AMV.progressNow(cached, x.now()));
+    cached.at = x.now();
+    cached.state = button === 'play' ? 'playing' : 'paused';
+  }
+  delete cached.notice;
+  return { delay: 200 }; // (the engine's own state is local and arrives within ~100 ms of the press: looked at again soon, not after most of a second)
+}
+
 // Kinds the new-tab page can add and edit itself (renderer/newtab-setup.js), through do=setup: none of
 // them has a key or a sign-in, so their settings may be shown to the page. The value picks what the
 // page's form starts from. Weather, World clock, Calendar and Feed are edited the same way, but their
@@ -96,6 +161,9 @@ const ENDPOINTS = {
 const INLINE = {
   notes: () => ({}),
   aistatus: () => ({}),
+  routines: () => ({}),
+  files: () => ({}),
+  applemusic: (w) => ({ mode: w.mode, art: w.art, app: w.app, react: w.react === true }),
   countdown: (w) => ({ cd: w.cd }),
   timer: (w) => ({ tm: { work: w.tm.work, rest: w.tm.rest, pomodoro: w.tm.pomodoro } }),
   tradingview: (w) => ({ tv: w.tv }),
@@ -112,7 +180,10 @@ const SPANS = WL.SPANS; // what older Lumens stored: a third, half, two thirds, 
 const HEIGHTS = ['small', 'medium', 'large', 'tall']; // a web page's frame
 const defaultSpan = (type) => (type === 'embed' ? 6 : 3);
 const MIN_REFRESH = 15e3; // a widget is fetched at most this often, even when asked
+const ERROR_CLICK_MS = 1e3; // ...except a card showing an error: Try again works at once (a double click is one request)
 const RATE = { window: 60e3, max: 40 }; // network requests per minute, all widgets together
+const PICTURE_RATE = { window: 60e3, max: 400 }; // ...and the small cover pictures of the Spotify cards (the Home tab alone is up to a hundred) come from Spotify's picture hosts: a budget of their own, so they never use up the API's
+const SEARCH_RATE = { window: 60e3, max: 90 }; // ...and a search the user typed (and the pictures of its rows) has a budget of its own: polling can't make it wait
 const ERROR_TTL = 2 * 60e3; // a failed fetch is retried after this
 const TIMEOUT = 12e3;
 const MUSE_TIMEOUT = 60e3; // a model answer (with web search) takes longer than a lookup
@@ -133,13 +204,30 @@ function httpsUrl(value, { allowWebcal = false } = {}) {
     return u.href;
   } catch { return null; }
 }
-const CAL_TIMEOUT = 8e3; // one calendar's answer; a slow one must not hold up the others
+const CAL_TIMEOUT = 12e3; // one calendar's answer; a slow one must not hold up the others (a DNS hiccup alone can take a few seconds)
+// Why a request never got an answer, from what the network stack said (Chromium's net::ERR_*, Node's codes, an abort for the timeout).
+// Anything that is not a plain refusal (a bad certificate, a blocked address) is taken for passing network trouble (offline, DNS,
+// a reset, a timeout) and asked again in a moment; a refusal says so instead of blaming the internet connection.
+const REFUSED_NET = /ERR_(CERT_|SSL_VERSION|BLOCKED|UNSAFE|DISALLOWED|INVALID_URL|UNKNOWN_URL_SCHEME|TOO_MANY_REDIRECTS|FILE_)/i;
+function netError(err) {
+  const bits = [err?.code, err?.cause?.code, err?.cause?.message, err?.message].filter((v) => typeof v === 'string' && v).join(' ');
+  if (err?.name === 'AbortError') return Object.assign(new Error('The server took too long to answer.'), { transient: true, why: 'timeout' });
+  if (REFUSED_NET.test(bits)) return Object.assign(new Error('Couldn’t connect securely. The address was refused.'), { transient: false, why: bits.slice(0, 80) });
+  // (Not "check your internet": the connection is often fine and the trouble is on the way; the card keeps trying by itself.)
+  return Object.assign(new Error('Couldn’t connect. Lumen keeps trying in the background.'), { transient: true, why: bits.slice(0, 80) });
+}
+const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
+const FRESH_NET_MS = 5 * 60e3; // after the browser's session failed and a fresh one worked: the cards stay on the fresh one this long
+const FETCH_CAP_MS = 45e3; // a card's whole fetch (several requests) is given up on after this, so a press of Refresh always ends
+const NET_RESET_CAP_MS = 4e3; // ...and so does dropping dead connections before it
+const NET_RESET_MS = 5e3; // dead sockets and the DNS cache are dropped before a retry at most this often
 // One calendar source, read and parsed: shared for ten minutes by every card (a force refresh or a Test looks again), and the
 // last good answer is kept so a calendar that can't be reached for a while still shows what it showed, with a warning.
 async function calendarOf(x, s, { fresh = false } = {}) {
   const key = `ics:${s.url}`;
   const load = async () => {
     const cal = ics.eventsBetween(await x.text(s.url, { max: 5e6, timeout: CAL_TIMEOUT }), { from: x.now(), days: 14, limit: 60 });
+    cal.fetchedAt = x.now(); // when this answer was read: a card that falls back to it says how old it is
     x.keep(key, cal);
     return cal;
   };
@@ -318,17 +406,22 @@ const CONNECTORS = {
         let cal;
         let error = '';
         let stale = false;
+        let transient = false;
         try {
           cal = await calendarOf(x, s);
         } catch (err) {
           error = String(err?.message || err).slice(0, 160);
+          transient = err?.transient === true;
           cal = x.kept(`ics:${s.url}`); // the last good answer: shown, with a warning, rather than nothing
           stale = Boolean(cal);
         }
         const color = s.color || (multi ? cal?.color || CS.defaultColor(slot) : '');
-        return { id: s.id, name: CS.labelOf(s, cal?.name, k), color, ok: !error, error, stale, cal, events: cal ? cal.events : [] };
+        return { id: s.id, name: CS.labelOf(s, cal?.name, k), color, ok: !error, error, stale, transient, cal, events: cal ? cal.events : [] };
       }));
-      if (parts.every((p) => !p.cal)) throw new Error(multi ? `${parts[0].name}: ${parts[0].error}` : parts[0].error);
+      if (parts.every((p) => !p.cal)) {
+        const bad = parts.find((p) => p.error) || parts[0];
+        throw Object.assign(new Error(multi ? `${bad.name}: ${bad.error}` : bad.error), { transient: parts.some((p) => p.transient) });
+      }
       const { events } = CS.merge(parts.map((p) => ({ id: p.id, events: p.events })), { limit: multi ? 24 : 12, now });
       const colorOf = Object.fromEntries(parts.map((p) => [p.id, p.color]));
       const shaped = events.map(({ title, location, url, color, allDay, date, start, end, cal, also }) => ({
@@ -339,9 +432,14 @@ const CONNECTORS = {
       return {
         events: shaped, multi,
         name: multi ? '' : single?.name || '', color: multi ? '' : parts[0].color || single?.color || '',
-        cals: parts.map((p) => ({ id: p.id, name: p.name, color: p.color, ok: p.ok, ...(p.error ? { error: p.error } : {}), ...(p.stale ? { stale: true } : {}) })),
+        cals: parts.map((p) => ({ id: p.id, name: p.name, color: p.color, ok: p.ok, ...(p.error ? { error: p.error } : {}), ...(p.stale ? { stale: true } : {}), ...(p.transient ? { retry: true } : {}) })),
+        // Every calendar is showing an older answer: when that answer was read (the card says "Updated 40 min ago" and why), so it can't pass for a fresh one.
+        // (With some calendars fine, the card is current and each failed one is flagged in cals.)
+        ...(parts.every((p) => p.stale) ? { staleSince: Math.min(...parts.map((p) => p.cal.fetchedAt || now)) } : {}),
       };
     },
+    // After a good fetch: is part of the answer an old one that a passing failure caused? Then ask again in a moment.
+    retryWanted: (data) => Boolean(data?.cals?.some((k) => !k.ok && k.retry)),
   },
 
   // Headlines from an RSS 2.0 or Atom feed (features/feed.js reads it safely): a preset (FEED.PRESETS) or
@@ -401,19 +499,21 @@ const CONNECTORS = {
       const done = c.todo.showDone ? await completedToday(x).catch(() => []) : [];
       const project = c.todo.source === 'project' && c.todo.projectId ? `https://app.todoist.com/app/project/${c.todo.projectId}` : null;
       return {
-        ...TV.shape(tasks, c.todo, today), done,
+        ...TV.shape(tasks, c.todo, today, { expand: true }), done,
         open: project || 'https://app.todoist.com/app/today',
         density: c.todo.density, overdueRed: c.todo.overdueRed, showCount: c.todo.showCount, quick: c.todo.quick,
       };
     },
-    // Page actions: complete (the caller then keeps an undo for a few seconds), undo (reopen it), add (quick add).
+    // Page actions: complete (the caller then keeps an undo for a few seconds), undo (reopen it), add (quick add), reschedule (a
+    // task's day, from the card's small menu).
     async act(c, action, x, cached) {
       const find = (id) => cached.groups?.flatMap((g) => g.tasks).find((t) => t.id === id);
       const auth = { Authorization: `Bearer ${x.secret()}` };
+      const api = x.endpoint('todoist');
       if (action.do === 'complete') {
         const task = find(action.task); // only a task the card is showing can be completed from it
         if (!task) return false;
-        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: auth });
+        await x.request(`${api}/tasks/${encodeURIComponent(action.task)}/close`, { method: 'POST', headers: auth });
         for (const g of cached.groups) g.tasks = g.tasks.filter((t) => t.id !== action.task);
         cached.groups = cached.groups.filter((g) => g.tasks.length);
         cached.total = Math.max(0, cached.total - 1);
@@ -421,17 +521,43 @@ const CONNECTORS = {
         return { undo: { id: action.task, title: task.title } };
       }
       if (action.do === 'undo') {
-        await x.request(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(action.task)}/reopen`, { method: 'POST', headers: auth });
+        await x.request(`${api}/tasks/${encodeURIComponent(action.task)}/reopen`, { method: 'POST', headers: auth });
         return { undone: true };
       }
+      if (action.do === 'reschedule') {
+        const task = find(action.task);
+        if (!task || task.recurring) return false; // (a new day would end a repeating task's repeat)
+        const words = { today: 'today', tomorrow: 'tomorrow', nextweek: 'next monday', none: 'no date' }[action.arg];
+        if (!words) return false;
+        await x.postJson(`${api}/tasks/${encodeURIComponent(action.task)}`, { due_string: words });
+        return { delay: 0 };
+      }
       if (action.do === 'add') {
-        if (c.todo.quick === 'off' || !action.text) return false;
-        const made = await x.postJson(`${x.endpoint('todoist')}/tasks/quick`, { text: action.text });
-        // Quick add reads the due date out of the words; the project (its name can have spaces) is set after.
-        if (c.todo.quickProjectId && made && typeof made === 'object' && String(made.project_id) !== c.todo.quickProjectId && /^[\w-]{1,40}$/.test(String(made.id))) {
-          await x.postJson(`${x.endpoint('todoist')}/tasks/${encodeURIComponent(String(made.id))}/move`, { project_id: c.todo.quickProjectId }).catch(() => {});
+        if (!action.text) return false;
+        const made = await x.postJson(`${api}/tasks/quick`, { text: action.text });
+        const id = made && typeof made === 'object' && /^[\w-]{1,40}$/.test(String(made.id)) ? String(made.id) : '';
+        // Quick add reads the due date and project out of the words. A card of one project gets the task there (the project's name can have spaces, so it is moved after).
+        const into = c.todo.quickProjectId || (c.todo.source === 'project' ? c.todo.projectId : '');
+        if (id && into && String(made.project_id) !== into) {
+          await x.postJson(`${api}/tasks/${id}/move`, { project_id: into }).catch(() => {});
         }
-        return { added: true };
+        // On Today a task without a day would vanish at the next look: it is for today unless the words said otherwise.
+        if (id && TV.dueTodayFor(c.todo) && !made.due) {
+          const set = await x.postJson(`${api}/tasks/${id}`, { due_string: 'today' }).catch(() => null);
+          if (set && typeof set === 'object') Object.assign(made, set);
+        }
+        // Shown at once, before the list is read again (which puts it in its place).
+        if (id && cached.groups && (made.due || !TV.needsDay(c.todo))) {
+          const today = TV.ymd(new Date());
+          const fresh = TV.normalizeTask(made, await x.projects().catch(() => new Map()), today);
+          if (fresh && !cached.groups.some((g) => g.tasks.some((t) => t.id === fresh.id))) {
+            if (!cached.groups.length) cached.groups = [{ label: '', more: 0, tasks: [] }];
+            cached.groups[0].tasks.push(TV.present(fresh, c.todo));
+            cached.total = (cached.total || 0) + 1;
+            cached.shown = (cached.shown || 0) + 1;
+          }
+        }
+        return { added: true, delay: 600 };
       }
       return false;
     },
@@ -443,29 +569,43 @@ const CONNECTORS = {
   // to the page as a data: URL, so the page never learns an address or a token.
   spotify: {
     label: 'Spotify',
-    ttl: 20e3,
-    minRefresh: 4e3, // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s
+    ttl: (d) => (d && d.mode === 'status' ? 4e3 : 20e3),
+    minRefresh: (d) => (d && d.mode === 'status' ? 100 : 4e3), // a song ending asks for the next one at once (the card's end-of-track refresh), so not the usual 15 s; the engine card is local, so quicker
     secret: 'spotify',
     clean: (c) => {
       const cfg = SV.cleanConfig(c);
-      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors) } : null;
+      return cfg ? { ...cfg, colors: WC.cleanMode(c.colors), react: c.react === true } : null; // (react: the card reacts to the music, off unless asked: renderer/newtab-music-react.js)
     },
     async resolve(input, x) {
       const clientId = SV.cleanClientId(input.clientId); // the user's own, or '' to use Lumen's
-      // Web player: Spotify's own site in the card, nothing to check here (the user signs in on the site itself).
-      if (SW.cleanMode(input) === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: 'The card shows open.spotify.com. Sign in there once.' };
+      // Status (the engine's now-playing card) and Web player: nothing to check here (the user signs in on Spotify's own site).
+      const mode = ['status', 'web', 'api'].includes(input.mode) ? input.mode : clientId ? 'api' : 'status'; // (a form always says; without one, an own Client ID means the API card, as before, else the engine's)
+      if (mode === 'status') return { config: { mode: 'status', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card plays Spotify inside Lumen and shows what is playing. Sign in on Spotify’s site once.' };
+      if (mode === 'web') return { config: { mode: 'web', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: 'The card shows open.spotify.com. Sign in there once.' };
       if (!SV.effectiveClientId(clientId)) throw new Error('Lumen’s own Spotify app isn’t available here. Add the Client ID of a Spotify app you made (32 letters and digits) on the Spotify widget’s page.');
       if (!x.secret()) throw new Error('Log in with Spotify first.');
       const me = await spotifyCall(x, { clientId }, 'GET', '/me');
       if (!me.ok) throw new Error(SV.playerError(me.status, me.body));
       let name = '';
       try { name = str(JSON.parse(me.body)?.display_name, 60); } catch { /* the name is only for the message */ }
-      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors) }, message: `Connected${name ? ` as ${name}` : ''}.` };
+      return { config: { mode: 'api', clientId, art: input.art !== false, colors: WC.cleanMode(input.colors), react: input.react === true }, message: `Connected${name ? ` as ${name}` : ''}.` };
     },
     title: () => 'Spotify',
-    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : `Now playing${c.art ? '' : ' · no album art'}`),
+    summary: (c) => (c.mode === 'web' ? 'Spotify web player' : c.mode === 'status' ? `Plays inside Lumen${c.art ? '' : ' · no album art'}` : `Now playing${c.art ? '' : ' · no album art'}`),
     async fetch(c, x) {
       if (c.mode === 'web') return { mode: 'web', url: SW.WEB_URL }; // the card is Spotify's own site (features/spotify-web.js)
+      if (c.mode === 'status') { // the engine's card (features/spotify-engine.js)
+        if (!x.spotifyEngine) return AMV.unavailable('unsupported', x.now());
+        const d = await x.spotifyEngine.read();
+        const shown = SAC.directResults(x.ui(c.id)); // (a search the Web API answered replaces the engine's rows until the next search)
+        const lib = SAC.directLibrary(x.ui(c.id)); // (the Web API's library, when the account is connected and it answered; else the page's own)
+        const homeOn = apiConnected(c, x);
+        // The Home tab: the Web API's shelves when the account is connected; else the tab says Spotify has to be connected (its button starts the sign-in).
+        const home = { ...(SAC.homeFields(x.ui(c.id), x.homeText()) || {}), can: { ...(d.can && typeof d.can === 'object' ? d.can : {}), home: true }, ...(homeOn ? {} : { home: { shelves: {}, connect: true } }) };
+        const lib2 = homeOn ? SAC.lib2Fields(x.ui(c.id), x.libText()) : null; // (the Library of the card: the Web API's, when the account is connected)
+        const merged = shown || lib || home || lib2 ? { ...d, ...(lib || {}), ...(shown || {}), ...(home || {}), ...(lib2 || {}) } : d;
+        return c.art === false ? { ...merged, art: '' } : merged;
+      }
       if (!x.secret()) throw new Error('Log in with Spotify in Settings.');
       const res = await spotifyCall(x, c, 'GET', '/me/player?additional_types=episode');
       if (res.status !== 204 && !res.ok) throw new Error(SV.playerError(res.status, res.body));
@@ -476,16 +616,50 @@ const CONNECTORS = {
       const { images, ...data } = SV.normalizePlayback(body, x.now());
       let art = '';
       if (c.art) for (const url of images) { art = await x.image(url).catch(() => ''); if (art) break; }
-      return { ...data, art };
+      // The bigger sizes (the heart, the queue, the library, devices, the album playing): features/spotify-api-card.js. A failure there never costs the card its now-playing.
+      const more = await SAC.extras((m, p, b) => spotifyCall(x, c, m, p, b), { ui: x.ui(c.id), cached: data, now: x.now, image: x.thumb, searchImage: x.searchThumb, homeText: x.homeText(), libText: x.libText() }, data).catch(() => ({}));
+      return { ...data, art, ...more };
     },
     // Web player: whether Spotify's site is signed in (known to main, so the card can offer a sign-in tab).
-    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : d),
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.spotifySignedIn, view: ctx.spotifyView || null } : c.mode === 'api' ? { ...d, pins: SV.cleanPins(c.pins) } : d),
     // Page actions: play, pause, next, previous. The card is updated at once and fetched again shortly.
     async act(c, action, x, cached) {
       if (c.mode === 'web') return false;
+      if (action.do === 'pin' || action.do === 'unpin') { // the playlist tabs (the Web API card): the pins are saved in the card's settings
+        if (c.mode !== 'api') return false;
+        const got = SV.applyPin(c.pins, action.do === 'pin' ? 'add' : 'remove', action.kind, action.item, SAC.titleOf(x.ui(c.id), action.kind, action.item));
+        if (got.error) throw new Error(got.error);
+        return { config: { pins: got.pins }, local: true };
+      }
+      if (c.mode === 'status') {
+        if (!x.spotifyEngine) return false;
+        const direct = await statusSearch(c, action, x, cached); // (the Web API answers searches when the account is connected, whatever plays the music)
+        if (direct) return direct;
+        if (action.do === 'etab' && action.arg === 'library' && await statusLibrary(c, x, cached, action)) return { local: true }; // (the library too; when it did not answer, the page's own list below)
+        return engineAct(x.spotifyEngine, 'Spotify', action, x, cached);
+      }
+      const callIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search'); // (a button the user pressed: the user's own budget, not the polling one)
+      const searchIt = (m, p, b) => spotifyCall(x, c, m, p, b, 'search');
+      const sctx = { ui: x.ui(c.id), cached, now: x.now, image: x.thumb, searchCall: searchIt, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), homeText: x.homeText(), libText: x.libText(), onPart: () => { Object.assign(cached, SAC.libraryFields(x.ui(c.id)) || {}, SAC.homeFields(x.ui(c.id)) || {}, SAC.lib2Fields(x.ui(c.id)) || {}); x.pushUpdate?.(); } };
+      if (action.do === 'ewarm') { warmSpotify(c, x); return { local: true }; }
+      const bigger = await SAC.act(callIt, action, sctx);
+      if (bigger !== false) { // what the card shows is brought up to date now (a tab's list, a result, a switch), not only at the next look at the player
+        Object.assign(cached, await SAC.extras(callIt, sctx, cached).catch(() => ({})));
+        return bigger;
+      }
       const req = SV.actionRequest(action.do);
       if (!req) return false;
-      const res = await spotifyCall(x, c, req.method, req.path);
+      let res = await spotifyCall(x, c, req.method, req.path);
+      // No device is active (Spotify forgets one after a while idle): wake one the account has (this computer's first) and press again there,
+      // rather than only saying "No active Spotify device". Pause has nothing to pause then.
+      if (!res.ok && action.do !== 'pause' && SV.noActiveDevice(res.status, res.body)) {
+        const devices = await spotifyCall(x, c, 'GET', '/me/player/devices');
+        const wake = devices.ok ? SV.deviceRequest(action.do, SV.pickDevice(devices.body)) : null;
+        if (wake) {
+          const moved = await spotifyCall(x, c, wake.method, wake.path, wake.body);
+          res = moved.ok && wake.retry ? await spotifyCall(x, c, req.method, req.path) : moved;
+        }
+      }
       if (!res.ok) throw new Error(SV.playerError(res.status, res.body));
       // An idle card has no track to show as playing (it would read "playing" with a blank title until the next fetch):
       // it only gets its answer from the fetch that follows.
@@ -499,21 +673,35 @@ const CONNECTORS = {
     },
   },
 
-  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Signs
-  // in with Lumen's built-in Google client (features/google-client.js) or, when the widget has one, the
-  // user's own Google Cloud OAuth client, which wins (features/oauth.js); see features/gmail-view.js.
+  // Read-only inbox summary: the unread count and the latest few subjects, senders and snippets. Two ways in:
+  //   mode 'google' (default): the Google sign-in already in Lumen's browsing session, through Gmail's Atom
+  //     feed (features/gmail-atom.js): no Google Cloud project, nothing to paste. Unread messages only.
+  //   mode 'oauth' (Advanced): the user's own Google Cloud OAuth client (or Lumen's built-in one, when this
+  //     copy has it: features/google-client.js), the Gmail API with the gmail.readonly scope (features/oauth.js).
   gmail: {
     label: 'Gmail',
-    ttl: 5 * 60e3,
+    // The feed asks for no more than one visit every 10 minutes; a signed-out card looks again sooner (the cookie watch also nudges it).
+    ttl: (data) => (data?.source === 'google' ? 10 * 60e3 : data?.google ? 2 * 60e3 : 5 * 60e3),
     secret: 'gmail',
     clean: (c) => { const g = GV.cleanConfig(c); return g ? { ...g, colors: WC.cleanMode(c.colors) } : null; },
     async resolve(input, x) {
+      if (GV.cleanConfig(input)?.mode === 'google') {
+        // Nothing to check against Google first: the card says "Sign in to Gmail" itself when nobody is signed in.
+        const cfg = GV.cleanConfig({ ...input, mode: 'google' });
+        if (!cfg) throw new Error('That didn’t check out. Try again.');
+        let message = 'Saved. Sign in to Google in Lumen and the card shows your unread mail.';
+        try {
+          const data = await gmailFeedData(x, cfg);
+          if (data.state === 'ok') message = `Connected${data.email ? ` as ${data.email}` : ''}. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.`;
+        } catch { /* saved anyway: the card explains what is wrong */ }
+        return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, message };
+      }
       const stored = OA.decodeCreds(x.secret());
       const client = gmailClient(input, stored, x.googleClient());
       const same = stored?.clientId === client.clientId;
       const creds = { clientId: client.clientId, clientSecret: client.clientSecret, refresh: same ? stored.refresh : '' };
       if (!creds.refresh) throw new Error(client.source === 'builtin' ? 'Connect your Google account first: use Sign in with Google.' : 'Connect your Google account first: use Connect Gmail.');
-      const cfg = GV.cleanConfig({ ...input, clientId: client.source === 'own' ? client.clientId : '' }); // the built-in client is never written to settings.json
+      const cfg = GV.cleanConfig({ ...input, mode: 'oauth', clientId: client.source === 'own' ? client.clientId : '' }); // the built-in client is never written to settings.json
       const data = await gmailData(x, x.session(creds), { ...cfg, count: 3 });
       const changed = !stored || stored.clientId !== creds.clientId || stored.clientSecret !== creds.clientSecret || stored.refresh !== creds.refresh;
       return { config: { ...cfg, colors: WC.cleanMode(input.colors) }, secret: changed ? OA.encodeCreds(creds) : undefined, message: `Connected. ${data.unread === 1 ? '1 unread message' : `${data.unread} unread messages`} in the inbox.` };
@@ -521,6 +709,7 @@ const CONNECTORS = {
     title: () => 'Gmail',
     summary: (c) => `Inbox · ${c.count} latest`,
     async fetch(c, x) {
+      if (c.mode !== 'oauth') return gmailFeedData(x, c);
       const session = x.session();
       // oneClick: the card's button can start the sign-in itself (do=signin) instead of opening Settings.
       const oneClick = () => GC.uiState({ clientId: c.clientId, stored: OA.decodeCreds(x.secret()), builtin: x.googleClient() }).oneClick;
@@ -608,6 +797,7 @@ const CONNECTORS = {
   // to Meta and use the key's credit, so nothing is asked until the card is added, the answer is kept
   // for hours, and a typed question is kept in memory only (never stored, no history).
   muse: {
+    costly: true, // every answer costs the person's credit: a press of Refresh keeps the minimum interval (and says so)
     label: 'Muse',
     ttl: 6 * 3600e3,
     secret: 'muse',
@@ -831,6 +1021,18 @@ const CONNECTORS = {
     async fetch() { return {}; },
     present: (c) => ({ label: c.cd.label, date: c.cd.date, time: c.cd.time, target: LW.countdownTarget(c.cd) }),
   },
+  // Files (renderer/newtab-widgets.js, features/files.js): the user's pinned and recently opened files. Nothing here: the card asks the
+  // main process for the list itself (the new-tab page's own bridge, preload/files-newtab-preload.js) and hears when it changes, so the
+  // list never goes through this file, the page's hash or settings.json. A path is only ever opened, shown or pinned by id in main.
+  files: {
+    label: 'Files',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows the files and folders you pinned and the ones you opened lately. It never leaves this computer.' }; },
+    title: () => 'Files',
+    summary: () => 'Pinned and recent files',
+    async fetch() { return {}; },
+  },
   timer: {
     label: 'Timer',
     ttl: 365 * 24 * 3600e3,
@@ -860,6 +1062,52 @@ const CONNECTORS = {
     summary: () => 'Which AIs are ready, working or at a limit',
     async fetch() { return {}; },
     present: (c, d, ctx) => ctx.aiStatus(),
+  },
+
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last, from the runner's view
+  // (deps.routines). No account, never online; present() asks on every read, routinesChanged() tells the page when it moved, and
+  // the card's buttons (do=routine-new, do=routine-open&id=) are handled in act() below: they open the sidebar, nothing is saved.
+  routines: {
+    label: 'Routines',
+    ttl: 365 * 24 * 3600e3,
+    clean: (c) => ({ colors: WC.cleanMode(c.colors) }),
+    async resolve(input) { return { config: { colors: WC.cleanMode(input.colors) }, message: 'Shows what your routines run next and what they did last. It updates by itself and never goes online.' }; },
+    title: () => 'Routines',
+    summary: () => 'What your routines run next and their latest results',
+    async fetch() { return {}; },
+    present: (c, d, ctx) => ctx.routines(),
+  },
+
+  // Apple Music. Two modes, like Spotify's. 'status' (the default) is a now-playing card driven by the Apple Music engine
+  // (features/apple-music-engine.js): Apple's own MusicKit JS in a hidden music.apple.com view, so the music plays inside Lumen
+  // and the card can show what is playing, seek, list recent plays and playlists and search. It needs no key here (the page's
+  // own MusicKit does the talking) and the user signs in on Apple's site. When the engine isn't playing but the desktop
+  // Apple Music app is, the card shows that app (features/apple-music-native.js). 'web' is music.apple.com itself in a view
+  // over the card (features/apple-music-web.js); present() tells it whether the user is signed in and what its view is doing.
+  applemusic: {
+    label: 'Apple Music',
+    ttl: (d) => (d && d.mode === 'web' ? 365 * 24 * 3600e3 : 4e3),
+    minRefresh: 100, // the engine tells main when something changes (deps.appleMusic.onChange), which asks for a fresh look at once
+    clean: (c) => ({ ...AMV.cleanConfig(c), colors: WC.cleanMode(c.colors), react: c.react === true }),
+    async resolve(input) {
+      const cfg = AMV.cleanConfig(input);
+      return { config: { ...cfg, colors: WC.cleanMode(input.colors), react: input.react === true }, message: cfg.mode === 'web' ? 'The card shows music.apple.com. Sign in there once; Lumen never sees your Apple ID or password.' : 'The card plays Apple Music inside Lumen and shows what is playing.' };
+    },
+    title: () => 'Apple Music',
+    summary: (c) => (c.mode === 'web' ? 'Apple Music web player' : `Now playing${c.art ? '' : ' · no album art'}`),
+    async fetch(c, x) {
+      if (c.mode === 'web') return { mode: 'web', url: AMV.WEB_URL };
+      if (!x.appleMusic) return AMV.unavailable('unsupported', x.now());
+      const d = await x.appleMusic.read({ app: c.app });
+      return c.art === false ? { ...d, art: '' } : d;
+    },
+    present: (c, d, ctx) => (d.mode === 'web' ? { ...d, signedIn: ctx.appleMusicSignedIn, view: ctx.appleMusicView || null } : d),
+    // Page actions: play, pause, next, previous, seek (seconds), playitem (a recent play, a playlist or a search result), amsearch,
+    // amsignin (the sign-in window) and amlists (look at the recent plays and playlists again).
+    async act(c, action, x, cached) {
+      if (c.mode === 'web' || !x.appleMusic) return false;
+      return engineAct(x.appleMusic, 'Apple Music', action, x, cached);
+    },
   },
 
   embed: {
@@ -1073,13 +1321,87 @@ async function completedToday(x) {
   });
 }
 
+// Spotify's card in "Play as Lumen" mode, when the account is also connected to the Web API (a token is kept and the Client ID is there): a search is ONE
+// request (GET /v1/search) instead of two page routes. -> an act() result when it handled the action, else falsy (the engine's page does it).
+const apiConnected = (c, x) => Boolean(x.secret() && SV.effectiveClientId(c.clientId));
+// The Library tab of the engine's card, read from the Web API when the account is connected (five plain requests; no page to scroll). True when it answered (the card
+// has the rows); false when not connected or the API failed (no scope, rate limit, offline): the engine reads the page's own library then.
+async function statusLibrary(c, x, cached, action) {
+  if (!apiConnected(c, x)) return false;
+  const ui = x.ui(c.id);
+  const have = ui.library;
+  if (have && SAC.directLibrary(ui) && x.now() - have.at < 20e3 && !action.force) { Object.assign(cached, SAC.directLibrary(ui)); return true; }
+  const sctx = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, listMs: x.libraryListMs?.(), onPart: () => { Object.assign(cached, SAC.directLibrary(ui) || {}); x.pushUpdate?.(); } };
+  await SAC.loadTab((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), 'library', sctx, cached).catch(() => {});
+  const got = SAC.directLibrary(ui);
+  if (!got) return false;
+  Object.assign(cached, got);
+  return true;
+}
+async function statusSearch(c, action, x, cached) {
+  if (action.do === 'ewarm') { warmSpotify(c, x); return false; } // (and the engine's page is started too: engineAct)
+  if (!apiConnected(c, x)) { if (action.do === 'esearch') SAC.clearSearch(x.ui(c.id)); return false; } // (not connected: the page searches, and no older Web API rows are left over it)
+  const ui = x.ui(c.id);
+  const sctx = { ui, now: x.now, image: x.thumb, searchCall: (m, p, b) => spotifyCall(x, c, m, p, b, 'search'), searchImage: x.searchThumb };
+  if (action.do === 'esearch') {
+    const term = typeof action.text === 'string' ? action.text.trim() : '';
+    if (!term) { SAC.clearSearch(ui); return false; } // (the engine clears its own)
+    const got = await SAC.runSearch(ui, term, sctx);
+    if (got.stale) return { local: true }; // a newer search was asked meanwhile: it has the card
+    if (!got.ok) { SAC.clearSearch(ui); return false; } // the Web API said no (scope, limit, network): the page searches instead
+    x.spotifyEngine.warm?.(); // (a click on a result plays in the hidden page: started now, not at the click)
+    Object.assign(cached, SAC.directResults(ui));
+    return { local: true };
+  }
+  if (action.do === 'elib' || action.do === 'edetail' || action.do === 'eplay') { // the Library (Web API, when connected): lists, opened lists, a row played in its list on Lumen's own player
+    if (!apiConnected(c, x)) return { local: true };
+    const lx = { ui, cached, now: x.now, image: x.thumb, searchImage: x.searchThumb, warm: () => x.spotifyEngine.warm?.(), pageRead: x.spotifyEngine?.readItem ? (kind, id) => x.spotifyEngine.readItem(kind, id) : undefined, onPart: () => { Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {}); x.pushUpdate?.(); } };
+    const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, lx);
+    Object.assign(cached, SAC.lib2Fields(ui, x.libText()) || {});
+    return done;
+  }
+  if (action.do === 'ehome') {
+    if (!SAC.HOME_SHELVES.includes(action.arg)) return false;
+    if (!apiConnected(c, x)) return { local: true }; // (nothing to read it with: the tab offers to connect)
+    const sh = { ui, now: x.now, image: x.thumb, searchImage: x.searchThumb, onPart: () => { Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {}); x.pushUpdate?.(); } };
+    await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, sh).catch(() => {});
+    Object.assign(cached, SAC.homeFields(ui, x.homeText()) || {});
+    return { local: true };
+  }
+  if (action.do === 'playlater' && action.kind === 'song') {
+    // "Add to queue" with the account connected: the Web API does it and its answer is the truth (the card says "Added" only when Spotify did). When it can't (no scope, no
+    // active device, offline) the hidden player's own page queues it, as before.
+    try { const done = await SAC.act((m, p, b) => spotifyCall(x, c, m, p, b, 'search'), action, { ui, cached, now: x.now }); if (done) return done; } catch { /* the page queues it */ }
+    return false;
+  }
+  if (action.do === 'ethumb' && (ui.search?.api || SAC.directLibrary(ui))) {
+    await SAC.loadThumbs(ui, action.ids, sctx);
+    Object.assign(cached, SAC.directLibrary(ui) || {}, SAC.directResults(ui) || {});
+    return { local: true };
+  }
+  if (action.do === 'emore' && ui.search?.api) { // the next ten songs of the search shown (Spotify's development mode answers ten a request)
+    const got = await SAC.searchMore(ui, sctx);
+    if (!got.stale) Object.assign(cached, SAC.directResults(ui));
+    return { local: true };
+  }
+  return false;
+}
+// The search box was focused: the access token is asked for now (the first search then has one), and the hidden page started where it plays.
+function warmSpotify(c, x) {
+  if (apiConnected(c, x)) spotifyAccess(x, SV.effectiveClientId(c.clientId)).catch(() => {});
+  if (c.mode === 'status') x.spotifyEngine?.warm?.();
+}
+
 // One call to the Spotify Web API with a fresh access token. A 401 gets one refresh and one retry;
 // a 429 already backs every request off (request() below) and reads as a calm message.
-async function spotifyCall(x, cfg, method, path, body) {
+// Spotify's answers can be big: GET /me/albums sends every saved album with its whole track list (50 albums are well over 1 MB), and a playlist's items
+// are full track objects. Cut at 256 KB the JSON was invalid and the list silently empty, so the cap is high and a cut answer is a failure (see ask() in spotify-api-card.js).
+const SPOTIFY_MAX_BYTES = 6e6;
+async function spotifyCall(x, cfg, method, path, body, budget) {
   const go = async (force) => {
     const token = await spotifyAccess(x, SV.effectiveClientId(cfg.clientId), force);
-    return x.raw(`${x.endpoint('spotify')}${path}`, {
-      method, max: 262144, body: body ? JSON.stringify(body) : undefined,
+    return (budget === 'search' && x.rawSearch ? x.rawSearch : x.raw)(`${x.endpoint('spotify')}${path}`, {
+      method, max: SPOTIFY_MAX_BYTES, body: body ? JSON.stringify(body) : undefined,
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     });
   };
@@ -1115,6 +1437,23 @@ async function spotifyAccess(x, clientId, force = false) {
   }
   await s.pending;
   return s.access;
+}
+
+// Gmail through the Google sign-in in Lumen's session: one GET of the inbox's Atom feed (x.googleMail,
+// main.js: the session's cookies, mail.google.com only), parsed strictly (features/gmail-atom.js).
+// Signed out (401, 403, a sign-in redirect or page) is a card state, not an error.
+async function gmailFeedData(x, cfg) {
+  const gm = x.googleMail;
+  const account = GA.cleanAccount(cfg.account);
+  if (!gm) throw new Error('Reading Gmail through your Google sign-in isn’t available here.');
+  const res = await gm.fetch(GA.feedUrl(account));
+  if (res.status === 401 || res.status === 403 || (res.status >= 300 && res.status < 400)) { x.googleSeen(false); return GA.signedOut(account); }
+  if (res.status === 429) { x.backoff(60e3); throw new Error('Gmail asked Lumen to slow down. It will try again shortly.'); }
+  if (res.status !== 200) throw new Error(res.status >= 500 ? 'Gmail is having trouble. Lumen will try again shortly.' : `Gmail answered ${res.status}.`);
+  const parsed = GA.parseFeed(res.body, { snippets: cfg.snippets !== false });
+  if (!parsed.ok) { if (parsed.reason === 'html') { x.googleSeen(false); return GA.signedOut(account); } throw new Error('Gmail sent something unexpected.'); }
+  x.googleSeen(true, parsed.email);
+  return GA.shape(parsed, { account, count: cfg.count, snippets: cfg.snippets !== false });
 }
 
 // Which Google client a Gmail sign-in or Check uses: the user's own (typed, or the widget's saved Client
@@ -1174,7 +1513,7 @@ async function framing(url, x) {
 // Settings' form fields -> checked values (what resolve() gets).
 function cleanInput(input) {
   const i = input && typeof input === 'object' ? input : {};
-  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, mode: i.mode, count: i.count, snippets: i.snippets, slack: i.slack };
+  return { type: CONNECTORS[i.type] ? i.type : null, title: str(i.title, 60), city: str(i.city, 80), units: i.units, colors: i.colors, cals: i.cals, fresh: i.fresh === true, url: typeof i.url === 'string' ? i.url.slice(0, 2000) : '', height: i.height, feed: str(i.feed, 30), span: pick(Number(i.span), SPANS, null), token: typeof i.token === 'string' ? i.token.slice(0, 300) : '', todo: i.todo, wx: i.wx, mk: i.mk, tv: i.tv, recipe: i.recipe, note: i.note, cd: i.cd, tm: i.tm, wc: i.wc, muse: i.muse, gh: i.gh, clientId: typeof i.clientId === 'string' ? i.clientId.slice(0, 300) : '', clientSecret: typeof i.clientSecret === 'string' ? i.clientSecret.slice(0, 300) : '', art: i.art, app: i.app, react: i.react === true, mode: i.mode, account: i.account, count: i.count, snippets: i.snippets, slack: i.slack };
 }
 
 // A stored widget -> { id, type, title, x, y, w, h, snap?, span, ...config } with every field checked, or null.
@@ -1256,17 +1595,26 @@ function applyRects(widgets, items) {
 // deps: { readSettings, writeSettings, fetch (Electron's net.fetch), getSecret(name), setSecret(name, value|null),
 //         onUpdate(), onConfigure(id)?, endpoints() (test overrides; {} otherwise), now?, undoMs?,
 //         spotifyWebSignedIn()? (true | false | null: is Spotify's site signed in, for the Web player card),
+//         spotifyEngine? (the same calls for Spotify's engine, features/spotify-engine.js), spotifyEngineSignedIn()?,
+//         appleMusic? ({ read({ app }), control(name), seek(sec), playItem(kind, id), search(term), signIn(), refreshLists(), reload() }: the Apple Music
+//         engine, features/apple-music-engine.js),
+//         appleMusicWebSignedIn()?, appleMusicWebStatus()?, appleMusicWebReload()? (the same three for the Apple Music card),
 //         spotifyWebStatus()? ({ state: 'loading'|'ready'|'offline'|'failed', drm: 'unknown'|'ok'|'missing' }: the Web player's view), spotifyWebReload()?,
 //         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
+  const recentPictures = [];
+  const recentSearch = []; // the same for the user's own searches (SEARCH_RATE)
   const memoCache = new Map(); // shared answers: what Todoist said to a question a minute ago
   const spotifyTokens = new Map(); // secret name -> { access, exp, pending }: short-lived tokens, in memory only
+  const uiState = new Map(); // widget id -> what the card keeps between looks (features/spotify-api-card.js)
   let backoffUntil = 0; // after a 429: no requests until then
   let pendingEdit = null; // a card's gear: the Settings page opens this widget's editor
   let slackPending = null; // a Slack sign-in that is waiting for its address: { state, clientId, clientSecret, redirectUri, at }
+  let slackDraft = null; // a pasted Client ID or Secret that is waiting for the other half: { clientId, clientSecret, at }
+  let slackLast = null; // how the last automatic sign-in ended, for Settings to show: { ok, message }
   let slackBad = false; // Slack refused the stored sign-in: the cards say Reconnect until it is redone
   let slackRefreshing = null; // one token refresh at a time (rotation invalidates the old refresh token)
   const now = () => (deps.now ? deps.now() : Date.now());
@@ -1282,7 +1630,7 @@ function createWidgets(deps) {
   const sizes = () => cleanSizes(deps.readSettings().homeWidgetSizes);
   const sizeFor = (type) => sizes()[type] || WL.defaultSize(type); // a size the person used stays; a first card fits beside the centre column
   // A changed config invalidates its cached data; its size, place and paper trades don't.
-  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, rotate, smart, colors, pf, ...rest }) => JSON.stringify(rest);
+  const keyOf = ({ span, height, x, y, w, h, snap, stack, top, rotate, smart, colors, pf, pins, ...rest }) => JSON.stringify(rest);
 
   let epoch = 0; // flush() bumps it: an answer that was in flight is not kept
   async function memo(key, ttl, fn) {
@@ -1292,31 +1640,53 @@ function createWidgets(deps) {
     const value = await fn();
     if (born !== epoch) return value;
     memoCache.set(key, { at: now(), value });
-    if (memoCache.size > 60) memoCache.delete(memoCache.keys().next().value);
+    if (memoCache.size > 400) memoCache.delete(memoCache.keys().next().value); // (the small pictures of a Home tab are most of them)
     return value;
   }
   const lastGood = new Map(); // key -> the last answer that worked (a calendar that is down for a while)
   const forget = (prefix) => { for (const k of [...memoCache.keys()]) if (k.startsWith(prefix)) memoCache.delete(k); };
 
   // ---- network helpers handed to connectors (x) ----
-  function spend() {
+  function spend(budget) {
     const t = now();
-    if (t < backoffUntil) throw new Error('The service asked Lumen to slow down. It will try again shortly.');
-    while (recent.length && t - recent[0] > RATE.window) recent.shift();
-    if (recent.length >= (Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
-    recent.push(t);
+    if (budget === 'pictures') { // (not the API: neither its 429 pause nor its budget)
+      while (recentPictures.length && t - recentPictures[0] > PICTURE_RATE.window) recentPictures.shift();
+      if (recentPictures.length >= (Number(deps.pictureRateMax?.()) || PICTURE_RATE.max)) throw new Error('Too many pictures right now. Try again in a minute.');
+      recentPictures.push(t);
+      return;
+    }
+    if (t < backoffUntil) throw Object.assign(new Error('The service asked Lumen to slow down. It will try again shortly.'), { waitMs: backoffUntil - t }); // (one 429 pauses every card: they wait it out together instead of retrying)
+    const bucket = budget === 'search' ? recentSearch : recent;
+    const win = budget === 'search' ? SEARCH_RATE.window : RATE.window;
+    while (bucket.length && t - bucket[0] > win) bucket.shift();
+    if (bucket.length >= (budget === 'search' ? Number(deps.searchRateMax?.()) || SEARCH_RATE.max : Number(deps.rateMax?.()) || RATE.max)) throw new Error('Too many requests right now. Try again in a minute.');
+    bucket.push(t);
   }
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT } = {}) {
+  let freshUntil = 0; // while now() < this, the cards' requests go through deps.freshFetch (see request())
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget } = {}) {
     if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
-    spend();
+    spend(budget);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
+    const init = { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' };
+    // After some network glitches the browser's own session stays broken (every request fails at once with net::ERR_FAILED
+    // until Lumen restarts; dropping its sockets and DNS cache is not enough). A request that fails that way is sent once
+    // more through a fresh session of its own (deps.freshFetch: the cards send no cookies, so nothing is lost), and the
+    // cards keep using that one for FRESH_NET_MS before trying the browser's session again.
+    const viaFresh = deps.freshFetch && now() < freshUntil;
     try {
-      res = await deps.fetch(url, { method, headers: { Accept: '*/*', ...headers }, body, signal: controller.signal, credentials: 'omit', redirect: 'follow', cache: 'no-store' });
+      res = await (viaFresh ? deps.freshFetch(url, init, { renew: false }) : deps.fetch(url, init));
     } catch (err) {
-      clearTimeout(timer);
-      throw new Error(err.name === 'AbortError' ? 'The server took too long to answer.' : 'Couldn’t connect. Check your internet connection.');
+      const why = netError(err);
+      if (!deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
+      try {
+        res = await deps.freshFetch(url, init, { renew: viaFresh }); // already on it and it failed too: a new one
+        freshUntil = now() + FRESH_NET_MS;
+      } catch (err2) {
+        clearTimeout(timer);
+        throw netError(err2);
+      }
     }
     try {
       if (res.url && !/^https:\/\//.test(res.url)) throw new Error('The address redirected away from https.');
@@ -1346,6 +1716,7 @@ function createWidgets(deps) {
     const res = await request(url, { method: 'POST', max: 65536, body, headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } });
     return { ok: res.ok, status: res.status, body: res.body, retryAfter: res.headers.get('retry-after') };
   }
+  let googleFeed = { signedIn: null, email: '' }; // what the last read of Gmail's feed saw: signed in to Google in Lumen (null: not asked yet) and as whom
   // OAuth accounts by secret name: the access token is kept here, in memory, and the refresh token in
   // the encrypted secret (a JSON blob, see features/oauth.js).
   const sessions = new Map();
@@ -1371,7 +1742,7 @@ function createWidgets(deps) {
     if (res.status === 401 || res.status === 403) return new Error('The token was refused. Check it in Settings.');
     if (res.status === 404) return new Error('Nothing was found at that address.');
     if (res.status === 429) return new Error('The service is busy. Lumen will try again shortly.');
-    return new Error(`The server answered ${res.status}.`);
+    return Object.assign(new Error(`The server answered ${res.status}.`), res.status >= 500 || res.status === 408 ? { transient: true } : {}); // a busy or restarting server passes
   };
   const spotifyTokenFor = (name) => { if (!name) return {}; if (!spotifyTokens.has(name)) spotifyTokens.set(name, {}); return spotifyTokens.get(name); };
   function helpers(secretName, secretOverride) {
@@ -1398,7 +1769,38 @@ function createWidgets(deps) {
       },
       backoff(ms) { backoffUntil = Math.max(backoffUntil, now() + Math.min(120e3, Math.max(1e3, ms))); },
       googleClient,
+      googleMail: deps.googleMail || null, // the feed fetch for Gmail's Google-sign-in mode (main.js)
+      googleSeen: (signedIn, email) => { googleFeed = { signedIn, email: signedIn ? str(email, 200) || googleFeed.email : '' }; },
+      appleMusic: deps.appleMusic || null, // the Apple Music engine (features/apple-music-engine.js)
+      spotifyEngine: deps.spotifyEngine || null, // Spotify's engine (features/spotify-engine.js)
+      libText: () => Object.fromEntries(Object.entries(SAC.LIB_STRINGS).map(([k, en]) => [k, tt(`spotify.library.${k}`, en)])), // (the Library's words, from locales/)
+      homeText: () => Object.fromEntries(Object.entries(SAC.HOME_STRINGS).map(([k, en]) => [k, tt(`spotify.home.${k}`, en)])), // (the Home tab's words, from locales/)
+      libraryListMs: () => Number(deps.libraryListMs?.()) || 0, // (tests: how long one library list may take)
+      pushUpdate: () => deps.onUpdate?.(), // (a read that goes on after its action answered: the card is redrawn with what came in)
+      ui: (id) => { if (!uiState.has(id)) uiState.set(id, {}); return uiState.get(id); }, // what a card keeps between looks (the Spotify card's open tab and its lists)
       raw: (url, opts) => request(url, opts),
+      rawSearch: (url, opts) => request(url, { ...opts, budget: 'search' }), // (a search the user asked for: SEARCH_RATE, not the polling budget)
+      // A row's picture (queue, search, library): a small JPEG made by deps.resizeThumb (128 px: rows draw it 28 px wide, Home tiles 112), as a data: URL the card accepts
+      // (under 12000 characters). Without a resizer the original is used when it is small enough. `budget`: 'search' for pictures of rows the user is looking at.
+      thumb: (url) => memo(`thumb:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/jpeg, image/png;q=0.9' }, budget: 'pictures' });
+        if (!res.ok || res.truncated) throw new Error('That picture can’t be shown.');
+        let small = null;
+        try { if (deps.resizeThumb) small = deps.resizeThumb(res.bytes); } catch { /* the picture as it is, if it is small enough */ }
+        const data = SV.dataUrl(small || res.bytes, SV.MAX_ART_BYTES);
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
+      searchThumb: (url) => x.thumb(url),
+      // The same picture as image(), for a result row the user is looking at (the search budget).
+      searchImage: (url) => memo(`img:${url}`, 3600e3, async () => {
+        if (!SV.isImageUrl(url)) throw new Error('Not a Spotify picture.');
+        const res = await request(url, { max: SV.MAX_ART_BYTES + 1, headers: { Accept: 'image/*' }, budget: 'search' });
+        const data = res.ok && !res.truncated ? SV.dataUrl(res.bytes) : null;
+        if (!data) throw new Error('That picture can’t be shown.');
+        return data;
+      }),
       async request(url, opts) {
         const res = await request(url, { max: 65536, ...opts });
         if (!res.ok) throw failure(res);
@@ -1499,7 +1901,7 @@ function createWidgets(deps) {
       },
       async identify(access) {
         const r = await slackRequest(x, access || (await slackToken(x)).access, 'auth.test');
-        return { userId: str(r.user_id, 40), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
+        return { userId: str(r.user_id, 40), userName: str(r.user, 80), teamId: str(r.team_id, 40), teamName: str(r.team, 120), teamUrl: /^https:\/\/[\w.-]+\.slack\.com/.test(r.url || '') ? new URL(r.url).origin : '' };
       },
       userName: (id) => x.memo(`slack:user:${id}`, 3600e3, async () => {
         const u = (await x.slack.call('users.info', { user: id })).user || {};
@@ -1509,21 +1911,117 @@ function createWidgets(deps) {
   }
 
   // ---- fetching ----
-  function refresh(w, { force = false } = {}) {
+  // A passing failure (offline, DNS, a reset, a timeout, a 5xx) is asked again after RETRY_STEPS, with the old answer still on the card.
+  const setTimer = deps.setTimer || ((fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; });
+  const clearTimer = deps.clearTimer || ((t) => clearTimeout(t));
+  function scheduleRetry(w, entry) {
+    if (entry.timer) { clearTimer(entry.timer); entry.timer = null; }
+    if (!(entry.tries < RETRY_STEPS.length)) return;
+    const delay = RETRY_STEPS[entry.tries++];
+    entry.timer = setTimer(() => {
+      entry.timer = null;
+      const cur = list().find((x) => x.id === w.id);
+      if (!cur || cache.get(w.id) !== entry || entry.key !== keyOf(cur)) return; // the card was edited or removed meanwhile
+      refresh(cur, { retry: true }).catch(() => {});
+    }, delay);
+  }
+  // The machine came back (it woke, the network returned, the new-tab page was shown again): every card that is showing an
+  // error or an older answer asks again now, and gets its three quick retries back.
+  function retryNow() {
+    const jobs = [];
+    for (const w of list()) {
+      const entry = cache.get(w.id);
+      if (!entry || entry.key !== keyOf(w) || entry.pending || !(entry.error || entry.retrying)) continue;
+      if (entry.timer) { clearTimer(entry.timer); entry.timer = null; }
+      entry.tries = 0;
+      jobs.push(refresh(w, { retry: true }).catch(() => false));
+    }
+    return Promise.all(jobs).then((r) => r.some(Boolean));
+  }
+  // After a network failure Chromium may keep a dead socket or a stale DNS answer, and every retry would fail on it the same way
+  // (a fresh Lumen gets through). Before a card that failed that way asks again, those are dropped: at most once in NET_RESET_MS.
+  let netResetAt = -Infinity;
+  function freshNetwork() {
+    if (!deps.resetNetwork || now() - netResetAt < NET_RESET_MS) return Promise.resolve();
+    netResetAt = now();
+    let t;
+    const cap = new Promise((r) => { t = setTimer(r, NET_RESET_CAP_MS); }); // a reset that never answers does not hold the refresh
+    return Promise.race([Promise.resolve().then(() => deps.resetNetwork()).catch(() => {}), cap]).then(() => clearTimer(t));
+  }
+  // user: a person pressed Refresh or Try again. That is always a real fetch: no minimum interval, no cached answer, no rate-limit
+  // pause that hides it (the failure is shown instead), and it joins a refresh already running (the button spins until it ends).
+  // Play / Pause on a music card: the card shows the intended state at once, and keeps it until the source says the same (Spotify's API answers is_playing with the old value for a
+  // second or two after a pause, and the hidden player's page can send a state it read just before the click). An answer that disagrees is not shown (it is one that was read
+  // before the press, or one that has not caught up); the player is asked again shortly. If it still disagrees after MUSIC_CONFIRM_MS the press did not work: the card goes back
+  // to what the source says, with a short note.
+  const MUSIC_CONFIRM_MS = 3000;
+  function holdIntent(w, entry, data, startedAt) {
+    const i = entry.intent;
+    if (!i) return data;
+    const playing = data && (data.state === 'playing' || data.state === 'paused');
+    if (!playing || data.kind === 'ad') { entry.intent = null; return data; } // (nothing playing any more, or an ad: nothing to hold)
+    if (data.state === i.state) { entry.intent = null; return data; } // confirmed
+    if (now() < i.until) { // not yet: show what was pressed, ask again soon
+      setTimer(() => { if (cache.get(w.id) === entry && entry.intent === i) refresh(w, { after: true }).catch(() => {}); }, 700);
+      return { ...data, state: i.state, progressMs: i.progressMs ?? data.progressMs, at: i.at };
+    }
+    entry.intent = null; // the source never agreed: the press did not work
+    const text = tt(i.state === 'paused' ? 'widgets.musicPauseFailed' : 'widgets.musicPlayFailed', i.state === 'paused' ? 'It didn’t pause. Try again.' : 'It didn’t start playing. Try again.');
+    entry.notice = { text, until: now() + 8000 };
+    setTimer(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+    void startedAt;
+    return { ...data, notice: text };
+  }
+  function refresh(w, { force = false, retry = false, user = false, after = false } = {}) {
+    if (user) force = true;
+    if (after) { // after a write (an added task): a run that began before the write has the old list, so wait for it and ask again
+      const run = cache.get(w.id)?.pending;
+      if (run) return run.then(() => refresh(w, { after: true, user }), () => refresh(w, { after: true, user }));
+      force = true;
+    }
     const c = connector(w);
     let entry = cache.get(w.id);
-    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, undo: entry?.undo }; cache.set(w.id, entry); }
-    if (entry.pending) return entry.pending;
-    if (entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
+    if (!entry || entry.key !== keyOf(w)) { entry = { key: keyOf(w), data: null, error: null, at: 0, tries: 0, undo: entry?.undo }; cache.set(w.id, entry); }
+    if (entry.pending) {
+      if (user && !entry.userAsked) { entry.userAsked = true; deps.onUpdate?.(); } // joined: the card now shows it spinning until this run ends
+      return entry.pending;
+    }
+    if (!user && entry.retryAt && now() < entry.retryAt) return Promise.resolve(false); // a rate limit said when to come back
     const age = now() - entry.at;
     const ttl = typeof c.ttl === 'function' ? c.ttl(entry.data) : c.ttl;
-    const fresh = entry.at && age < (entry.error ? ERROR_TTL : ttl);
-    if (fresh && (!force || age < (c.minRefresh ?? MIN_REFRESH))) return Promise.resolve(false);
+    const fresh = !retry && entry.at && age < (entry.error ? ERROR_TTL : ttl);
+    // A card showing an error asks again on Try again (only a double click is held back): the usual 15 s floor kept a click
+    // right after an automatic retry from doing anything.
+    const floor = entry.error || entry.retrying ? ERROR_CLICK_MS : typeof c.minRefresh === 'function' ? c.minRefresh(entry.data) : (c.minRefresh ?? MIN_REFRESH);
+    // A card that costs money for each answer (Muse) keeps the minimum interval for a press too, but says so on the card.
+    if (user && c.costly && fresh && age < floor && entry.data) {
+      entry.notice = { text: 'Just updated. Press again in a few seconds.', until: now() + 8000 };
+      setTimer(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+      deps.onUpdate?.();
+      return Promise.resolve(false);
+    }
+    if (!user && !after && fresh && (!force || age < floor)) return Promise.resolve(false);
+    if (user) { entry.userAsked = true; entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } forget('projects:'); }
     if (force) { forget('tasks:'); forget('done:'); forget('gh:'); forget('wx:'); forget('wc:'); forget('tv:'); forget('ics:'); }
-    entry.pending = Promise.resolve()
-      .then(() => c.fetch(w, helpers(c.secret)))
-      .then((data) => { entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now(); }, (err) => { entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0; })
-      .then(() => { entry.at = now(); entry.pending = null; deps.onUpdate?.(); return true; });
+    let capTimer;
+    const capped = (p) => Promise.race([p, new Promise((_, no) => { capTimer = setTimer(() => no(Object.assign(new Error('Couldn’t reach the service in time. Try again.'), { transient: true })), FETCH_CAP_MS); })]);
+    const startedAt = now();
+    entry.pending = (entry.netFail || (user && entry.error) ? freshNetwork() : Promise.resolve())
+      .then(() => capped(Promise.resolve().then(() => c.fetch(w, helpers(c.secret)))))
+      .then((data) => {
+        data = holdIntent(w, entry, data, startedAt);
+        entry.data = data; entry.error = null; entry.retryAt = 0; entry.okAt = now();
+        entry.retrying = Boolean(c.retryWanted?.(data)); // part of the answer is an old one after a passing failure
+        entry.netFail = entry.retrying;
+        if (entry.retrying) scheduleRetry(w, entry); else { entry.tries = 0; if (entry.timer) { clearTimer(entry.timer); entry.timer = null; } }
+      }, (err) => {
+        entry.error = String(err?.message || err).slice(0, 200); entry.retryAt = err?.waitMs > 0 ? now() + err.waitMs : 0;
+        entry.retrying = false;
+        entry.netFail = err?.transient === true; // a passing failure (no answer, a reset, a timeout, a busy server), not a refusal
+        if (err?.transient === true && !entry.retryAt) scheduleRetry(w, entry);
+      })
+      .then(() => { clearTimer(capTimer); entry.at = now(); entry.pending = null; entry.userAsked = false; deps.onUpdate?.(); return true; });
+    if (user) deps.onUpdate?.(); // the card starts spinning now, not when the answer comes
     return entry.pending;
   }
   const connector = (w) => CONNECTORS[w.type];
@@ -1536,13 +2034,13 @@ function createWidgets(deps) {
       if (!current?.pending) refresh(w).catch((err) => console.error('[lumen] widget refresh:', err.message));
       const undo = current?.undo && current.undo.until > now() ? { id: current.undo.id, title: current.undo.title } : null;
       let data = current?.data ? (undo ? { ...current.data, undo } : current.data) : null;
-      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()) });
+      if (data && connector(w).present) data = connector(w).present(w, data, { now: now(), offline: Boolean(current.error), spotifySignedIn: deps.spotifyWebSignedIn ? deps.spotifyWebSignedIn() : null, spotifyView: deps.spotifyWebStatus ? deps.spotifyWebStatus() : null, appleMusicSignedIn: deps.appleMusicWebSignedIn ? deps.appleMusicWebSignedIn() : null, appleMusicView: deps.appleMusicWebStatus ? deps.appleMusicWebStatus() : null, aiStatus: () => AS.shape(deps.aiStatus ? deps.aiStatus() : {}, now()), routines: () => RC.shape(deps.routines ? deps.routines() : {}, now()) });
       if (data && current.notice && current.notice.until > now()) data = { ...data, notice: current.notice.text };
       const layout = WL.rectOf(w);
       if (w.snap) layout.snap = w.snap;
       // With old data on hand a failed refresh is a warning under it ("offline"), not an empty card.
       const stack = w.stack ? { stack: ST.membersOf(all, w.stack), sid: w.stack, top: Boolean(w.top), ...(w.rotate === false ? { rotate: false } : {}), ...(w.smart === false ? { smart: false } : {}), ...(w.was ? { was: w.was } : {}) } : {}; // the page draws the hidden members too (a switch is instant)
-      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', layout, ...stack, data, updated: current?.data ? current.okAt || current.at : 0, warning: current?.data ? current.error || null : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
+      return { id: w.id, type: w.type, title: w.title || connector(w).title(w), span: w.span, height: w.height, colors: w.colors || 'calendar', react: w.react === true, layout, ...stack, data, updated: current?.data ? (current.error ? current.okAt || current.at : data?.staleSince || current.okAt || current.at) : 0, warning: current?.data ? current.error || (data?.staleSince ? 'Couldn’t refresh; showing earlier events' : null) : null, error: current?.data ? null : current?.error ?? null, loading: !current?.data && !current?.error, ...(current?.pending && current.userAsked ? { refreshing: true } : {}), ...(INLINE[w.type] ? { setup: { title: w.title || '', ...INLINE[w.type](w) } } : {}) };
     });
     return [...cards, ...SYS.forPage(sysList())]; // free system cards (Favorites moved, ...): the page draws them, see renderer/newtab-system.js
   }
@@ -1578,6 +2076,7 @@ function createWidgets(deps) {
     if (!id && widgets.length >= MAX_WIDGETS) throw new Error(`Up to ${MAX_WIDGETS} widgets.`);
     const { widget, secret, message } = await resolveInput(input, id, known);
     // Paper trades survive an edit; the starting cash can only change while there are none (Reset first).
+    if (prev?.pins && widget.type === 'spotify' && widget.mode === 'api' && !widget.pins) widget.pins = prev.pins; // (the form has no pins: they stay)
     if (prev?.pf && CONNECTORS[widget.type].portfolio) widget.pf = { cash0: prev.pf.trades.length ? prev.pf.cash0 : widget.pf?.cash0, trades: prev.pf.trades };
     const ci = cleanInput(input);
     if (prev) {
@@ -1758,6 +2257,16 @@ function createWidgets(deps) {
   function gmailSignInFromPage(w) {
     // Also when a sign-in is stored but Google stopped accepting it (the card asks to reconnect): a new sign-in replaces it.
     if (w.type !== 'gmail') return false;
+    if (w.mode !== 'oauth') { // the default: sign in to Google in a normal Lumen tab; the cookie watch refreshes the card
+      if (cache.get(w.id)?.data?.state === 'ok') return false;
+      gmailOpenSignIn();
+      const old = cache.get(w.id);
+      const entry = old && old.key === keyOf(w) ? old : { key: keyOf(w), undo: old?.undo };
+      Object.assign(entry, { data: { ...GA.signedOut(w.account), message: 'Finish signing in, in the tab Lumen opened. This card fills in when you’re done.' }, error: null, at: now() });
+      cache.set(w.id, entry);
+      deps.onUpdate?.();
+      return true;
+    }
     if (sessionFor('gmail').connected() && cache.get(w.id)?.data?.state !== 'reconnect') return false;
     if (!GC.uiState({ clientId: w.clientId, stored: OA.decodeCreds(deps.getSecret('gmail')), builtin: googleClient() }).oneClick) { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     const show = (message) => {
@@ -1778,6 +2287,43 @@ function createWidgets(deps) {
       .then(() => Promise.all(list().filter((x) => x.type === 'gmail').map((x) => refresh(x, { force: true }).catch(() => {}))))
       .catch((err) => { if (attempt === pageSignIns) show(String(err?.message || err)); }) // a newer click's wait is not overwritten by the one it cancelled
       .finally(() => clearTimeout(hint));
+    return true;
+  }
+  // ---- Gmail through the Google sign-in in Lumen (the default) ----
+  // Sign in: a normal tab on Google's sign-in page (Lumen's own Google sign-in handling applies there).
+  function gmailOpenSignIn() {
+    if (!deps.googleMail?.openSignIn) throw new Error('Opening a sign-in tab isn’t available here.');
+    deps.googleMail.openSignIn(GA.SIGN_IN_URL);
+    return true;
+  }
+  // The Google accounts signed in in Lumen, for Settings' picker: [{ index, email }]. Stops at the first
+  // index that isn't an account (or repeats one): a few small requests, only when Settings asks.
+  async function gmailAccounts() {
+    if (!deps.googleMail) return { accounts: [], signedIn: false };
+    const found = [];
+    for (let i = 0; i <= GA.MAX_ACCOUNT; i++) {
+      let res;
+      try { res = await deps.googleMail.fetch(GA.feedUrl(i)); } catch { break; }
+      const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
+      if (!parsed?.ok || !parsed.email || found.some((e) => e.toLowerCase() === parsed.email.toLowerCase())) break;
+      found.push(parsed.email);
+    }
+    googleFeed = { signedIn: found.length > 0, email: found[0] || '' };
+    return { accounts: GA.accountList(found), signedIn: found.length > 0 };
+  }
+  // Google's sign-in cookies appeared or went (main.js watches them): Gmail cards that read through that
+  // sign-in look again at once, instead of waiting out their refresh time.
+  let googleNudge = 0;
+  function googleSessionChanged() {
+    const cards = list().filter((w) => w.type === 'gmail' && w.mode !== 'oauth');
+    if (!cards.length) return false;
+    clearTimeout(googleNudge);
+    googleNudge = setTimeout(() => {
+      for (const w of cards) cache.delete(w.id);
+      googleFeed = { signedIn: null, email: '' };
+      deps.onUpdate?.();
+    }, 1500);
+    googleNudge.unref?.();
     return true;
   }
   // Best effort: tell Google the refresh token is no longer wanted.
@@ -1819,22 +2365,44 @@ function createWidgets(deps) {
     return {
       url: SV.authorizeUrl(x.endpoint('spotifyAccounts'), { clientId, challenge: p.challenge, state: p.state }),
       state: p.state,
+      builtin: SV.clientIdSource({ user: clientIdInput, env: typeof process !== 'undefined' ? process.env?.LUMEN_SPOTIFY_CLIENT_ID : '' }) === 'builtin', // (Lumen's own app: limited to 25 listed accounts)
       async exchange(code) {
         if (typeof code !== 'string' || !/^[\w.~-]{1,2000}$/.test(code)) throw new Error('Spotify sent something unexpected.');
         const res = await x.raw(`${x.endpoint('spotifyAccounts')}/api/token`, {
           method: 'POST', max: 65536, body: SV.tokenForm('code', { clientId, code, verifier: p.verifier }),
           headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         });
-        if (!res.ok) throw new Error(SV.tokenError(res.status, res.body));
+        if (!res.ok) throw Object.assign(new Error(SV.tokenError(res.status, res.body)), { allowlist: SV.isAllowlistError(res.status, res.body) });
         const t = SV.parseToken(res.body, now());
         deps.setSecret('spotify', t.refresh);
         Object.assign(x.spotifyToken, { access: t.access, exp: t.exp, name: undefined });
-        for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+        for (const w of list()) if (w.type === 'spotify') { cache.delete(w.id); uiState.delete(w.id); } // (a new sign-in agrees to every scope again: nothing is "missing" any more)
         await spotifyName(x, clientId); // "Connected as …" in Settings
         deps.onUpdate?.();
         return true;
       },
     };
+  }
+  // The Spotify card's Reconnect / Connect button: the sign-in starts at once (main.js passes its flow as `signIn(clientId)`), whatever the card's mode. The card says it is
+  // waiting, and what went wrong if it did not work (Lumen's own app only lets 25 listed accounts in: then it offers the user's own app).
+  async function spotifyReconnect(id, signIn) {
+    const w = list().find((x) => x.id === id && x.type === 'spotify');
+    if (!w) return false;
+    const x = helpers('spotify');
+    const show = (ui, signInState) => {
+      ui.signIn = signInState;
+      const e = cache.get(id);
+      if (e && e.data) e.data = { ...e.data, ...(SAC.homeFields(ui, x.homeText()) || {}) };
+      deps.onUpdate?.();
+    };
+    show(x.ui(id), { state: 'waiting', message: tt('spotify.home.waiting', 'Waiting for Spotify in the tab that just opened…') });
+    let r;
+    try { r = await signIn(w.clientId || ''); } catch (err) { r = { ok: false, message: String(err?.message || err) }; }
+    const ui = x.ui(id); // (a sign-in that worked reset the card's state: a fresh one)
+    if (r.ok) { show(ui, null); const e = cache.get(id); if (e) e.at = 0; refresh(list().find((q) => q.id === id) || w, { force: true }).catch(() => {}); return true; }
+    if (r.cancelled) { show(ui, null); return false; }
+    show(ui, { state: r.allowlist ? 'allowlist' : 'failed', message: String(r.message || '').slice(0, 300) });
+    return false;
   }
   // Who is signed in, for Settings' status line (kept in memory, never stored). '' when unknown.
   async function spotifyName(x, clientId) {
@@ -1851,7 +2419,7 @@ function createWidgets(deps) {
   function spotifyDisconnect() {
     deps.setSecret('spotify', null);
     spotifyTokens.delete('spotify');
-    for (const w of list()) if (w.type === 'spotify') cache.delete(w.id);
+    for (const w of list()) if (w.type === 'spotify') { cache.delete(w.id); uiState.delete(w.id); }
     deps.onUpdate?.();
     return true;
   }
@@ -1861,7 +2429,7 @@ function createWidgets(deps) {
   function slackStatus() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
     return {
-      connected: Boolean(tok?.access), team: tok?.teamName || '', reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
+      connected: Boolean(tok?.access), team: tok?.teamName || '', user: tok?.userName || '', last: slackLast, draft: Boolean(slackDraft), reconnect: Boolean(tok?.access) && slackBad, canRefresh: Boolean(tok?.refresh),
       clientId: tok?.clientId || slackPending?.clientId || '', hasSecret: Boolean(tok?.clientSecret), redirect: SL.DEFAULT_REDIRECT, scopes: SL.USER_SCOPES, waiting: Boolean(slackPending),
     };
   }
@@ -1876,6 +2444,7 @@ function createWidgets(deps) {
     if (!clientId) throw new Error('Paste your Slack app’s Client ID (Basic Information → App Credentials: two numbers with a dot).');
     if (!clientSecret) throw new Error('Paste your Slack app’s Client Secret (the same page). It is stored encrypted and never shown again.');
     if (!redirectUri) throw new Error('The redirect URL must be an https:// address. Add the same one under OAuth & Permissions → Redirect URLs in your Slack app.');
+    slackLast = null;
     slackPending = { state: OA.randomState(), clientId, clientSecret, redirectUri, at: now() };
     return { url: SL.authorizeUrl({ clientId, redirectUri, state: slackPending.state }), redirectUri };
   }
@@ -1895,11 +2464,45 @@ function createWidgets(deps) {
     slackReset();
     return { message: `Connected to ${t.teamName || 'Slack'}.` };
   }
-  function slackCancel() { slackPending = null; return true; }
+  function slackCancel() { slackPending = null; slackDraft = null; return true; }
+  // The easy path: a user token (xoxp-…) the user copied from the app's OAuth & Permissions page, or that
+  // Lumen saw on the clipboard. It is checked with auth.test before anything is stored.
+  async function slackConnectToken(token) {
+    const pasted = SL.cleanUserToken(token);
+    if (!pasted) throw new Error('That doesn’t look like a Slack user token (it starts with xoxp-).');
+    const who = await helpers('slack').slack.identify(pasted);
+    deps.setSecret('slack', OA.packTokens({ access: pasted, userId: who.userId, userName: who.userName, teamId: who.teamId, teamName: who.teamName, teamUrl: who.teamUrl }));
+    slackPending = null; slackDraft = null;
+    slackReset();
+    return { message: `Connected to ${who.teamName || 'Slack'}${who.userName ? ` as ${who.userName}` : ''}.` };
+  }
+  // One paste box for everything: a token connects at once; a Client ID and Client Secret (together, or one
+  // after the other) start the approval, whose address comes back through slackAuto.
+  async function slackPaste(text) {
+    const p = SL.parseCredentials(text);
+    if (p.token) return { kind: 'connected', ...(await slackConnectToken(p.token)) };
+    if (!p.clientId && !p.clientSecret) throw new Error('Lumen can’t use that. Paste the User OAuth Token (starts with xoxp-), or the Client ID and Client Secret.');
+    const keep = slackDraft && now() - slackDraft.at < 15 * 60e3 ? slackDraft : null;
+    const clientId = p.clientId || keep?.clientId || '';
+    const clientSecret = p.clientSecret || keep?.clientSecret || '';
+    if (!clientId || !clientSecret) {
+      slackDraft = { clientId, clientSecret, at: now() };
+      return { kind: 'partial', missing: clientId ? 'Client Secret' : 'Client ID' };
+    }
+    slackDraft = null;
+    return { kind: 'approve', ...slackStart({ clientId, clientSecret }) };
+  }
+  // The address Slack sent the setup window to, or a token Lumen saw on the clipboard: finish quietly and
+  // leave the result in the status (Settings shows it), because no call is waiting for an answer.
+  async function slackAuto(what, value) {
+    try { slackLast = { ok: true, message: (what === 'token' ? await slackConnectToken(value) : await slackFinish(value)).message }; } catch (err) { slackLast = { ok: false, message: err instanceof Error ? err.message : 'Slack sign-in failed.' }; }
+    deps.onUpdate?.();
+    return slackLast;
+  }
   // Settings' Disconnect: revoke the token at Slack when possible, then forget everything stored.
   async function slackDisconnect() {
     const tok = OA.unpackTokens(deps.getSecret('slack'));
-    slackPending = null;
+    slackPending = null; slackDraft = null; slackLast = null;
     if (tok?.access) await slackRequest(helpers('slack'), tok.access, 'auth.revoke').catch(() => {});
     deps.setSecret('slack', null);
     slackReset();
@@ -1974,6 +2577,7 @@ function createWidgets(deps) {
       connections: { gmail: Boolean(OA.decodeCreds(deps.getSecret('gmail'))?.refresh) }, // whether a Google account is connected (never the token)
       gmailAccount: OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // which one, when known
       gmailSignedOut: !OA.decodeCreds(deps.getSecret('gmail'))?.refresh ? OA.decodeCreds(deps.getSecret('gmail'))?.email || '' : '', // Google ended this account's sign-in (a disconnect forgets the address)
+      gmailGoogle: { signedIn: googleFeed.signedIn, email: googleFeed.email, available: Boolean(deps.googleMail) }, // Settings: is the Google sign-in in Lumen readable, and as whom (the default mode)
       gmailClient: { builtin: Boolean(googleClient()), verified: Boolean(googleClient()?.verified), revoked: lastRevoke }, // Lumen has its own Google client: Settings leads with "Sign in with Google" (never the id or secret)
       slack: slackStatus(),
       secrets: Object.fromEntries([...new Set(Object.values(CONNECTORS).map((c) => c.secret).filter(Boolean))].map((s) => [s, Boolean(deps.getSecret(s))])),
@@ -1998,8 +2602,21 @@ function createWidgets(deps) {
     const id = params.get('widget');
     if (id === null) return null;
     const action = { id, do: params.get('do'), task: params.get('task') };
-    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
-    if ((action.do === 'complete' || action.do === 'undo') && !action.task) return { invalid: true };
+    if (!/^w[0-9a-z]{4,20}$/.test(id) || !/^(refresh|complete|undo|add|place|size|layout|remove|configure|consent|locate|restore|create|reset|look|play|pause|next|previous|ask|buy|sell|resetpf|signin|cycle|stack|unstack|restack|smartstack|note|timer|tvinterval|setup|reload|seek|playitem|playnext|playlater|esearch|ethumb|emore|ewarm|esignin|eshow|elists|like|shuffle|repeat|volume|etab|ehome|reconnect|elib|edetail|eplay|eopen|pplay|pin|unpin|playfrom|playqueue|transfer|retry|reschedule|tdsource|routine-new|routine-open)$/.test(action.do || '') || (action.task !== null && !/^[\w-]{1,40}$/.test(action.task))) return { invalid: true };
+    if ((action.do === 'complete' || action.do === 'undo' || action.do === 'reschedule') && !action.task) return { invalid: true };
+    if (action.do === 'routine-open') { // the Routines card's row: which routine's result to open (a task id)
+      action.routine = params.get('id');
+      if (typeof action.routine !== 'string' || !RC.ROUTINE_ID_RE.test(action.routine)) return { invalid: true };
+    }
+    if (action.do === 'reschedule') { // a task's new day, from the card's small menu
+      action.arg = params.get('arg');
+      if (!['today', 'tomorrow', 'nextweek', 'none'].includes(action.arg)) return { invalid: true };
+    }
+    if (action.do === 'refresh') action.arg = params.get('arg') === 'auto' ? 'auto' : null;
+    if (action.do === 'tdsource') { // the card header's Today / Upcoming / Inbox switch
+      action.arg = params.get('arg');
+      if (!TV.VIEWS.includes(action.arg)) return { invalid: true };
+    }
     if (action.do === 'add') {
       action.text = str(params.get('text'), 300);
       if (!action.text) return { invalid: true };
@@ -2020,6 +2637,87 @@ function createWidgets(deps) {
       if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg) || !Object.prototype.hasOwnProperty.call(INLINE, cfg.type) || (params.get('cfg') || '').length > 12000) return { invalid: true };
       action.cfg = cfg;
       action.create = id === 'wcreate';
+    }
+    if (action.do === 'seek') {
+      action.sec = Number(params.get('arg'));
+      if (!Number.isFinite(action.sec) || action.sec < 0 || action.sec > 48 * 3600) return { invalid: true };
+    }
+    if (action.do === 'playitem' || action.do === 'playnext' || action.do === 'playlater') {
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!AMB.KINDS.includes(action.kind) || !AMB.ID_RE.test(action.item || '')) return { invalid: true };
+    }
+    if (action.do === 'esearch') action.text = AMB.clip(params.get('arg') || '', 80); // may be empty: clears the search
+    if (action.do === 'ethumb') { // the result rows on screen (their ids, comma-joined): their small pictures are fetched now
+      action.ids = String(params.get('arg') || '').split(',').filter((id) => AMB.ID_RE.test(id)).slice(0, 12);
+      if (!action.ids.length) return { invalid: true };
+    }
+    // The music card's other buttons (renderer/newtab-music.js): every argument is checked here, whichever engine gets it.
+    if (action.do === 'like' || action.do === 'shuffle') {
+      action.arg = params.get('arg');
+      if (action.arg !== null && !['0', '1'].includes(action.arg)) return { invalid: true };
+      if (action.arg === null) delete action.arg;
+    }
+    if (action.do === 'repeat') {
+      action.arg = params.get('arg');
+      if (action.arg !== null && !['off', 'all', 'one'].includes(action.arg)) return { invalid: true };
+      if (action.arg === null) delete action.arg;
+    }
+    if (action.do === 'volume') {
+      action.arg = params.get('arg');
+      if (!/^\d{1,3}$/.test(action.arg || '') || Number(action.arg) > 100) return { invalid: true };
+    }
+    if (action.do === 'etab') {
+      action.arg = params.get('arg');
+      if (!['queue', 'library', 'devices', 'tracks', 'lyrics', 'search'].includes(action.arg)) return { invalid: true };
+      if (params.get('force') === '1') action.force = true; // (Try again: the tab is read again, not served from the last few seconds)
+    }
+    if (action.do === 'elib') { // the Library's lists (arg: init | playlists | albums | artists; more: the next page)
+      action.arg = params.get('arg');
+      if (!['init', 'playlists', 'albums', 'artists'].includes(action.arg)) return { invalid: true };
+      if (params.get('more') === '1') action.more = true;
+      if (params.get('force') === '1') action.force = true;
+    }
+    if (action.do === 'edetail' || action.do === 'eplay') { // a list of the Library opened in the card (its songs, a page at a time), or played (pos: from that entry; with: which song)
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!['playlist', 'album', 'liked', 'artist'].includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return { invalid: true };
+      if (action.do === 'edetail') { if (params.get('more') === '1') action.more = true; if (params.get('force') === '1') action.force = true; }
+      else {
+        if (params.has('pos')) { action.pos = Number(params.get('pos')); if (!Number.isInteger(action.pos) || action.pos < 0 || action.pos > 99999) return { invalid: true }; }
+        action.with = params.get('with');
+        if (action.with !== null && !AMB.ID_RE.test(action.with)) return { invalid: true };
+        if (action.with === null) delete action.with;
+        if (params.get('shuffle') === '1') action.shuffle = true;
+      }
+    }
+    if (action.do === 'ehome') { // a Home shelf the card scrolled to (arg: which)
+      action.arg = params.get('arg');
+      if (!SAC.HOME_SHELVES.includes(action.arg)) return { invalid: true };
+      if (params.get('force') === '1') action.force = true;
+    }
+    if (action.do === 'eopen' || action.do === 'pplay' || action.do === 'pin' || action.do === 'unpin') { // a playlist or album (kind, arg: its id): open its songs in the card, play it (pos: from that entry; with: which song; shuffle=1), pin it as a tab or unpin it
+      action.kind = params.get('kind');
+      action.item = params.get('arg');
+      if (!SV.PIN_KINDS.includes(action.kind) || !SV.SAFE_ID.test(action.item || '')) return { invalid: true };
+      if (action.do === 'eopen' && params.get('force') === '1') action.force = true;
+      if (action.do === 'pplay') {
+        if (params.has('pos')) { action.arg = params.get('pos'); if (!/^\d{1,4}$/.test(action.arg)) return { invalid: true }; }
+        action.with = params.get('with');
+        if (action.with !== null && !AMB.ID_RE.test(action.with)) return { invalid: true };
+        if (action.with === null) delete action.with;
+        if (params.get('shuffle') === '1') action.shuffle = true;
+      }
+    }
+    if (action.do === 'playfrom' || action.do === 'playqueue') { // a row's place in the list the card showed (arg), and which song it was (with), so a list that moved on is not played from
+      action.arg = params.get('arg');
+      action.item = params.get('with');
+      if (!/^\d{1,3}$/.test(action.arg || '') || (action.item !== null && !AMB.ID_RE.test(action.item))) return { invalid: true };
+      if (action.item === null) delete action.item;
+    }
+    if (action.do === 'transfer') {
+      action.arg = params.get('arg');
+      if (!SV.DEVICE_ID_RE.test(action.arg || '')) return { invalid: true };
     }
     if (action.do === 'note') action.text = (params.get('text') || '').slice(0, LW.MAX_NOTE); // may be empty: the note was cleared
     if (action.do === 'tvinterval') {
@@ -2170,10 +2868,27 @@ function createWidgets(deps) {
     if (action.do === 'look') { deps.writeSettings({ ...deps.readSettings(), [action.key]: action.value }); deps.onUpdate?.(); return true; }
     if (action.do === 'reset') return resetLayout(); // Edit layout's Reset layout (the page keeps an Undo for it)
     if (action.do === 'setup') return setupFromPage(action);
+    if (action.do === 'retry') return retryNow(); // the page was shown again, or the machine came back online
     if (SYS.isSystemId(action.id)) return actSystem(action);
     const w = list().find((x) => x.id === action.id);
     if (!w) return false;
-    if (action.do === 'refresh') return refresh(w, { force: true });
+    if (action.do === 'routine-new' || action.do === 'routine-open') { // the Routines card: open the sidebar's editor or a routine's result; the widget itself is not touched
+      if (w.type !== 'routines' || !deps.routineAct) return false;
+      const done = deps.routineAct(action.do === 'routine-new' ? { act: 'new' } : { act: 'open', id: action.routine });
+      return done?.ok !== false;
+    }
+    if (action.do === 'refresh') return refresh(w, { force: true, user: action.arg !== 'auto' }); // arg=auto: the page's own timer (a card that went stale, a timer that ended)
+    if (action.do === 'tdsource') { // the Todoist card's Today / Upcoming / Inbox switch: the card keeps showing the old list until the new one arrives
+      const todo = w.type === 'todoist' ? TV.applyView(w.todo, action.arg) : null;
+      if (!todo || TV.viewOf(w.todo) === null) return false;
+      const was = cache.get(w.id);
+      save(list().map((x) => (x.id === w.id ? { ...x, todo } : x)));
+      const next = list().find((x) => x.id === w.id);
+      if (was?.data) cache.set(w.id, { key: keyOf(next), data: was.data, error: null, at: 0, okAt: was.okAt, undo: null });
+      deps.onUpdate?.();
+      refresh(next).catch(() => {});
+      return true;
+    }
     if (action.do === 'place') return place(w.id, action.to);
     if (action.do === 'size') return resize(w.id, { span: action.span, height: action.height });
     if (action.do === 'layout') return layout(action.items, action.dock);
@@ -2184,7 +2899,11 @@ function createWidgets(deps) {
     if (action.do === 'locate') return relocate();
     if (action.do === 'configure') { pendingEdit = w.id; deps.onConfigure?.(w.id); return true; }
     if (action.do === 'signin') return gmailSignInFromPage(w);
-    if (action.do === 'reload') { // the Spotify Web player's "Try again": load open.spotify.com in its view again
+    if (action.do === 'reload') { // a Web player's "Try again": load the site (open.spotify.com, music.apple.com) in its view again
+      // The players load in the normal session: a dead socket or stale DNS answer from a network glitch would fail the reload too.
+      if (w.type === 'applemusic' || w.type === 'spotify') await freshNetwork();
+      if (w.type === 'applemusic') { if (w.mode === 'web') deps.appleMusicWebReload?.(); else deps.appleMusic?.reload?.(); return true; }
+      if (w.type === 'spotify' && w.mode === 'status') { deps.spotifyEngine?.reload?.(); return true; }
       if (w.type !== 'spotify' || w.mode !== 'web') return false;
       deps.spotifyWebReload?.();
       return true;
@@ -2192,9 +2911,13 @@ function createWidgets(deps) {
     const c = connector(w);
     const entry = cache.get(w.id);
     if (!c.act || !entry?.data) return false;
+    entry.notice = null; // (a note from the last press — "Added to the queue." — is not what this press did)
     try {
       const done = await c.act(w, action, helpers(c.secret), entry.data, { now: now(), offline: Boolean(entry.error) });
       if (!done) return false;
+      if ((w.type === 'spotify' || w.type === 'applemusic') && (action.do === 'play' || action.do === 'pause') && (entry.data.state === 'playing' || entry.data.state === 'paused') && entry.data.state === (action.do === 'play' ? 'playing' : 'paused')) {
+        entry.intent = { state: entry.data.state, at: now(), until: now() + MUSIC_CONFIRM_MS, progressMs: entry.data.progressMs }; // (see holdIntent)
+      }
       if (done.keep) { deps.onUpdate?.(); return true; } // nothing to fetch again (a Muse answer costs money)
       forget('tasks:');
       forget('done:');
@@ -2211,11 +2934,15 @@ function createWidgets(deps) {
       if (done.undone) entry.undo = null;
       deps.onUpdate?.(); // the task leaves the card at once
       entry.at = 0; // and the list is fetched again
-      setTimeout(() => refresh(w).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
+      setTimeout(() => refresh(w, { after: true }).catch(() => {}), done.delay ?? (done.undo ? 800 : 0));
       return true;
     } catch (err) {
       entry.error = String(err?.message || err).slice(0, 200);
       entry.data = { ...entry.data, notice: entry.error };
+      // What went wrong stays on the card for a few seconds, as a note does, instead of vanishing with the next look at the player (which replaced the data and the message with it).
+      entry.notice = { text: entry.error, until: now() + 8000 };
+      setTimeout(() => { if (entry.notice && entry.notice.until <= now()) { entry.notice = null; deps.onUpdate?.(); } }, 8050);
+      if (err?.transient === true) { entry.tries = 0; scheduleRetry(w, entry); } // a passing failure: the list is read again in a moment, which also clears the note
       deps.onUpdate?.();
       return false;
     }
@@ -2244,6 +2971,15 @@ function createWidgets(deps) {
     }
   }
 
+  // An engine (or the desktop Apple Music app) changed what it is playing, as main.js heard: the status cards look again at once.
+  function engineChanged() {
+    for (const w of list()) {
+      if (!((w.type === 'applemusic' && w.mode !== 'web') || (w.type === 'spotify' && w.mode === 'status'))) continue;
+      // A change that comes right after another look is not dropped: it is looked at again a moment later.
+      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 110); }, () => {});
+    }
+  }
+
   // The AI status card shows live facts (chats working, tabs the AI opened, a limit that ended), so main.js says when
   // any of them may have moved (aiStatusSoon: several events in a row become one look). The page is only refreshed when the card's
   // data really differs from what it was last given, so an idle browser costs nothing.
@@ -2259,9 +2995,31 @@ function createWidgets(deps) {
   }
   const aiStatusSoon = () => { if (aiTimer) return; aiTimer = setTimeout(() => { aiTimer = null; try { aiStatusChanged(); } catch (err) { console.error('[lumen] AI status:', err.message); } }, 300); aiTimer.unref?.(); };
 
+  // The Routines card shows the runner's live view (next runs, latest results, approvals waiting), so main.js says when a routine
+  // may have moved (routinesSoon: several changes in a row become one look). Like the AI status card, the page is only refreshed
+  // when the shaped data differs from what it was last given.
+  let routinesLast = '';
+  let routinesTimer = null;
+  function routinesChanged() {
+    if (!deps.routines || !list().some((w) => w.type === 'routines')) return false;
+    const now = JSON.stringify(RC.shape(deps.routines(), Date.now()));
+    if (now === routinesLast) return false;
+    routinesLast = now;
+    deps.onUpdate?.();
+    return true;
+  }
+  const routinesSoon = () => { if (routinesTimer) return; routinesTimer = setTimeout(() => { routinesTimer = null; try { routinesChanged(); } catch (err) { console.error('[lumen] Routines card:', err.message); } }, 300); routinesTimer.unref?.(); };
+
   // flush: forget everything fetched (tests point the connectors at a fake server after the first page already asked).
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
-  return { flush, aiStatusChanged, aiStatusSoon, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailCancel, gmailDisconnect, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels };
+  // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
+  // connected (and as whom, and whether one click can start it), and one read-only Gmail API request with its token. Nothing else leaves here.
+  function gmailAuthState() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
+  }
+  const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

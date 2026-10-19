@@ -121,9 +121,13 @@ async function oneNewTab(r, how = 'key', { settle = 700 } = {}) {
   const m = await ui.evaluate(() => { window.__m.on = false; return { ev: window.__m.ev, frames: window.__m.frames, long: window.__m.long }; });
   const n = await app.evaluate(() => { global.__nt.on = false; return { lag: global.__nt.lag, vis: global.__nt.vis }; });
   const first = (e) => { const x = m.ev.find((y) => y.e === e); return x ? x.t - t0 : NaN; };
+  // the page itself: when its first contentful paint happened (before the press = a spare that had drawn already), and the widgets' first render
+  const pg = await app.evaluate(async () => { const t = global.__agent.browser.activeTab(); if (!t) return null; try { return await t.webContents.executeJavaScript(`({ fcp: (performance.getEntriesByName('first-contentful-paint')[0] || {}).startTime + performance.timeOrigin, ready: performance.timeOrigin, marks: performance.getEntriesByType('mark').map(m=>m.name+'@'+Math.round(m.startTime)).join(' '), nav: (()=>{const n=performance.getEntriesByType('navigation')[0]||{};const r=performance.getEntriesByType('resource').filter(e=>e.name.endsWith('.js'));return {resp:n.responseEnd,dcl:n.domContentLoadedEventEnd,load:n.loadEventEnd,fcp:(performance.getEntriesByName('first-contentful-paint')[0]||{}).startTime,js:r.length,jsEnd:Math.max(0,...r.map(e=>e.responseEnd)),jsStart:Math.min(...r.map(e=>e.startTime))}})() })`, true); } catch { return null; } });
+  if (process.env.NAV && pg) console.log(JSON.stringify(pg.nav), pg.marks);
+  const page = pg && Number.isFinite(pg.fcp) ? Math.max(Math.max(0, pg.fcp - t0), 0) : NaN;
   const tabsAfter = await ui.evaluate(() => document.querySelectorAll('#tabs .tab').length);
   return {
-    strip: first('strip'), frame: first('frame'), focus: first('focus'), typed: first('input'),
+    page, strip: first('strip'), frame: first('frame'), focus: first('focus'), typed: first('input'),
     shown: n.vis.length ? n.vis[0] - t0 : NaN,
     lagMax: Math.max(0, ...n.lag), lagSum: n.lag.filter((x) => x > 16).reduce((a, b) => a + b, 0),
     longMax: Math.max(0, ...m.long.map((x) => x.d)), frameMax: Math.max(0, ...m.frames),
@@ -160,7 +164,7 @@ async function scenario(name, fn, opts = {}) {
     const res = await fn(r);
     await stopProfile(r.app, name);
     const bad = res.filter((x) => !x.ok).length;
-    const cols = ['strip', 'frame', 'focus', 'typed', 'shown', 'lagMax', 'longMax', 'frameMax'];
+    const cols = ['page', 'strip', 'frame', 'focus', 'typed', 'shown', 'lagMax', 'longMax', 'frameMax'];
     const row = { name, n: res.length, bad };
     for (const c of cols) row[c] = stats(res.map((x) => x[c]));
     rows.push(row);
@@ -173,7 +177,7 @@ async function scenario(name, fn, opts = {}) {
 
 (async () => {
   const { server, base } = await pageServer();
-  const all = ['idle', 'button', 'rapid', 'tabs10', 'tabs30', 'tabs60', 'sleepy60', 'heavy', 'loading', 'closeburst', 'sidebar', 'windows', 'widgets'];
+  const all = ['idle', 'button', 'rapid', 'tabs10', 'tabs30', 'tabs60', 'sleepy60', 'heavy', 'loading', 'closeburst', 'sidebar', 'windows', 'widgets', 'longidle', 'ram'];
   const wanted = arg === 'all' ? all : arg.split(',');
   const S = {
     idle: (r) => (async () => { const out = []; for (let i = 0; i < N; i++) { await waitSpare(r); out.push(await oneNewTab(r)); await closeActive(r); await sleep(500); } return out; })(),
@@ -187,12 +191,23 @@ async function scenario(name, fn, opts = {}) {
     sidebar: (r) => (async () => { await r.ui.evaluate(() => document.getElementById('ai-toggle')?.click() || document.querySelector('[data-action=sidebar],#sidebar-toggle')?.click()); await sleep(1200); const out = []; for (let i = 0; i < N; i++) { await waitSpare(r); out.push(await oneNewTab(r)); await closeActive(r); await sleep(500); } return out; })(),
     windows: (r) => (async () => { for (let i = 0; i < 3; i++) { await r.app.evaluate(() => global.__basics.openNewWindow()); await sleep(1500); } const out = []; for (let i = 0; i < N; i++) { await waitSpare(r); out.push(await oneNewTab(r)); await closeActive(r); await sleep(500); } return out; })(),
   };
+  S.longidle = (r) => (async () => { const out = []; for (let i = 0; i < Math.min(N, 5); i++) { await sleep(30000); await waitSpare(r); out.push(await oneNewTab(r)); await closeActive(r); } return out; })(); // 30 s idle before each press
+  // RAM cost of the spare: all processes' working set / private bytes (KB) with no spare, then with one loaded. Run with SPARE=0.
+  S.ram = (r) => (async () => {
+    const metrics = () => r.app.evaluate(({ app }) => { const m = app.getAppMetrics(); return { procs: m.length, ws: m.reduce((n, x) => n + (x.memory.workingSetSize || 0), 0), priv: m.reduce((n, x) => n + (x.memory.privateBytes || 0), 0) }; });
+    await sleep(3000); const before = await metrics();
+    await r.app.evaluate(() => global.__spareNewTab.enable()); await waitSpare(r); await sleep(3000); const after = await metrics();
+    console.log(`RAM no spare: ${before.procs} procs, working set ${Math.round(before.ws / 1024)} MB, private ${Math.round(before.priv / 1024)} MB`);
+    console.log(`RAM spare:    ${after.procs} procs, working set ${Math.round(after.ws / 1024)} MB, private ${Math.round(after.priv / 1024)} MB`);
+    console.log(`RAM cost of the spare: +${after.procs - before.procs} proc, +${Math.round((after.ws - before.ws) / 1024)} MB working set, +${Math.round((after.priv - before.priv) / 1024)} MB private`);
+    return [{ ok: true }];
+  })();
   S.widgets = S.idle;
   const widgets = ['aistatus', 'worldclock', 'weather', 'crypto', 'feed', 'aistatus', 'worldclock', 'weather', 'crypto', 'feed'].map((type, i) => ({ id: `wperf${String(i).padStart(4, '0')}`, type, x: (i % 4) * 3, y: Math.floor(i / 4) * 3, w: 3, h: 3 }));
   for (const name of wanted) { if (S[name]) await scenario(name, S[name], name === 'widgets' ? { settings: { homeWidgets: widgets } } : {}); else console.log('unknown scenario', name); }
   server.close();
   console.log('\nscenario        n   strip(med/p95/max)   frame               focus               typed               shown               lagMax');
-  for (const r of rows) console.log(`${r.name.padEnd(14)} ${String(r.n).padStart(3)}   ${['strip', 'frame', 'focus', 'typed', 'shown', 'lagMax'].map((c) => `${r[c].med}/${r[c].p95}/${r[c].max}`.padEnd(19)).join(' ')}`);
+  for (const r of rows) console.log(`${r.name.padEnd(14)} ${String(r.n).padStart(3)}   ${['page', 'strip', 'frame', 'focus', 'typed', 'shown', 'lagMax'].map((c) => `${r[c].med}/${r[c].p95}/${r[c].max}`.padEnd(19)).join(' ')}`);
   if (process.env.JSON) console.log(JSON.stringify(rows));
   process.exit(0);
 })().catch((err) => { console.error(err); process.exit(1); });

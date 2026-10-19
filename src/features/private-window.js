@@ -15,16 +15,18 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const googleAuth = require('../browser/google-auth-identity');
-const firefoxProfile = googleAuth.firefoxProfile(process.platform);
+const { shortcutMod, shortcutKey } = require('../browser/shortcut-mod');
 const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
 const NEWTAB_HTML = path.join(__dirname, '..', 'renderer', 'private-newtab.html');
 const TOP = 78; // tab strip + toolbar height in renderer/private.css
 const PROMPTABLE = new Set(['media', 'geolocation', 'notifications', 'clipboard-read']); // permission.<name> in locales/en.json
-// As main.js: protected video (mediaKeySystem) plays, and screen sharing's own picker (pickScreen) is the consent.
-const ALWAYS_ALLOWED = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'mediaKeySystem', 'display-capture']);
+// As main.js (browser/site-permissions.js): protected video plays, screen sharing's own picker is the consent, wake lock
+// and sensors are never asked, and decisions are read under the canonical origin.
+const SITE_PERMISSIONS = require('../browser/site-permissions');
+const DEVICE_PERMISSIONS = require('../browser/device-permissions'); // hid, usb, serial
+const { createBurstLimit } = require('./popup-guard'); // a page opening windows or tabs in a loop
 const { RISKY_TYPES } = require('./downloads'); // programs and scripts: never saved without the user choosing to
 const FAVICON_MAX = 256 * 1024;
 const CLOSED_KEEP = 25; // closed tabs Ctrl+Shift+T can bring back, per window (memory only)
@@ -38,7 +40,7 @@ const sameFile = (a, b) => {
 //         t, strings(), Menu, clipboard, shell, platform, testBackground, prepareSession(ses), releaseSession(ses),
 //         prepareTab(wc), tabWebPreferences(), defaultZoom(), realUrl(wc), securityState(wc), zoom(wc, step), searchFor(text),
 //         downloadDir(), askWhereToSave(), permissionDefault(name), pickScreen(request, callback, win),
-//         askOpenExternal(wc, details, decisions), openSettings(), onFocusChange() } — all but the first eight optional.
+//         askOpenExternal(wc, details, decisions), openSettings(), onFocusChange(), print(wc, win) (the print preview) } — all but the first eight optional.
 function createPrivateWindows(deps) {
   const { BrowserWindow, WebContentsView, session, ipcMain, dialog, resolveInput, isWebUrl } = deps;
   const t = deps.t || ((key, vars) => (vars ? `${key} ${JSON.stringify(vars)}` : key));
@@ -119,9 +121,7 @@ function createPrivateWindows(deps) {
     else if (deps.chromeHintHeaders) {
       ses.webRequest.onBeforeSendHeaders((details, callback) => {
         let headers = details.requestHeaders;
-        if (googleAuth.isAuthUrl(details.url)) {
-          headers = googleAuth.firefoxRequestHeaders(headers, firefoxProfile); // Google's sign-in hosts see Firefox
-        } else if (/^https:/.test(details.url)) {
+        if (/^https:/.test(details.url)) {
           for (const name of Object.keys(headers)) if (/^sec-ch-ua(-mobile|-platform)?$/i.test(name)) delete headers[name];
           Object.assign(headers, deps.chromeHintHeaders);
         }
@@ -129,23 +129,30 @@ function createPrivateWindows(deps) {
       });
     }
     ses.setPermissionRequestHandler(async (wc, permission, callback, details) => {
-      if (ALWAYS_ALLOWED.has(permission)) return callback(true);
+      if (SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) })) return callback(true);
       if (permission === 'openExternal') return callback(Boolean(await deps.askOpenExternal?.(wc, details, rec.externalDecisions)));
-      let origin;
-      try { origin = new URL(details.requestingUrl || wc.getURL()).origin; } catch { return callback(false); }
-      if (!PROMPTABLE.has(permission) || !isWebUrl(origin)) return callback(false);
-      const key = `${origin}|${permission}`;
-      if (rec.decisions.has(key)) return callback(rec.decisions.get(key));
-      if (deps.permissionDefault?.(permission) === 'block' || !alive(rec)) return callback(false); // [settings] default: Block
+      const origin = SITE_PERMISSIONS.requestOrigin(wc, details);
+      if (!PROMPTABLE.has(permission) || !origin) return callback(false);
+      const { deny, ask } = SITE_PERMISSIONS.plan(rec.decisions, origin, permission, details, (p) => deps.permissionDefault?.(p) === 'block'); // (camera and microphone are decided separately)
+      if (deny) return callback(false);
+      if (!ask.length) return callback(true);
+      if (!alive(rec)) return callback(false);
       // Remembered for this window only; nothing is written to settings.json.
       const { response } = await dialog.showMessageBox(rec.win, {
         type: 'question', buttons: [t('permission.deny'), t('permission.allow')], defaultId: 0, cancelId: 0,
-        message: t('permission.ask', { host: new URL(origin).host, reason: t(`permission.${permission}`) }), detail: t('private.permission.detail'),
+        message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }), detail: t('private.permission.detail'),
       });
-      rec.decisions.set(key, response === 1);
+      for (const name of ask) rec.decisions.set(`${origin}|${name}`, response === 1);
       callback(response === 1);
+      SITE_PERMISSIONS.notify(ses);
     });
-    ses.setPermissionCheckHandler((_wc, permission, origin) => ALWAYS_ALLOWED.has(permission) || rec.decisions.get(`${origin}|${permission}`) === true);
+    // [devices] WebHID, WebUSB and Web Serial (features/device-chooser.js): the same chooser, over this window; what the
+    // user picks is remembered in memory for this window only (no store: nothing reaches settings.json).
+    const devices = deps.deviceChooser?.();
+    if (devices) devices.install(ses, { store: DEVICE_PERMISSIONS.createGrantStore(), windowOf: () => rec.win });
+    ses.setPermissionCheckHandler((wc, permission, origin, details) => DEVICE_PERMISSIONS.TYPES.includes(permission) ? devices?.check(wc, permission, origin, details) === true :
+      SITE_PERMISSIONS.alwaysAllowed(permission, { blockThirdPartyCookies: Boolean(deps.thirdPartyCookiesBlocked?.()) }) || SITE_PERMISSIONS.allowedNow(rec.decisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
+    SITE_PERMISSIONS.register(ses, { decisions: rec.decisions, isBlocked: (permission) => deps.permissionDefault?.(permission) === 'block' });
     if (deps.pickScreen) ses.setDisplayMediaRequestHandler((request, callback) => deps.pickScreen(request, callback, rec.win));
     ses.on('will-download', (_event, item) => startDownload(rec, item));
   }
@@ -266,7 +273,11 @@ function createPrivateWindows(deps) {
       update();
     });
     wc.on('page-favicon-updated', (_e, favicons) => loadFavicon(rec, tab, favicons.filter((u) => typeof u === 'string' && u)));
-    wc.on('before-input-event', (event, input) => handleShortcut(rec, event, input));
+    wc.on('before-input-event', (event, input) => {
+      // Ctrl+S, Ctrl+P, Ctrl+F... go to the page first; the private window's own action runs only if it did not handle them (features/page-first-keys.js)
+      if (input.type === 'keyDown' && deps.pageFirstKeys?.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab(rec)?.view.webContents === wc) handleShortcut(rec, { preventDefault() {} }, input); })) return;
+      handleShortcut(rec, event, input);
+    });
     // Only web pages (and the private new-tab page) in a private tab.
     wc.on('will-navigate', (event) => { if (!isWebUrl(event.url) && !sameFile(event.url, NEWTAB_URL)) event.preventDefault(); });
     deps.chromeIdentity?.(wc);
@@ -350,13 +361,14 @@ function createPrivateWindows(deps) {
   // A sign-in or payment popup ("Sign in with Google" on a site) stays a popup, in this window's private session,
   // with window.opener kept so it can report back to the page; a link that opens a tab opens a private tab.
   function popupOrTab(rec, url, disposition) {
+    if (!(rec.popupLimit ||= createBurstLimit()).allow()) return { action: 'deny' };
     if (disposition === 'new-window' && (isWebUrl(url) || url === 'about:blank')) {
       return {
         action: 'allow',
         overrideBrowserWindowOptions: { autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } },
         outlivesOpener: true,
         createWindow: (options) => {
-          const child = new BrowserWindow({ ...options, autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(deps.testBackground ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
+          const child = new BrowserWindow({ ...(({ parent, modal, ...rest }) => rest)(options || {}), autoHideMenuBar: true, icon: deps.iconPath, backgroundColor: deps.popupBackground?.() || '#1d1530', ...(deps.testBackground ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : { webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.popupWebPreferences?.() || {}) } }) });
           if (deps.testBackground) hideForTests(child);
           const wc = child.webContents;
           deps.chromeIdentity?.(wc); // before anything loads
@@ -378,7 +390,7 @@ function createPrivateWindows(deps) {
           // It belongs to this private window: it closes with it (whose session is then cleared).
           rec.popups.add(child);
           child.on('closed', () => rec.popups.delete(child));
-          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt && input.key.toLowerCase() === 'w') { e.preventDefault(); child.close(); } });
+          wc.on('before-input-event', (e, input) => { if (input.type === 'keyDown' && shortcutMod(input, platform) && !input.alt && shortcutKey(input) === 'w') { e.preventDefault(); child.close(); } });
           wc.setWindowOpenHandler(({ url: u, disposition: d }) => popupOrTab(rec, u, d));
           return wc;
         },
@@ -510,6 +522,7 @@ function createPrivateWindows(deps) {
     switch (name) {
       case 'newTab': openTab(rec); break;
       case 'newWindow': open(); break;
+      case 'normalWindow': if (!deps.openNormalWindow) return false; deps.openNormalWindow(); break;
       case 'closeTab': if (rec.activeId) closeTab(rec, rec.activeId); break;
       case 'closeWindow': rec.win.close(); break;
       case 'reopenTab': reopenClosed(rec); break;
@@ -526,7 +539,8 @@ function createPrivateWindows(deps) {
       case 'zoomIn': zoom(live, 0.5); break;
       case 'zoomOut': zoom(live, -0.5); break;
       case 'actualSize': zoom(live, 0); break;
-      case 'print': live?.print({}, () => {}); break;
+      case 'print': if (deps.print) deps.print(live, rec.win); else live?.print({}, () => {}); break; // the print preview, over this window
+      case 'printSystem': live?.print({}, () => {}); break;
       case 'devTools': live?.toggleDevTools(); break;
       case 'screenshot': { const ctx = screenshotCtx(rec); if (ctx) deps.screenshot?.(ctx).catch(() => {}); break; }
       case 'settings': deps.openSettings?.(); break;
@@ -538,16 +552,18 @@ function createPrivateWindows(deps) {
 
   function handleShortcut(rec, event, input) {
     if (input.type !== 'keyDown') return;
-    const mod = input.control || input.meta;
     const mac = platform === 'darwin';
-    const key = input.key.toLowerCase();
+    const key = shortcutKey(input);
+    const mod = shortcutMod(input, platform); // macOS: Cmd, never Control (the text-editing key there)
     let name = null;
     if (mod && input.shift && key === 'n') name = 'newWindow';
     else if (mod && input.shift && key === 't') name = 'reopenTab';
     else if (mod && input.shift && key === 'w') name = 'closeWindow';
+    else if (mod && !input.shift && !input.alt && key === 'n') name = 'normalWindow';
     else if (mod && key === 't') name = 'newTab';
     else if (mod && key === 'w') name = 'closeTab';
     else if (mod && key === 'l') name = 'focusAddress';
+    else if (mod && !input.shift && !input.alt && (key === 'k' || key === 'e')) name = 'focusAddress';
     else if (mod && input.shift && !input.alt && key === 's') name = 'screenshot';
     else if (mod && key === 'f') name = 'find';
     else if ((mod && key === 'g') || key === 'f3') name = input.shift ? 'findPrevious' : 'findNext';
@@ -572,6 +588,7 @@ function createPrivateWindows(deps) {
     else if (mod && (key === '=' || key === '+')) name = 'zoomIn';
     else if (mod && key === '-') name = 'zoomOut';
     else if (mod && key === '0') name = 'actualSize';
+    else if (mod && input.shift && !input.alt && key === 'p') name = 'printSystem';
     else if (mod && key === 'p') name = 'print';
     else if (key === 'f12' || (mod && input.alt && key === 'i')) name = 'devTools';
     else if (mod && key === ',') name = 'settings';
@@ -713,6 +730,13 @@ function createPrivateWindows(deps) {
     command: (name) => { const rec = focusedRec(); if (!rec) return false; command(rec, name); return true; },
     // One of this module's tabs (Safe Browsing and certificate warnings treat it as a tab).
     ownsTab: (wc) => Boolean(wc && tabOwner(wc)),
+    // [passkeys] Is this one of our tabs, the one in front of its window? (features/passkeys.js owns the dialog to that window.)
+    tabWindow: (wc) => {
+      const rec = wc ? tabOwner(wc) : null;
+      if (!rec || !alive(rec)) return null;
+      const tab = activeTab(rec);
+      return { win: rec.win, active: Boolean(tab && tab.view.webContents === wc) };
+    },
     refresh: (wc) => { const rec = tabOwner(wc); if (rec) sendStateSoon(rec); },
     // Test hooks read these; nothing in the app itself needs them.
     list: () => [...windows].filter(alive).map((rec) => ({

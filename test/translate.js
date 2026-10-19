@@ -7,6 +7,7 @@
 // The on-device engine (Bergamot) is stood in for by a fake with the same interface (a test hook), so its
 // choice, the download card, progress, no-consent rule, cancel, pivot-free fallback to the AI and caching all
 // run; the real engine and models are exercised by test/translate-local-real.js (network).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -91,7 +92,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   const labels = await app.evaluate((_e, i) => global.__translate.api.menuItems(global.__translate.tab(i)).map((m) => m.label).filter(Boolean), es);
   check('the page menu offers Translate to… and Translate with the AI (no on-device engine here)', labels.includes('Translate with FakeAI') && labels.includes('Translate to…') && !labels.includes('Translate on this device'), labels.join(' | '));
   const pageItem = await app.evaluate((_e, i) => global.__translate.api.pageMenuItem(global.__translate.tab(i)).map((m) => m.label), es);
-  check('the page menu item is "Translate Page…"', pageItem.join() === 'Translate Page…', pageItem.join());
+  check('the page menu item is "Translate page…"', pageItem.join() === 'Translate page…', pageItem.join());
 
   // ---- the consent card gates the first send ----
   await barClick('Translate');
@@ -297,7 +298,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   check('no errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

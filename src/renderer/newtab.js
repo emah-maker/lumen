@@ -33,8 +33,8 @@ function data() {
 }
 
 // [look] The page's design from Settings → Appearance, checked field by field.
-const BACKGROUNDS = ['plain', 'aurora', 'dusk', 'ocean', 'forest', 'sunset', 'graphite', 'image'];
-const EFFECTS = ['particles', 'stars', 'bubbles', 'snow']; // newtab-effects.js
+const BACKGROUNDS = window.Backgrounds.IDS; // features/backgrounds.js: the presets, their text mode and (for the newer ones) their CSS art
+const EFFECTS = window.Backgrounds.EFFECT_IDS.filter((id) => id !== 'none'); // newtab-effects.js
 const hex = (v) => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null);
 function lookOf(l) {
   const look = l && typeof l === 'object' ? l : {};
@@ -43,8 +43,10 @@ function lookOf(l) {
   const sections = look.sections && typeof look.sections === 'object' ? look.sections : {};
   return {
     background, image,
-    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true, lite: look.lite === true,
+    effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true || look.softwareGfx === true, lite: look.lite === true, light: look.lightGfx === true || look.softwareGfx === true, soft: look.softwareGfx === true, // [igpu] Graphics: Light; software drawing: still too, no blur, no shadows (settings-backend.js [igpu])
     effectStyle: effectStyleOf(look.effectStyle),
+    reduceMotion: look.still === true, // (the setting itself: `still` above also stands for software drawing)
+    musicReactive: look.musicReactive === true, // [look] Music-reactive home screen: off unless switched on (newtab-music-react.js)
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     clockSize: window.WidgetSystem.cleanClockSize(look.clockSize) || 'm',
@@ -71,25 +73,38 @@ let currentLook = lookOf(null);
 window.newtabLook = () => currentLook; // the editor on the clock card (newtab-setup.js) starts from what is shown
 function applyLook(look) {
   currentLook = look;
+  const tone = window.Backgrounds.toneOf(look.background); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text)
   document.body.dataset.bg = look.background;
-  document.body.classList.toggle('on-media', look.background !== 'plain');
+  document.body.classList.toggle('on-media', tone !== 'plain');
+  document.body.classList.toggle('tone-light', tone === 'light');
   document.body.style.setProperty('--wallpaper', look.image ? `url("${look.image}")` : 'none');
-  const accent = (dark.matches || look.background !== 'plain' ? look.accent.dark : look.accent.light) || null;
-  const root = document.documentElement.style;
-  if (accent) {
-    root.setProperty('--accent', accent);
-    const n = parseInt(accent.slice(1), 16);
-    root.setProperty('--ring', `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, 0.3)`);
-  } else { root.removeProperty('--accent'); root.removeProperty('--ring'); }
+  document.getElementById('backdrop').style.background = window.Backgrounds.byId(look.background)?.art || ''; // (the newer presets; the older ones are CSS below)
+  applyAccent(look);
   document.getElementById('clock').hidden = !look.clock;
   applyClockStyle(look);
   window.newtabSize?.apply(look.clockSize, look.searchWidth); // [look] --clock-size / --search-w on <main>
   document.body.dataset.wpack = look.packed ? '1' : '0';
   document.body.dataset.wglass = look.glass;
+  document.body.classList.toggle('gfx-soft', look.soft); // [igpu] software drawing: no blur at all, no heavy shadows, no motion (newtab.html)
+  document.body.classList.toggle('gfx-light', look.light); // [igpu] no backdrop blur, no drifting layer (newtab.html), a cheaper effect (newtab-effects.js)
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no sliding with Reduce motion or Performance mode
   document.body.classList.toggle('still', look.still); // [widgets] no sliding or other motion with Reduce motion
   applyEffect(look);
+  applyMusicReactive(look);
   window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
+}
+// [look] The accent's tokens (features/theme-colors.js) in the shades the page is drawn in: the system's on Plain, light on a light
+// background, dark on any other.
+const modeOf = (look) => window.Backgrounds.modeOf(look.background, dark.matches); // (features/backgrounds.js: the Settings preview asks the same)
+const ACCENT_VARS = ['--accent', '--accent-rgb', '--accent-bright', '--accent-deep', '--accent-text', '--accent-soft', '--ring', '--on-accent'];
+function applyAccent(look) {
+  const mode = modeOf(look);
+  const hexOf = look.accent[mode];
+  const root = document.documentElement.style;
+  const vars = hexOf ? window.ThemeColors.varsOf(window.ThemeColors.tokensFor(hexOf, mode)) : null;
+  for (const name of ACCENT_VARS) {
+    if (vars) root.setProperty(name, vars[name]); else root.removeProperty(name);
+  }
 }
 // The animated effect's script is loaded the first time one is on, never otherwise.
 let effectScript = null;
@@ -102,12 +117,25 @@ function applyEffect(look) {
   effectScript.onload = () => window.setBackdropEffect?.(currentLook.effect, currentLook);
   document.head.append(effectScript);
 }
+// [look] Music-reactive home screen: its three scripts are loaded the first time the setting is on, never otherwise.
+let musicScripts = 0;
+function applyMusicReactive(look) {
+  if (window.setMusicReactive) { window.setMusicReactive(look); return; }
+  if (!(look.musicReactive || document.querySelector('.w-card[data-mreact="1"]')) || musicScripts) return; // (the home screen, or a music card that reacts: either starts it)
+  musicScripts = 1;
+  const load = (src, next) => { const s = document.createElement('script'); s.src = src; s.onload = next; document.head.append(s); };
+  load('../features/music-react.js', () => load('music-field-canvas.js', () => load('newtab-music-react.js', () => window.setMusicReactive?.(currentLook))));
+}
+window.musicCardsChanged = () => applyMusicReactive(currentLook); // (newtab-widgets.js says when the cards change; the driver replaces this once loaded)
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
-window.widgetLook = () => ({
-  accent: (dark.matches || currentLook.background !== 'plain' ? currentLook.accent.dark : currentLook.accent.light) || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
-  background: currentLook.background, dark: dark.matches, imageColors: currentLook.imageColors,
-});
+window.widgetLook = () => {
+  const light = window.Backgrounds.toneOf(currentLook.background) === 'light'; // (a light background reads like Plain in the light theme: dark text)
+  return {
+    accent: currentLook.accent[modeOf(currentLook)] || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+    background: light ? 'plain' : currentLook.background, dark: light ? false : dark.matches, imageColors: currentLook.imageColors,
+  };
+};
 // [look] The clock's style (features/clock-styles.js; the looks are CSS in newtab.html): data attributes on <body>.
 // The defaults (classic, no card, no extra shadow, classic greeting) set nothing the page didn't always have.
 function applyClockStyle(look) {
@@ -144,14 +172,17 @@ function tickClock() {
 const clockRange = document.createRange();
 let lastClockW = 0;
 document.fonts?.ready?.then(() => window.newtabSize?.fitNow?.()); // a clock font that loads late may be wider
-// Minutes only: wake every 10 s. With seconds: just after each second turns. Never draws while the tab is hidden.
+// Minutes only: wake as each minute turns. With seconds: just after each second turns. A hidden page (a background tab, the spare) has no
+// timer at all: the clock is drawn and the timer started again when the page is shown.
 let clockTimer = 0;
 function scheduleClock() {
   clearTimeout(clockTimer);
-  const every = currentLook.clockStyle?.seconds ? 1000 : 10000;
-  clockTimer = setTimeout(() => { if (!document.hidden) tickClock(); scheduleClock(); }, every - (Date.now() % every) + 15);
+  clockTimer = 0;
+  if (document.hidden || document.getElementById('clock-card')?.hidden) return; // (nothing on screen shows the time: no timer)
+  const every = currentLook.clockStyle?.seconds ? 1000 : 60e3;
+  clockTimer = setTimeout(() => { tickClock(); scheduleClock(); }, every - (Date.now() % every) + 15);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tickClock(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(clockTimer); clockTimer = 0; } else { tickClock(); scheduleClock(); } });
 
 // A stable hue per site for monogram tiles.
 function hueOf(text) {
@@ -188,14 +219,22 @@ function tile(b, size) {
 function section(title, content) {
   const s = document.createElement('section');
   s.setAttribute('aria-label', title);
-  s.append(Object.assign(document.createElement('h2'), { textContent: title }), content);
+  const h2 = Object.assign(document.createElement('h2'), { textContent: title });
+  if (title === 'Favorites') h2.title = `Your bookmarks. Press ${MAC ? 'Cmd' : 'Ctrl'}+D on any page to add it here.`;
+  s.append(h2, content);
   return s;
 }
 
+// Where Favorites come from: your bookmarks. Said on an empty list, and under a short one (the heading's tooltip says it too).
+const MAC = /mac|iphone|ipad/i.test(String(navigator.userAgentData?.platform || navigator.platform || ''));
+const hintLine = (lead) => {
+  const kbd = (t) => Object.assign(document.createElement('kbd'), { textContent: t });
+  return ['Favorites are your bookmarks. ' + lead, kbd(MAC ? 'Cmd' : 'Ctrl'), '+', kbd('D'), ' on any page to add it here.'];
+};
 function favorites(list) {
   if (!list.length) {
     const p = Object.assign(document.createElement('p'), { className: 'empty' });
-    p.append('Bookmark a page with ', Object.assign(document.createElement('kbd'), { textContent: 'Ctrl' }), '+', Object.assign(document.createElement('kbd'), { textContent: 'D' }), ' and it appears here.');
+    p.append(...hintLine('Press '));
     return p;
   }
   const nav = Object.assign(document.createElement('nav'), { className: 'grid' });
@@ -207,7 +246,12 @@ function favorites(list) {
     a.append(tile(b, 28), Object.assign(document.createElement('span'), { className: 'name', textContent: label(b) }));
     nav.append(a);
   }
-  return nav;
+  if (list.length >= 4) return nav;
+  const box = document.createElement('div');
+  const hint = Object.assign(document.createElement('p'), { className: 'section-hint' });
+  hint.append(...hintLine('Press '));
+  box.append(nav, hint);
+  return box;
 }
 
 function frequent(list) {
@@ -248,10 +292,7 @@ function privacy(blocked) {
   return card;
 }
 
-function greeting(now) {
-  const h = now.getHours();
-  return h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-}
+const greeting = (now) => window.ClockStyles.greetingFor(now); // (features/clock-styles.js)
 
 function render() {
   const { favorites: favs, frequent: freq, blocked, look, widgets } = data();
@@ -289,8 +330,10 @@ render();
 window.addEventListener('hashchange', render);
 
 // The field either searches with the engine chosen in settings (the hash carries { label, url
-// with %s }) or asks the assistant. Asking reloads this page with ?ask=…; the browser cancels that
-// navigation and hands the prompt to the sidebar, so the tab stays here.
+// with %s }) or asks the assistant. Asking hands the question (and any pictures in the box) to the browser through
+// window.lumenNewtab.askAi (preload/newtab-preload.js; nothing goes in this page's address), which turns this tab into the
+// full-page chat; the chat asks it in a new chat. Ask AI is the one way into the chat from here: with an empty box it just
+// opens it (the same tab, Ctrl/Cmd+click: a new tab).
 (() => {
   const form = document.querySelector('form[role=search]');
   const input = document.getElementById('q');
@@ -300,21 +343,32 @@ window.addEventListener('hashchange', render);
   try { if (localStorage.getItem(KEY) === 'ask') mode = 'ask'; } catch {}
   // Who the box asks and which engine it searches are read from the hash each time (the browser rewrites it when
   // the user picks another model or search engine), so the label never shows what was true when the page loaded.
-  const current = () => { const d = data(); return { engine: d.search, who: d.assistant?.name || 'Claude', model: d.assistant?.model || '', modelLabel: d.assistant?.label || '' }; };
+  const current = () => { const d = data(); return { engine: d.search, who: d.assistant?.name || 'AI', connected: !d.assistant || d.assistant.agentUsable !== false, model: d.assistant?.model || '', modelLabel: d.assistant?.label || '' }; };
 
+  let hintTimer = null;
+  const goConnect = () => { location.href = `${location.pathname}?connect-ai=1${location.hash}`; }; // the browser opens Settings > API keys and sign-ins and keeps this tab here
+  document.getElementById('mode-connect')?.addEventListener('click', goConnect);
   function apply(next, { save = true, focus = false } = {}) {
     mode = next === 'ask' ? 'ask' : 'search';
-    const { engine, who, model, modelLabel } = current();
+    const { engine, who, connected, model, modelLabel } = current();
     const askRadio = document.getElementById('mode-ask');
+    form.classList.toggle('ni-ask', mode === 'ask'); // (the attach button shows in Ask AI only)
     askRadio.dataset.model = model; // exactly which model an ask goes to
-    askRadio.title = modelLabel ? `${modelLabel}` : '';
+    askRadio.title = `Open chat (${MAC ? 'Shift+Cmd+L' : 'Ctrl+Shift+L'})${modelLabel ? `. Answers with ${modelLabel}.` : ''}`;
     for (const r of radios) {
       const on = r.dataset.mode === mode;
       r.setAttribute('aria-checked', String(on));
       r.tabIndex = on ? 0 : -1;
       if (on && focus) r.focus();
     }
-    const text = mode === 'ask' ? `Ask ${who}…` : `Search ${engine?.label || 'Google'}`;
+    // Ask AI with no AI connected yet: a setup prompt, not a box that would ask nobody.
+    const text = mode === 'ask' ? (connected ? `Ask ${who}…` : 'Connect an AI to ask questions') : `Search ${engine?.label || 'Google'}`;
+    const setup = mode === 'ask' && !connected;
+    const connect = document.getElementById('mode-connect');
+    if (connect) connect.hidden = !setup;
+    const hintEl = document.getElementById('mode-hint');
+    if (hintEl && hintEl.dataset.base === undefined) hintEl.dataset.base = hintEl.textContent.replace('Ctrl+Enter', /^Mac/.test(navigator.platform || '') ? '⌘↩' : 'Ctrl+Enter'); // (Cmd+Enter on a Mac; Ctrl+/ really is Control there)
+    if (hintEl && !hintTimer) hintEl.textContent = setup ? 'No AI is connected yet.' : hintEl.dataset.base;
     input.placeholder = text;
     input.setAttribute('aria-label', text);
     if (save) try { localStorage.setItem(KEY, mode); } catch {}
@@ -322,7 +376,35 @@ window.addEventListener('hashchange', render);
   apply(mode, { save: false });
   window.addEventListener('hashchange', () => apply(mode, { save: false })); // a model or search engine was picked: the box follows at once
 
-  for (const r of radios) r.addEventListener('click', () => { apply(r.dataset.mode); input.focus(); });
+  // Search | Ask AI: a click picks the mode. Ask AI, when it is already the mode (or with Ctrl/Cmd held), is the chat button: it sends
+  // what is typed to the full-page chat, or opens that chat when the box is empty.
+  // Short notes in the hint line (images go to Ask AI, a picture that was left out), put back after a few seconds.
+  const hint = document.getElementById('mode-hint');
+  const say = (message, ms = 7000) => {
+    if (!hint) return;
+    hint.textContent = message;
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => { hintTimer = null; apply(mode, { save: false }); }, ms);
+  };
+  const images = window.NewtabImages.create({
+    form, input, strip: document.getElementById('ni-strip'), attach: document.getElementById('ni-attach'), dropNote: document.getElementById('ni-dropnote'),
+    bridge: window.lumenNewtab, say,
+    toAsk: () => { if (mode === 'ask') return false; apply('ask'); return true; }, // a picture added in Search mode switches the box to Ask AI
+  });
+  const openChat = async (inNewTab) => {
+    const q = input.value.trim().slice(0, 20000);
+    if ((q || images.count()) && !current().connected) { goConnect(); return; }
+    if (!window.lumenNewtab) return;
+    const pictures = await images.take();
+    const ok = await window.lumenNewtab.askAi({ text: q, images: pictures, inNewTab });
+    if (ok && inNewTab) images.clear(); // (the pictures went with the question; this page stays, as the text does)
+  };
+  for (const r of radios) {
+    r.addEventListener('click', (e) => {
+      if (r.dataset.mode === 'ask' && (mode === 'ask' || e.ctrlKey || e.metaKey)) { openChat(e.ctrlKey || e.metaKey); return; }
+      apply(r.dataset.mode); input.focus();
+    });
+  }
   document.getElementById('mode').addEventListener('keydown', (e) => {
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
@@ -331,30 +413,16 @@ window.addEventListener('hashchange', render);
   });
   input.addEventListener('keydown', (e) => {
     const toggle = (e.ctrlKey && e.key === '/') || (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A'));
-    if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); }
+    if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); return; }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
   });
-
-  // This box passes only words (the address of this page carries them): a picture pasted or dropped here is not
-  // taken in silently. It says where images go.
-  const hint = document.getElementById('mode-hint');
-  const hintText = hint ? hint.textContent : '';
-  let hintTimer = null;
-  const refuseImages = (e, files) => {
-    if (mode !== 'ask' || !hint || ![...files].some((f) => String(f.type).startsWith('image/'))) return;
-    e.preventDefault();
-    hint.textContent = 'Images can’t go in this box. Ask here, then add the picture in the chat (paste, drop, or the attach button).';
-    clearTimeout(hintTimer);
-    hintTimer = setTimeout(() => { hint.textContent = hintText; }, 9000);
-  };
-  input.addEventListener('paste', (e) => refuseImages(e, e.clipboardData?.files || []));
-  form.addEventListener('dragover', (e) => { if (mode === 'ask' && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file' && i.type.startsWith('image/'))) e.preventDefault(); });
-  form.addEventListener('drop', (e) => refuseImages(e, e.dataTransfer?.files || []));
 
   form.addEventListener('submit', (e) => {
     const q = input.value.trim();
-    if (mode === 'ask') {
+    if (mode === 'ask' || images.count()) { // (pictures only go to Ask AI)
       e.preventDefault();
-      if (q) location.href = `${location.pathname}?ask=${encodeURIComponent(q)}${location.hash}`;
+      if (!current().connected) { goConnect(); return; }
+      openChat(false); // (an empty box opens the chat itself)
       return;
     }
     const { engine } = current();

@@ -10,9 +10,19 @@ const tier = (prompt, o) => tierFor(prompt, o).tier;
 for (const p of ['hi', 'what time is it in Tokyo', 'summarize this page', 'translate this to French', 'open github.com', 'search for pizza near me']) {
   check(`light: ${p}`, tier(p) === 'light', `${tier(p)} (${score(p)})`);
 }
-for (const p of ['find the cheapest flight from Boston to Denver next month on this site', 'fix the login bug on this page']) {
+for (const p of ['fix the login bug on this page', 'Write a function that parses CSV', 'Why does this crash?', 'write a SQL query for the monthly totals']) {
   check(`standard: ${p}`, tier(p) === 'standard', `${tier(p)} (${score(p)})`);
 }
+// Haiku 5.5 takes everyday chat, page questions, summaries and plain browsing (light), not just greetings and lookups.
+for (const p of ['find the cheapest flight from Boston to Denver next month on this site', 'what does this page say about refunds?', 'explain how photosynthesis works', 'write a short email declining the invite']) {
+  check(`light (Haiku 5.5): ${p}`, tier(p) === 'light', `${tier(p)} (${score(p)})`);
+}
+// A comparison weighs options, and a cover letter is high-stakes writing: mid-size (docs/auto-model.md, by situation).
+for (const p of ['compare these two laptops and tell me which is better for travel', 'Draft a cover letter for this job posting and keep it under 300 words and friendly']) {
+  check(`standard (a comparison, long-form writing): ${p}`, tier(p) === 'standard', `${tier(p)} (${score(p)})`);
+}
+check('code still goes up a tier: Sonnet, not Haiku', route({ engine: 'claudecode', picked: 'default', prompt: 'fix the login bug on this page' }).model === 'sonnet' && route({ engine: 'claudecode', picked: 'default', prompt: 'what does this page say about refunds?' }).model === 'haiku');
+check('a code fence is never light', tier('what is this\n```js\nx\n```') !== 'light');
 const heavyBrief = [
   'Refactor the checkout flow across the codebase and debug why the cart total is wrong after a coupon is applied.',
   '1. Investigate the root cause in cart.js and pricing.js',

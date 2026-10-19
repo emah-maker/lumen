@@ -5,6 +5,7 @@
 // cycles, after a drag-drop, and under the OS "reduce motion" preference (which deliberately swaps
 // the shake for a dashed outline: checked to be consistent for every card, and to resume afterwards).
 // Offline; a throwaway profile; LUMEN_TEST_BACKGROUND keeps the window off-screen.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -153,7 +154,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await edit(false);
 
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

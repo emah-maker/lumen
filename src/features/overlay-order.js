@@ -1,4 +1,4 @@
-// Stacking of the native views that float over the page, bottom to top: Spotify card, suggestions,
+// Stacking of the native views that float over the page, bottom to top: Spotify and Apple Music cards, suggestions,
 // downloads panel, tool overlay (dialogs are raised last by features/dialogs.js). A tab view added
 // later (a new tab, a woken one) lands above any of them; this says which views to re-add.
 // Pure (no Electron): `children` is the window's contentView.children, `tabViews` the tab views,

@@ -43,13 +43,13 @@
     .g-orange { background: #ff9500; } .g-yellow { background: #ffcc00; } .g-green { background: #34c759; } .g-gray { background: #8e8e93; }
     /* Over a tab strip the slot there shows where it lands; the card becomes the tab itself, a small chip under the
        cursor (held by its icon, as before), so what is being moved never leaves the pointer. */
-    .card.compact { width: min(220px, calc(100% - var(--pad) * 2)); border-radius: 9px; opacity: 0.97; }
+    .card.compact { width: min(220px, calc(100% - var(--pad) * 2)); border-radius: 8px; opacity: 0.97; }
     .card.compact .shot, .card.bare .shot { height: 0; opacity: 0; border-top-width: 0; }
     /* Dropped while its window is still getting ready: it stays, breathing, until the window takes its place. */
     .card.wait { opacity: 1; transform: none; animation: breathe 900ms ease-in-out infinite alternate; }
     @keyframes breathe { to { opacity: 0.72; transform: scale(0.985); } }
     /* Several tabs dragged together: the count, and the edges of the cards stacked behind. */
-    .count { display: none; flex: none; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+    .count { display: none; flex: none; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 8px; background: var(--accent-deep); color: var(--on-accent); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
     .card.many .count { display: block; }
     .stack { position: absolute; left: var(--pad); top: var(--pad); width: calc(100% - var(--pad) * 2); bottom: var(--pad); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow), inset 0 0 0 0.5px var(--edge); opacity: 0; transform: none; transition: opacity 180ms ease-out, transform 260ms var(--spring), width 240ms var(--spring); }
     .stack.one { transform: translate(5px, -5px) scale(0.985); }

@@ -13,6 +13,16 @@ check('no Temml: inline source kept in a code span', () => {
   const html = md.render('Area is $\\pi r^2$ here.');
   assert.match(html, /<code class="math-src"[^>]*>\\pi r\^2<\/code>/);
 });
+check('a formula may open on a relation ("Work $= 2 pi N tau$")', () => {
+  const { maths } = md.liftMath(String.raw`Work $= 2\pi N \tau \approx 15{,}834$ ft-lbf.`);
+  assert.strictEqual(maths.length, 1);
+  assert.strictEqual(maths[0].tex, String.raw`= 2\pi N \tau \approx 15{,}834`);
+});
+check('a long inline formula sits on the text baseline (baseline-source after the vertical-align shorthand)', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+  const rule = /\.msg\.assistant \.math-inline \{([^}]*)\}/.exec(css)[1];
+  assert.ok(rule.indexOf('baseline-source: first') > rule.indexOf('vertical-align'), rule);
+});
 check('money is not math', () => {
   for (const s of ['It costs $5 and $10.', 'From $5-$10 a month', 'Pay $ 5 now $', 'a \\$x\\$ b']) {
     const { maths } = md.liftMath(s);

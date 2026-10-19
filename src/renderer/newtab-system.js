@@ -149,9 +149,17 @@
       const node = id === 'wsyshead' ? headerEl : id === 'wsyssearch' ? formEl : parts[KEY[id]].section;
       boxes[id] = rectOfNode(node);
     }
+    // The lowest section reaches down to the row the centre column's obstacle did (WL.obstacleFor rounds up), so a card
+    // that was pushed below the column is still below it, packed or not, once the section is a card.
+    const lowest = Object.keys(boxes).reduce((a, id) => (a === null || boxes[id].top + boxes[id].height > boxes[a].top + boxes[a].height ? id : a), null);
     for (const [id, box] of Object.entries(boxes)) {
       const rect = WS.cellsFromBox(id, box, m);
-      if (rect) origin.set(id, rect);
+      if (!rect) continue;
+      if (id === lowest) {
+        const rows = Math.ceil((box.top + box.height - m.top + WL.GAP) / m.pitchY - 0.01);
+        rect.h = Math.max(rect.h, rows - rect.y);
+      }
+      origin.set(id, WL.cleanRect(WS.typeOf(id), rect, m.cols) || rect);
     }
     refill();
   }

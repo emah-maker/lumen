@@ -18,7 +18,7 @@ const lastSnapshot = new Map(); // webContents id -> { url, lines }
 // gets one line back instead. "Soon" is a few tool calls: the API clears older tool results, and a
 // model that can no longer see the earlier snapshot must get it again. Any tool that can change the
 // page clears the cache, and the content itself is compared, so a stale hit can't happen.
-const READ_ONLY = new Set(['read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf']);
+const READ_ONLY = new Set(['find_sources', 'delegate', 'read_page', 'find', 'screenshot', 'list_tabs', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'analyze_posts', 'get_console', 'get_network', 'video_overview', 'video_frames', 'annotate']);
 const FRESH_CALLS = 6;
 class ReadCache {
   // acted: how many acting tools have run (batch's baseline reuse compares it, see batch below).
@@ -63,9 +63,18 @@ function compactOutline(opts) {
   const seen = new Set();
   let size = 0;
   let clipped = false;
+  // Boilerplate every site repeats and no task needs: skip links, "Toggle … subsection" and "Hide Contents"
+  // buttons, a bare "Main menu" / "Appearance" label. (The controls keep their refs: only the lines go.)
+  const NOISE_LINE = /^(- )?(\[\d+\] (link|button) ")?(\[\d+\])?((skip|jump) to [^"]*|toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar|main menu)|main menu|move to sidebar|appearance)"?$/i;
+  const NOISE_INLINE = / ?\[\d+\] button "(toggle [^"]* subsection|(hide|show) (contents|appearance|tools|sidebar))"/gi;
+  // A nav, footer or sidebar is mostly a long list of links the task rarely needs: its first lines show, the rest is counted (the
+  // refs stay valid: find reaches any of them). `cap` is the one being walked.
+  const BOILER_LINES = 15;
+  let cap = null;
   const push = (line) => {
-    if (!line || seen.has(line)) return;
+    if (!line || seen.has(line) || NOISE_LINE.test(line)) return;
     if (size + line.length > opts.maxChars) { clipped = true; return; }
+    if (cap) { if (cap.n >= BOILER_LINES) { cap.skipped++; return; } cap.n++; }
     seen.add(line);
     lines.push(line);
     size += line.length + 1;
@@ -108,8 +117,7 @@ function compactOutline(opts) {
   const TEXT_BLOCKS = new Set(['P', 'LI', 'TD', 'TH', 'DD', 'DT', 'BLOCKQUOTE', 'FIGCAPTION', 'CAPTION', 'LABEL', 'LEGEND', 'PRE']);
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'svg', 'HEAD', 'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO', 'PICTURE']);
   // Running text with inline refs: "Turing was an English [812]mathematician and …"
-  const inline = (block) => {
-    if (block.tagName === 'PRE') { const t = String(block.innerText || '').trim(); return t.length > 2000 ? `${t.slice(0, 2000)}…` : t; }
+  const inlineOf = (nodes) => {
     let out = '';
     const walk = (node) => {
       for (const child of node.childNodes) {
@@ -122,9 +130,16 @@ function compactOutline(opts) {
         }
       }
     };
-    walk(block);
-    const text = clean(out);
+    for (const node of nodes) {
+      if (node.nodeType === 3) out += node.nodeValue;
+      else if (node.nodeType === 1 && !SKIP.has(node.tagName) && visible(node)) walk({ childNodes: [node] });
+    }
+    const text = clean(out.replace(NOISE_INLINE, ''));
     return text.length > opts.blockChars ? `${text.slice(0, opts.blockChars)}…` : text;
+  };
+  const inline = (block) => {
+    if (block.tagName === 'PRE') { const t = String(block.innerText || '').trim(); return t.length > 2000 ? `${t.slice(0, 2000)}…` : t; }
+    return inlineOf(block.childNodes);
   };
   const landmark = (el) => {
     const role = el.getAttribute('role');
@@ -140,30 +155,72 @@ function compactOutline(opts) {
     if (el.tagName === 'SLOT') { const assigned = el.assignedElements({ flatten: true }); if (assigned.length) return assigned; }
     return el.children;
   };
-  const walk = (el) => {
-    for (const child of kids(el)) {
-      if (clipped) return;
-      if (SKIP.has(child.tagName) || !visible(child)) continue;
-      const id = idOf.get(child);
-      if (id) { push(describe(id, child)); continue; }
-      const h = /^H([1-6])$/.exec(child.tagName);
-      if (h) { push(`${'#'.repeat(Number(h[1]))} ${clean(child.innerText).slice(0, 120)}`); continue; }
-      const mark = landmark(child);
-      if (mark) push(mark);
-      if (TEXT_BLOCKS.has(child.tagName)) {
-        const text = inline(child);
-        if (text.length > 1) push(child.tagName === 'LI' ? `- ${text}` : text);
-        continue;
-      }
-      // A div/span that holds its own text (not just other blocks) is a text block too.
-      const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
-      if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
-        const text = inline(child);
-        if (text.length > 1) push(text);
-        continue;
-      }
+  // A cell or list item that holds a table, list, heading or form is a layout container (Hacker News: the
+  // whole page is one table cell, each story a row of a table inside it), not a text block: its own
+  // text is one line, what it holds is walked as usual.
+  const NESTED = 'table,ul,ol,dl,h1,h2,h3,h4,h5,h6,form';
+  const CELLS = new Set(['LI', 'TD', 'TH', 'DD', 'DT']);
+  const holdsStructure = (n) => n.nodeType === 1 && (n.matches(NESTED) || Boolean(n.querySelector(NESTED)));
+  // The words of a cookie / consent banner are noise (its buttons keep their refs: "Accept" stays clickable).
+  const CONSENT = '[id*=cookie i],[class*=cookie i],[aria-label*=cookie i],[id*=consent i],[class*=consent i],[aria-label*=consent i],[id*=gdpr i],[class*=gdpr i]';
+  const inConsent = (el) => {
+    try {
+      const box = el.closest(CONSENT);
+      return Boolean(box) && !['BODY', 'HTML', 'MAIN', 'ARTICLE'].includes(box.tagName) && String(box.innerText || '').length < 1500;
+    } catch { return false; }
+  };
+  const visit = (child) => {
+    if (clipped) return;
+    if (SKIP.has(child.tagName) || !visible(child)) return;
+    const id = idOf.get(child);
+    if (id) { push(describe(id, child)); return; }
+    const h = /^H([1-6])$/.exec(child.tagName);
+    if (h) { push(`${'#'.repeat(Number(h[1]))} ${clean(child.innerText).slice(0, 120)}`); return; }
+    const mark = landmark(child);
+    if (mark) push(mark);
+    if (mark && /^\[(nav|footer|aside|navigation|contentinfo|complementary)\b/.test(mark) && !cap) {
+      cap = { n: 0, skipped: 0 };
       walk(child);
+      const skipped = cap.skipped;
+      cap = null;
+      if (skipped) push(`… ${skipped} more lines in this ${mark.slice(1).split(/[:\]]/)[0]} (find reaches them)`);
+      return;
     }
+    if (TEXT_BLOCKS.has(child.tagName)) {
+      if (CELLS.has(child.tagName) && !child.shadowRoot && child.querySelector(NESTED)) { mixed(child); return; }
+      if (inConsent(child)) return;
+      const text = inline(child);
+      if (text.length > 1) push(child.tagName === 'LI' ? `- ${text}` : text);
+      return;
+    }
+    // A div/span that holds its own text (not just other blocks) is a text block too.
+    const ownText = [...child.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim().length > 1);
+    if (ownText && !child.shadowRoot && !child.querySelector('p,li,h1,h2,h3,h4,h5,h6,table,ul,ol,form')) {
+      if (inConsent(child)) return;
+      const text = inline(child);
+      if (text.length > 1) push(text);
+      return;
+    }
+    walk(child);
+  };
+  // The inline runs of a container cell become lines (the first of an LI is a bullet); what holds a table
+  // or list is visited in its place.
+  const mixed = (cell) => {
+    let run = [];
+    let first = true;
+    const flush = () => {
+      if (!run.length) return;
+      const text = inlineOf(run);
+      run = [];
+      if (text.length > 1) { push(first && cell.tagName === 'LI' ? `- ${text}` : text); first = false; }
+    };
+    for (const n of cell.childNodes) {
+      if (holdsStructure(n)) { flush(); visit(n); } else run.push(n);
+    }
+    flush();
+  };
+  const walk = (el) => {
+    for (const child of kids(el)) visit(child);
   };
   if (!opts.frame) push(`${clean(document.title)} (${location.href.slice(0, 150)})`);
   walk(document.body || document.documentElement);
@@ -268,22 +325,24 @@ const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
 // ---------------------------------------------------------------- tool definitions
 
 const READ_PAGE_EXTRA = {
-  mode: { type: 'string', enum: ['compact', 'full'] },
-  since_last: { type: 'boolean', description: 'compact: only what changed since your last read.' },
+  mode: { type: 'string', enum: ['compact', 'full', 'outline', 'site'] },
+  structured: { type: 'boolean' }, // full: JSON-LD, meta tags, embedded data (named in the tool description)
+  since_last: { type: 'boolean', description: 'compact: only changes since your last read.' },
   start_line: { type: 'integer', description: 'compact: continue a clipped outline.' },
-  hrefs: { type: 'boolean', description: 'compact: include link URLs.' },
-  extract: { type: 'string', enum: ['tables', 'links', 'lists'], description: 'Return these as JSON instead of a page read.' },
-  selector: { type: 'string', description: 'extract: limit to this CSS selector.' },
+  hrefs: { type: 'boolean', description: 'compact: add link URLs.' },
+  elements: { type: 'boolean', description: 'full: list the elements.' },
+  extract: { type: 'string', enum: ['tables', 'links', 'lists'] },
+  selector: { type: 'string', description: 'CSS scope for extract.' },
 };
 // Tools that can also report what changed on the page after they act (see observe).
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
-  max_width: { type: 'integer', description: 'Width px (default 1024, max 1600).' },
-  quality: { type: 'integer', description: '30-90 (default 60).' },
+  max_width: { type: 'integer', description: 'Default 720, max 1600.' },
+  quality: { type: 'integer', description: '30-90, default 60.' },
   region: {
     type: 'object',
-    description: 'Crop, in page CSS px (no click_at).',
+    description: 'Crop, page CSS px (no click_at).',
     properties: { x: { type: 'number' }, y: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' } },
     required: ['x', 'y', 'width', 'height'],
   },
@@ -292,16 +351,16 @@ const SCREENSHOT_EXTRA = {
 const NEW_TOOLS = [
   {
     name: 'find',
-    description: 'Search the active tab for text: returns matching controls as [id] refs and short text snippets with nearby refs. Far cheaper than read_page for one field, button or fact.',
+    description: 'Find text in the active tab: [id] refs and snippets.',
     input_schema: {
       type: 'object',
-      properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Max results (default 8).' } },
+      properties: { query: { type: 'string' }, max: { type: 'integer', description: 'Default 8.' } },
       required: ['query'],
     },
   },
   {
     name: 'batch',
-    description: 'Several actions on the active tab in one call; stops at the first failure or site change and returns what changed. Steps: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text} scroll{direction} hover{ref}.',
+    description: 'Several actions in one call, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
@@ -313,6 +372,9 @@ const NEW_TOOLS = [
               do: { type: 'string', enum: ['type', 'click', 'select', 'press', 'wait_for', 'scroll', 'hover'] },
               ref: { type: 'integer' },
               text: { type: 'string' },
+              url: { type: 'string' },
+              gone: { type: 'string' },
+              network_idle: { type: 'boolean' },
               enter: { type: 'boolean' },
               key: { type: 'string' },
               modifiers: { type: 'array', items: { type: 'string' } },
@@ -327,23 +389,12 @@ const NEW_TOOLS = [
   },
 ];
 
-// Shorter descriptions for verbose tools (same meaning, fewer tokens on every request).
+// Description overrides. The short descriptions (which already name the options added here) now live in
+// agent.js's TOOLS, so there is one copy of each; read_pdf's is shared with features/pdf-text.js.
 const pdfText = require('../features/pdf-text');
-const { captureTab } = require('../features/tab-capture');
+const { captureTab, captureJpeg } = require('../features/tab-capture');
 const TRIMMED = {
-  read_page: 'Read the active tab. mode:"compact": outline with [id] refs (use first). mode:"full": raw JSON elements and text (text_offset/element_offset to page). extract:"tables"|"links"|"lists" (+selector): JSON, no run_script needed. Ids stay valid until the page changes.',
-  navigate: 'Load a URL in the active tab. read:true also returns the new outline; wait_for waits for that text first.',
-  click: 'Click by [id] from read_page/find, or by visible text. observe:true (also on click_at, type_text, press_key) returns what changed: no follow-up read.',
-  type_text: 'Replace an input/textarea/contenteditable value, pick a <select> option by label, or set date/time (e.g. 2026-03-14, 13:30). Use click for checkboxes/radios. press_enter submits.',
-  fill_form: 'Fill fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved.',
-  read_urls: 'Read up to 6 pages in parallel in hidden tabs without cookies/logins; as_user:true asks to read the user\'s own account pages signed in. Returns title + text.',
-  run_script: 'LAST RESORT: run JavaScript in the page (use return; async ok); result is JSON. Only when nothing else can do it, in one call. Never to click, type or navigate, or to bypass confirmation rules.',
-  group_tabs: 'Put tabs (ids from list_tabs) into a new named group; use 1-3 word names. Tabs in another group move.',
-  click_at: 'Click a point in the last screenshot\'s pixel coordinates (canvas, maps, custom widgets).',
-  wait_for: 'Wait until the active tab contains some text, up to a timeout.',
   read_pdf: pdfText.READ_PDF_DESCRIPTION,
-  press_key: 'Press a key or shortcut in the active tab, e.g. "Enter", or "a" with modifiers ["control"].',
-  screenshot: 'Screenshot the active tab (layout, images, charts). read_page/find are far cheaper.',
 };
 
 // Adds the new tools and options to the agent's TOOLS array (called once at load, before the
@@ -367,7 +418,9 @@ const ACTING = ['batch'];
 // ---------------------------------------------------------------- execution
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
+const pageReading = require('./page-reading'); // mode "outline"
 const frames = require('./frames');
+const annotate = require('./annotate'); // shotScaleOf: what a screenshot's pixels are in page px
 
 // read_page's registry pass alone: the same walk and labels that build window.__claudeEls (so ids
 // match what click / type_text resolve), without the page's full innerText and the element list it
@@ -396,7 +449,7 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
   const inFrames = frames.available(wc); // embedded frames are outlined each in its own frame (below)
   await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // builds the element registry the refs point into
   const result = await h.runScript(wc, serialize(compactOutline, {
-    maxChars: Math.min(Math.max(Number(input.max_chars) || 6000, 1000), 20000),
+    maxChars: Math.min(Math.max(Number(input.max_chars) || DEFAULT_OUTLINE_CHARS, 1000), 20000),
     blockChars: 280,
     startLine: input.start_line || 0,
     hrefs: Boolean(input.hrefs),
@@ -411,19 +464,39 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
     const after = new Set(result.lines);
     const added = result.lines.filter((l) => !before.has(l));
     const removed = previous.lines.filter((l) => !after.has(l)).length;
+    const shownAdded = added.length > DIFF_LINES ? [...added.slice(0, DIFF_LINES), `… ${added.length - DIFF_LINES} more added lines (read_page or find)`] : added;
     body = added.length || removed
-      ? `Changes since your last read (+${added.length} / -${removed} lines):\n${added.join('\n')}`
+      ? `Changes since your last read (+${added.length} / -${removed} lines):\n${shownAdded.join('\n')}`
       : 'No changes since your last read.';
+  } else if (input.head) {
+    // After navigate / open_tab: the title, URL and the top of the page, enough to see where it landed.
+    body = input.noTitle ? pageHead(result.lines.slice(1), result.totalLines - 1, result.clipped) : pageHead(result.lines, result.totalLines, result.clipped);
   } else if (input.summary) {
     // After a batch lands on a new page: just its top, the model can read more if it needs to.
     body = `Now on a new page:\n${result.lines.slice(0, 12).join('\n')}\n… (${result.totalLines} lines; use find or read_page mode:"compact")`;
   } else {
-    body = `${input.since_last && previous ? '(new page)\n' : ''}${result.lines.join('\n')}`;
+    body = `${input.since_last && previous ? '(new page)\n' : ''}${(input.noTitle ? result.lines.slice(1) : result.lines).join('\n')}`;
     if (result.clipped) body += `\n… outline clipped at ${result.totalLines} lines (${result.elements} controls). Use find, or start_line:${result.startLine + result.lines.length}.`;
     const same = dedupe && !input.since_last && h.dedupe?.() ? reads.check(wc.id, url, `c|${input.start_line || 0}|${Boolean(input.hrefs)}`, body) : null;
     if (same) body = same;
   }
   return `<untrusted_page_content>\n${body}\n</untrusted_page_content>`;
+}
+
+// The first ~600 characters of an outline (whole lines), with a pointer to the rest.
+const HEAD_CHARS = 600;
+const DEFAULT_OUTLINE_CHARS = 4000; // a compact read's default cap (~1,000 tokens); a clipped outline says how to continue (start_line) and find reaches the rest
+const DIFF_LINES = 25; // a diff longer than this lists its first lines and counts the rest
+function pageHead(lines, total, clipped = false) {
+  const out = [];
+  let size = 0;
+  for (const line of lines) {
+    if (out.length && size + line.length + 1 > HEAD_CHARS) break;
+    out.push(line.length > HEAD_CHARS ? `${line.slice(0, HEAD_CHARS)}…` : line);
+    size += line.length + 1;
+  }
+  const more = out.length < total || clipped;
+  return `${out.join('\n')}${more ? '\n… (more: read_page mode:"compact", or find)' : ''}`;
 }
 
 // The embedded frames' outlines, each headed by its label, refs naming the frame (frames.js).
@@ -452,10 +525,19 @@ async function frameOutlines(agent, wc, input, h) {
 }
 
 // The page's outline after a navigation (navigate / open_tab read:true), or '' when it can't be shown.
-async function outline(agent, wc, h) {
+// noTitle: navigate's own line already says the title and address, so the outline's first line (the same two) is left out.
+async function outline(agent, wc, h, { noTitle = false } = {}) {
   if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
   try { return `
-${await compact(agent, wc, { mode: 'compact', max_chars: 4000 }, h)}`; } catch { return ''; }
+${await compact(agent, wc, { mode: 'compact', max_chars: 4000, noTitle }, h)}`; } catch { return ''; }
+}
+
+// The short head of the page after a navigation ('' when it can't be shown): navigate / open_tab return it by
+// default (read:false opts out), so the model often needs no read_page step to see where it landed.
+async function head(agent, wc, h, { noTitle = false } = {}) {
+  if (wc.isDestroyed() || agent.browser.aiOff?.(wc.getURL())) return '';
+  try { return `
+${await compact(agent, wc, { mode: 'compact', max_chars: 1500, head: true, noTitle }, h)}`; } catch { return ''; }
 }
 
 // True when the last compact read of this tab (same URL, few calls ago) is still the baseline for the
@@ -480,8 +562,20 @@ ${diff}`;
 }
 
 async function screenshot(agent, wc, input, h) {
-  const maxWidth = Math.min(Math.max(Number(input.max_width) || 1024, 320), 1600);
+  const maxWidth = Math.min(Math.max(Number(input.max_width) || 720, 320), 1600);
   const quality = Math.min(Math.max(Number(input.quality) || 60, 30), 90);
+  if (!input.region) {
+    const shot = await captureJpeg(wc, { maxWidth, quality });
+    if (shot) {
+      const size = { width: shot.width, height: shot.height };
+      const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+      agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
+      return [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: shot.data } },
+        { type: 'text', text: `Screenshot of ${wc.getURL()}, ${size.width}x${size.height} px. Use these coordinates with click_at.` },
+      ];
+    }
+  }
   let image;
   if (input.region) {
     const z = wc.getZoomFactor();
@@ -495,8 +589,8 @@ async function screenshot(agent, wc, input, h) {
   if (input.region) {
     agent.screenshotScale = null; // a crop can't be mapped back for click_at
   } else {
-    const viewWidth = (await h.runScript(wc, 'innerWidth')) * wc.getZoomFactor();
-    agent.screenshotScale = { wc, ratio: viewWidth / size.width };
+    const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+    agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
   }
   return [
     { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.toJPEG(quality).toString('base64') } },
@@ -523,7 +617,7 @@ async function batch(agent, wc, input, h) {
         case 'select': tool = ['type_text', { element_id: step.ref, text: step.text ?? '' }]; break;
         case 'click': tool = ['click', step.ref ? { element_id: step.ref } : { text: step.text }]; break;
         case 'press': tool = ['press_key', { key: step.key, ...(step.modifiers ? { modifiers: step.modifiers } : {}) }]; break;
-        case 'wait_for': tool = ['wait_for', { text: step.text, seconds: 10 }]; break;
+        case 'wait_for': tool = ['wait_for', { ...(step.text !== undefined ? { text: step.text } : {}), ...(step.url !== undefined ? { url: step.url } : {}), ...(step.gone !== undefined ? { gone: step.gone } : {}), ...(step.network_idle === true ? { network_idle: true } : {}), seconds: 10 }]; break;
         case 'scroll': tool = ['scroll', { direction: step.direction || 'down' }]; break;
         case 'hover': tool = ['hover', { element_id: step.ref }]; break;
         default: throw new Error(`Unknown step "${step.do}".`);
@@ -553,6 +647,7 @@ async function batch(agent, wc, input, h) {
 async function execute(agent, name, input, h) {
   reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
+  if (name === 'read_page' && input.mode === 'outline') return pageReading.readOutline((code, ms) => h.runScript(agent.requireTab(), code, ms)); // headings, links by region, next page (page-outline.js)
   if (name === 'read_page' && input.extract) {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);
@@ -562,7 +657,7 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
 [truncated: ${json.length} chars; use selector]` : json}
 </untrusted_page_content>`;
   }
-  if (name === 'screenshot') return screenshot(agent, agent.requireTab(), input, h);
+  if (name === 'screenshot') return screenshot(agent, agent.screenshotWc ? agent.screenshotWc(input) : agent.requireTab(), input, h);
   if (name === 'find') {
     const wc = agent.requireTab();
     const inFrames = frames.available(wc);
@@ -584,4 +679,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };
+module.exports = { OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };

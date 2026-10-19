@@ -107,6 +107,7 @@ module.exports = async function tradingviewUnits(check) {
   check('tradingview compact: a chart becomes the mini price view (the full chart is all toolbar on a small card)', new URL(cChart).pathname === '/embed-widget/mini-symbol-overview/' && hashOf(cChart).symbol === 'NASDAQ:AAPL' && TV.isEmbedUrl(cChart), cChart);
   check('tradingview compact: leaving compact off changes nothing (the default is the full address)', TV.embedUrl(chartCfg, false) === TV.embedUrl(chartCfg, false, false) && new URL(TV.embedUrl(chartCfg, false)).pathname === '/widgetembed/', '');
   const miniCfg = { symbol: 'BINANCE:BTCUSDT', view: 'mini', interval: 'W', theme: 'dark' };
+  check('tradingview compact: auto theme follows dark in the compact view and mini view alike', hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'chart', theme: 'auto' }, true, true)).colorTheme === 'dark' && hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'mini', theme: 'auto' }, true)).colorTheme === 'dark' && hashOf(TV.embedUrl({ symbol: 'NASDAQ:AAPL', view: 'mini', theme: 'auto' }, false)).colorTheme === 'light', '');
   check('tradingview compact: the mini view is already compact and stays as it is', TV.embedUrl(miniCfg, true, true) === TV.embedUrl(miniCfg, true), '');
   const multi = { view: 'watchlist', theme: 'light', chart: true, symbols: ['###Tech', 'AAPL', 'TSLA', '###Crypto', 'BINANCE:BTCUSDT', '###Index', 'SPX'] };
   const fullTabs = hashOf(TV.embedUrl(multi, false));
@@ -135,6 +136,14 @@ module.exports = async function tradingviewUnits(check) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'newtab.html'), 'utf8');
   const wsrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'newtab-widgets.js'), 'utf8');
   check('tradingview: the new-tab page loads the fit module before the widgets and sizes the frame through it', html.indexOf('<script src="../features/tradingview-fit.js">') > 0 && html.indexOf('<script src="../features/tradingview-fit.js">') < html.indexOf('<script src="newtab-widgets.js">') && /TradingViewFit/.test(wsrc) && /ResizeObserver\(place\)/.test(wsrc) && /\.tv-fit \.w-frame/.test(html), '');
+  // The Reload button (the embed is TradingView's own cross-origin frame, so the shared Refresh has nothing to ask main for)
+  const tvCard = wsrc.slice(wsrc.indexOf('  tradingview(w, card) {'), wsrc.indexOf('  // Custom recipes'));
+  const has = (...parts) => parts.every((p) => tvCard.includes(p));
+  check('tradingview reload: the card has a button built like the other icon buttons (same icon), tooltip Reload, named for the symbol', has('iconButton(ICON_REFRESH, `Reload ${symbol}`', 'card.head.append(reloadBtn)') && wsrc.includes("b.title = label.replace(/ .*$/, '')"), '');
+  check('tradingview reload: it starts over with a new frame at the same address (symbols, interval and theme are in it), not the shared Refresh', has('frame.replaceWith(next)', 'next.src = tvFrameSrc(shown)') && !has('refreshButton(w)') && !has("widgetAct(w.id, 'refresh')"), '');
+  check('tradingview reload: a press turns the arrows and turns the button off until the frame loads, so a double click is one reload', has("reloadBtn.classList.toggle('spinning', on)", 'reloadBtn.disabled = on', "'aria-busy'", 'if (reloading ||', "addEventListener('load'"), '');
+  check('tradingview reload: a frame that never loads (or being offline) ends in the card’s Couldn’t reload note with a Try again that reloads', has('stall = setTimeout(fail, ', 'Couldn’t reload', "classList.add('w-retry')", "retry.addEventListener('click', () => reload())", 'navigator.onLine === false'), '');
+  check('tradingview reload: the test-only origin swap only accepts https://127.0.0.1, so it can never point the embed elsewhere', wsrc.includes('/^https:\\/\\/127\\.0\\.0\\.1:\\d+$/.test(o)') && wsrc.includes("p.hostname === 's.tradingview.com'"), '');
   const size = WL.defaultSize('tradingview');
   check('tradingview: a new chart starts wide (not squeezed into the side area)', size.w === 6 && size.h === 6, JSON.stringify(size));
 };

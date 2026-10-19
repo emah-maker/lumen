@@ -8,6 +8,7 @@
 //  - two clients get two windows; a window ends with its session (after a grace), unless the user used it
 //  - the window closes by hand and the next call makes a new one; it is not in the saved session
 //  - the agent's pages are muted, ask nothing (alert/confirm/popups), and keep working while the window is minimized
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -144,9 +145,11 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
   // ---- 1. Nothing opens until the agent needs a tab
   const A = await connect('Claude Code');
-  check('a connected agent has no window yet', (await agentWins()).length === 0, JSON.stringify(await windows()));
+  // Connecting and listing the tools makes no window (a session that never uses Lumen must not pop one up).
+  await sleep(1200);
+  check('a connected agent that listed the tools has no window yet', (await agentWins()).length === 0, JSON.stringify(await windows()));
   let r = await A.call('list_tabs');
-  check('list_tabs before any window: an empty list, and still no window', A.text(r) === '[]' && (await agentWins()).length === 0, A.text(r));
+  check('list_tabs: no tabs of its own yet, still no window', (await agentWins()).length === 0 && A.text(r) === '[]', A.text(r));
 
   // ---- 2. The sidebar AI starts working in the user's tab (held mid-run) while the agent drives
   await ui.evaluate(() => window.assistant.setAutoAllow?.(true)).catch(() => {});
@@ -237,7 +240,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.evaluate(() => window.browser.hideAiTabs(true)); // "hide the tabs the AI opened" on: it must not hide the agent's tabs
   await sleep(500);
   const strip = await (await agentUi()).evaluate(() => [...document.querySelectorAll('#tabs .tab')].map((e) => ({ ai: e.classList.contains('ai-opened') || e.dataset.ai || '', hidden: e.hidden })));
-  check('the agent\'s tabs are not marked or hidden as AI tabs', strip.length >= 2 && strip.every((t) => !t.hidden && !t.ai), JSON.stringify(strip));
+  // (#539: every tab in an outside app's own window is marked as that app's, "Opened by <app>", with the ai-opened class; "hide the tabs the AI opened" still must not hide them.)
+  check('the agent\'s tabs are marked as the app\'s (ai-opened, #539) but never hidden by "hide the tabs the AI opened"', strip.length >= 2 && strip.every((t) => !t.hidden && t.ai), JSON.stringify(strip));
   r = await A.call('read_page');
   await ui.evaluate(() => window.browser.hideAiTabs(false));
   check('the agent is unaffected by the AI\'s tab', /PAGE-A1/.test(A.text(r)), A.text(r).slice(0, 200));

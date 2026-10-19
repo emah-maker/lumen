@@ -1,6 +1,7 @@
 // Accessibility and UI strings: the tab strip works from the keyboard alone (the WAI-ARIA tabs
 // pattern), no control in the browser UI or Settings is left without a name, and the strings come
 // from locales/ (a locale file overrides English; a key it lacks falls back to English).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -198,7 +199,7 @@ const AUDIT = `(() => {
   check('locale: no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);

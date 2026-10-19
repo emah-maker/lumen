@@ -1,6 +1,7 @@
 // A click anywhere in the address field (not only on its text) focuses the address bar, and a click on one of its
 // buttons does not.
 'use strict';
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');

@@ -4,6 +4,7 @@
 // screen, kept fresh live, with tokens that never leave the main process. Offline: a local https server (a
 // throwaway self-signed certificate) stands in for Open-Meteo, its geocoder, an IP-location service, Todoist,
 // a calendar feed and sites with and without X-Frame-Options. Pointer input is dispatched into the page.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -187,7 +188,7 @@ function server(opts) {
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
   } catch (err) {
     console.log(`SKIP  the browser checks: openssl isn't available (${err.message})`);
-    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     console.log(failures ? `\n${failures} failed` : '\nall passed');
     process.exit(failures ? 1 : 0);
   }
@@ -735,7 +736,7 @@ function server(opts) {
   const oslo = (await W('list')).find((x) => x.type === 'weather' && x.wx.places[0].name.startsWith('Oslo'));
   for (let i = 0; i < 25 && !(await page(`document.querySelector('.w-card[data-id="${oslo.id}"] .w-note')?.textContent || ''`)); i++) await sleep(150);
   const note = await page(`document.querySelector('.w-card[data-id="${oslo.id}"] .w-note')?.textContent + '|' + document.querySelector('.w-card[data-id="${oslo.id}"] .w-btn')?.getAttribute('aria-label')`);
-  check('a new weather widget offline shows a calm message with Try again', /^Couldn’t update.*connect/.test(note) && /Try .* again/.test(note), note);
+  check('a new weather widget offline shows a calm message with Try again', /^Couldn’t connect/.test(note) && !/Couldn’t update/.test(note) && /Try .* again/.test(note), note);
   await app.evaluate((_e, b) => { global.__widgetEndpoints.forecast = `${b}/forecast`; }, base);
 
   // A tampered hash can't smuggle in a script address or markup.
@@ -758,8 +759,8 @@ function server(opts) {
 
   await app.close();
   fake.srv.close();
-  fs.rmSync(scratch, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

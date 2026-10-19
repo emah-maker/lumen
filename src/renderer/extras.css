@@ -9,14 +9,14 @@
   margin: 0 0 2px; /* a negative margin here would let the textarea squeeze onto this row */
   padding: 3px 4px 3px 8px;
   min-width: 0;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   font-size: 12px;
-  color: var(--text-2, var(--muted, #8a8a8e));
+  color: var(--text-2, var(--muted));
   background: var(--surface-2, rgba(127, 127, 127, 0.08));
 }
 .page-context[hidden] { display: none; }
 .page-context .pc-label { flex: none; }
-.page-context .pc-icon { flex: none; width: 14px; height: 14px; border-radius: 3px; }
+.page-context .pc-icon { flex: none; width: 14px; height: 14px; border-radius: var(--r-xs); }
 .page-context .pc-icon[hidden] { display: none; }
 .page-context .pc-title {
   flex: 1 1 auto;
@@ -30,14 +30,14 @@
   flex: none;
   border: 0;
   padding: 1px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font: inherit;
   color: inherit;
   background: transparent;
   cursor: pointer;
 }
 .page-context .pc-toggle:hover { background: rgba(127, 127, 127, 0.16); }
-.page-context .pc-toggle:focus-visible { outline: 2px solid var(--accent, #0a84ff); outline-offset: 1px; }
+.page-context .pc-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .page-context.excluded .pc-title { text-decoration: line-through; opacity: 0.7; }
 
 /* An approval is waiting and the sidebar is closed. */
@@ -50,20 +50,46 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--accent, #0a84ff);
-  box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface, #fff));
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--toolbar-bg, var(--surface));
 }
 
-/* Auto-allow actions (sidebar head): the bolt fills in accent while on. */
+/* Helpers is a labelled row in the sidebar's More menu now (styles.css .more-menu .menu-state): "Helpers  On". */
+
+/* The permission button (sidebar head, full-page chat header): the icon and name of the mode, one click to the next ([mode cycle], chat-core.js).
+   Ask is neutral, Auto is the accent colour, Bypass is a red-outlined pill with normal text (only Bypass is red). */
+.icon-btn.auto-allow { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: auto; min-width: 30px; padding: 0 9px 0 7px; white-space: nowrap; }
 .icon-btn.auto-allow svg path { fill: none; }
-.icon-btn.auto-allow[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.icon-btn.auto-allow[aria-pressed="true"] svg path { fill: currentColor; }
+.icon-btn.auto-allow[data-mode="auto"] { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.auto-allow[data-mode="auto"] svg path { fill: currentColor; }
+.icon-btn.auto-allow[data-mode="bypass"], .icon-btn.auto-allow[data-mode="bypass"]:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--danger); }
+.icon-btn.auto-allow[data-mode="bypass"] svg { color: var(--danger); }
+.icon-btn.auto-allow.armed { box-shadow: inset 0 0 0 1.5px var(--text); }
+/* The bolt's menu (renderer/chat-core.js): Ask / Auto-allow actions / Bypass permissions. */
+.perm-menu { position: absolute; top: calc(100% + 4px); right: 8px; z-index: var(--z-menu); width: min(300px, calc(100vw - 16px)); padding: 4px; border-radius: var(--r-lg); background: var(--card, var(--surface-raised, var(--field))); box-shadow: 0 10px 28px -8px rgba(0,0,0,.32), 0 0 0 0.5px var(--border); }
+.perm-menu[hidden] { display: none; }
+.perm-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 7px 10px 7px 28px; border: none; border-radius: var(--r-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; position: relative; }
+.perm-item:hover, .perm-item:focus-visible { background: var(--hover, rgba(127,127,127,.12)); outline: none; }
+.perm-item[aria-checked="true"]::before { content: ""; position: absolute; left: 11px; top: 12px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.perm-name { font-size: 13px; font-weight: 600; }
+.perm-desc { font-size: 12px; line-height: 1.35; color: var(--muted); }
+.perm-item.danger .perm-name { color: var(--danger); }
+.perm-item.armed { background: var(--danger-soft); }
+.perm-item.armed .perm-desc { color: var(--text); font-weight: 600; }
+.perm-note { margin: 4px 10px 6px; font-size: 11px; line-height: 1.35; color: var(--muted); }
+.bypass-badge { flex-basis: 100%; display: flex; justify-content: flex-start; min-width: 0; margin: 0 0 6px; padding: 0; border: none; background: none; font: inherit; cursor: pointer; }
+.bypass-badge[hidden] { display: none; }
+.bypass-badge .bb-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; max-width: 100%; box-sizing: border-box; padding: 0 10px 0 8px; border-radius: var(--r-xl); background: color-mix(in srgb, var(--danger) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--danger); color: var(--text); font-size: 12px; font-weight: 600; line-height: 1; }
+.bypass-badge .bb-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bypass-badge:hover .bb-pill { background: color-mix(in srgb, var(--danger) 22%, var(--surface)); }
+.bypass-badge:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; border-radius: var(--r-xl); }
+.bypass-badge svg { flex: none; width: 12px; height: 12px; fill: none; stroke: var(--danger); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Update prompt in the toolbar (renderer/updates.js): the same quiet pill as "Lumen is using this tab". */
 .update-pill {
   display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 2px 0 10px; margin-right: 6px;
   flex: 0 1 auto; max-width: 30vw; /* shrinks (the text ellipsizes); the button and the x never do */
-  border-radius: 14px; color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
+  border-radius: var(--r-xl); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border);
   animation: pill-in var(--t-snappy) var(--spring-snappy);
 }
@@ -71,16 +97,32 @@
 #update-pill .update-text { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
 #update-action, .update-dismiss { flex: none; }
 #update-action {
-  height: 22px; padding: 0 10px; border: none; border-radius: 11px; background: var(--accent-soft); color: var(--accent);
+  height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--accent-soft); color: var(--accent-text);
   font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
 }
 #update-action:hover { box-shadow: inset 0 0 0 1px var(--accent); }
 .update-dismiss {
-  width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 11px;
+  width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: var(--r-lg);
   background: transparent; color: var(--muted); font-size: 14px; line-height: 1;
 }
 .update-dismiss:hover { background: var(--hover); color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .update-pill { animation: fade-in var(--t-fast) ease-out; } }
+/* Compact pills. app.js (fitToolbarPills) sets data-compact on .toolbar-end from what fits: 1 = icon and short label, 2 = icon
+   only. The full words stay in the DOM, clipped (never display:none), so they are still the accessible name; the tooltip has them too. */
+.update-pill { position: relative; }
+.update-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) :is(#agent-pill-text, #update-pill .update-text) { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .agent-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) #update-pill { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .pill-short { display: inline; }
+.toolbar-end[data-compact="1"] .update-dot { display: block; }
+.toolbar-end[data-compact="2"] :is(.pill-short, .update-dot) { display: none; }
+.toolbar-end[data-compact="2"] .btn-icon { display: block; }
+.toolbar-end[data-compact="2"] :is(#agent-stop, #update-action) { display: grid; place-items: center; width: var(--hit-min); height: var(--hit-min); padding: 0; }
+.toolbar-end[data-compact="2"] .btn-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end[data-compact="2"] .agent-pill { padding-left: 8px; padding-right: 2px; }
+.toolbar-end[data-compact="2"] #update-pill { padding-left: 2px; }
+.toolbar-end[data-compact="2"] #update-action[hidden] { display: none; }
 
 /* [ai controls] AI turned off on this tab's site (the chip), and "Undo tab changes" under a reply. */
 .page-context.ai-off { color: var(--text, inherit); background: var(--accent-soft, rgba(10, 132, 255, 0.12)); }
@@ -88,17 +130,22 @@
 .run-undo { margin: 4px 0 8px; font-size: 12px; color: var(--muted); }
 .run-undo .btn { font-size: 12px; }
 .run-undo-result { margin: 4px 0 0; padding-left: 18px; }
-/* [usage] plan meter under the page chip */
-.usage-meter { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 6px; padding: 2px 4px; border: 0; background: none; color: var(--muted, #6e6e73); font: inherit; font-size: 11px; text-align: left; border-radius: 6px; cursor: pointer; font-variant-numeric: tabular-nums; }
+/* [usage] [context] the strip right above the textbox: plan meter (left, shrinks) and context meter (right) in one line (chat-extras.js) */
+.meter-strip { flex-basis: 100%; display: flex; align-items: center; gap: 10px; min-width: 0; margin: 0 0 2px; }
+.meter-strip[hidden] { display: none; }
+.meter-strip .usage-meter { flex: 0 1 auto; width: auto; min-width: 0; }
+.meter-strip .usage-meter:first-child:not(.context-meter) { flex: 1 1 0; }
+.meter-strip .context-meter { flex: none; }
+.usage-meter { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0; padding: 2px 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 11px; text-align: left; border-radius: var(--r-sm); cursor: pointer; font-variant-numeric: tabular-nums; }
 .usage-meter[hidden] { display: none; }
 .usage-meter .um-bar[hidden] { display: none; }
 .usage-meter:hover { color: var(--text, inherit); }
-.usage-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
+.usage-meter:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .usage-meter .um-bar { flex: none; width: 44px; height: 4px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }
-.usage-meter .um-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent, #007aff); transition: width var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
-.usage-meter.high .um-bar i { background: #ff453a; }
-.usage-meter.warn .um-bar i { background: #ff9f0a; }
-.usage-meter.high[data-kind="limit"] .um-text { color: #ff453a; }
+.usage-meter .um-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
+.usage-meter.high .um-bar i { background: var(--danger); }
+.usage-meter.warn .um-bar i { background: var(--warning-fill); }
+.usage-meter.high[data-kind="limit"] .um-text { color: var(--danger); }
 .usage-meter.hint { cursor: default; }
 .pref-lite .usage-meter .um-bar i { transition: none; }
 .usage-meter .um-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -106,22 +153,77 @@
 /* [ai manners] "Under the reply: Close N tabs the AI opened" and the composer's Hands-off badge. */
 .run-undo.ai-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .run-undo.ai-tabs .ai-tabs-text { color: var(--muted); }
-.hands-off-badge { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: 8px; background: var(--hover); color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.hands-off-badge { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: var(--r-md); background: var(--hover); color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .hands-off-badge[hidden] { display: none; }
 .hands-off-badge:hover { color: var(--text); }
 .hands-off-badge:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .hands-off-badge svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-/* [context] the open chat's context-window ring, left of Send (chat-extras.js) */
-.context-meter { position: relative; flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted, #6e6e73); cursor: pointer; }
-.context-meter[hidden] { display: none; }
-.context-meter:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
-.context-meter:focus-visible { outline: 2px solid var(--accent, #007aff); outline-offset: 1px; }
-.context-meter svg { width: 18px; height: 18px; transform: rotate(-90deg); }
-.context-meter circle { fill: none; stroke-width: 2.5; }
-.context-meter .cm-track { stroke: rgba(127, 127, 127, 0.25); }
-.context-meter .cm-fill { stroke: var(--accent, #007aff); stroke-linecap: round; transition: stroke-dasharray var(--t-smooth) cubic-bezier(0.16, 1, 0.3, 1); }
-.context-meter.warn .cm-fill { stroke: #ff9f0a; }
-.context-meter.high .cm-fill { stroke: #ff453a; }
-.pref-lite .context-meter .cm-fill { transition: none; }
 .notice.slash-help ul { margin: 4px 0; padding-left: 18px; text-align: left; }
 .notice.slash-help code { font-size: 11px; }
+
+/* [usage] the popover over the plan meter (chat-extras.js, text from usage-popover.js): compact, anchored above the strip */
+.meter-strip { position: relative; }
+.usage-popover { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 30; box-sizing: border-box; width: 320px; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border, rgba(0, 0, 0, 0.1)); border-radius: var(--r-lg); background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; outline: none; }
+.usage-popover[hidden] { display: none; }
+.usage-popover .up-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.usage-popover .up-title { font-weight: 600; }
+.usage-popover .up-plan { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.usage-popover .up-row { margin-bottom: 8px; }
+.usage-popover .up-line { display: flex; justify-content: space-between; gap: 10px; }
+.usage-popover .up-label { min-width: 0; overflow-wrap: anywhere; }
+.usage-popover .up-value { color: var(--muted); text-align: right; }
+.usage-popover .up-bar { display: block; height: 4px; margin: 4px 0 2px; border-radius: 2px; background: rgba(127, 127, 127, 0.22); overflow: hidden; }
+.usage-popover .up-bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+.usage-popover .up-bar[data-level="warn"] i { background: var(--warning-fill); }
+.usage-popover .up-bar[data-level="high"] i { background: var(--danger); }
+.usage-popover .up-sub { color: var(--muted); font-size: 11px; }
+.usage-popover .up-section { margin: 10px 0 4px; padding-top: 8px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2)); color: var(--muted); font-size: 11px; font-weight: 600; }
+.usage-popover .up-count { margin-bottom: 2px; }
+.usage-popover .up-count .up-value { color: var(--text, inherit); }
+.usage-popover .up-note { margin: 0 0 8px; color: var(--muted); font-size: 11px; }
+.usage-popover .up-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border, rgba(127, 127, 127, 0.2)); }
+.usage-popover .up-updated { color: var(--muted); font-size: 11px; }
+.usage-popover .up-link { margin: 0; padding: 2px 4px; border: 0; border-radius: var(--r-xs); background: none; color: var(--accent-text); font: inherit; font-size: 11px; cursor: pointer; }
+.usage-popover .up-link:hover { text-decoration: underline; }
+.usage-popover .up-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.usage-meter[aria-expanded="true"] { color: var(--text, inherit); }
+
+/* [work folder] the composer's chip and its popover (renderer/chat-folders.js) */
+.work-folder-chip { flex-basis: 100%; display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 6px; padding: 3px 8px; border: none; border-radius: var(--r-md); background: var(--hover); color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.work-folder-chip[hidden] { display: none; }
+.work-folder-chip:hover { color: var(--text); }
+.work-folder-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.work-folder-chip svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.work-folder-chip .wf-label { flex: none; font-weight: 600; }
+.work-folder-chip .wf-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 11px; }
+.work-folder-chip.missing { color: var(--danger); }
+.work-folder-pop { position: fixed; z-index: 90; min-width: 200px; max-width: 300px; padding: 4px; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--hairline, rgba(127, 127, 127, 0.25)), 0 12px 32px -12px rgb(0 0 0 / 0.5); }
+.work-folder-pop .wf-item { display: flex; align-items: center; width: 100%; min-height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.work-folder-pop .wf-item:hover, .work-folder-pop .wf-item:focus-visible { outline: none; background: var(--hover); }
+.work-folder-pop .wf-note { margin: 0; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+
+/* [plan mode] The composer's Plan chip (renderer/plan-mode.js) and the plan card the AI proposes. */
+.plan-chip { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px; border: none; border-radius: var(--r-xl); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.plan-chip svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.plan-chip:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.plan-chip[aria-pressed="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); font-weight: 600; }
+.plan-chip:disabled { opacity: 0.45; cursor: default; }
+.plan-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: var(--r-lg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
+.plan-card .plan-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.plan-card .plan-kicker { flex: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.plan-card .plan-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.plan-card .plan-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; }
+.plan-card .plan-steps li { overflow-wrap: anywhere; }
+.plan-card .plan-step-text[contenteditable] { display: inline-block; min-width: 4em; padding: 1px 4px; border-radius: var(--r-sm); background: var(--field); outline: none; }
+.plan-card .plan-step-text[contenteditable]:focus-visible { box-shadow: var(--focus-ring); }
+.plan-card .plan-risky { margin-left: 6px; padding: 0 6px; border-radius: var(--r-xl); font-size: 11px; font-weight: 600; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
+.plan-card .plan-sites { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.plan-card .plan-site-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.plan-card .plan-site { display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px; border-radius: var(--r-xl); background: var(--hover); color: var(--text); font-family: var(--mono, monospace); }
+.plan-card .plan-site-x { display: none; padding: 0 2px; border: none; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+.plan-card.editing .plan-site-x { display: inline; }
+.plan-card .plan-note { font-size: 12px; color: var(--muted); }
+.plan-card .plan-problem { font-size: 12px; color: var(--danger); }
+.plan-card .plan-problem[hidden] { display: none; }
+.plan-card .plan-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.plan-card.used .plan-actions { opacity: 0.6; }

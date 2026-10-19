@@ -3,6 +3,7 @@
 // covers, when the notes show (never on a first run, a downgrade or in test mode unless asked), that
 // the version is recorded and the switch saved, the settings' validation, and that CHANGELOG.md ships
 // inside the app with an entry for package.json's version.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -126,7 +127,7 @@ module.exports = async function whatsNewUnits(check) {
     } finally { console.error = quiet; }
   } finally {
     if (saved === undefined) delete process.env.LUMEN_WHATS_NEW_TEST; else process.env.LUMEN_WHATS_NEW_TEST = saved;
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
 
   // ---- settings

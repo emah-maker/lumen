@@ -2,11 +2,13 @@
 // every action goes back by download id. main.js accepts these only from the panel's own view.
 const { contextBridge, ipcRenderer } = require('electron');
 
+contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} }); // renderer/i18n.js
 contextBridge.exposeInMainWorld('downloadsPanel', {
   onList: (callback) => ipcRenderer.on('downloads:list', (_e, list) => callback(list)),
   onOpen: (callback) => ipcRenderer.on('downloads:open', () => callback()),
   act: (action, id) => ipcRenderer.send('downloads:act', action, id),
   drag: (id) => ipcRenderer.send('downloads:drag', id),
+  menu: (id) => ipcRenderer.send('downloads:row-menu', id), // right-click: Open, Show in folder, Pin to Files
   clear: () => ipcRenderer.send('downloads:clear'),
   openFolder: () => ipcRenderer.send('downloads:folder'),
   showAll: () => ipcRenderer.send('downloads:all'),

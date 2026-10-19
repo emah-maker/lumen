@@ -18,6 +18,11 @@ const searchUrlFor = (id, query) => engineFor(id).url.replace('%s', encodeURICom
 // classic trick to make someone run script on the site they're on, so it is searched as text.
 const TLDS = require('./tlds');
 const LOCAL_HOST = /^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\])(:\d+)?([/?#]|$)/i;
+// An intranet name with a port ("intranet:8080", "nas:5000/admin") is an address, as in Chrome; a bare word is not.
+const HOST_PORT = /^[a-z0-9][a-z0-9-]*:\d{2,5}([/?#]|$)/i;
+const DOTTED_QUAD = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])/;
+// "999.1.1.1" and "1.2.3.400" are not IP addresses: searched, not opened.
+const badQuad = (value) => { const m = DOTTED_QUAD.exec(value); return Boolean(m) && m.slice(1).some((o) => Number(o) > 255); };
 // A path typed or pasted into the address bar opens the file, as in Chrome: /Users/me/page.html,
 // ~/Downloads/report.pdf, C:\\Users\\me\\page.html. Spaces are allowed (paths have them), so this
 // runs before the "has a space, so it's a search" rule. "//host" is left alone.
@@ -37,7 +42,8 @@ function resolveInput(text, engineId) {
   const file = localPath(value);
   if (file) return file;
   if (/\s/.test(value)) return search();
-  if (LOCAL_HOST.test(value) || /^[^/?#]+\.localhost(:\d+)?([/?#]|$)/i.test(value)) return `http://${value}`;
+  if (badQuad(value)) return search();
+  if (LOCAL_HOST.test(value) || HOST_PORT.test(value) || /^[^/?#]+\.localhost(:\d+)?([/?#]|$)/i.test(value)) return `http://${value}`;
   const host = value.split(/[/?#]/)[0].replace(/:\d+$/, '').replace(/\.$/, '');
   if (host.includes('@') || !/^[^.:]+(\.[^.:]+)+$/.test(host)) return search();
   let tld = host.slice(host.lastIndexOf('.') + 1).toLowerCase();
@@ -47,4 +53,12 @@ function resolveInput(text, engineId) {
   return TLDS.has(tld) ? `https://${value}` : search();
 }
 
-module.exports = { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput };
+// lumen://history, lumen://bookmarks, lumen://readinglist, lumen://downloads and lumen://about (chrome:// too, as people type it) name Lumen's own
+// pages, which aren't web addresses: the page to open, or null. (lumen://settings and lumen://chat have their own parsers.)
+const INTERNAL_PAGES = { history: 'history', bookmarks: 'bookmarks', downloads: 'downloads', readinglist: 'readinglist', about: 'updates', version: 'updates', update: 'updates', updates: 'updates' };
+function internalPage(text) {
+  const m = /^(?:lumen|chrome):\/\/([a-z]+)\/?$/i.exec(String(text || '').trim());
+  return (m && INTERNAL_PAGES[m[1].toLowerCase()]) || null;
+}
+
+module.exports = { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput, internalPage };

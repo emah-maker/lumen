@@ -22,10 +22,45 @@
 
 const { PAGE_TEXT } = require('./page-scripts');
 const frames = require('./frames');
+const officeDocs = require('./office-docs'); // a Google Doc / Sheet / Slides tab: the export's text (the page itself is a canvas)
 
 const TEXT_CHUNK = 12000; // as read_page's first chunk (page-scripts.js)
 const PARSE_WAIT_MS = 1500;
 const WORLD_NAME = 'lumen-page-text';
+
+// The text worth sending: the page's <main> (or [role=main], else its longest <article>) when it holds most of
+// the page's words, so menus, sidebars and footers stay out of the 7k; and the boilerplate lines every site
+// repeats ("Jump to content", "Main menu", "Toggle ... subsection") dropped. A page with web components keeps
+// the whole text (its main's innerText would miss their shadow roots).
+const READABLE = String.raw`
+  const readable = (doc, text) => {
+    let out = text;
+    try {
+      let shadowed = false;
+      for (const el of doc.querySelectorAll('*')) if (el.shadowRoot) { shadowed = true; break; }
+      if (!shadowed) {
+        const shown = (el) => el.getClientRects().length > 0;
+        let main = [...doc.querySelectorAll('main, [role=main]')].find(shown);
+        if (!main) main = [...doc.querySelectorAll('article')].filter(shown).sort((a, b) => (b.innerText || '').length - (a.innerText || '').length)[0];
+        const inner = main ? (main.innerText || '').replace(/\n{3,}/g, '\n\n').trim() : '';
+        if (inner.length >= 500 && inner.length * 4 >= out.length) out = inner;
+      }
+    } catch {}
+    const lines = out.split('\n');
+    const top = /^(main menu|move to sidebar|hide|appearance|tools)$/i;
+    const anywhere = /^(toggle .+ subsection|(skip|jump) to (the )?(main |primary )?(content|navigation|search|footer))$/i;
+    // A site's display-settings menu (Wikipedia: "Appearance", Text Small/Standard/Large, Width, Color) is a run of short option lines.
+    const options = /^(appearance( hide)?|text|small|standard|large|width|wide|color( \(beta\))?|automatic|light|dark)$/i;
+    const kept = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = lines[i].trim();
+      if (/^appearance( hide)?$/i.test(t) && /^text$/i.test((lines[i + 1] || '').trim())) { while (i + 1 < lines.length && options.test(lines[i + 1].trim())) i++; continue; }
+      if (anywhere.test(t) || (i < 40 && top.test(t))) continue;
+      kept.push(lines[i]);
+    }
+    return kept.join('\n');
+  };
+`;
 
 // The script: { url, title, text (the first `chars` characters), totalTextChars }.
 function textScript(chars = TEXT_CHUNK) {
@@ -35,7 +70,8 @@ function textScript(chars = TEXT_CHUNK) {
       await new Promise((done) => { document.addEventListener('DOMContentLoaded', done, { once: true }); setTimeout(done, ${PARSE_WAIT_MS}); });
     }
     ${PAGE_TEXT}
-    const text = pageText(document).replace(/\\n{3,}/g, '\\n\\n');
+    ${READABLE}
+    const text = readable(document, pageText(document)).replace(/\\n{3,}/g, '\\n\\n');
     return { url: location.href, title: document.title, text: text.slice(0, ${n}), totalTextChars: text.length };
   })()`;
 }
@@ -75,6 +111,11 @@ async function readPageText(wc, { chars = TEXT_CHUNK, timeoutMs = 4000, fallback
     if (wc.isDestroyed?.()) throw new Error('The tab was closed.');
     if (typeof fallback !== 'function') throw new Error('The page did not respond.');
     value = await fallback(script, Math.max(1, timeoutMs - (Date.now() - started)));
+  }
+  // A Google Doc, Sheet or Slides deck: the whole text from the editor's export (office-docs.js), in place of the canvas's few words.
+  if (value && typeof value === 'object' && typeof fallback === 'function' && officeDocs.exportTarget(wc.getURL?.(), officeDocs.allowLocalHosts())) {
+    const doc = await officeDocs.readExport(wc.getURL(), { run: (code) => fallback(code, 8000), sessionFetch: wc.session?.fetch ? (u) => wc.session.fetch(u, { credentials: 'include', signal: AbortSignal.timeout(8000) }) : undefined }).catch(() => null);
+    if (doc) { const full = officeDocs.header(doc) + doc.text; return { ...value, text: full.slice(0, chars), totalTextChars: full.length, source: `${doc.label} export` }; }
   }
   // Then the frames (their own sessions and worlds), in what is left of the time.
   const left = Math.min(2500, timeoutMs - (Date.now() - started));

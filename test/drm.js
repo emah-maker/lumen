@@ -3,6 +3,7 @@
 // Starts Lumen as a plain process (under Playwright's Electron launcher the Widevine component
 // never installs) and drives a tab over the DevTools protocol instead. The CDM downloads on the
 // first run of a fresh profile, so this allows real time for that.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { chromium } = require('playwright-core');
 const { spawn } = require('child_process');
 const fs = require('fs');

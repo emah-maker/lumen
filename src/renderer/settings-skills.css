@@ -9,7 +9,7 @@
 .skill-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .skill-title { font-weight: 500; }
 .skill-slash { color: var(--muted); font-weight: 400; font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; }
-.skill-source { margin-left: 8px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); }
+.skill-source { margin-left: 8px; padding: 0 6px; border-radius: var(--r-pill); font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); }
 .skill-actions { display: flex; flex: none; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .skills-empty { padding: 8px 0; }
 
@@ -30,7 +30,7 @@
 @media (max-width: 640px) { .skills-two { grid-template-columns: 1fr; } }
 .skill-preview { max-height: 14em; margin: 0; }
 
-.skills-review { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: 20px; border: none; border-radius: 14px; color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 24px 64px -16px rgb(0 0 0 / 0.5); overflow: auto; }
+.skills-review { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: 20px; border: none; border-radius: var(--r-xl); color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 24px 64px -16px rgb(0 0 0 / 0.5); overflow: auto; }
 .skills-review::backdrop { background: rgb(0 0 0 / 0.35); }
 .skills-review h3 { margin: 0 0 6px; font-size: 15px; }
 .skills-review-item { padding: 10px 0; border-top: 1px solid var(--hairline); }
@@ -40,3 +40,11 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+/* SKILL.md: the switches above the list, Claude Code's read-only skills, and the "Update the skill" diff */
+.skills-switches { margin-bottom: 8px; }
+.skills-cc { margin-top: 12px; }
+.skills-ignored { font-size: 12px; }
+.skills-diff { max-height: 50vh; overflow: auto; white-space: pre-wrap; }
+.skills-diff .diff-line { padding: 0 4px; }
+.skills-diff .diff-add { background: rgb(40 160 70 / 0.16); }
+.skills-diff .diff-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; }

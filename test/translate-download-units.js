@@ -1,6 +1,7 @@
 // On-device translation, the download path in plain Node (features/translate-models.js): a failing
 // sibling file, a full disk, a stalled connection, stale half-downloads, and two callers sharing one
 // pair. Fake registry, fake fetch (real streams), fake write stream where a disk error is needed.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,8 +15,11 @@ const sha = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Wait for a condition instead of guessing how long cleanup takes (a fixed sleep was the flaky part).
 async function until(cond, label = 'condition') {
-  for (let i = 0; i < 2000; i++) { if (cond()) return; await sleep(5); }
-  throw new Error(`timed out waiting for ${label}`);
+  const deadline = Date.now() + 30000; // a deadline, not an iteration count: a loaded machine stretches each 5 ms sleep
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await sleep(5);
+  }
 }
 // The store's stall watchdog and retry pause, driven by hand: nothing here depends on how fast the machine is.
 const timers = { active: new Map() };
@@ -92,8 +96,9 @@ const fetchImpl = async (url, { signal } = {}) => {
   return new Response(bodyOf(FILES.get(loc), mode, signal, () => { alive--; }, loc));
 };
 
+// (prefix: not claude-browser-test-*, which scripts/test-all.js sweeps from the shared temp folder when another run's suite ends)
 const tmpDirs = [];
-const newDir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-browser-test-translate-dl-')); tmpDirs.push(d); return d; };
+const newDir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-unit-translate-dl-')); tmpDirs.push(d); return d; };
 const parts = (d) => fs.readdirSync(d).filter((n) => n.includes('.part'));
 const unhandled = [];
 process.on('unhandledRejection', (e) => unhandled.push(String(e)));
@@ -219,8 +224,9 @@ const keepAlive = setInterval(() => {}, 1000); // the store's timers are unref'd
     const tabCtl = new AbortController();
     const tab = local.ensure([['es', 'en']], { signal: tabCtl.signal }).catch((e) => e);
     await until(() => calls.length >= 3, 'the tab download to start');
-    const page = local.downloadLanguage('es').catch((e) => e);
-    await until(() => store.downloading().length === 1, 'the page download to join');
+    let pageJoined = false; // (progress reaching the page means it has attached to the running download: downloading() already shows the tab's)
+    const page = local.downloadLanguage('es', { onProgress: () => { pageJoined = true; } }).catch((e) => e);
+    await until(() => pageJoined, 'the page download to join');
     local.cancelLanguage('es');
     const pr = await page;
     check('settings cancel: the page download reports cancelled', pr?.code === 'cancelled', pr?.message);
@@ -292,7 +298,7 @@ const keepAlive = setInterval(() => {}, 1000); // the store's timers are unref'd
     off2();
   }
 
-  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true });
+  for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   check('no unhandled errors', unhandled.length === 0, unhandled.join('; '));
   clearInterval(keepAlive);
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

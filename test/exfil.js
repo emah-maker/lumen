@@ -3,6 +3,7 @@
 // freely; outside (MCP) agents are always asked; an approved host redirecting to a new one asks too;
 // web_search asks before sending the query; run_script and each batch step are gated per site;
 // list_tabs hides query strings and Lumen's own tabs.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -62,6 +63,7 @@ const path = require('path');
     global.__pageContext = pageContext;
     const tab = agent.browser.activeTab();
     if (startUrl) await tab.webContents.loadURL(startUrl).catch(() => {});
+    const before = new Map(agent.browser.listTabs().map((t) => [t.id, t.url]));
     agent.messages.settings = { model: 'claude-opus-5', adhdMode: true };
     let turn = 0;
     agent.getClient = () => ({ beta: { messages: { stream: () => {
@@ -72,7 +74,7 @@ const path = require('path');
       return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
     } } } });
     const events = [];
-    await agent.run('do it', (e) => {
+    await agent.run(pageContext ? 'do it on this page' : 'do it', (e) => {
       events.push(e);
       if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, answer), 20);
     });
@@ -84,6 +86,9 @@ const path = require('path');
       approved: [...agent.approvedHosts],
       results,
       url: agent.browser.activeTab().webContents.getURL(),
+      // Where the AI went: a chat's navigate loads in a tab of its own, not the user's (agents out of sight), so the active tab's url
+      // says nothing about it. These are the tabs that are new or moved during this run.
+      reached: agent.browser.listTabs().filter((t) => before.get(t.id) !== t.url).map((t) => t.url),
       tabs: agent.browser.listTabs().length,
     };
   }, opts);
@@ -102,20 +107,20 @@ const path = require('path');
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: `${other}/collect` } },
   ] });
-  check('allowed: the navigation happens', r.approvals.length === 1 && r.url.startsWith(other), JSON.stringify(r));
+  check('allowed: the navigation happens', r.approvals.length === 1 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 3. Host already approved in this chat: no card.
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [otherHost], toolUses: [
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: `${other}/collect` } },
   ] });
-  check('an already-approved host gets no card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('an already-approved host gets no card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 4. A run that read nothing navigates freely (and the taint from earlier runs doesn't carry over).
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
     { name: 'navigate', input: { url: `${other}/somewhere` } },
   ] });
-  check('an untainted run navigates without a card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('an untainted run navigates without a card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 4b. Page content read in one message stays in the chat: a later message in the same chat is
   // still asked; New chat starts clean.
@@ -123,7 +128,7 @@ const path = require('path');
   r = await run({ fresh: false, pageContext: false, answer: false, toolUses: [{ name: 'navigate', input: { url: `${other}/collect` } }] });
   check('a read in message 1 still asks before navigating in message 2 of the same chat', r.approvals.length === 1 && r.approvals[0].host === otherHost && r.url.startsWith(home), JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [{ name: 'navigate', input: { url: `${other}/collect` } }] });
-  check('after New chat, the same navigation goes without a card', r.approvals.length === 0 && r.url.startsWith(other), JSON.stringify(r));
+  check('after New chat, the same navigation goes without a card', r.approvals.length === 0 && r.reached.some((u) => u.startsWith(other)), JSON.stringify(r));
 
   // 5. The page text attached to the message counts as reading it.
   r = await run({ startUrl: `${home}/inbox`, pageContext: true, answer: false, toolUses: [
@@ -159,11 +164,11 @@ const path = require('path');
     { name: 'read_page', input: {} },
     { name: 'navigate', input: { url: bounce('/landing-allowed') } },
   ] });
-  check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.url === `${other}/landing-allowed` && !r.results[1]?.error, JSON.stringify(r));
+  check('allowed: the redirect goes on to the second host', r.approvals.length === 1 && r.reached.includes(`${other}/landing-allowed`) && !r.results[1]?.error, JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
-    { name: 'navigate', input: { url: bounce('/landing-untainted') } },
+    { name: 'navigate', input: { url: bounce('/landing-untainted'), read: false } }, // (navigate returns the page head by default, which counts as reading it (e7c240b); read:false keeps the run untainted)
   ] });
-  check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.url === `${other}/landing-untainted`, JSON.stringify(r));
+  check('an untainted run follows the redirect without a card', r.approvals.length === 0 && r.reached.includes(`${other}/landing-untainted`), JSON.stringify(r));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, approve: [homeHost], toolUses: [
     { name: 'read_page', input: {} },
     { name: 'read_urls', input: { urls: [bounce('/hidden-denied')] } },
@@ -265,8 +270,9 @@ const path = require('path');
     const seen = JSON.parse(await agent.execute('list_tabs', {}));
     const web = seen.find((t) => t.url === `${h}/search`);
     const internal = raw.find((t) => /^file:/.test(t.url) && !/newtab\.html/.test(t.url)); // settings
-    const switched = web ? await agent.execute('switch_tab', { tab_id: web.id }) : '';
-    const refused = internal ? await agent.execute('switch_tab', { tab_id: internal.id }).then((x) => x, (err) => `ERR ${err.message}`) : 'no internal tab';
+    const inRun = (fn) => agent.inTask(web ? web.id : 1, new AbortController().signal, fn); // (real calls run in a task: switch_tab works on the tab it names, not the one in front)
+    const switched = web ? await inRun(() => agent.execute('switch_tab', { tab_id: web.id })) : '';
+    const refused = internal ? await inRun(() => agent.execute('switch_tab', { tab_id: internal.id })).then((x) => x, (err) => `ERR ${err.message}`) : 'no internal tab';
     return { raw: raw.map((t) => t.url), seen: seen.map((t) => t.url), switched, refused, internal: internal?.url || null };
   }, home);
   check('list_tabs shows the web tab without its query or fragment', tabs.seen.includes(`${home}/search`), JSON.stringify(tabs));
@@ -290,6 +296,6 @@ const path = require('path');
   server.close();
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {}
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

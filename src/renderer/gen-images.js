@@ -48,13 +48,62 @@
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
   }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
+  }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
   }
 
-  // ---- enlarge: a layer over the chat (the sidebar's or the page's own)
+  // ---- enlarge: the viewer (chat-image-viewer.js: zoom, pan, step through the chat's pictures, Save / Copy / Open in a tab).
+  // Its code and styles load on the first click, as the Meeting helper's do (meeting-loader.js); if they can't, the plain layer below opens.
+  let viewerLoading = null;
+  const loadViewer = () => {
+    if (window.chatImageViewer) return Promise.resolve();
+    return viewerLoading || (viewerLoading = new Promise((resolve, reject) => {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-image-viewer.css' });
+      document.head.appendChild(css);
+      const script = Object.assign(document.createElement('script'), { src: 'chat-image-viewer.js' });
+      script.onload = resolve;
+      script.onerror = () => { viewerLoading = null; script.remove(); css.remove(); reject(new Error('chat-image-viewer.js did not load')); };
+      document.body.appendChild(script);
+    }));
+  };
+  // Every picture in this conversation, in order: the AI's (and web pictures shown on request), Markdown data pictures, and ones the user sent.
+  const PICS = '.gen-img-open, img.md-img-ready, .msg-images img';
+  function galleryAround(opener, pic, url) {
+    const scope = (opener?.closest?.('.messages')) || document.querySelector('[data-chat-root] .messages') || document;
+    const items = [];
+    let index = -1;
+    for (const node of scope.querySelectorAll(PICS)) {
+      const im = node.tagName === 'IMG' ? node : node.querySelector('img');
+      const src = im?.currentSrc || im?.src || '';
+      if (!OK.test(src)) continue;
+      if (node === opener) index = items.length;
+      items.push({ url: src, alt: im.alt || '', id: node.closest('.gen-img')?.dataset.id || '' });
+    }
+    if (index < 0) { items.push({ url, alt: pic.alt || '', id: pic.id || '' }); index = items.length - 1; }
+    return { items, index };
+  }
   function enlarge(pic, url, opener) {
+    const { items, index } = galleryAround(opener, pic, url);
+    loadViewer().then(() => { if (!window.chatImageViewer.open({ items, index, opener })) enlargeBasic(pic, url, opener); }).catch(() => enlargeBasic(pic, url, opener));
+  }
+  // A picture the user sent: click (or Enter) to open it too.
+  function zoomable(img) {
+    if (!img || img.dataset.zoomable) return;
+    img.dataset.zoomable = '1';
+    img.tabIndex = 0;
+    img.setAttribute('role', 'button');
+    img.title = tr('imgview.hint');
+    const open = () => enlarge({ id: '', alt: img.alt }, img.src, img);
+    img.addEventListener('click', open);
+    img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  }
+
+  function enlargeBasic(pic, url, opener) {
     const root = document.querySelector('[data-chat-root]') || document.body;
     const box = el('div', { className: 'gen-lightbox' });
     box.setAttribute('role', 'dialog');
@@ -111,7 +160,7 @@
     m.querySelector('button').focus();
   }
 
-  // pic: { id, alt }
+  // pic: { id, alt, credit? }
   function figure(pic) {
     const fig = el('figure', { className: 'gen-img' });
     fig.dataset.id = pic.id;
@@ -133,10 +182,14 @@
       img.src = url;
       const open = el('button', { type: 'button', className: 'gen-img-open' }, img);
       open.setAttribute('aria-label', `${tr('genimg.enlarge')}: ${pic.alt || tr('genimg.alt')}`);
+      open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
-      fig.replaceChildren(open, bar);
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
+      // [image routing] which provider made it (the user's own keys or plan, so it is always said)
+      // a picture taken from a file the AI made: its file name
+      const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
+      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []), ...caption);
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
@@ -169,14 +222,9 @@
     for (const img of root.querySelectorAll('img.md-img:not(.md-img-ready)')) {
       img.classList.add('md-img-ready');
       if (!OK.test(img.getAttribute('src') || '')) { img.replaceWith(document.createTextNode(img.alt || '')); continue; }
-      img.tabIndex = 0;
-      img.setAttribute('role', 'button');
-      const pic = { id: '', alt: img.alt };
-      const open = () => enlarge(pic, img.src, img);
-      img.addEventListener('click', open);
-      img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      zoomable(img);
     }
   }
 
-  window.genImages = { figure, decorate, load };
+  window.genImages = { figure, decorate, load, zoomable, enlarge };
 })();

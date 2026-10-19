@@ -3,6 +3,7 @@
 // Full access on: no "can't make pictures" notice, and the picture the run wrote is shown in the chat (and kept with it);
 // a picture that was already there, one outside the home folder and a fake one (SVG bytes) are not; "/image …" arrives as
 // words. Full access off: the notice, now saying what to do, and nothing from the reply's paths is shown.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -121,7 +122,7 @@ process.stdin.on('data', (d) => {
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
 

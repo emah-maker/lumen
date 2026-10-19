@@ -7,7 +7,8 @@
 // What it changes (see limits()): background tabs sleep after 5 minutes instead of 20 and at most
 // four stay loaded, the disk caches are smaller, no blur and no animation in Lumen's own pages (the
 // page adds the pref-lite class), streaming replies redraw less often, non-urgent work that runs
-// after startup (update check, model lists) waits longer, and background tasks run one at a time. It
+// after startup (update check, model lists) waits longer, background tasks run one at a time, and at
+// most one idle Claude Code chat keeps its process warm (2 otherwise: features/warm-chats.js). It
 // never removes a feature.
 const fs = require('fs');
 const os = require('os');
@@ -16,6 +17,11 @@ const path = require('path');
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
 const MODES = ['auto', 'on', 'off'];
+// Throttling (battery saver, thermal limits) is read with hysteresis: a laptop whose power source flips every couple of seconds reports a
+// speed limit that often, and each switch of the mode re-renders the new-tab pages and pushes the prefs to every window.
+const THROTTLE_ENTER_MS = 15e3; // the condition must hold this long before the mode turns on
+const THROTTLE_LEAVE_MS = 60e3; // ...and the opposite this long before it turns off
+const THROTTLE_MIN_GAP_MS = 120e3; // at most one switch per this
 
 // The hardware verdicts that need nothing but Node. Returns the reasons Auto would turn the mode on.
 function hardwareReasons({ totalMem = os.totalmem(), cpus = os.cpus().length } = {}) {
@@ -27,8 +33,8 @@ function hardwareReasons({ totalMem = os.totalmem(), cpus = os.cpus().length } =
 }
 
 const LIMITS = {
-  normal: { sleepAfterMs: 20 * 60e3, maxLiveBackgroundTabs: Infinity, diskCacheBytes: 256 * MB, codeCacheBytes: 192 * MB, startupDelayMs: 0, maxBackgroundTasks: 3, streamRedrawMs: 0 },
-  lite: { sleepAfterMs: 5 * 60e3, maxLiveBackgroundTabs: 4, diskCacheBytes: 96 * MB, codeCacheBytes: 64 * MB, startupDelayMs: 45e3, maxBackgroundTasks: 1, streamRedrawMs: 100 },
+  normal: { sleepAfterMs: 20 * 60e3, maxLiveBackgroundTabs: Infinity, diskCacheBytes: 256 * MB, codeCacheBytes: 192 * MB, startupDelayMs: 0, maxBackgroundTasks: 3, streamRedrawMs: 0, maxWarmChats: 2 },
+  lite: { sleepAfterMs: 5 * 60e3, maxLiveBackgroundTabs: 4, diskCacheBytes: 96 * MB, codeCacheBytes: 64 * MB, startupDelayMs: 45e3, maxBackgroundTasks: 1, streamRedrawMs: 100, maxWarmChats: 1 },
 };
 
 // deps: { app, readSettings, powerMonitor? (or a function returning it), onChange?, totalMem?, cpus? } (the last two for tests)
@@ -36,8 +42,15 @@ function create(deps) {
   const { app, readSettings, onChange } = deps;
   const hardware = hardwareReasons({ totalMem: deps.totalMem, cpus: deps.cpus });
   let gpuSoftware = false; // learned once the GPU process has reported (after ready)
-  let throttled = false;
+  let throttled = false; // the committed state (what the mode uses)
+  let speedLimited = false; let thermalHot = false; // the latest reports
+  let rawSince = 0; // when the reported state last changed
+  let lastSwitch = -Infinity;
+  let throttleTimer = null;
   let lastActive = null;
+  const clock = deps.now || Date.now;
+  const setTimer = deps.setTimer || setTimeout;
+  const clearTimer = deps.clearTimer || clearTimeout;
 
   const mode = () => (MODES.includes(readSettings().performanceMode) ? readSettings().performanceMode : 'auto');
   function reasons() {
@@ -57,6 +70,27 @@ function create(deps) {
     if (now !== lastActive) { lastActive = now; onChange?.(info()); }
   }
 
+  // A report of the speed limit or thermal state. Only a change of the combined state counts, and it takes effect once it has held for
+  // THROTTLE_ENTER_MS (turning on) or THROTTLE_LEAVE_MS (turning off), and no sooner than THROTTLE_MIN_GAP_MS after the last switch.
+  function throttleReport(patch) {
+    const before = speedLimited || thermalHot;
+    speedLimited = patch.speedLimited ?? speedLimited;
+    thermalHot = patch.thermalHot ?? thermalHot;
+    const raw = speedLimited || thermalHot;
+    if (raw !== before) rawSince = clock();
+    clearTimer(throttleTimer); throttleTimer = null;
+    if (raw === throttled) return;
+    const at = Math.max(rawSince + (raw ? THROTTLE_ENTER_MS : THROTTLE_LEAVE_MS), lastSwitch + THROTTLE_MIN_GAP_MS);
+    throttleTimer = setTimer(() => {
+      throttleTimer = null;
+      const now = speedLimited || thermalHot;
+      if (now === throttled) return;
+      throttled = now; lastSwitch = clock();
+      refresh();
+    }, Math.max(0, at - clock()));
+    throttleTimer?.unref?.();
+  }
+
   // The disk cache size applies to a session that starts after this call: run it before app.whenReady.
   function applyLaunchSwitches() {
     app.commandLine.appendSwitch('disk-cache-size', String(limits().diskCacheBytes));
@@ -74,8 +108,8 @@ function create(deps) {
     checkGpu();
     try {
       const powerMonitor = typeof deps.powerMonitor === 'function' ? deps.powerMonitor() : deps.powerMonitor; // only usable once the app is ready
-      powerMonitor?.on('speed-limit-change', (details) => { throttled = Number(details?.limit) > 0 && Number(details.limit) < 100; refresh(); });
-      powerMonitor?.on('thermal-state-change', (details) => { throttled = ['serious', 'critical'].includes(details?.state); refresh(); });
+      powerMonitor?.on('speed-limit-change', (details) => throttleReport({ speedLimited: Number(details?.limit) > 0 && Number(details.limit) < 100 }));
+      powerMonitor?.on('thermal-state-change', (details) => throttleReport({ thermalHot: ['serious', 'critical'].includes(details?.state) }));
     } catch { /* not supported here */ }
     refresh();
   }
@@ -127,4 +161,4 @@ function trimCodeCache(userData, capBytes, { now = Date.now(), every = WEEK } = 
   } catch { return 'kept'; }
 }
 
-module.exports = { create, hardwareReasons, trimCodeCache, folderBytes, LIMITS, MODES };
+module.exports = { THROTTLE_ENTER_MS, THROTTLE_LEAVE_MS, THROTTLE_MIN_GAP_MS, create, hardwareReasons, trimCodeCache, folderBytes, LIMITS, MODES };

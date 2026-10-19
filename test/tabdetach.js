@@ -6,6 +6,7 @@
 // The renderer's drag messages (tab:dragstart / dragend / dragcancel) are sent straight to main.js and the
 // cursor is scripted (__windows.setCursor), so nothing moves the real mouse. Windows are invisible
 // (LUMEN_TEST_BACKGROUND) apart from the private one.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -16,6 +17,9 @@ const http = require('http');
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A window that never appeared is a failed check with a name, not a TypeError that ends the run (the rest of the suite is skipped).
+  class Missing extends Error {}
+  const need = (v, what) => { if (!v) throw new Missing(what); return v; };
   const waitFor = async (fn, ms = 8000) => {
     const end = Date.now() + ms;
     for (;;) {
@@ -57,6 +61,7 @@ const http = require('http');
   const cursor = (point) => app.evaluate((_e, p) => global.__windows.setCursor(p), point);
   const dragState = () => app.evaluate(() => global.__windows.dragState());
   const winBounds = (id) => app.evaluate(({ BrowserWindow }, w) => BrowserWindow.fromId(w).getBounds(), id);
+  const scaleOf = (id) => app.evaluate(({ BrowserWindow, screen }, w) => screen.getDisplayMatching(BrowserWindow.fromId(w).getBounds()).scaleFactor, id);
   const boundsAt = (id, x, y) => waitFor(async () => { const b = await winBounds(id); return Math.abs(b.x - x) <= 2 && Math.abs(b.y - y) <= 2 ? b : null; }, 3000);
   const inTab = (contentsId, js) => app.evaluate(({ webContents }, [id, code]) => webContents.fromId(id).executeJavaScript(code), [contentsId, js]);
   const errors = [];
@@ -78,21 +83,21 @@ const http = require('http');
 
     // ---- the tab menu: a second entry for a window's tabs only when there is somewhere to go
     const menu1 = await app.evaluate((_e, [w, id]) => global.__windows.tabMenu(w, id), [win1, a.id]);
-    check('the tab menu offers Move Tab to New Window', menu1.some((i) => i.label === 'Move Tab to New Window' && i.enabled), JSON.stringify(menu1.map((i) => i.label)));
-    check('...and no "to Window" entry while there is one window', !menu1.some((i) => i.label === 'Move Tab to Window'), JSON.stringify(menu1.map((i) => i.label)));
+    check('the tab menu offers Move Tab to New Window', menu1.some((i) => i.label === 'Move tab to new window' && i.enabled), JSON.stringify(menu1.map((i) => i.label)));
+    check('...and no "to Window" entry while there is one window', !menu1.some((i) => i.label === 'Move tab to window'), JSON.stringify(menu1.map((i) => i.label)));
 
     // ---- the menu's tear-off: a pinned tab stays pinned, the same WebContents, no reload
     await app.evaluate((_e, id) => global.__pinTab(id, true), a.id);
     await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 300, y: 300 }), [win1, a.id]);
     const two = await waitFor(async () => { const l = await windows(); return l.length === 2 && others(l)[0]?.tabs.length === 1 ? l : null; });
     check('Move Tab to New Window makes a second window', Boolean(two), JSON.stringify(await windows()));
-    const menuW2 = others(two)[0];
+    const menuW2 = need(two && others(two)[0], 'the window made by Move Tab to New Window');
     const menuMoved = menuW2?.tabs[0];
     check('the new window holds the same WebContents and URL, still pinned, ungrouped', menuMoved?.contentsId === a.contentsId && menuMoved.url === `${base}/a` && menuMoved.pinned && !menuMoved.groupId, JSON.stringify(menuMoved));
     check('the source keeps its other tabs', winOf(two, win1).tabs.some((t) => t.id === b.id) && !winOf(two, win1).tabs.some((t) => t.id === a.id), JSON.stringify(two));
     check('the page was not reloaded: script state, typed text, scroll and title survive', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     const menu2 = await app.evaluate((_e, [w, id]) => global.__windows.tabMenu(w, id), [win1, b.id]);
-    const sub = menu2.find((i) => i.label === 'Move Tab to Window');
+    const sub = menu2.find((i) => i.label === 'Move tab to window');
     check('with two windows the menu lists the other one under Move Tab to Window', sub && sub.sub.length === 1 && /Page a/.test(sub.sub[0]), JSON.stringify(sub));
     await app.evaluate((_e, [from, id, to]) => global.__windows.moveTo(from, id, to), [menuW2.windowId, a.id, win1]);
     const one = await waitFor(async () => { const l = await windows(); return l.length === 1 && l[0].tabs.some((t) => t.id === a.id) ? l : null; });
@@ -100,6 +105,16 @@ const http = require('http');
 
     // ---- drag out of the strip: a card follows the cursor; the tab stays in its window until the release
     const win1Tabs = () => windows().then((l) => winOf(l, win1).tabs.map((t) => t.id));
+    // A tab opened by code lands in the window that is current, which follows the OS focus and so can be another test window: put it where the check needs it.
+    const openTabIn = async (win, url) => {
+      const tab = await openTab(url);
+      const at = (await windows()).find((w) => w.tabs.some((x) => x.id === tab.id));
+      if (at && at.windowId !== win) {
+        await app.evaluate((_e, [from, id, to]) => global.__windows.moveTo(from, id, to), [at.windowId, tab.id, win]);
+        await waitFor(async () => winOf(await windows(), win)?.tabs.some((x) => x.id === tab.id));
+      }
+      return tab;
+    };
     const uiCount = (windowId, selector) => app.evaluate(({ BrowserWindow }, [id, sel]) => BrowserWindow.fromId(id).webContents.executeJavaScript(`document.querySelectorAll(${JSON.stringify(sel)}).length`), [windowId, selector]);
     // The open drop slot in a window's strip: the id of the tab right after it ('end' if none), or null.
     const slotBefore = (windowId) => app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).webContents.executeJavaScript(`(() => {
@@ -114,6 +129,7 @@ const http = require('http');
     await emit(win1, 'tab:switch', initialId); // make win1 current
     await app.evaluate((_e, id) => global.__pinTab(id, true), a.id); // ...pinned, to see it stay pinned
     await cursor({ x: 900, y: 500 });
+    const srcAtStart = await winBounds(win1); // (window sizes are in DIPs, device-independent pixels, like the cursor and the work area)
     await emit(win1, 'tab:dragstart', a.id, { x: 300, y: 15, stripX: 150 });
     const dragging = await dragState();
     check('past the threshold a card drag starts in the window the tab is in', dragging?.card === true && dragging.windowId === win1 && dragging.single === false, JSON.stringify(dragging));
@@ -125,15 +141,26 @@ const http = require('http');
     await cursor({ x: 1100, y: 600 });
     await cardAt({ x: 1100, y: 600 });
     const srcSize = await winBounds(win1);
+    const srcScale = await scaleOf(win1);
     await emit(win1, 'tab:dragend');
     const dropped = await waitFor(async () => { const l = await windows(); return l.length === 2 && others(l)[0]?.tabs.length === 1 ? l : null; });
     check('released over no strip: the tab becomes a window of its own', Boolean(dropped) && (await dragState()) === null, JSON.stringify(await windows()));
-    const w2id = dropped && others(dropped)[0].windowId;
+    const w2id = need(dropped && others(dropped)[0].windowId, 'the window the dropped tab became');
     const w2 = dropped && winOf(dropped, w2id);
     check('it holds the same WebContents, still pinned, ungrouped; the source keeps its other tabs', w2?.tabs[0].contentsId === a.contentsId && w2.tabs[0].pinned && !w2.tabs[0].groupId && winOf(dropped, win1).tabs.some((t) => t.id === b.id), JSON.stringify(dropped));
     check('the page was not reloaded', stateOk(await keptState(a.contentsId)), JSON.stringify(await keptState(a.contentsId)));
     check('the new window opens with the tab under the release point (grab offset kept)', Boolean(await boundsAt(w2id, 1100 - 150, 600 - 15)), JSON.stringify(await winBounds(w2id)));
-    check('...at the size of the window it came from', (await winBounds(w2id)).width === srcSize.width && (await winBounds(w2id)).height === srcSize.height, JSON.stringify([await winBounds(w2id), srcSize]));
+    // The same size as the window it came from, in DIPs (the app sizes it from getBounds() at the start of the drag and places it with one
+    // setBounds(), all in DIPs). Rounding at a scaled display moves a size by a pixel or two, so a small tolerance. This test window is parked
+    // off-screen (test mode), and on a mixed-DPI desktop Windows can re-read a parked window's size at another display's scale (955x611
+    // for a 1442x921 window at 150%); the same size on screen, in physical pixels, is the same size to the user, so that counts too.
+    const newBounds = await winBounds(w2id);
+    const newScale = await scaleOf(w2id);
+    const within = (a, b, tol) => Math.abs(a.width - b.width) <= tol && Math.abs(a.height - b.height) <= tol;
+    const physical = (b, s) => ({ width: b.width * s, height: b.height * s });
+    const sameDips = within(newBounds, srcAtStart, 2);
+    const samePhysical = within(physical(newBounds, newScale), physical(srcSize, srcScale), 3) || within(physical(newBounds, newScale), physical(srcAtStart, srcScale), 3);
+    check('...at the size of the window it came from (in DIPs, give or take 2; or the same size in physical pixels)', sameDips || samePhysical, JSON.stringify({ newBounds, newScale, srcAtStart, srcSize, srcScale }));
     await cursor({ x: 200, y: 200 });
     await sleep(150);
     check('and nothing follows the cursor after the release', Boolean(await boundsAt(w2id, 950, 585)), JSON.stringify(await winBounds(w2id)));
@@ -168,8 +195,8 @@ const http = require('http');
 
     // ---- over its own strip: the tab moves along it
     await emit(win1, 'tab:switch', initialId);
-    const c = await openTab(`${base}/c`);
-    const beforeOwn = await win1Tabs();
+    const c = await openTabIn(win1, `${base}/c`);
+    const beforeOwn = (await waitFor(async () => { const l = await win1Tabs(); return l.length === 2 && l[1] === c.id ? l : null; })) || await win1Tabs(); // (the strip learns of the new tab a moment after it loads)
     check('(a second tab in the source window to reorder)', beforeOwn.length === 2 && beforeOwn[1] === c.id, JSON.stringify(beforeOwn));
     await cursor({ x: 900, y: 500 });
     await emit(win1, 'tab:dragstart', c.id, { x: 300, y: 15, stripX: 150 });
@@ -200,7 +227,7 @@ const http = require('http');
 
     // ---- only tab, released in place / Escape
     await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 400, y: 400 }), [win1, a.id]);
-    const w4 = await waitFor(async () => { const l = await windows(); return l.length === 2 && others(l)[0].tabs.length === 1 ? others(l)[0] : null; });
+    const w4 = need(await waitFor(async () => { const l = await windows(); return l.length === 2 && others(l)[0]?.tabs.length === 1 ? others(l)[0] : null; }), 'the window an only tab was torn off into');
     await cursor({ x: 900, y: 500 });
     await emit(w4.windowId, 'tab:dragstart', a.id, { x: 100, y: 10, stripX: 0 });
     await waitFor(async () => (await dragState())?.single);
@@ -290,12 +317,18 @@ const http = require('http');
 
     // ---- a multi-selection travels together: dragged into another window, all of it goes, in order
     {
-      const list0 = await windows();
-      const home = list0.find((w) => w.windowId === win1) || list0[0];
-      const away = list0.find((w) => w.windowId !== home.windowId);
+      // (Tabs the test opens land in the window that is current, so find the window that got them rather than assume the first; and make sure there are two.)
+      if ((await windows()).length < 2) {
+        const extra = await openTab(`${base}/away`);
+        await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 1150, y: 150 }), [(await windows())[0].windowId, extra.id]);
+        await waitFor(async () => (await windows()).length >= 2);
+      }
       const m1 = await openTab(`${base}/m1`);
       const m2 = await openTab(`${base}/m2`);
-      const homeNow = winOf(await windows(), home.windowId);
+      const list0 = await windows();
+      const home = list0.find((w) => w.tabs.some((x) => x.id === m1.id)) || list0[0];
+      const away = list0.find((w) => w.windowId !== home.windowId);
+      const homeNow = winOf(list0, home.windowId);
       if (away && homeNow && homeNow.tabs.some((t) => t.id === m1.id)) {
         await app.evaluate((_e, [w, ids]) => global.__windows.setSelection(w, ids), [home.windowId, [m1.id, m2.id]]);
         await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [home.windowId, away.windowId]);
@@ -317,13 +350,12 @@ const http = require('http');
 
     // ---- a group dragged by its label back into its own strip, somewhere else, stays one whole group
     {
-      const list0 = await windows();
-      const home = list0[0];
-      const g1 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g1`);
-      const g2 = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); return t.id; }, `${base}/g2`);
+      const home = (await windows()).find((w) => w.windowId === win1) || (await windows())[0];
+      const g1 = (await openTabIn(home.windowId, `${base}/g1`)).id;
+      const g2 = (await openTabIn(home.windowId, `${base}/g2`)).id;
       const w = winOf(await windows(), home.windowId);
       const inHome = w && w.tabs.some((t) => t.id === g1) && w.tabs.some((t) => t.id === g2);
-      if (inHome && w.tabs.length >= 4) {
+      if (inHome && w.tabs.length >= 3) { // (the two group tabs and at least one loose tab to move in front of)
         const gid = await app.evaluate((_e, [win, ids]) => global.__windows.group(win, ids, 'Pair'), [home.windowId, [g1, g2]]);
         const first = winOf(await windows(), home.windowId).tabs.find((t) => t.id !== g1 && t.id !== g2 && !t.pinned);
         await cursor({ x: 700, y: 500 });
@@ -371,6 +403,8 @@ const http = require('http');
     const restored = await waitFor(async () => { const l = await windows(); return l.length === before2.length && urlsOf(l) === urlsOf(before2) ? l : null; });
     check('every window comes back with its tabs after a restart', Boolean(restored), `${urlsOf(before2)} => ${urlsOf(await windows())}`);
     check('no errors in the browser UI', errors.length === 0, errors.join(' | '));
+  } catch (e) {
+    check('the suite ran to the end', false, e instanceof Missing ? `missing: ${e.message}` : e.stack);
   } finally {
     await app.close().catch(() => {});
     server.close();

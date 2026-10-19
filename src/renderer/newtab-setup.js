@@ -1,5 +1,5 @@
 // [widgets] Adding and editing widgets on the new-tab page itself, for the kinds with no key, sign-in
-// or private address (features/widgets.js INLINE: Notes, Countdown, Timer, TradingView, Custom, Web
+// or private address (features/widgets.js INLINE: Notes, Countdown, Timer, Apple Music, TradingView, Custom, Web
 // page). The form is a small dialog; Save sends its input as ?widget=<id|wcreate>&do=setup&cfg=<json>
 // (the browser cancels that navigation), main.js checks it exactly as Settings would and answers
 // through window.widgetSetupResult({ ok, message, id }). Weather, World clock, Calendar and Feed are edited
@@ -10,9 +10,9 @@
 (function () {
 'use strict';
 
-const KINDS = ['notes', 'countdown', 'timer', 'aistatus', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
+const KINDS = ['notes', 'files', 'countdown', 'timer', 'aistatus', 'routines', 'applemusic', 'tradingview', 'custom', 'embed', 'weather', 'worldclock', 'calendar', 'feed', 'crypto'];
 const EDIT_ONLY = ['crypto']; // edited here, added in Settings (the optional key lives there)
-const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
+const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', routines: 'Routines', files: 'Files', applemusic: 'Apple Music', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
 const CLOCKS = [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 // features/feed.js PRESETS (test/widget-config-units.js keeps the two lists the same).
 const FEEDS = [['bloomberg-markets', 'Bloomberg Markets'], ['bloomberg-technology', 'Bloomberg Technology'], ['bloomberg-politics', 'Bloomberg Politics'], ['hn', 'Hacker News'], ['hn-frontpage', 'Hacker News (hnrss.org)'], ['npr', 'NPR News']];
@@ -80,7 +80,24 @@ const bool = (v) => v === 'on';
 // Each kind: its fields (from what is saved, if anything) and read() -> the input main.js checks.
 const FORMS = {
   notes: () => ({ nodes: [el('p', 'ws-note', 'Type straight on the card. It saves as you go and stays on this computer.')], read: () => ({}) }),
+  files: () => ({ nodes: [el('p', 'ws-note', 'Shows the files and folders you pin and the ones you opened lately. Click one to open it. It stays on this computer; Lumen keeps only names and places, never what is inside.')], read: () => ({}) }),
   aistatus: () => ({ nodes: [el('p', 'ws-note', 'Shows which of your AIs are ready, working or at a limit. It updates by itself and uses only what Lumen already knows on this computer.')], read: () => ({}) }),
+  routines: () => ({ nodes: [el('p', 'ws-note', 'Shows what your routines run next and what they did last. It updates by itself and uses only what Lumen already knows on this computer.')], read: () => ({}) }),
+  applemusic(s) {
+    const mode = select([['status', 'Status card: what the Apple Music app is playing'], ['web', 'Web player: music.apple.com in the card']], s.mode === 'web' ? 'web' : 'status');
+    const art = select([['on', 'Show album art'], ['off', 'No album art']], s.art === false ? 'off' : 'on');
+    const app = select([['on', 'Yes'], ['off', 'No']], s.app === false ? 'off' : 'on');
+    const react = select([['off', 'Off'], ['on', 'On']], s.react === true ? 'on' : 'off'); // [look] the card reacts to the music playing on the PC (newtab-music-react.js)
+    const note = el('p', 'ws-note');
+    const sync = () => {
+      art.parentElement.hidden = app.parentElement.hidden = mode.value !== 'status';
+      note.textContent = mode.value === 'web' ? 'Shows Apple Music’s web player (music.apple.com). Sign in there once; Lumen never sees your Apple ID or password.' : 'Plays Apple Music inside Lumen and shows what is playing, with play, pause, next, previous and seek, your recent plays and playlists, and a search. Sign in on Apple’s site once; Lumen never sees your Apple ID.';
+    };
+    mode.addEventListener('change', sync);
+    const nodes = [field('Show', mode), field('Album art', art), field('Also show the Apple Music app', app, 'When nothing plays inside Lumen but the app does.'), field('React to music', react, 'The cover breathes on the beat and a soft glow rims the card, from the sound your PC is playing. Nothing is recorded or sent.'), note];
+    sync();
+    return { nodes, read: () => ({ mode: mode.value, art: art.value === 'on', app: app.value === 'on', react: react.value === 'on' }), first: mode };
+  },
   countdown(s) {
     const cd = s.cd || {};
     const label = input('text', cd.label, { maxlength: '60', placeholder: 'Vacation' });

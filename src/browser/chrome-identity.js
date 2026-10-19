@@ -1,7 +1,8 @@
 // The one identity Lumen gives every page: a stock Chrome of this Chromium's major version. The User-Agent
 // string, navigator.userAgentData (brands, getHighEntropyValues), the Sec-CH-UA* request headers and the
 // window.chrome object a Chrome page has all come from here, so they cannot disagree. Google's sign-in
-// ("This browser or app may not be secure") compares them. Pure (no Electron): test/chrome-identity-units.js.
+// ("This browser or app may not be secure") compares them; Google's own sign-in hosts get this identity too (a Firefox
+// one there is refused, google-auth-identity.js). Pure (no Electron): test/chrome-identity-units.js.
 /* global window, location */ // the patch functions are serialized into pages and run there
 
 // Chrome's brand list, built the way Chromium builds it (GenerateBrandVersionList): the made-up
@@ -58,6 +59,36 @@ function uaMetadata({ chromeVersion, platform, arch, release = '', systemVersion
   };
 }
 
+// ---------------------------------------------------------------- languages
+
+// Chrome's accept-languages: the user's languages in order, each one's base language after it unless the list has
+// it already (en-US -> en-US,en; fr-CA,en-US -> fr-CA,fr,en-US,en). navigator.languages is this list, and the
+// Accept-Language header is the same list with q-weights; Electron's default gave "en-US" in the header and
+// ["en-US","en-001"] in the page.
+function languageList(langs) {
+  // ("en-001", English for the world, is how Windows can name it; Chrome has only "en" for that.)
+  const given = (Array.isArray(langs) ? langs : []).map((l) => String(l).trim().replace(/_/g, '-').replace(/-001$/, '')).filter((l) => /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l));
+  const out = [];
+  for (const l of given) {
+    if (!out.includes(l)) out.push(l);
+    const base = l.split('-')[0];
+    if (base !== l && !given.includes(base) && !out.includes(base)) out.push(base);
+  }
+  // Chromium only treats Accept-Language as a simple (no-preflight) header up to 128 bytes: a Mac with 40 system
+  // languages sent ~400, every cross-origin script/font load became a preflight, and CDNs that refuse OPTIONS
+  // (Canvas's CloudFront) failed them all. The header and navigator.languages are both cut to the first entries that fit.
+  const fits = [];
+  let length = 0;
+  for (const [i, l] of out.entries()) {
+    length += (i === 0 ? 0 : 1) + l.length + (i === 0 ? 0 : `;q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`.length);
+    if (length > 128) break;
+    fits.push(l);
+  }
+  return fits.length ? fits : ['en-US', 'en'];
+}
+// "en-US,en;q=0.9": the q-weighted form Chrome sends.
+const acceptLanguageHeader = (langs) => languageList(langs).map((l, i) => (i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`)).join(',');
+
 // ---------------------------------------------------------------- request headers
 
 const brandList = (brands) => brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', ');
@@ -99,6 +130,16 @@ function withHints(headers, hints) {
   return out;
 }
 
+// Chrome sends Accept-Encoding and then Accept-Language near the end of the header list (after Referer, Chromium adds
+// Accept-Encoding itself after our rewrite), but Electron hands the listener Accept-Language right after User-Agent,
+// where no Chrome has it: the header is moved to the end of the list.
+function languageLast(headers) {
+  for (const name of Object.keys(headers)) {
+    if (/^accept-language$/i.test(name)) { const value = headers[name]; delete headers[name]; headers[name] = value; }
+  }
+  return headers;
+}
+
 // ---------------------------------------------------------------- what the page's own JavaScript sees
 
 // Runs at document start in every frame's main world (DevTools' Page.addScriptToEvaluateOnNewDocument), after
@@ -108,16 +149,39 @@ function withHints(headers, hints) {
 //    took effect in that renderer),
 //  - window.chrome with app, csi and loadTimes (Electron pages have no window.chrome; Google looks for it),
 //  - the functions it adds answer toString() like native ones.
-function identityPatch(skipHostSource) {
+function identityPatch() {
   try {
     if (/^(file|lumen|chrome-extension|chrome|devtools):$/.test(location.protocol)) return;
-    if (new RegExp(skipHostSource, 'i').test(location.hostname)) return; // Google's sign-in hosts get a Firefox identity instead (google-auth-identity.js)
-    const shown = new WeakMap(); // function -> the text toString() gives for it
+    // One WeakMap (function -> the text toString() gives for it) shared by everything Lumen patches into a page's main
+    // world (this script and the preloads), found by asking the toString wrapper for it (toString.call(symbol): the native throws, ours answers; no property of its own), whichever of them runs first.
+    // toString is wrapped by a plain method, not a Proxy (a Proxy gives itself away to the cyclic-prototype and stack-depth
+    // probes that "tampered function" checks run). A TypeError from toString.call(notAFunction) is raised inside the
+    // wrapper, so its stack would carry a frame of ours ("at Object.toString (<anonymous>:L:C)") that no native toString
+    // has: it is cut out. (The same helper is in preload/permissions-preload.js and page-dialogs-preload.js.)
+    const nativeTexts = () => {
+      const key = Symbol.for('lumen.nativeTexts');
+      const current = Function.prototype.toString;
+      try { const found = current.call(key); if (found instanceof WeakMap) return found; } catch { /* the native one: not wrapped yet */ }
+      const shown = new WeakMap();
+      const wrapper = {
+        toString() {
+          'use strict'; // (a sloppy method would box the symbol it is asked with)
+          if (this === key) return shown;
+          if (shown.has(this)) return shown.get(this);
+          try {
+            return Reflect.apply(current, this, arguments);
+          } catch (err) {
+            try { if (err && typeof err.stack === 'string') err.stack = err.stack.split('\n').filter((line) => !/^\s+at (?:\S+\.)?(?:toString|apply) \([^)]*<anonymous>:\d+:\d+\)$/.test(line)).join('\n'); } catch { /* frozen error: left */ }
+            throw err;
+          }
+        },
+      }.toString;
+      shown.set(wrapper, 'function toString() { [native code] }');
+      Object.defineProperty(Function.prototype, 'toString', { value: wrapper, writable: true, configurable: true, enumerable: false });
+      return shown;
+    };
+    const shown = nativeTexts();
     const native = (fn) => { shown.set(fn, `function ${fn.name}() { [native code] }`); return fn; };
-    const toString = Function.prototype.toString;
-    const patched = new Proxy(toString, { apply: (target, self, args) => (shown.has(self) ? shown.get(self) : Reflect.apply(target, self, args)) });
-    shown.set(patched, 'function toString() { [native code] }');
-    Object.defineProperty(Function.prototype, 'toString', { value: patched, writable: true, configurable: true, enumerable: false });
     const define = (object, key, value) => Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
 
     if (navigator.webdriver) {
@@ -128,28 +192,7 @@ function identityPatch(skipHostSource) {
     if (!window.chrome) Object.defineProperty(window, 'chrome', { value: {}, writable: true, enumerable: true, configurable: false });
     const chrome = window.chrome;
     if (chrome && typeof chrome === 'object') {
-      if (!chrome.app) {
-        define(chrome, 'app', {
-          isInstalled: false,
-          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-          ...{
-            getDetails() { return null; },
-            getIsInstalled() { return false; },
-            installState(callback) { if (typeof callback === 'function') setTimeout(() => callback('not_installed'), 0); },
-            runningState() { return 'cannot_run'; },
-          },
-        });
-        for (const key of ['getDetails', 'getIsInstalled', 'installState', 'runningState']) native(chrome.app[key]);
-      }
-      if (!chrome.csi) {
-        define(chrome, 'csi', native({
-          csi() {
-            const t = performance.timing;
-            return { startE: t.navigationStart, onloadT: t.domContentLoadedEventEnd, pageT: Date.now() - t.navigationStart, tran: 15 };
-          },
-        }.csi));
-      }
+      // (in the order Chrome has them: loadTimes, csi, app)
       if (!chrome.loadTimes) {
         define(chrome, 'loadTimes', native({
           loadTimes() {
@@ -168,15 +211,37 @@ function identityPatch(skipHostSource) {
           },
         }.loadTimes));
       }
+      if (!chrome.csi) {
+        define(chrome, 'csi', native({
+          csi() {
+            const t = performance.timing;
+            return { startE: t.navigationStart, onloadT: t.domContentLoadedEventEnd, pageT: Date.now() - t.navigationStart, tran: 15 };
+          },
+        }.csi));
+      }
+      if (!chrome.app) {
+        define(chrome, 'app', {
+          isInstalled: false,
+          InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+          RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+          ...{
+            getDetails() { return null; },
+            getIsInstalled() { return false; },
+            installState(callback) { if (typeof callback === 'function') setTimeout(() => callback('not_installed'), 0); },
+            runningState() { return 'cannot_run'; },
+          },
+        });
+        for (const key of ['getDetails', 'getIsInstalled', 'installState', 'runningState']) native(chrome.app[key]);
+      }
     }
   } catch {
     // A page that locked something down: it keeps what it has.
   }
 }
-const IDENTITY_SCRIPT = `(${identityPatch})(${JSON.stringify(require('./google-auth-identity').HOST_SOURCE)});`;
+const IDENTITY_SCRIPT = `(${identityPatch})();`;
 
 module.exports = {
-  chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
-  lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, HIGH_ENTROPY,
+  languageList, acceptLanguageHeader, chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
+  lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, languageLast, HIGH_ENTROPY,
   IDENTITY_SCRIPT,
 };

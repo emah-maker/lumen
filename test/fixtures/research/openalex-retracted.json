@@ -1,0 +1,101 @@
+{
+ "meta": {
+  "count": 136783,
+  "db_response_time_ms": 25,
+  "page": 1,
+  "per_page": 1,
+  "groups_count": null,
+  "cost_usd": 0.0001
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W3046275966",
+   "doi": "https://doi.org/10.1016/s0140-6736(20)30367-6",
+   "title": "Dementia prevention, intervention, and care: 2020 report of the Lancet Commission",
+   "publication_year": 2020,
+   "authorships": [
+    {
+     "author_position": "first",
+     "author": {
+      "id": "https://openalex.org/A5068994533",
+      "display_name": "Gill Livingston"
+     },
+     "raw_author_name": "Gill Livingston"
+    },
+    {
+     "author_position": "middle",
+     "author": {
+      "id": "https://openalex.org/A5074999126",
+      "display_name": "Jonathan D. Huntley"
+     },
+     "raw_author_name": "Jonathan Huntley"
+    },
+    {
+     "author_position": "middle",
+     "author": {
+      "id": "https://openalex.org/A5084818858",
+      "display_name": "Andrew Sommerlad"
+     },
+     "raw_author_name": "Andrew Sommerlad"
+    },
+    {
+     "author_position": "middle",
+     "author": {
+      "id": "https://openalex.org/A5107927449",
+      "display_name": "David Ames"
+     },
+     "raw_author_name": "David Ames"
+    }
+   ],
+   "primary_location": {
+    "id": "doi:10.1016/s0140-6736(20)30367-6",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.1016/s0140-6736(20)30367-6",
+    "pdf_url": "http://www.thelancet.com/article/S0140673620303676/pdf",
+    "source": {
+     "id": "https://openalex.org/S49861241",
+     "display_name": "The Lancet",
+     "type": "journal",
+     "issn_l": "0099-5355",
+     "host_organization_name": "Elsevier BV"
+    },
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "The Lancet",
+    "raw_type": "journal-article"
+   },
+   "best_oa_location": {
+    "id": "doi:10.1016/s0140-6736(20)30367-6",
+    "is_oa": true,
+    "landing_page_url": "https://doi.org/10.1016/s0140-6736(20)30367-6",
+    "pdf_url": "http://www.thelancet.com/article/S0140673620303676/pdf",
+    "license": null,
+    "license_id": null,
+    "version": "publishedVersion",
+    "is_accepted": true,
+    "is_published": true,
+    "raw_source_name": "The Lancet",
+    "raw_type": "journal-article"
+   },
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "bronze",
+    "oa_url": "http://www.thelancet.com/article/S0140673620303676/pdf",
+    "any_repository_has_fulltext": true
+   },
+   "cited_by_count": 10774,
+   "is_retracted": true,
+   "type": "article",
+   "biblio": {
+    "volume": "396",
+    "issue": "10248",
+    "first_page": "413",
+    "last_page": "446"
+   }
+  }
+ ],
+ "group_by": []
+}

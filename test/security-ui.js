@@ -3,6 +3,7 @@
 // - "Back to safety" goes back; the agent's navigate or a script clicking "Continue" never gets
 //   through on its own: only the user's answer in Lumen's own dialog does, and then only for that host;
 // - an https page that loads an http image shows "not fully secure"; a clean one shows the lock.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -145,7 +146,7 @@ const path = require('path');
 
   await app.close();
   for (const s of [plain, bad, bad2]) s.close();
-  fs.rmSync(certDir, { recursive: true, force: true });
+  fs.rmSync(certDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -5,6 +5,7 @@
 // - the agent's navigate lands on the warning; only the user's answer in Lumen's own dialog, after
 //   the warning page's link, lets the page load, and then only that page.
 // Optional: with GOOGLE_SAFE_BROWSING_API_KEY set, Google's real test page is checked too.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const crypto = require('crypto');
 const fs = require('fs');

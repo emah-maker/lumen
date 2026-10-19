@@ -1,6 +1,7 @@
 // The tab strip under load and the basics around it: clicks that land while tabs are updating,
 // scrolling a strip that overflows, pinned tabs, restoring a session lazily (and pinned tabs with
 // it), favicons, the History page, zoom reset to the default, F11, and dialogs from a popup window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -382,7 +383,7 @@ const os = require('os');
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true }); // ~10 MB per run otherwise left in the temp dir
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); // ~10 MB per run otherwise left in the temp dir
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

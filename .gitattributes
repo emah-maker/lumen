@@ -1,0 +1,21 @@
+# Test fixtures are compared byte for byte: keep them exactly as committed on every checkout (core.autocrlf would add CRs)
+test/fixtures/** -text
+*.pdf binary
+*.png binary
+*.eml -text
+CHANGELOG.md merge=lumen-changelog
+scripts/test-all.js merge=lumen-list
+# Generated: git keeps our copy on a conflict (lumen-bundle), and scripts/land.js rebuilds them from the merged sources
+src/renderer/ui.bundle.js merge=lumen-bundle
+src/renderer/ui.bundle.css merge=lumen-bundle
+src/renderer/settings.bundle.js merge=lumen-bundle
+src/renderer/settings.bundle.css merge=lumen-bundle
+src/renderer/settings.html merge=lumen-bundle
+src/renderer/index.html merge=lumen-bundle
+src/preload/preload.bundle.js merge=lumen-bundle
+# Generated bundles are shipped as checked out: keep them LF on every checkout (CRLF adds ~2% to each; perf-budget measures the real file)
+src/preload/preload.bundle.js text eol=lf
+src/renderer/*.bundle.js text eol=lf
+src/renderer/*.bundle.css text eol=lf
+src/renderer/index.html text eol=lf
+src/renderer/settings.html text eol=lf

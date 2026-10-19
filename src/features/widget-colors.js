@@ -113,7 +113,9 @@ function dominantColors(pixels, n = 3) {
 function paletteFor({ accent, background = 'plain', dark = false, imageColors = null, surface = null } = {}) {
   const acc = isHex(accent) ? accent : '#007aff';
   const onMedia = background !== 'plain';
-  const info = BACKGROUND_INFO[background];
+  // The newer backgrounds (features/backgrounds.js, loaded beside this on the new-tab page) give their dominant colour.
+  const seed = globalThis.Backgrounds?.byId?.(background)?.seed;
+  const info = BACKGROUND_INFO[background] || (isHex(seed) ? { colors: [seed], avg: null } : undefined);
   const picked = background === 'image' ? (Array.isArray(imageColors) ? imageColors.filter(isHex) : []) : (info?.colors || []);
   const hues = picked.length >= 2 ? picked.slice(0, 3) : harmonies(picked[0] || acc);
   while (hues.length < 3) hues.push(hues[hues.length - 1]);

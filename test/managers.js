@@ -2,6 +2,7 @@
 // bookmarks add / edit / search / remove / export / import round trip, a local download driven
 // from the Downloads page, and a "last hour" clear that removes only recent history, cookies,
 // site data and downloads. Local servers only; a throwaway profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -61,6 +62,8 @@ const os = require('os');
   check('the Bookmarks page opens with its API', await waitFor(async () => (await inPage('bookmarks', 'typeof window.lumenBookmarks?.list')) === 'function'), await inPage('bookmarks', 'location.href'));
   const again = await app.evaluate(() => { const a = global.__managers.managers.open('bookmarks'); const b = global.__managers.managers.open('bookmarks'); return a === b; });
   check('opening it again reuses the same tab', again, again);
+  check('the address bar shows lumen://bookmarks', await waitFor(async () => (await ui.inputValue('#address')) === 'lumen://bookmarks'), await ui.inputValue('#address'));
+  check('the bookmark star is not offered on it', await ui.locator('#bookmark').isHidden(), 'visible');
   check('an empty list says so', await waitFor(async () => /No bookmarks yet/.test(await inPage('bookmarks', "document.getElementById('list').textContent"))), await rowsText());
 
   // add
@@ -111,6 +114,12 @@ const os = require('os');
   await inPage('bookmarks', `[...document.querySelectorAll('#list .row')].find((r) => r.dataset.url === ${JSON.stringify(`${base}/alpha2`)}).querySelector('.actions button:last-child').click()`);
   check('Remove deletes a bookmark', await waitFor(async () => !(await saved()).some((b) => b.url === `${base}/alpha2`)), JSON.stringify(await saved()));
   check('the removed bookmark leaves the page', await waitFor(async () => !/Alpha renamed/.test(await rowsText())), await rowsText());
+  check('Remove offers Undo', await waitFor(async () => (await inPage('bookmarks', "document.querySelector('.toast button')?.textContent")) === 'Undo'), await inPage('bookmarks', "document.body.textContent"));
+  await inPage('bookmarks', "document.querySelector('.toast button').click()");
+  check('Undo puts the bookmark back in its place', await waitFor(async () => { const s = await saved(); return s.length === 2 && s[0].url === `${base}/alpha2` && s[0].title === 'Alpha renamed' && s[0].folder === 'Reading'; }), JSON.stringify(await saved()));
+  check('the Undo note goes away once used', await waitFor(async () => (await inPage('bookmarks', "document.querySelector('.toast') ? 'yes' : 'no'")) === 'no'), 'still there');
+  await inPage('bookmarks', `[...document.querySelectorAll('#list .row')].find((r) => r.dataset.url === ${JSON.stringify(`${base}/alpha2`)}).querySelector('.actions button:last-child').click()`);
+  await waitFor(async () => !(await saved()).some((b) => b.url === `${base}/alpha2`));
 
   // import (round trip): brings back the removed one, skips the one still there
   await app.evaluate((_e, file) => { global.__managers.managers.pickers.open = async () => ({ canceled: false, filePaths: [file] }); }, exportFile);
@@ -173,6 +182,10 @@ const os = require('os');
   await waitFor(async () => (await rowState(3)) === 'cancelled');
   check('Remove takes a finished download off the list', (await press(1, 'remove')) === 'ok' && await waitFor(async () => (await rowState(1)) === '' && !(await dl()).some((d) => d.id === 1)), JSON.stringify(await dl()));
   check('the downloaded file itself is kept', fs.existsSync(path.join(dlDir, 'slow.bin')), fs.readdirSync(dlDir).join(','));
+  check('Remove offers Undo on the Downloads page', await waitFor(async () => (await inPage('downloads', "document.querySelector('.toast button')?.textContent")) === 'Undo'), await inPage('downloads', "document.body.textContent"));
+  await inPage('downloads', "document.querySelector('.toast button').click()");
+  check('Undo puts the download back in its place', await waitFor(async () => (await dl()).some((d) => d.id === 1) && (await dl()).map((d) => d.id).join() === '3,2,1' && (await rowState(1)) === 'completed'), JSON.stringify((await dl()).map((d) => d.id)));
+  check('the address bar shows lumen://downloads', (await ui.inputValue('#address')) === 'lumen://downloads' || (await waitFor(async () => (await ui.inputValue('#address')) === 'lumen://downloads')), await ui.inputValue('#address'));
   const denied = await app.evaluate(({ webContents }, from) => webContents.getAllWebContents().find((w) => w.getURL() === from).executeJavaScript('typeof window.lumenDownloads'), webTab);
   check('a web tab cannot reach the downloads API', denied === 'undefined', denied);
   const refused = await app.evaluate(() => global.__agent.execute('read_page', {}).then(() => 'read it', (err) => err.message));
@@ -181,6 +194,9 @@ const os = require('os');
   // ================= Clear browsing data, last hour =================
   // An "old" site (127.0.0.1: visited, cookie and localStorage 3 days ago) and a "new" one (localhost).
   await app.evaluate((_e, u) => global.__agent.execute('open_tab', { url: u }).catch((err) => err.message), `${base}/start`);
+  // open_tab opens in the background now (AI manners); the run-less calls below act on the tab in front, so bring it forward.
+  await app.evaluate((_e, u) => { const t = global.__agent.browser.listTabs().find((x) => x.url.startsWith(u)); if (t) global.__agent.browser.switchTab(t.id); }, `${base}/start`);
+  await new Promise((r) => setTimeout(r, 500));
   await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }), `${base}/set`);
   await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }), `${other}/set`);
   const cookieHosts = () => app.evaluate(async ({ session }) => (await session.defaultSession.cookies.get({ name: 'lumen_test' })).map((c) => c.domain).sort());
@@ -216,8 +232,8 @@ const os = require('os');
 
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
-  fs.rmSync(dlDir, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(dlDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

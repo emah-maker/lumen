@@ -24,21 +24,48 @@ function installOverrides(bridgeKey) {
   const bridge = window[bridgeKey];
   delete window[bridgeKey];
 
-  const looksNative = (name, fn) => {
-    Object.defineProperty(fn, 'toString', { value: () => `function ${name}() { [native code] }`, configurable: true, enumerable: false, writable: true });
-    return fn;
+  // One WeakMap (function -> the text toString() gives for it) shared by everything Lumen patches into a page's main
+  // world (this script and the preloads), found by asking the toString wrapper for it (toString.call(symbol): the native throws, ours answers; no property of its own), whichever of them runs first.
+  // toString is wrapped by a plain method, not a Proxy (a Proxy gives itself away to the cyclic-prototype and stack-depth
+  // probes that "tampered function" checks run). A TypeError from toString.call(notAFunction) is raised inside the
+  // wrapper, so its stack would carry a frame of ours ("at Object.toString (<anonymous>:L:C)") that no native toString
+  // has: it is cut out. (The same helper is in preload/permissions-preload.js and page-dialogs-preload.js.)
+  const nativeTexts = () => {
+    const key = Symbol.for('lumen.nativeTexts');
+    const current = Function.prototype.toString;
+    try { const found = current.call(key); if (found instanceof WeakMap) return found; } catch { /* the native one: not wrapped yet */ }
+    const shown = new WeakMap();
+    const wrapper = {
+      toString() {
+        'use strict'; // (a sloppy method would box the symbol it is asked with)
+        if (this === key) return shown;
+        if (shown.has(this)) return shown.get(this);
+        try {
+          return Reflect.apply(current, this, arguments);
+        } catch (err) {
+          try { if (err && typeof err.stack === 'string') err.stack = err.stack.split('\n').filter((line) => !/^\s+at (?:\S+\.)?(?:toString|apply) \([^)]*<anonymous>:\d+:\d+\)$/.test(line)).join('\n'); } catch { /* frozen error: left */ }
+          throw err;
+        }
+      },
+    }.toString;
+    shown.set(wrapper, 'function toString() { [native code] }');
+    Object.defineProperty(Function.prototype, 'toString', { value: wrapper, writable: true, configurable: true, enumerable: false });
+    return shown;
   };
+  const shown = nativeTexts();
+  const looksNative = (name, fn) => { shown.set(fn, `function ${name}() { [native code] }`); return fn; };
   const define = (name, fn) => Object.defineProperty(window, name, { value: looksNative(name, fn), writable: true, configurable: true, enumerable: false });
 
-  define('alert', function alert(message) {
+  // (methods, like the natives: no prototype property, not constructible)
+  define('alert', { alert(message) {
     bridge.request('alert', message === undefined ? '' : String(message));
-  });
-  define('confirm', function confirm(message) {
+  } }.alert);
+  define('confirm', { confirm(message) {
     return Boolean(bridge.request('confirm', message === undefined ? '' : String(message)));
-  });
-  define('prompt', function prompt(message, defaultValue) {
+  } }.confirm);
+  define('prompt', { prompt(message, defaultValue) {
     return bridge.request('prompt', message === undefined ? '' : String(message), defaultValue === undefined ? '' : String(defaultValue));
-  });
+  } }.prompt);
 }
 
 try {
@@ -46,6 +73,29 @@ try {
 } catch (err) {
   console.error('page dialogs: could not install alert/confirm/prompt overrides:', err.message);
 }
+
+// A site's notification clicked (Gmail, Slack, a calendar): Chrome brings that site's tab to the front, Electron only tells the
+// page. Each `new Notification` gets a click listener that asks main to show this tab. Only a real click counts (isTrusted): a page
+// dispatching its own 'click' can't pull its tab forward. The page's own onclick still runs as before.
+const NOTIFY_KEY = '__lumenNotifyBridge_7c2e91';
+if (!onGoogleAccounts) contextBridge.exposeInMainWorld(NOTIFY_KEY, { clicked: () => ipcRenderer.send('page-notification:click') });
+function wrapNotifications(bridgeKey) {
+  const bridge = window[bridgeKey];
+  delete window[bridgeKey];
+  const Native = window.Notification;
+  if (typeof Native !== 'function' || !bridge) return;
+  const Wrapped = new Proxy(Native, {
+    construct(target, args, newTarget) {
+      const n = Reflect.construct(target, args, newTarget === Wrapped ? target : newTarget);
+      n.addEventListener('click', (e) => { if (e.isTrusted) bridge.clicked(); });
+      return n;
+    },
+  });
+  Object.defineProperty(window, 'Notification', { value: Wrapped, writable: true, configurable: true, enumerable: false });
+}
+try {
+  if (!onGoogleAccounts) contextBridge.executeInMainWorld({ func: wrapNotifications, args: [NOTIFY_KEY] });
+} catch { /* the page keeps the plain Notification */ }
 
 // FedCM: Electron has none, so a page that sees its API (IdentityCredential) waits for a sign-in prompt that never
 // comes. main.js turns the feature off; if a Chromium version ever ignores that switch, the API is removed here too,

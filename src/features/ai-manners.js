@@ -5,6 +5,7 @@
 //                       navigated it, pinned it, moved it into a group)
 //   closeSelection()    which of those tabs "Close the tabs the AI opened" may close
 //   handsOffRefusal()   "Don't let the AI act on my pages": the tools that act, and the refusal for a tab that is not the AI's
+//   keepOff / isKeptOff / offTabCheck / offTabRefusal   "Keep the AI from acting on this tab": one tab, read-only for every AI path
 //   typingWait()        how long the AI's typing waits while the user types in the same tab
 //   guardsFocus()       whether the user's caret in a page needs putting back after the AI acted there
 //   showsTab()          may open_tab / switch_tab bring the tab to the front (never by default)
@@ -29,6 +30,15 @@ function handOver(tab) {
   return true;
 }
 const isAiTab = (tab) => Boolean(tab && tab.openedBy);
+// The mark as the saved session keeps it: { chatId, at } or null. A run id means nothing after a restart (ids start again), so it
+// is not kept: a restored tab belongs to its chat, and "close this chat's tabs", the tab menu and the setting still reach it.
+const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0 } : null);
+// Puts a saved mark back on a restored tab (not on one that is pinned or was placed by hand: that tab is the user's).
+function restoreMark(tab, saved) {
+  if (!tab || !saved || typeof saved !== 'object' || tab.pinned || tab.userMoved) return tab;
+  const chatId = typeof saved.chatId === 'string' && saved.chatId ? saved.chatId : null;
+  return markOpened(tab, { chatId, runId: null }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
+}
 // Has the user taken this tab over without handOver having been called (pinned, dragged to a place by hand)?
 // A group the AI or Lumen's own automatic grouping put it in does not count: only a move or a pin of the user's.
 const takenOver = (tab) => Boolean(tab?.openedBy && (tab.pinned || tab.userMoved));
@@ -54,19 +64,29 @@ function closeSelection(tabs, { runId = null, chatId = null, boundIds = [], busy
   });
 }
 
+// The tabs `closeSelection` would take but for a run working in them right now: they are kept, and the toast says so
+// ("Kept 1 tab the AI is still using"), so Close never shuts a page under a working chat and never skips one silently.
+function busyKept(tabs, opts = {}) {
+  const busy = new Set(opts.busyIds || []);
+  if (!busy.size) return [];
+  const bound = new Set(opts.boundIds || []);
+  return closeSelection(tabs, { ...opts, busyIds: [] }).filter((tab) => busy.has(tab.id) && !bound.has(tab.id));
+}
+
 const CLOSE_SETTINGS = ['off', 'ask', 'always'];
 const cleanCloseSetting = (value) => (CLOSE_SETTINGS.includes(value) ? value : 'off');
 // What happens when a run that opened `n` closeable tabs ends: 'none' (it opened none), 'offer' (a quiet
-// "Close N tabs" under the reply), 'ask' (the same, as a question), 'close' (closes them, with Undo).
+// "Close N tabs this chat opened" button under the reply: the setting's Never, the default), 'ask' (the same, as a question),
+// 'close' (closes them, with Undo).
 function closeAfterRun({ setting = 'off', n = 0 } = {}) {
   if (!n) return 'none';
   const s = cleanCloseSetting(setting);
-  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'none'; // Off: nothing under the reply (the tab menu and the chat's row still close them)
+  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'offer'; // Never closes nothing by itself, but the button is always under a reply that opened tabs
 }
 
 // ---- hands-off mode
 // The tools that click, type, move or run something in a page (or close a tab). Reading tools are not here.
-const ACTION_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab', 'group_tabs', 'ungroup_tabs']);
+const ACTION_TOOLS = new Set(['click', 'click_at', 'type_text', 'fill_form', 'press_key', 'upload_file', 'scroll', 'navigate', 'reload', 'go_back', 'go_forward', 'run_script', 'hover', 'close_tab', 'group_tabs', 'ungroup_tabs', 'handle_dialog', 'run_macro', 'document']);
 const isActionTool = (name) => ACTION_TOOLS.has(name);
 
 const handsOffRefusal = (tool) => `Hands-off mode is on: the user does not let the AI click, type, scroll or navigate in their own tabs, so ${tool} was not run on this tab. Open a tab of your own with open_tab (it opens in the background) and work there. Reading the user's tabs (read_page, find, screenshot, read_tabs, list_tabs) still works.`;
@@ -101,15 +121,39 @@ const isAutomationRead = (method) => AUTOMATION_READS.test(String(method || ''))
 // { ok: true } (run it), { noop: true } (answer {} without running it) or { error } (refuse, with the text for the client).
 //   handsOff   the setting
 //   ownTab     the command is for a tab the AI opened
-// Not for hands-off mode: everything is { ok: true }.
-function automationVerdict({ method, handsOff = false, ownTab = false } = {}) {
+// Not for hands-off mode: everything is { ok: true }. A tab the user keeps the AI from acting on (`offTab`) is read-only: the same
+// reads as hands-off mode, init calls no-op'd, everything else refused.
+function automationVerdict({ method, handsOff = false, ownTab = false, offTab = false } = {}) {
+  if (offTab) { // [ai off-tab] read-only, even with hands-off mode off and on a tab the AI opened
+    if (isAutomationRead(method)) return { ok: true };
+    if (AUTOMATION_INIT_NOOPS.has(method)) return { noop: true };
+    return { error: `The user keeps the AI from acting on this tab, so ${method} was not run. Reading it works (screenshots, DOM, accessibility tree); don't click, type, navigate or run scripts there. Ask the user to do it, or work in another tab.` };
+  }
   if (!handsOff || ownTab || isAutomationRead(method)) return { ok: true };
   if (AUTOMATION_INIT_NOOPS.has(method)) return { noop: true };
   return { error: `Hands-off mode is on in Lumen: ${method} is not a read-only command, and this is not a tab the AI opened, so it was not run. Reads (screenshots, DOM, accessibility tree, Runtime.enable) work; evaluating script here (Runtime.evaluate) is refused. Open your own tab (Target.createTarget) to act.` };
 }
 
+// ---- [ai off-tab] "Keep the AI from acting on this tab": the button in the address bar and the tab's menu. Per TAB (it stays through
+// navigation, ends when the tab closes, comes back with the restored session). READ-ONLY for the AI: it may read the tab (read_page,
+// find, screenshot, read_pdf, read_tabs, its page text with a message) but every tool that acts on it (isActionTool, run_script
+// included) is refused, whoever asks (the sidebar's AI, its CLI engines, outside agents over MCP, the CDP proxy). Only the user clears
+// it: no tool does.
+const isKeptOff = (tab) => Boolean(tab && tab.aiKeepOff);
+function keepOff(tab, on = true) {
+  if (!tab) return tab;
+  if (on) tab.aiKeepOff = true; else delete tab.aiKeepOff;
+  return tab;
+}
+const OFF_TAB_REFUSAL = "The user keeps the AI from acting on this tab. You can read it, but don't click, type, navigate or run scripts there; ask the user to do it, or work in another tab.";
+const OFF_TAB_NOTE = '(read-only: the user keeps the AI from acting on this tab)'; // what list_tabs and the browser state say about it
+const offTabRefusal = () => OFF_TAB_REFUSAL;
+// null when the call may go ahead, else the error text for the model. `offTab`: the tab the tool names or would act on is kept off;
+// `tool`: its name (a tool that only reads is let through; an unnamed one is treated as acting).
+const offTabCheck = ({ offTab = false, tool = '' } = {}) => (offTab && (!tool || isActionTool(tool)) ? OFF_TAB_REFUSAL : null);
+
 // One line for the system prompt, so the model plans around it instead of finding out by being refused.
-const HANDS_OFF_PROMPT = 'Hands-off mode is on: the user does not let you click, type, scroll or navigate in their own tabs. You can read them (read_page, find, screenshot, read_tabs, list_tabs). To act, open your own tab with open_tab (it opens in the background) and work there; those tabs are yours.';
+const HANDS_OFF_PROMPT = 'Hands-off mode is on: you may read the user\'s tabs but not click, type, scroll or navigate in them. To act, open a tab of your own with open_tab and work there.';
 
 // ---- the user's focus
 const TYPING_GRACE_MS = 1500; // the AI's typing waits this long after the user's last key in the same tab
@@ -192,7 +236,8 @@ const userInput = {
 
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
-  markOpened, handOver, isAiTab, takenOver, closeSelection, cleanCloseSetting, closeAfterRun,
+  markOpened, handOver, isAiTab, takenOver, closeSelection, busyKept, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
+  isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };

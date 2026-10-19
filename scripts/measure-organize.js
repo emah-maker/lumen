@@ -75,7 +75,7 @@ async function measureOld(tabsIn) {
 }
 
 // The new flow. `cache` is shared across calls to show re-organizing.
-async function measureNew(tabsIn, cache, { h = freshHarness(tabsIn) } = {}) {
+async function measureNew(tabsIn, cache, { h = freshHarness(tabsIn), routeMs = 0, routeFirst = false } = {}) {
   const model = fakeModel();
   const t0 = Date.now();
   let firstMs = null;
@@ -91,8 +91,11 @@ async function measureNew(tabsIn, cache, { h = freshHarness(tabsIn) } = {}) {
     }
     return ans;
   });
+  // routeMs: how long working out the route to a model takes (a CLI's sign-in check). routeFirst: the old order (before the local pass).
+  if (routeFirst && routeMs) await sleep(routeMs);
   const stats = await oai.organizeProgressive({
     tabGroups: h.tg, ask, cache,
+    ...(!routeFirst && routeMs ? { ask: undefined, prepare: async () => { await sleep(routeMs); return { ask }; } } : {}),
     onPhase: (name) => { if (name === 'local' && firstMs == null) firstMs = Date.now() - t0; },
   });
   const total = Date.now() - t0;
@@ -118,6 +121,9 @@ async function main() {
     console.log(row('after, first time', cold));
     console.log(row('after, again', warm));
     console.log(row('after, +3 tabs', more));
+    const ROUTE_MS = Number(arg('route', 1000));
+    console.log(row(`route ${ROUTE_MS}ms, old order`, await measureNew(tabs, oai.createRefineCache(), { routeMs: ROUTE_MS, routeFirst: true })));
+    console.log(row(`route ${ROUTE_MS}ms, new order`, await measureNew(tabs, oai.createRefineCache(), { routeMs: ROUTE_MS })));
     table.push({ n, old, cold, warm, more });
   }
   console.log('\n| tabs | before first/final | after first / final (first run) | after re-run | tokens in/out before -> after |');

@@ -10,6 +10,8 @@ const SORTS = ['due', 'priority', 'project', 'manual', 'created'];
 const DENSITIES = ['comfortable', 'compact'];
 const MAXES = [5, 10, 20, 50, 0]; // 0: all of them, the card scrolls
 const QUICK = ['off', 'top', 'bottom'];
+const VIEWS = ['today', 'upcoming', 'inbox']; // the card header's switch
+const EXPAND_CAP = 60; // tasks sent to the page past `max` (the card shows `max`, then "Show more" and a scroll)
 const FIELDS = ['due', 'project', 'labels', 'priority', 'description', 'subtasks', 'recurring'];
 const DEFAULT_FIELDS = { due: true, project: false, labels: false, priority: true, description: false, subtasks: false, recurring: true };
 const MAX_QUERY = 200;
@@ -42,13 +44,21 @@ function cleanConfig(c) {
     showDone: i.showDone === true,
     overdueRed: i.overdueRed !== false,
     showCount: i.showCount === true,
-    quick: pick(i.quick, QUICK, 'off'),
+    quick: pick(i.quick, QUICK, 'top'), // top / bottom: the add box is always open; off: a "+ Add task" row that opens it
     quickProjectId: ID.test(idOf(i.quickProjectId)) ? idOf(i.quickProjectId) : '',
   };
   // A source that needs a value it doesn't have is the default source.
   if ((out.source === 'project' && !out.projectId) || (out.source === 'label' && !out.label) || (out.source === 'custom' && !out.query)) out.source = 'todayOverdue';
   return out;
 }
+
+// The header switch: which of Today / Upcoming / Inbox a card is showing (null for a project, label, filter or all-tasks card, which has
+// no switch), and the config after picking one. Only the source changes; days, grouping and the rest stay.
+const viewOf = (cfg) => ({ todayOverdue: 'today', today: 'today', upcoming: 'upcoming', inbox: 'inbox' }[cfg.source] || null);
+const applyView = (cfg, view) => (VIEWS.includes(view) ? { ...cfg, source: view === 'today' ? 'todayOverdue' : view } : null);
+// A new task has to belong on the card it was added to, or it would vanish at the next look: Today and Upcoming need a day.
+const dueTodayFor = (cfg) => cfg.source === 'todayOverdue' || cfg.source === 'today';
+const needsDay = (cfg) => dueTodayFor(cfg) || cfg.source === 'upcoming';
 
 // What to ask Todoist: a filter query, or (for a project) its id. Todoist's own filter language.
 function questionFor(cfg) {
@@ -179,19 +189,23 @@ function present(t, cfg) {
   return out;
 }
 // Tasks (normalized) + config -> what the card shows: { name, total, shown, groups: [{ label, tasks, more }] }.
-function shape(tasks, cfg, today = ymd(new Date())) {
+function shape(tasks, cfg, today = ymd(new Date()), { expand = false } = {}) {
   const counts = new Map();
   for (const t of tasks) if (t.parent) counts.set(t.parent, (counts.get(t.parent) || 0) + 1);
   const withSubs = tasks.map((t) => (counts.has(t.id) ? { ...t, subtasks: counts.get(t.id) } : t));
   const grouped = groupTasks(sortTasks(withSubs, cfg.sort), cfg.group, today);
-  const { groups, shown } = limitTasks(grouped, cfg.max);
+  // expand: the card can scroll and "Show more", so it gets more than `max` (cfg.max says where its short list ends)
+  const { groups, shown } = limitTasks(grouped, expand && cfg.max > 0 ? Math.max(cfg.max, EXPAND_CAP) : cfg.max);
   return {
     name: nameFor(cfg), total: tasks.length, shown,
+    ...(expand ? { collapsed: cfg.max } : {}),
+    ...(viewOf(cfg) ? { view: viewOf(cfg) } : {}),
     groups: groups.map((g) => ({ label: g.label, more: g.more, tasks: g.tasks.map((t) => present(t, cfg)) })),
   };
 }
 
 module.exports = {
+  VIEWS, EXPAND_CAP, viewOf, applyView, dueTodayFor, needsDay, present,
   SOURCES, GROUPS, SORTS, DENSITIES, MAXES, QUICK, FIELDS, DEFAULT_FIELDS, FETCH_LIMIT, MAX_QUERY, COLORS,
   cleanConfig, questionFor, nameFor, summaryFor, colorOf, normalizeTask, sortTasks, groupTasks, limitTasks, shape, ymd, bucketOf,
 };

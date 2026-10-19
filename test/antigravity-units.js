@@ -5,6 +5,7 @@
 //  - the install command (shown, never run unless asked), the picker entries, the one-shot runner for Organize.
 // Verified against a real agy 1.2.14 by hand (read-only: --help, models, mcp add/list in a throwaway HOME, no model call): the flag
 // names and the `agy models` format used below. The live headless behaviour is from Google's docs: see antigravity.js's header.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -41,7 +42,26 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   check('antigravity MCP, stdio fallback (LUMEN_AGY_MCP=stdio): the bridge, named by this run\'s tag', JSON.stringify(ag.stdioConfig({ command: 'node', args: ['mcp.js'], env: { A: '1' } }, '/ud', 'tag-9')) === '{"mcpServers":{"lumen":{"command":"node","args":["mcp.js"],"env":{"A":"1","LUMEN_USERDATA":"/ud","LUMEN_ENGINE":"tag-9"}}}}', '');
   const hooks = ag.hooksFor('/h/lumen gate.sh', 'linux');
   const winHooks = ag.hooksFor('C:\\Users\\a b\\lumen-gate.cmd', 'win32');
-  check('antigravity hooks.json: Lumen\'s gate before every tool call (any tool) and every model call, the path quoted', hooks['lumen-gate'].PreToolUse[0].matcher === '*' && hooks['lumen-gate'].PreToolUse[0].hooks[0].command === "'/h/lumen gate.sh'" && hooks['lumen-gate'].PreInvocation[0].command === "'/h/lumen gate.sh'" && winHooks['lumen-gate'].PreToolUse[0].hooks[0].command === '"C:\\Users\\a b\\lumen-gate.cmd"', JSON.stringify(hooks));
+  check('antigravity hooks.json: Lumen\'s gate before every tool call (any tool) and every model call, the path quoted', hooks['lumen-gate'].PreToolUse[0].matcher === '*' && hooks['lumen-gate'].PreToolUse[0].hooks[0].command === "'/h/lumen gate.sh'" && hooks['lumen-gate'].PreInvocation[0].command === "'/h/lumen gate.sh'", JSON.stringify(hooks));
+  // Windows: agy runs `cmd /c <command>` through an argv that escapes quotes as \", so the command must hold none (live test failure).
+  check('antigravity hooks.json (Windows): the command has no quote characters, with or without a space in the path', !/"/.test(winHooks['lumen-gate'].PreToolUse[0].hooks[0].command) && winHooks['lumen-gate'].PreToolUse[0].hooks[0].command === 'C:\\Users\\a b\\lumen-gate.cmd' && ag.hooksFor('"C:\\x\\g.cmd"', 'win32')['lumen-gate'].PreInvocation[0].command === 'C:\\x\\g.cmd', JSON.stringify(winHooks));
+  if (process.platform === 'win32') {
+    // Prove it: run the generated command the way agy does (cmd /c with the argument escaped by the platform's argv rules), from a
+    // folder whose name has a space, once as written and once through the short path run() hands to hooksFor.
+    const { spawnSync } = require('child_process');
+    const spaced = path.join(tmp, 'gate dir');
+    fs.mkdirSync(spaced, { recursive: true });
+    const gateFile = path.join(spaced, 'lumen-gate.cmd');
+    fs.writeFileSync(gateFile, '@echo off\r\nmore >nul\r\necho {"decision":"allow"}\r\n');
+    const viaCmd = (command) => spawnSync('cmd', ['/c', command], { input: '{}', encoding: 'utf8', windowsHide: true });
+    const plain = viaCmd(ag.hooksFor(gateFile, 'win32')['lumen-gate'].PreToolUse[0].hooks[0].command);
+    const short = ag.shortPath(gateFile);
+    const viaShort = viaCmd(ag.hooksFor(short, 'win32')['lumen-gate'].PreToolUse[0].hooks[0].command);
+    const oldWay = viaCmd(`"${gateFile}"`);
+    check('antigravity hooks.json (Windows): the generated command really runs under cmd /c, spaces in the path or not', plain.status === 0 && /"allow"/.test(plain.stdout) && viaShort.status === 0 && /"allow"/.test(viaShort.stdout), plain.stderr + viaShort.stderr);
+    check('antigravity hooks.json (Windows): the old quoted form is what failed', oldWay.status !== 0 && /not recognized/.test(oldWay.stderr), oldWay.stderr + oldWay.stdout);
+    check('antigravity shortPath: a path without a space is untouched; a spaced one comes back without one when the volume has short names, else unchanged', ag.shortPath('C:\\a\\b.cmd') === 'C:\\a\\b.cmd' && (!/\s/.test(short) || short === gateFile) && fs.existsSync(short) && ag.shortPath('/a b/c', 'linux') === '/a b/c', short);
+  }
   check('antigravity install: the official command per OS, as an argv with no user input', ag.installCommand('linux') === 'curl -fsSL https://antigravity.google/cli/install.sh | bash' && ag.installCommand('darwin') === ag.installCommand('linux') && ag.installCommand('win32') === 'irm https://antigravity.google/cli/install.ps1 | iex' && ag.installArgv('win32').file === 'powershell.exe' && ag.installArgv('linux').args[1] === ag.installCommand('linux'), '');
   const realModels = 'gemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.1-pro-low\tGemini 3.1 Pro (Low)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n'; // agy 1.2.14's own output
   check('antigravity models: agy 1.2.14\'s real listing parses to slugs and display names', ag.parseModels(realModels).join() === 'gemini-3.8-flash-high,gemini-3.1-pro-low,claude-sonnet-4-6,gpt-oss-120b-medium' && ag.modelNames(realModels)['claude-sonnet-4-6'] === 'Claude Sonnet 4.6 (Thinking)', JSON.stringify(ag.modelNames(realModels)));
@@ -93,9 +113,18 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
     req.end(JSON.stringify(body));
   });
   const hook = (run, name, args = { CommandLine: 'rm -rf x' }) => post(run.hookUrl, name === null ? { conversationId: 'c' } : { toolCall: { name, args }, stepIdx: 1 }).then((r) => r.decision || 'none');
-  const run = gate.open('a-1', 'c-1', { agy: true });
+  const agyHome = path.join(tmp, 'chat home');
+  const descr = path.join(agyHome, '.gemini', 'antigravity-cli', 'mcp', 'lumen', 'read_page.json');
+  const run = gate.open('a-1', 'c-1', { agy: true, home: agyHome });
   check('agy gate: a shell, file or browser tool of agy\'s own is denied with a reason', await hook(run, 'run_command') === 'deny' && await hook(run, 'write_to_file') === 'deny' && await hook(run, 'replace_file_content') === 'deny' && await hook(run, 'read_url_content') === 'deny' && (await post(run.hookUrl, { toolCall: { name: 'run_command', args: {} } })).reason.includes('Only Lumen'), '');
-  check('agy gate: Lumen\'s qualified MCP tools and plain reads go through', await hook(run, 'mcp_lumen_click', {}) === 'allow' && await hook(run, 'lumen__read_page', {}) === 'allow' && await hook(run, 'mcp__lumen__ping', {}) === 'allow' && await hook(run, 'list_dir', {}) === 'allow' && await hook(run, 'view_file', {}) === 'allow', '');
+  check('agy gate: Lumen\'s qualified MCP tools and plain reads go through', await hook(run, 'mcp_lumen_click', {}) === 'allow' && await hook(run, 'lumen__read_page', {}) === 'allow' && await hook(run, 'mcp__lumen__ping', {}) === 'allow', '');
+  check('agy gate: view_file/list_dir of Lumen\'s own descriptor folder go through; any other path, a pathless read or other reads are denied', await hook(run, 'view_file', { AbsolutePath: descr }) === 'allow' && await hook(run, 'list_dir', { DirectoryPath: path.dirname(descr) }) === 'allow' && await hook(run, 'view_file', { AbsolutePath: path.join(agyHome, 'lumen-gate.cmd') }) === 'deny' && await hook(run, 'view_file', { AbsolutePath: path.join(path.dirname(descr), '..', '..', 'settings.json') }) === 'deny' && await hook(run, 'view_file', { AbsolutePath: path.join(tmp, 'other chat', '.gemini', 'antigravity-cli', 'mcp', 'lumen', 'x.json') }) === 'deny' && await hook(run, 'view_file', {}) === 'deny' && await hook(run, 'list_dir', {}) === 'deny' && await hook(run, 'grep_search', { SearchPath: descr }) === 'deny' && await hook(run, 'view_file', { AbsolutePath: descr, Other: 1 }) === 'allow', '');
+  // The stream check and the hook share one allowlist (ai/agy-tools.js): what the hook allows the stream check does not stop.
+  const streamOff = (name, args) => ag.offToolOf(name, args, agyHome);
+  check('antigravity watch and hook agree: the descriptor read is allowed by both, any other read or write by neither', streamOff('view_file', { AbsolutePath: descr }) === null && streamOff('view_file', { AbsolutePath: path.join(tmp, 'secret.txt') }) === 'view_file' && streamOff('view_file', undefined) === null /* no path in the stream: the hook decides */ && streamOff('write_to_file', { TargetFile: descr }) === 'write_to_file' && streamOff('run_command', {}) === 'run_command' && streamOff('view_file', { AbsolutePath: descr.replace('read_page', '..\\..\\..\\..\\x') }) === 'view_file', '');
+  for (const [nm, a] of [['view_file', { AbsolutePath: descr }], ['view_file', { AbsolutePath: path.join(tmp, 'x') }], ['list_dir', { DirectoryPath: path.dirname(descr) }], ['write_to_file', { TargetFile: descr }], ['run_command', { CommandLine: 'x' }], ['view_file_outline', { AbsolutePath: descr }]]) {
+    check(`agy allowlist: the hook and the stream check agree on ${nm} ${JSON.stringify(a).slice(0, 40)}`, (await hook(run, nm, a) === 'allow') === (streamOff(nm, a) === null), '');
+  }
   check('agy gate fails closed: agy\'s other tools (generate_image, invoke_subagent, unknown names) are denied', await hook(run, 'generate_image', {}) === 'deny' && await hook(run, 'invoke_subagent', {}) === 'deny' && await hook(run, 'some_new_tool', {}) === 'deny' && await hook(run, '', {}) === 'deny', '');
   check('agy gate fails closed: "lumen" inside another server or tool name, or a tool Lumen lacks, is denied', await hook(run, 'mcp_evil_lumen_click', {}) === 'deny' && await hook(run, 'mcp_notlumen_click', {}) === 'deny' && await hook(run, 'lumen_helper', {}) === 'deny' && await hook(run, 'mcp_lumen_delete_everything', {}) === 'deny' && await hook(run, 'lumenclick', {}) === 'deny', '');
   check('agy gate: the PreInvocation ping marks the run as seen', !gate.armed('a-1') && await hook(run, null) === 'none' && gate.armed('a-1'), '');
@@ -160,6 +189,75 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   check('antigravity run: the run\'s MCP token file is gone afterwards, the gate run closed', !fs.existsSync(path.join(ok.data, 'antigravity-home', '.gemini', 'config', 'mcp_config.json')) && ok.gate.closed.length === 1, '');
   check('antigravity run: the environment is a short list, no API keys of the user\'s shell', !('ANTHROPIC_API_KEY' in sp.opts.env) && sp.opts.env.NO_COLOR === '1', '');
 
+  // [parallel Antigravity chats] a chat's run uses that chat's own home (its token file and conversations), seeded once
+  {
+    const data = fs.mkdtempSync(path.join(tmp, 'ud-chat-'));
+    const mainGemini = path.join(data, 'antigravity-home', '.gemini');
+    fs.mkdirSync(path.join(mainGemini, 'antigravity-cli', 'conversations'), { recursive: true });
+    fs.mkdirSync(path.join(mainGemini, 'antigravity-cli', 'log'), { recursive: true });
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'conversations', 'old-conv.db'), 'old');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'conversations', 'other-conv.db'), 'other');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'installation_id'), 'inst-1');
+    fs.writeFileSync(path.join(mainGemini, 'oauth_creds.json'), 'creds-1');
+    const runIn = async (chatId, sessionId = null) => {
+      const f = fake([init, done('ok')]);
+      const g = { open() { return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 't'.repeat(48), hookUrl: 'http://127.0.0.1:1/hook/x' }; }, close() {} };
+      const engine = new ag.AntigravityEngine({ userData: data, gate: async () => g, spawn: f.spawn, kill: f.kill });
+      engine.bin = process.execPath;
+      const out = await engine.run({ prompt: 'hi', sessionId, systemPrompt: 'S', signal: new AbortController().signal, emit: () => {}, scope: { chatId } });
+      return { out, sp: f.spawns[0] };
+    };
+    const c1 = await runIn('chat1', 'old-conv');
+    const home1 = ag.chatHomeFor(data, 'chat1');
+    const g1 = path.join(home1, '.gemini');
+    check('antigravity chat home: a chat\'s run has HOME in its own folder, with its MCP token file there (not in the main home)', c1.sp.opts.env.HOME === home1 && c1.sp.mcp?.mcpServers?.lumen && !fs.existsSync(path.join(mainGemini, 'config', 'mcp_config.json')) && !fs.existsSync(path.join(g1, 'config', 'mcp_config.json')), JSON.stringify([c1.sp.opts.env.HOME, home1]));
+    check('antigravity chat home: seeded from the main home without logs or other chats\' conversations; the chat\'s saved conversation is migrated; sign-in files shared', fs.readFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'utf8') === 'inst-1' && !fs.existsSync(path.join(g1, 'antigravity-cli', 'log')) && fs.readdirSync(path.join(g1, 'antigravity-cli', 'conversations')).join() === 'old-conv.db' && fs.readFileSync(path.join(g1, 'oauth_creds.json'), 'utf8') === 'creds-1', JSON.stringify(fs.readdirSync(path.join(g1, 'antigravity-cli'))));
+    fs.writeFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'chat-own');
+    fs.writeFileSync(path.join(mainGemini, 'antigravity-cli', 'installation_id'), 'inst-2');
+    const later = Date.now() / 1000 + 5;
+    fs.writeFileSync(path.join(mainGemini, 'oauth_creds.json'), 'creds-2');
+    fs.utimesSync(path.join(mainGemini, 'oauth_creds.json'), later, later);
+    await runIn('chat1', 'old-conv');
+    check('antigravity chat home: seeded once (later runs keep the chat\'s own state), but a newer sign-in in the main home is picked up', fs.readFileSync(path.join(g1, 'antigravity-cli', 'installation_id'), 'utf8') === 'chat-own' && fs.readFileSync(path.join(g1, 'oauth_creds.json'), 'utf8') === 'creds-2');
+    const later2 = Date.now() / 1000 + 20;
+    fs.writeFileSync(path.join(g1, 'oauth_creds.json'), 'creds-refreshed');
+    fs.utimesSync(path.join(g1, 'oauth_creds.json'), later2, later2);
+    await runIn('chat1', 'old-conv'); // (agy refreshed its sign-in during this run)
+    const c2 = await runIn('chat2');
+    check('antigravity chat home: another chat gets another home; a sign-in a chat\'s agy refreshed goes back to the main home and on to new chats', c2.sp.opts.env.HOME === ag.chatHomeFor(data, 'chat2') && c2.sp.opts.env.HOME !== home1 && fs.readFileSync(path.join(mainGemini, 'oauth_creds.json'), 'utf8') === 'creds-refreshed' && fs.readFileSync(path.join(ag.chatHomeFor(data, 'chat2'), '.gemini', 'oauth_creds.json'), 'utf8') === 'creds-refreshed', fs.readFileSync(path.join(mainGemini, 'oauth_creds.json'), 'utf8'));
+    check('antigravity chat home: an odd chat id never escapes the chats folder', path.dirname(ag.chatHomeFor(data, '../../etc')) === ag.chatsDirFor(data) && ag.chatHomeFor(data, null) === null);
+  }
+
+  // [prepare] The message's setup that needs no message (the chat's home and its settings, gate script and hooks) is done by
+  // prepare() while the page is read; run() takes the same work over instead of repeating it, and writes only the token file.
+  {
+    const data = fs.mkdtempSync(path.join(tmp, 'ud-prep-'));
+    const f = fake([init, done('ok')]);
+    let gates = 0;
+    const g = { open() { return { mcpUrl: 'http://127.0.0.1:1/mcp', mcpToken: 'p'.repeat(48), hookUrl: 'http://127.0.0.1:1/hook/x' }; }, close() {} };
+    const engine = new ag.AntigravityEngine({ userData: data, gate: async () => { gates++; return g; }, spawn: f.spawn, kill: f.kill });
+    engine.bin = process.execPath;
+    const scope = { chatId: 'prep-chat' };
+    const home = ag.chatHomeFor(data, 'prep-chat');
+    const early = engine.prepare({ scope, sessionId: null, fullAccess: false });
+    const prepared = await early;
+    const hooksFile = path.join(home, '.gemini', 'config', 'hooks.json');
+    const settingsFile = path.join(home, '.gemini', 'antigravity-cli', 'settings.json');
+    check('antigravity prepare: the chat\'s settings, gate script and hooks are in place before any message, the token file is not', prepared.bin === process.execPath && prepared.home === home && fs.existsSync(hooksFile) && fs.existsSync(settingsFile) && fs.existsSync(path.join(home, process.platform === 'win32' ? 'lumen-gate.cmd' : 'lumen-gate.sh')) && !fs.existsSync(path.join(home, '.gemini', 'config', 'mcp_config.json')), JSON.stringify(Object.keys(prepared)));
+    check('antigravity prepare: the same message asks again and gets the same work (one gate lookup)', engine.prepare({ scope, sessionId: null, fullAccess: false }) === early && gates === 1, String(gates));
+    const m0 = fs.statSync(settingsFile).mtimeMs;
+    const out = await engine.run({ prompt: 'hi', sessionId: null, systemPrompt: 'S', signal: new AbortController().signal, emit: () => {}, scope });
+    check('antigravity prepare: run() uses it (no second gate lookup, settings not rewritten) and the spawn sees all four files', out.sessionId === 'conv-1' && gates === 1 && fs.statSync(settingsFile).mtimeMs === m0 && f.spawns[0].mcp && f.spawns[0].settings && f.spawns[0].hooks, String(gates));
+    const again = engine.prepare({ scope, sessionId: 'conv-1', fullAccess: false });
+    check('antigravity prepare: used up by that run: the next message looks again (and another conversation or access is another key)', again !== early && engine.prepare({ scope, sessionId: 'conv-1', fullAccess: true }) !== again, '');
+    await again;
+    const none = new ag.AntigravityEngine({ userData: data, gate: async () => g, spawn: f.spawn, kill: f.kill });
+    none.bin = null;
+    process.env.LUMEN_AGY_BIN = path.join(tmp, 'no-such-agy');
+    check('antigravity prepare: no agy installed resolves { bin: null } and writes nothing', (await none.prepare({ scope: { chatId: 'nobin' } })).bin === null && !fs.existsSync(ag.chatHomeFor(data, 'nobin')), '');
+    delete process.env.LUMEN_AGY_BIN;
+  }
+
   const resumed = await runAgy([init, say(1, 'ok'), done('ok')], { run: { sessionId: 'conv-1', model: 'gemini-3.1-pro-high' } });
   const rp = resumed.f.spawns[0];
   check('antigravity run: a later message continues the conversation with --conversation and the model, with a reminder, not the whole system text; the gate run carries the conversation id', flag(rp.argv, '--conversation') === 'conv-1' && flag(rp.argv, '--model') === 'gemini-3.1-pro-high' && !flag(rp.argv, '-p').includes('SYS') && /lumen_reminder/.test(flag(rp.argv, '-p')) && resumed.gate.opened[0].session === 'conv-1', rp.argv.join(' ').slice(0, 300));
@@ -197,7 +295,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   const eng = new ag.AntigravityEngine({ userData: tmp, gate: async () => ({}), exec: (file, args, o, cb) => { calls.push({ file, args }); cb(null, 'installed\n', ''); } });
   check('antigravity install(): nothing runs until it is called; then exactly the official command, no shell string from input', calls.length === 0 && (await eng.install()).ok === true && calls.length === 1 && calls[0].args.includes(ag.installCommand()), JSON.stringify(calls));
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* Windows may still hold the folder for a moment; the OS temp cleanup takes it */ }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

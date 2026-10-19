@@ -2,6 +2,7 @@
 // (features/chat-usage.js), with a fake Claude client: no network, no key needed.
 // Covers: moving the old single chat.json into the list, New chat keeping the old chat, reopening
 // one, rename, export, delete, token/cost totals, and approved sites staying with their chat.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -12,10 +13,15 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
 
 // A fake Claude key keeps the picker, and so the agent, on the Claude API even when this machine
 // has Claude Code installed; the client itself is swapped for a fake below.
-const launch = (profile) => electron.launch({
-  args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
-});
+// (These checks are about a chat the sidebar reopens on: the "Sidebar button starts a new chat" default is covered by test/sidebar-newchat.js.)
+const launch = async (profile) => {
+  const app = await electron.launch({
+    args: [path.join(__dirname, '..')],
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
+  });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  return app;
+};
 
 // Every reply is "Reply N." and reports 1000 input + 200 output tokens (claude-opus-5: $0.01).
 const fakeClient = (app) => app.evaluate(() => {
@@ -75,16 +81,19 @@ const fakeClient = (app) => app.evaluate(() => {
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => /Reply 1\./.test(document.getElementById('messages').textContent)));
   let usage = await waitFor(() => ui.evaluate(() => { const el = document.getElementById('chat-usage'); return !el.hidden && el.textContent; }));
-  check('usage line shows tokens and cost after a reply', usage === '1.2k tokens · ~$0.01', usage);
+  check('usage line shows tokens and cost after a reply', usage === 'This chat: 1.2k tokens · ~$0.01', usage);
   await ui.fill('#prompt', 'second follow-up');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => /Reply 2\./.test(document.getElementById('messages').textContent)));
   usage = await waitFor(() => ui.evaluate(() => { const t = document.getElementById('chat-usage').textContent; return /2\.4k/.test(t) && t; }));
-  check('usage adds up across replies', usage === '2.4k tokens · ~$0.02', usage);
+  check('usage adds up across replies', usage === 'This chat: 2.4k tokens · ~$0.02', usage);
   // [context] The ring left of Send: the last request's input against the model's window.
   const ring = () => ui.evaluate(() => { const el = document.getElementById('context-meter'); return el ? { hidden: el.hidden, label: el.getAttribute('aria-label'), title: el.title } : null; });
   const ringShown = await waitFor(async () => { const r = await ring(); return r && !r.hidden && r; });
-  check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 200\.0k tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
+  check('context ring shows after a reply, with its numbers', ringShown && /^Context \d+% used$/.test(ringShown.label) && /\(1\.0k of 1.0M tokens\)/.test(ringShown.title), JSON.stringify(ringShown));
+  check('context strip: above the textbox, reads "Context 1k / 1M" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 1M' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer') && Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
+  // [usage bars] A chat on a Claude API key has the context ring and the tokens line but no plan bar: there are no plan numbers to show. (The meter may show today's tokens and cost, which arrive a moment after the reply: only a plan percentage is wrong.)
+  check('usage bars: an API-key chat shows its context ring and tokens, and no made-up plan bar', await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return (!m || m.hidden || !/plan|d+%/i.test(m.textContent)) && [...document.querySelectorAll('.model-picker .ubar, #composer .ubar')].filter((b) => !b.closest('.picker-group')).length === 0; }), 'a plan bar is showing'); // (a provider's heading in the model list carries its own plan bar: on a machine with Claude Code or Codex signed in, those headings have one)
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
   check('usage is saved with the chat', saved?.input === 2000 && saved?.output === 400 && saved?.turns === 2, JSON.stringify(saved));
 
@@ -126,8 +135,8 @@ const fakeClient = (app) => app.evaluate(() => {
   await rowAction(legacyId, '.chat-open');
   const reopened = await waitFor(() => ui.evaluate(() => document.getElementById('chat-list').hidden && document.getElementById('messages').textContent));
   check('opening a chat shows its messages', /legacy question about tides/.test(reopened || '') && /Reply 2\./.test(reopened || '') && !/brand new topic/.test(reopened || ''), (reopened || '').slice(0, 200));
-  check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === '2.4k tokens · ~$0.02', 'usage line');
-  check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 200\.0k/.test(r.title); }), JSON.stringify(await ring()));
+  check('opening a chat shows its usage', await ui.evaluate(() => document.getElementById('chat-usage').textContent) === 'This chat: 2.4k tokens · ~$0.02', 'usage line');
+  check('opening a chat shows its context ring', await waitFor(async () => { const r = await ring(); return r && !r.hidden && /1\.0k of 1.0M/.test(r.title); }), JSON.stringify(await ring()));
   const hostsBack = await app.evaluate(() => [...global.__agent.approvedHosts]);
   check('approved sites come back with their chat', hostsBack.includes('approved-in-legacy.test') && !hostsBack.includes('approved-in-new.test'), JSON.stringify(hostsBack));
   check('a reopened chat counts as having read content', await app.evaluate(() => global.__agent.messages.tainted === true), 'not tainted');
@@ -161,17 +170,24 @@ const fakeClient = (app) => app.evaluate(() => {
   const cancelled = await ui.evaluate((id) => window.assistant.chats.exportChat(id), newId);
   check('a cancelled export writes nothing', cancelled && cancelled.ok === false && cancelled.reason === 'canceled', JSON.stringify(cancelled));
 
-  // ---- 7. Delete: two clicks; deleting another chat leaves the open one alone.
+  // ---- 6b. Library: search over message text, pin and archive (through the same IPC the list uses).
+  const hits = await ui.evaluate(() => window.assistant.chats.search('Reply'));
+  check('search finds a chat by a word in its messages', Array.isArray(hits) && hits.length >= 1 && hits.every((h) => typeof h.id === 'string'), JSON.stringify(hits));
+  check('search for a word nobody wrote finds nothing', (await ui.evaluate(() => window.assistant.chats.search('zzzqqq'))).length === 0);
+  check('pin and archive are kept in the list', await ui.evaluate(async (id) => { const c = window.assistant.chats; const a = await c.pin(id, true); const b = await c.archive(id, true); const row = (await c.list()).chats.find((x) => x.id === id); const ok = a && b && row.pinned && row.archived; await c.archive(id, false); await c.pin(id, false); return ok; }, newId), 'flags');
+  check('the list has a search box as soon as there are chats', await waitFor(() => ui.evaluate(() => Boolean(document.querySelector('#chat-list .chat-search')))), 'no box');
+  // ---- 7. Delete: one click hides the chat with an Undo bar; Undo brings it back; after the time it is erased. Deleting another chat leaves the open one alone.
   const del = `.chat-item[data-id="${newId}"] .chat-delete`;
   await rowAction(newId, '.chat-delete');
-  check('the first delete click only asks', (await app.evaluate(() => global.__chats.store().list().length)) === 2, 'deleted on first click');
+  check('delete hides the chat at once but keeps its file for the undo time', (await app.evaluate(() => global.__chats.store().list().length)) === 1 && fs.existsSync(path.join(chatsDir, `${newId}.json`)) && await ui.evaluate(() => /Chat deleted/.test(document.querySelector('.chat-undo-toast')?.textContent || '')), 'no undo bar');
+  await ui.click('.chat-undo-toast button');
+  check('Undo brings the chat back', await waitFor(async () => (await app.evaluate(() => global.__chats.store().list().length)) === 2), 'not restored');
   await rowAction(newId, '.chat-delete');
-  list = await waitFor(async () => { const l = await app.evaluate(() => global.__chats.store().list()); return l.length === 1 && l; });
-  check('the second click deletes the chat and its file', list && list[0].id === legacyId && !fs.existsSync(path.join(chatsDir, `${newId}.json`)), JSON.stringify(list));
+  list = await waitFor(async () => { const l = await app.evaluate(() => global.__chats.store().list()); return l.length === 1 && !fs.existsSync(path.join(chatsDir, `${newId}.json`)) && l; }, 15000);
+  check('after the undo time the chat and its file are gone', list && list[0].id === legacyId && !fs.existsSync(path.join(chatsDir, `${newId}.json`)), JSON.stringify(list));
   check('deleting another chat keeps the open one on screen', /back again/.test(await ui.evaluate(() => document.getElementById('messages').textContent)), 'view cleared');
   // Deleting the open chat empties the sidebar.
   const delOpen = `.chat-item[data-id="${legacyId}"] .chat-delete`;
-  await rowAction(legacyId, '.chat-delete');
   await rowAction(legacyId, '.chat-delete');
   const cleared = await waitFor(() => ui.evaluate(() => !document.querySelector('.msg') && document.getElementById('chat-usage').hidden));
   check('deleting the open chat empties the sidebar', cleared, 'still shows messages');
@@ -197,7 +213,7 @@ const fakeClient = (app) => app.evaluate(() => {
   await ui.fill('#prompt', '/context');
   await ui.press('#prompt', 'Enter');
   const report = await waitFor(() => ui.evaluate(() => [...document.querySelectorAll('.msg.assistant')].map((e) => e.textContent).find((t) => /Tokens:/.test(t))));
-  check('/context answers in the chat with the figure', report && /Tokens: 1\.0k \/ 200\.0k/.test(report), report);
+  check('/context answers in the chat with the figure', report && /Tokens: 1\.0k \/ 1.0M/.test(report), report);
   await waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active')));
   await ui.fill('#prompt', '/compact');
   await ui.press('#prompt', 'Enter');

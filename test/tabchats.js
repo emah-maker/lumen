@@ -4,6 +4,7 @@
 // the cap makes the next chat wait, a tab closed under a working chat does not stop it, the chat list shows
 // where each chat lives (open it in its tab, move it here), and tab-chat bindings come back after a restart and
 // follow a tab into another window.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -13,24 +14,39 @@ const http = require('http');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await Promise.resolve(fn()).catch(() => null); if (v) return v; await sleep(100); } return v; };
 
-const launch = (profile) => electron.launch({
-  args: [path.join(__dirname, '..')],
-  env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
-});
+// (These checks are about a chat the sidebar reopens on: the "Sidebar button starts a new chat" default is covered by test/sidebar-newchat.js.)
+const launch = async (profile) => {
+  const app = await electron.launch({
+    args: [path.join(__dirname, '..')],
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
+  });
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  return app;
+};
 
 // The model: a message that names "chat-X" is chat X. Its first turn streams a line, then waits until the test lets
 // it go (so several chats are in flight together), then reads the page; the second turn answers "X finished" and
 // records what its read_page tool saw.
 const fakeModel = (app) => app.evaluate(() => {
   global.__seen = {};
+  global.__switchTarget = {};
+  global.__models = {};
   global.__inflight = new Set();
   const holds = {};
   const hold = (who) => (holds[who] ||= (() => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; })());
   global.__release = (who) => hold(who).resolve();
   global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
     const who = /chat-(\w+)/.exec(JSON.stringify(params.messages[0]))?.[1] || '?';
+    global.__models[who] = params.model;
     const results = params.messages.filter((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result'));
     const usage = { input_tokens: 100, output_tokens: 20 };
+    if (!results.length && /^SW\d$/.test(who)) { // a chat whose own tool call switches tabs (no hold): global.__switchTarget[who]
+      const text = `${who} switching`;
+      return {
+        async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }; },
+        finalMessage: async () => ({ role: 'assistant', model: 'claude-opus-5', stop_reason: 'tool_use', content: [{ type: 'text', text }, { type: 'tool_use', id: `tu-${who}`, name: 'switch_tab', input: { tab_id: global.__switchTarget[who], show: true } }], usage }),
+      };
+    }
     if (!results.length) {
       const text = `${who} is working`;
       return {
@@ -64,6 +80,8 @@ const fakeModel = (app) => app.evaluate(() => {
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabchats-'));
   let app = await launch(profile);
+  const oneChatPerTab = () => app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true)); // these checks are about tabs with a chat each (the old behaviour)
+  await oneChatPerTab();
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const errors = [];
@@ -134,7 +152,84 @@ const fakeModel = (app) => app.evaluate(() => {
   check('chat A\'s reply is in tab A', /A finished/.test(await messagesText()) && !/B finished/.test(await messagesText()), await messagesText());
   check('viewing the chat clears the done dot', await waitFor(async () => (await mark(tabA)) === null), await mark(tabA));
 
+  // ---- 3b. Only a run's own switch_tab / open_tab is "the AI's switch". A switch through the main-process API while a reply runs is the
+  // user's: the tab keeps its own chat and the sidebar shows it. And a run's switch never takes a tab that shows another chat.
+  const tabP = await openTab(`${base}/p`); await waitFor(async () => (await active()) === tabP);
+  await send('chat-P: go'); await inflight('P');
+  const tabQ = await openTab(`${base}/q`); await waitFor(async () => (await active()) === tabQ);
+  await waitFor(() => tc(() => global.__tabChats.shown() === global.__tabChats.chatId()));
+  const chatOfTab = (id) => tc((_e, i) => global.__tabChats.bindings.chatOf(i), id);
+  const chatP = await chatOfTab(tabP);
+  const chatQ0 = await chatOfTab(tabQ);
+  await showTab(tabP); await waitFor(async () => /chat-P/.test(await messagesText()));
+  await showTab(tabQ); // while P's reply is running, through the main-process API
+  await waitFor(async () => (await active()) === tabQ);
+  await sleep(500);
+  const afterSwitch = await tc(() => ({ shown: global.__tabChats.shown(), open: global.__tabChats.chatId() }));
+  const [pNow, qNow] = [await chatOfTab(tabP), await chatOfTab(tabQ)];
+  check('a main-process tab switch mid-run keeps each tab on its own chat', pNow === chatP && qNow === chatQ0 && chatP !== chatQ0, JSON.stringify({ pNow, qNow, chatP, chatQ0 }));
+  check('... and the sidebar shows the chat of tab Q, not the running chat P', afterSwitch.shown === chatQ0 && afterSwitch.open === chatQ0 && !/chat-P/.test(await messagesText()), `${JSON.stringify(afterSwitch)} ${await messagesText()}`);
+  // The same switch made from inside some task's async scope (code that is not a switch_tab / open_tool call, e.g. a hook a run's
+  // tool triggers) is still not "the AI's switch": the sidebar follows the tab.
+  await showTab(tabP); await waitFor(async () => /chat-P/.test(await messagesText()));
+  await app.evaluate((_e, [p, q]) => global.__agent.inTask(p, null, async () => { global.__agent.browser.switchTab(q); }, null), [tabP, tabQ]);
+  await waitFor(async () => (await active()) === tabQ);
+  await waitFor(async () => !/chat-P/.test(await messagesText()));
+  await sleep(300);
+  const inScope = await tc(() => ({ shown: global.__tabChats.shown(), open: global.__tabChats.chatId() }));
+  check('a switch inside a task scope that is not a tab tool still shows the tab chat', inScope.shown === chatQ0 && (await chatOfTab(tabQ)) === chatQ0 && (await chatOfTab(tabP)) === chatP && !/chat-P/.test(await messagesText()), `${JSON.stringify(inScope)} ${await messagesText()}`);
+  await send('chat-Q: go'); await inflight('Q');
+  await tc(() => { global.__release('P'); global.__release('Q'); });
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  // A run's own switch_tab to a tab that shows another chat (with history) leaves that tab alone...
+  const tabS1 = await openTab(`${base}/sw1`); await waitFor(async () => (await active()) === tabS1);
+  const chatQ = await chatOfTab(tabQ);
+  await tc((_e, q) => { global.__switchTarget.SW1 = q; }, tabQ);
+  await send('chat-SW1: go');
+  await waitFor(() => tc(() => global.__seen.SW1 !== undefined));
+  const chatS1 = await chatOfTab(tabS1);
+  await sleep(300);
+  const bound1 = await chatOfTab(tabQ);
+  check('a run switch_tab to a tab showing another chat does not rebind it', bound1 === chatQ && chatQ !== chatS1 && Boolean(chatS1), JSON.stringify({ bound1, chatQ, chatS1 }));
+  // ...while a switch to a tab with no chat of its own yet still binds it to the run's chat, as designed.
+  const tabR = await tc(() => global.__agent.browser.openTab('about:blank', { background: true }).id);
+  await tc((_e, r) => { global.__switchTarget.SW2 = r; }, tabR);
+  const tabS2 = await openTab(`${base}/sw2`); await waitFor(async () => (await active()) === tabS2);
+  await send('chat-SW2: go');
+  await waitFor(() => tc(() => global.__seen.SW2 !== undefined));
+  await sleep(300);
+  const chatS2 = await chatOfTab(tabS2);
+  const boundR = await chatOfTab(tabR);
+  check('a run own switch_tab to a fresh tab still binds that tab to the run chat', Boolean(chatS2) && boundR === chatS2, JSON.stringify({ boundR, chatS2, seen: await tc(() => global.__seen) }));
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  // ---- 3c. The sidebar's running state belongs to the chat it shows. A chat QA is working; the user goes to tab Y (its own idle chat).
+  const tX = await openTab(`${base}/s`); await waitFor(async () => (await active()) === tX);
+  await send('chat-QA: go'); await inflight('QA');
+  const tY = await openTab(`${base}/u`); await waitFor(async () => (await active()) === tY);
+  await waitFor(() => tc(() => global.__tabChats.shown() === global.__tabChats.chatId()));
+  await waitFor(emptyNow, 4000);
+  const idX = await tc((_e, t) => global.__tabChats.bindings.chatOf(t), tX);
+  const busy = () => ui.evaluate(() => document.body.classList.contains('agent-active'));
+  // (a) A late run start of chat X reaches the sidebar that now shows Y: it must not turn Y's sidebar into a running one.
+  await app.evaluate(({ webContents }, chat) => { const w = webContents.getAllWebContents().find((c) => /index\.html/.test(c.getURL())); w.send('chat:run-start', { text: 'chat-QA: late', runId: 1, chatId: chat, images: [] }); }, idX);
+  await sleep(400);
+  check('a late run start of another chat does not make the shown chat look running', !(await busy()) && (await bubbles()).length === 0, `${await busy()} ${await bubbles()}`);
+  // (b) A tab switch that reaches the sidebar late or not at all (a tool of X was acting when it happened) leaves the sidebar on S's
+  // running state; the first message typed in Y must still be sent at once, not queued until X ends.
+  await showTab(tX); await waitFor(async () => /QA is working/.test(await messagesText()));
+  await app.evaluate((_e, id) => { const a = global.__agent; const orig = a.currentScope; a.currentScope = () => ({}); try { a.browser.switchTab(id); } finally { a.currentScope = orig; } }, tY);
+  await waitFor(async () => (await active()) === tY);
+  await sleep(300);
+  await send('chat-QB: go');
+  check('the first message in a new tab is sent at once while another chat runs (not queued behind it)', Boolean(await waitFor(() => tc(() => global.__inflight.has('QB')), 4000)), `${await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)} queued`);
+  check('... and shows no queued notice', (await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)) === 0, '');
+  await tc(() => { global.__release('QA'); global.__release('QB'); });
+  await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
+  check('X ending does not leave Y stuck running', await waitFor(async () => !(await busy()), 6000), 'still busy');
+
   // ---- 4. The cap: three chats work, the fourth waits its turn (and says so), then runs.
+  check('a new profile has no limit on chats working at once', (await tc(() => global.__tabChats.slots.limit)) === Infinity, await tc(() => global.__tabChats.slots.limit));
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 })); // (the default is no limit)
   const extra = [];
   for (const [i, who] of ['C', 'D', 'E'].entries()) { extra.push(await openTab(`${base}/${who.toLowerCase()}`)); await waitFor(async () => (await active()) === extra[i]); }
   await showTab(extra[0]); await waitFor(async () => (await active()) === extra[0]); await send('chat-C: go'); await inflight('C');
@@ -192,7 +287,8 @@ const fakeModel = (app) => app.evaluate(() => {
   await ui.evaluate(() => document.getElementById('chat-history').click());
   await tc(() => global.__release('I'));
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
-  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 3 }));
+  await app.evaluate(() => global.__patchSettings({ maxChatRuns: 0 }));
+  check('"No limit" in Settings lifts the cap', (await tc(() => global.__tabChats.slots.limit)) === Infinity, await tc(() => global.__tabChats.slots.limit));
 
   // ---- 5. The chat list knows where each chat lives.
   await showTab(tabA);
@@ -360,6 +456,45 @@ const fakeModel = (app) => app.evaluate(() => {
   const savedX = await tc(() => global.__chats.store().list().some((c) => c.title.includes('chat-X')));
   check('it finished and is in the chat list', savedX, 'not saved');
 
+  // ---- 6b. A model picked in an empty chat stays with that chat: two empty tab chats, two picks.
+  {
+    await tc(() => { for (const t of global.__windows.list()[0].tabs) void t; }); // (settle)
+    const pickerValue = () => ui.evaluate(() => document.getElementById('model')?.value);
+    const pick = (id) => ui.evaluate((m) => window.assistant.setModel(m), id);
+    const synced = (tab) => waitFor(() => tc((_e, t) => global.__tabChats.shown() === global.__tabChats.chatId() && global.__tabChats.chatId() === global.__tabChats.bindings.chatOf(t), tab));
+    const tabE = await openTab(`${base}/e`);
+    await waitFor(async () => (await active()) === tabE);
+    await synced(tabE);
+    await pick('claude-sonnet-5-5');
+    const tabF = await openTab(`${base}/f`);
+    await waitFor(async () => (await active()) === tabF);
+    await synced(tabF);
+    check('a second empty chat starts on the saved default (the last pick), not the first chat pick', await waitFor(async () => (await pickerValue()) === 'claude-sonnet-5-5'), await pickerValue());
+    await pick('claude-haiku-5-5');
+    check('picking in the second empty chat shows that pick', await waitFor(async () => (await pickerValue()) === 'claude-haiku-5-5'), await pickerValue());
+    await showTab(tabE);
+    await synced(tabE);
+    check('back on the first empty chat the picker shows its own pick', await waitFor(async () => (await pickerValue()) === 'claude-sonnet-5-5'), await pickerValue());
+    const listed = await tc(() => global.__chats.store().list().length);
+    await send('chat-PICKONE: hello');
+    await inflight('PICKONE');
+    check('the first empty chat runs on its own pick, not the last one', await waitFor(() => tc(() => global.__models.PICKONE === 'claude-sonnet-5-5')), await tc(() => global.__models.PICKONE));
+    await showTab(tabF);
+    await synced(tabF);
+    check('the second empty chat still shows its own pick', await waitFor(async () => (await pickerValue()) === 'claude-haiku-5-5'), await pickerValue());
+    check('... and no chat was saved for the pick alone', (await tc(() => global.__chats.store().list().length)) <= listed + 1, await tc(() => global.__chats.store().list().length));
+    await send('chat-PICKTWO: hello');
+    await inflight('PICKTWO');
+    check('the second empty chat runs on its own pick', await waitFor(() => tc(() => global.__models.PICKTWO === 'claude-haiku-5-5')), await tc(() => global.__models.PICKTWO));
+    await tc(() => { global.__release('PICKONE'); global.__release('PICKTWO'); });
+    await waitFor(() => tc(() => global.__seen.PICKONE && global.__seen.PICKTWO));
+    await waitFor(async () => /PICKTWO finished/.test(await messagesText()));
+    await showTab(tabE);
+    await synced(tabE);
+    await waitFor(async () => /PICKONE finished/.test(await messagesText()));
+    await sleep(500); // (both chats saved)
+  }
+
   // ---- 7. A tab moves to another window and takes its chat, and a task working in it, along.
   const mover = await openTab(`${base}/moveme`);
   await waitFor(async () => (await active()) === mover);
@@ -368,8 +503,8 @@ const fakeModel = (app) => app.evaluate(() => {
   const win1 = await tc(() => global.__windows.list()[0].windowId);
   await app.evaluate((_e, [w, id]) => global.__windows.tearOff(w, id, { x: 200, y: 200 }), [win1, mover]);
   await waitFor(() => tc(() => global.__windows.list().length === 2));
-  const ui2 = await waitFor(() => app.windows().find((p) => p !== ui && p.url().includes('index.html')));
-  await ui2.waitForSelector('.tab');
+  // (Not just any other index.html page: a spare window prepared for the next drag looks the same, and has no tabs; and no waitForSelector on it: a window that is never shown in background mode does not paint, so Playwright's visibility wait hangs.)
+  const ui2 = await waitFor(async () => { for (const p of app.windows()) { if (p !== ui && !p.isClosed() && p.url().includes('index.html') && await p.evaluate(() => document.querySelectorAll('.tab').length).catch(() => 0)) return p; } return null; });
   const text2 = () => ui2.evaluate(() => document.getElementById('messages').textContent);
   await waitFor(async () => /chat-M/.test(await text2()));
   check('the chat follows its tab into the new window and shows there', /chat-M/.test(await text2()), await text2());
@@ -398,6 +533,7 @@ const fakeModel = (app) => app.evaluate(() => {
   await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
   await app.close();
   app = await launch(profile);
+  await oneChatPerTab();
   ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   await fakeModel(app);

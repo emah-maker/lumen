@@ -6,7 +6,9 @@ shot-*.png
 .env
 .env.*
 !.env.example
-.claude/
+.claude/*
+# (the project's Claude Code settings are shared: the docs-check Stop hook, CLAUDE.md "Docs")
+!.claude/settings.json
 out/
 # The GitHub Pages site, built by scripts/build-site.js
 _site/
@@ -20,3 +22,5 @@ userData/
 lumen-profile*/
 # Lumen's built-in Google OAuth client, written by scripts/build.js from LUMEN_GOOGLE_CLIENT_ID / _SECRET
 src/features/google-client.json
+docs/ux-audit/**/*.png
+docs/ux-audit/shots/

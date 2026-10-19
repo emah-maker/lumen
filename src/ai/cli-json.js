@@ -8,7 +8,7 @@
 // GROK_HOME whose config.toml names no MCP servers. Input goes in on stdin or in a file, never on a
 // shell command line, and the answer is checked against the schema's shape before it is used.
 
-const { spawn: nodeSpawn } = require('child_process');
+const { spawn: nodeSpawn } = require('./cli-utils');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -16,9 +16,13 @@ const { killTree, validModel } = require('./cli-utils');
 
 const TIMEOUT_MS = 60000;
 
+// [cc settings] Settings > AI > "Use my Claude Code settings in Lumen chats" (main.js sets this); off by default.
+let userSettingsOn = () => false;
+const configure = (o = {}) => { if (typeof o.userSettings === 'function') userSettingsOn = o.userSettings; };
+
 // ---------- Claude Code ----------
 
-function claudeArgs({ system, schema, model = 'haiku' }) {
+function claudeArgs({ system, schema, model = 'haiku', userSettings = false }) {
   return [
     '-p',
     '--output-format', 'json',
@@ -27,6 +31,7 @@ function claudeArgs({ system, schema, model = 'haiku' }) {
     '--permission-mode', 'dontAsk',
     '--disable-slash-commands',
     '--no-session-persistence',
+    ...(userSettings || userSettingsOn() ? [] : ['--setting-sources', 'project']), // [cc settings] Settings > AI: off, skip the user's CLAUDE.md, rules, memory and hooks
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--system-prompt', system, // replaces Claude Code's own (coding) system prompt
     '--json-schema', JSON.stringify(schema),
@@ -188,7 +193,7 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
     } catch (err) {
       throw err.output !== undefined ? new Error(describeFailure(err.output, err.code).text) : err;
     } finally {
-      fs.rmSync(cwd, { recursive: true, force: true });
+      require('./temp-dirs').removeDirSync(cwd); // (never throws: a busy folder must not replace the answer)
     }
   }
   if (engine === 'grokbuild') {
@@ -198,7 +203,7 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
     fs.mkdirSync(home, { recursive: true, mode: 0o700 });
     fs.mkdirSync(cwd, { recursive: true });
     fs.writeFileSync(path.join(home, 'config.toml'), grokConfig(), { mode: 0o600 });
-    const userHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok');
+    const userHome = gb.userGrokHome();
     let authBefore = null;
     try { authBefore = gb.linkAuth(userHome, home); } catch {} // no login shared: the run reports "not signed in"
     const promptFile = path.join(cwd, `prompt-${process.pid}-${Date.now()}.json`);
@@ -234,4 +239,4 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
   throw new Error(`No one-shot runner for ${engine}.`);
 }
 
-module.exports = { claudeArgs, grokArgs, grokConfig, antigravityArgs, antigravitySettings, runCli, parseResult, checkGroups, completeJSON, whenIdle, TIMEOUT_MS };
+module.exports = { configure, claudeArgs, grokArgs, grokConfig, antigravityArgs, antigravitySettings, runCli, parseResult, checkGroups, completeJSON, whenIdle, TIMEOUT_MS };

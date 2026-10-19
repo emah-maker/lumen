@@ -6,8 +6,8 @@
 .tasks-btn { position: relative; }
 .tasks-btn.active { color: var(--accent); background: var(--accent-soft); }
 .task-badge {
-  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
-  background: var(--accent); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: var(--r-sm);
+  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
 }
 .task-badge.waiting { background: var(--warning); }
 #toggle-sidebar.has-task-attention { position: relative; }
@@ -25,7 +25,7 @@
 .task-row:hover, .task-row:focus-visible { background: var(--hover); outline: none; }
 .task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .task-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-meta { font-size: 11px; color: var(--faint); margin: 0; overflow-wrap: anywhere; }
+.task-meta { font-size: 11px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
 .task-row .task-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-needs { font-size: 11px; font-weight: 600; color: var(--warning); }
 
@@ -67,7 +67,7 @@
 .task-field.stack { flex-direction: column; align-items: stretch; gap: 4px; }
 .task-field input[type="text"], .task-field input[type="number"], .task-field input[type="datetime-local"], .task-field select, .task-field textarea {
   flex: 1; min-width: 0; padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text);
-  background: var(--field); border: 1px solid transparent; border-radius: 6px; outline: none;
+  background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); outline: none;
 }
 .task-field input:focus-visible, .task-field select:focus-visible, .task-field textarea:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .task-field textarea { resize: vertical; min-height: 56px; }
@@ -78,18 +78,18 @@
   background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px); overflow-y: auto;
 }@media (prefers-reduced-transparency: reduce) { .task-create { background: var(--bg); backdrop-filter: none; } }
 .task-create-card {
-  width: 100%; padding: 14px; border-radius: 12px; background: var(--surface-raised);
+  width: 100%; padding: 14px; border-radius: var(--r-xl); background: var(--surface-raised);
   box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 16px 40px -16px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
 }
 .task-create-card h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
-.task-summary { margin: 0 0 10px; font-size: 12.5px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; white-space: pre-line; }
+.task-summary { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--text); overflow-wrap: anywhere; white-space: pre-line; }
 .task-create-card .approval-actions { margin-top: 12px; }
 
 /* The sidebar gives its children a fixed width (styles.css), so the banner names its own. */
 .sidebar > .task-toast { width: calc(var(--sidebar-width) - 25px); }
 .task-toast {
   position: absolute; top: 50px; right: 12px; z-index: var(--z-toast); display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
-  border-radius: 10px; background: var(--surface-raised); font-size: 12px; box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
+  border-radius: var(--r-lg); background: var(--surface-raised); font-size: 12px; box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 10px 28px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k)));
   animation: chat-list-in var(--t-base) var(--ease-out);
 }
 .task-toast > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -107,9 +107,9 @@
 
 /* Progress, "needs you" and results. */
 .tasks-btn.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--bg); }
-.task-live { margin: 0; font-size: 11px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-live { margin: 0; font-size: 11px; color: var(--accent-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
-.task-new { flex: none; align-self: center; padding: 1px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.task-new { flex: none; align-self: center; padding: 1px 6px; border-radius: var(--r-md); font-size: 10px; font-weight: 600; background: var(--accent-soft); color: var(--accent-text); }
 .task-row.unseen .task-title { font-weight: 600; }
 .task-needs-you { margin: 0 12px 8px; padding: 8px 10px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--warning); }
 .task-needs-you h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--warning); }
@@ -118,5 +118,5 @@ p.task-live { white-space: normal; overflow-wrap: anywhere; margin: 2px 0 6px; }
 .task-link:hover, .task-link:focus-visible { text-decoration: underline; outline: none; }
 .task-needs-item .task-approval { margin-top: 4px; }
 .task-pages { margin: 0; padding-left: 18px; font-size: 12px; overflow-wrap: anywhere; }
-.task-pages a { color: var(--accent); text-decoration: none; }
+.task-pages a { color: var(--accent-text); text-decoration: none; }
 .task-pages a:hover, .task-pages a:focus-visible { text-decoration: underline; }

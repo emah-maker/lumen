@@ -89,6 +89,10 @@
   function setBox(card, px) {
     const key = `${px.left},${px.top},${px.width},${px.height}`;
     if (card._pos === key) return;
+    if (!card._pos) { // never placed (a card just added): it appears in its place, it does not slide there from the grid's corner
+      card.classList.add('w-placing');
+      requestAnimationFrame(() => requestAnimationFrame(() => card.classList.remove('w-placing')));
+    }
     card._pos = key;
     card.style.transform = `translate3d(${px.left}px, ${px.top}px, 0)`;
     card.style.width = `${px.width}px`;
@@ -127,11 +131,16 @@
     }
     // In Edit layout the page runs half a window past the lowest card, so a card can be dropped into a row far below the rest.
     const slack = editing ? Math.round(window.innerHeight * 0.5) : 0;
-    boxEl().style.height = list.length ? `${Math.ceil(bottom + 32 + slack)}px` : '';
+    const lowest = bottom + slack;
+    boxEl().style.height = list.length ? `${Math.ceil(lowest + WL.pageRoom(lowest, document.documentElement.clientHeight, 32))}px` : '';
     shiftMain(WL.bannerRows(list, o));
   }
+  // Edit layout frees the page's sections into cards, so the centre column's obstacle shrinks to the header and search
+  // box: the cards are held where they were drawn when it began (WE.holdBase / holdItems), until a change is saved.
+  let editBase = null;
+  const heldItems = () => WE.holdItems(items, editBase);
   function layoutNow() {
-    view = WL.resolve(items, o);
+    view = WL.resolve(heldItems(), o);
     place(view);
     if (firstLayout && items.length) {
       firstLayout = false;
@@ -451,6 +460,7 @@
   function setEditing(on) {
     measure();
     if (on === editing || (on && stacked())) return;
+    editBase = on ? WE.holdBase(view, items, WS.isSystemId) : null;
     if (on) window.newtabSystem?.freeAll(); // every section becomes a card where it stands
     editing = on;
     relayout(); // the page's extra room below the cards comes and goes with Edit layout
@@ -626,7 +636,7 @@
       const now = o;
       ({ m, o } = keep);
       const floor = floorOb === undefined ? null : floorOb;
-      lastBlockers = now.obstacle ? WL.movedBy(items, now, now.obstacle, floor) : [];
+      lastBlockers = now.obstacle ? WL.movedBy(heldItems(), now, now.obstacle, floor) : [];
       return lastBlockers.length === 0;
     },
     // The column at its smallest (newtab-system paints it, then calls this): what "moved" is measured against.

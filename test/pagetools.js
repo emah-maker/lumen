@@ -1,6 +1,7 @@
 // Page tools (features/page-tools.js): Save Page As, View Source, Reader mode and Picture in
 // Picture, against local fixture pages. Also checks that the source and reader pages stay out of
 // the AI's reach and that web pages can't open them.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -163,7 +164,7 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
     const wc = global.__pageTools.tab(i).view.webContents;
     return global.__pageTools.contextMenuItems(wc, { mediaType: 'video', mediaFlags: { canShowPictureInPicture: true }, x: 50, y: 50, srcURL: '', frame: wc.mainFrame }).map((m) => m.label || m.type);
   }, videoTab);
-  check('the video context menu has Picture in Picture', items.includes('Picture in Picture'), items);
+  check('the video context menu has Picture in Picture', items.includes('Picture in picture'), items);
   const pip = await app.evaluate((_e, i) => { const wc = global.__pageTools.tab(i).view.webContents; return global.__pageTools.tools.togglePictureInPicture(wc.mainFrame, 50, 50).catch((e) => `error: ${e.message}`); }, videoTab);
   const inPip = await waitFor(() => inTab(videoTab, "document.pictureInPictureElement?.id === 'v'"));
   check('Picture in Picture opens for the video', pip === 'entered' && inPip === true, `${pip} / ${inPip}`);
@@ -175,7 +176,7 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
   check('no errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  for (const dir of [profile, out]) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of [profile, out]) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

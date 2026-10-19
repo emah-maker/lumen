@@ -4,6 +4,7 @@
 //  2. in Lumen: the sidebar AI gets the tools, every call shows a card with its arguments (even with
 //     auto-allow on), deny blocks, allow runs, "Always allow" is per tool and stops counting once the
 //     chat has read a page, outside MCP agents can't reach them, the settings page never shows secrets.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const http = require('http');
@@ -172,7 +173,7 @@ async function lumenPart() {
         return { async *[Symbol.asyncIterator]() {}, finalMessage: async () => message };
       } } } });
       const events = [];
-      await agent.run('do it', (e) => {
+      await agent.run('do it with this page', (e) => {
         events.push(e);
         if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, answer), 20);
       });

@@ -14,7 +14,7 @@
         <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
       </button>
       <!-- [ai manners] hide / show the tabs the AI opened: shown only while there are some (or while hidden), with their count; the name stays, aria-pressed says the state -->
-      <button class="icon-btn hide-ai-tabs" id="hide-ai-tabs" type="button" title="Hide tabs the AI opened" aria-label="Hide tabs the AI opened" aria-pressed="false" data-i18n-aria-label="sidebar.hideAiTabs" hidden>
+      <button class="icon-btn hide-ai-tabs" id="hide-ai-tabs" type="button" title="Hide tabs the AI opened" aria-label="Hide tabs the AI opened" aria-haspopup="menu" aria-pressed="false" data-i18n-title="sidebar.hideAiTabs" data-i18n-aria-label="sidebar.hideAiTabs" hidden>
         <svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path class="slash" d="M3 14L13 3"/></svg>
         <span class="hide-ai-count" id="hide-ai-tabs-count" aria-hidden="true" hidden></span>
         <span class="hide-ai-label" id="hide-ai-tabs-label" aria-hidden="true" hidden></span>
@@ -31,6 +31,7 @@
       <button class="icon-btn tab-search-btn" id="tab-search" type="button" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs" data-i18n-title="tabSearch.title" data-i18n-aria-label="tabSearch.label" aria-haspopup="dialog" aria-expanded="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>
       </button>
+      <div class="drag-gutter" id="drag-gutter" aria-hidden="true"></div><!-- window-drag area that never shrinks away (styles.css) -->
     </div>
 
     <nav class="toolbar" aria-label="Toolbar" data-i18n-aria-label="toolbar.label">
@@ -49,6 +50,9 @@
                placeholder="Search or enter address" aria-label="Address" data-i18n-placeholder="address.placeholder" data-i18n-aria-label="address.label" />
         <div class="omnibox-end">
           <button class="zoom-pill" id="zoom" type="button" title="Reset zoom (Ctrl+0)" aria-label="Reset zoom" data-i18n-title="toolbar.zoomReset.title" data-i18n-aria-label="toolbar.zoomReset" hidden></button>
+          <button class="omnibox-action ai-off-tab" id="ai-off-tab" type="button" title="Keep the AI from acting on this tab" aria-label="Keep the AI from acting on this tab" aria-pressed="false" data-i18n-title="toolbar.aiOffTab.off" data-i18n-aria-label="toolbar.aiOffTab.off" hidden>
+            <svg viewBox="0 0 16 16"><path class="ai-off-shield" d="M8 1.8 13 3.6v3.9c0 3-2.1 5.2-5 6.7-2.9-1.5-5-3.7-5-6.7V3.6Z"/><path class="ai-off-spark" d="M8 4.9l.7 1.9 1.9.7-1.9.7L8 10.1l-.7-1.9-1.9-.7 1.9-.7Z"/></svg>
+          </button>
           <button class="omnibox-action reader" id="reader" type="button" title="Reader mode" aria-label="Reader mode" aria-pressed="false" data-i18n-title="toolbar.reader.title" data-i18n-aria-label="toolbar.reader" hidden>
             <svg viewBox="0 0 16 16"><path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5Zm11 0H9.25A1.25 1.25 0 0 0 8 4.75v8a1.25 1.25 0 0 1 1.25-1.25h4.25Z"/></svg>
           </button>
@@ -63,11 +67,19 @@
 
       <div class="toolbar-end">
         <div class="agent-window-chip" id="agent-window-chip" role="status" hidden></div>
+        <!-- [agents out of sight] an outside agent in its own window is waiting for an OK: a count only, nothing opens; the click takes you to that window -->
+        <button type="button" class="agents-pending" id="agents-pending" hidden title="An agent in its own window is waiting for your OK" aria-label="An agent is waiting for your OK" data-i18n-title="agentWindow.pending.title" data-i18n-aria-label="agentWindow.pending.title"><span id="agents-pending-count">1</span></button>
         <div class="agent-pill" id="agent-pill" role="status">
           <span class="agent-dot" aria-hidden="true"></span>
           <span id="agent-pill-text">Lumen is using this tab</span>
-          <button type="button" id="agent-stop" data-i18n="agent.stop">Stop</button>
+          <span id="agent-pill-short" class="pill-short" aria-hidden="true" data-i18n="agent.usingShort">Using tab</span>
+          <button type="button" id="agent-stop" title="Stop" data-i18n-title="agent.stop"><svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><rect class="solid" x="4.5" y="4.5" width="7" height="7" rx="1.5"/></svg><span class="btn-label" data-i18n="agent.stop">Stop</span></button>
         </div>
+        <div class="external-pills" id="external-pills" hidden></div><!-- [external apps] "<app> is using Lumen" with Stop and Take over (renderer/app.js) -->
+        <button class="icon-btn focus-btn" id="focus-btn" type="button" title="Focus mode" aria-label="Focus mode" aria-haspopup="menu" data-i18n-title="focus.button" data-i18n-aria-label="focus.button"><!-- [focus] a menu to start focus mode; while it is on, the time left (renderer/focus.js) -->
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle class="dot" cx="8" cy="8" r="1.6"/></svg>
+          <span class="focus-time" id="focus-time" hidden></span>
+        </button>
         <button class="icon-btn download-btn" id="downloads" type="button" aria-label="Downloads" data-i18n-aria-label="toolbar.downloads" hidden>
           <svg viewBox="0 0 24 24" class="download-ring" aria-hidden="true">
             <circle class="ring-track" cx="12" cy="12" r="10"/>
@@ -104,11 +116,22 @@
     </div>
     </div>
     <div class="infobar" id="translate-bar" role="region" aria-label="Translate this page" data-i18n-aria-label="translate.region" hidden></div>
+    <div class="infobar" id="external-bar" role="region" aria-label="An app wants to use Lumen" data-i18n-aria-label="external.region" hidden></div><!-- [external apps] "<app> wants to use Lumen": Allow / Deny -->
     <div class="infobar" id="password-bar" role="region" aria-label="Save password" data-i18n-aria-label="passwords.region" hidden></div><!-- [passwords] renderer/passwords.js -->
     <div class="loadbar" id="loadbar" hidden></div>
   </header>
 
   <main class="body">
+    <!-- [side tabs] Settings → Tabs → Tab layout: Side. The tab list (#tabs) and the new-tab button move in here (renderer/side-tabs.js). -->
+    <aside id="side-tabs" class="side-tabs" aria-label="Tab list" data-i18n-aria-label="tabs.side.label" hidden>
+      <div class="side-head" id="side-head">
+        <button class="icon-btn side-collapse" id="side-collapse" type="button" title="Show icons only" aria-label="Show icons only" aria-pressed="false" data-i18n-title="tabs.side.collapse" data-i18n-aria-label="tabs.side.collapse">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/></svg>
+        </button>
+      </div>
+      <div class="side-list" id="side-tabs-list"></div>
+      <div class="side-resize" id="side-resize" role="separator" aria-orientation="vertical" aria-label="Resize the tab list" data-i18n-aria-label="tabs.side.resize" tabindex="0"></div>
+    </aside>
     <div id="viewport" class="viewport"></div>
 
     <aside id="sidebar" class="sidebar" data-chat-root aria-label="AI assistant" data-i18n-aria-label="toolbar.ai">
@@ -122,11 +145,7 @@
           <button class="icon-btn auto-allow" id="auto-allow" type="button" title="Auto-allow actions: off" aria-label="Auto-allow actions" aria-pressed="false" data-i18n-aria-label="sidebar.autoAllow">
             <svg viewBox="0 0 16 16"><path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/></svg>
           </button>
-          <button class="icon-btn tasks-btn" id="tasks-btn" type="button" title="Background tasks" aria-label="Background tasks" aria-haspopup="dialog" aria-expanded="false" aria-controls="task-panel" data-i18n-title="tasks.button" data-i18n-aria-label="tasks.button">
-            <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
-            <span class="task-badge" id="tasks-badge" aria-hidden="true" hidden></span>
-          </button>
-          <button class="icon-btn" id="chat-history" title="Chats" aria-label="Chats" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
+          <button class="icon-btn" id="chat-history" title="Chat history" aria-label="Chat history" aria-expanded="false" aria-controls="chat-list" data-i18n-title="sidebar.chats" data-i18n-aria-label="sidebar.chats">
             <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/></svg>
           </button>
           <button class="icon-btn" id="new-chat" title="New chat (Ctrl+Shift+K)" aria-keyshortcuts="Control+Shift+K Meta+Shift+K" aria-label="New chat" data-i18n-title="sidebar.newChat.title" data-i18n-aria-label="sidebar.newChat">
@@ -137,6 +156,27 @@
               <svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" class="knob"/><circle cx="8" cy="8" r="1" class="knob"/><circle cx="12.5" cy="8" r="1" class="knob"/></svg>
             </button>
             <div class="more-menu" id="more-menu" role="menu" hidden>
+            <button class="icon-btn menu-item labeled" role="menuitemcheckbox" id="helpers-btn" type="button" title="Helpers: on" aria-checked="true">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="3.5" r="1.6"/><circle cx="3.5" cy="12" r="1.6"/><circle cx="12.5" cy="12" r="1.6"/><path d="M7.2 5 4.3 10.5M8.8 5l2.9 5.5"/></svg>
+            <span class="menu-label" data-i18n="sidebar.helpers">Helpers</span><span class="menu-state" id="helpers-state" data-i18n="sidebar.state.on">On</span>
+          </button>
+            <button class="icon-btn menu-item labeled tasks-btn" role="menuitem" id="tasks-btn" type="button" title="Background tasks" aria-haspopup="dialog" aria-expanded="false" aria-controls="task-panel">
+            <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5.5 6.5h5M5.5 9.5h3"/></svg>
+            <span class="menu-label" data-i18n="tasks.button">Background tasks</span><span class="task-badge" id="tasks-badge" aria-hidden="true" hidden></span>
+          </button>
+            <button class="icon-btn menu-item labeled" role="menuitem" id="research-btn" type="button" title="Research board" aria-haspopup="dialog" aria-expanded="false" aria-controls="research-panel">
+            <svg viewBox="0 0 16 16"><path d="M3.5 2.5h7a2 2 0 0 1 2 2v9h-7a2 2 0 0 1-2-2zM3.5 11.5a2 2 0 0 1 2-2h7M6 5.5h4"/></svg>
+            <span class="menu-label" data-i18n="research.button">Research board</span><span class="task-badge research-badge" id="research-badge" aria-hidden="true" hidden></span>
+          </button>
+            <button class="icon-btn menu-item labeled" role="menuitem" id="notes-btn" type="button" title="Notes" aria-haspopup="dialog" aria-expanded="false" aria-controls="notes-panel">
+            <svg viewBox="0 0 16 16"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>
+            <span class="menu-label" data-i18n="notes.button">Notes</span>
+          </button>
+            <button class="icon-btn menu-item labeled" role="menuitem" id="meeting-btn" type="button" title="Meeting helper (Ctrl+Shift+E)" data-i18n-title="meeting.button.title" aria-haspopup="dialog" aria-expanded="false" aria-controls="meeting-panel">
+            <svg viewBox="0 0 16 16"><path d="M8 2.5a2.5 2.5 0 0 0-2.5 2.5v3a2.5 2.5 0 0 0 5 0V5A2.5 2.5 0 0 0 8 2.5zM4.5 7.5v.5a3.5 3.5 0 0 0 7 0v-.5M8 11.5V14M6 14h4"/></svg>
+            <span class="menu-label" data-i18n="meeting.button">Meeting helper</span><span class="task-badge meeting-badge" id="meeting-badge" aria-hidden="true" hidden></span>
+          </button>
+            <div class="menu-sep" role="separator"></div>
             <button class="icon-btn menu-item" role="menuitem" id="open-chat-page" type="button" title="Open as full page (Ctrl+Shift+L)" aria-label="Open as full page" aria-keyshortcuts="Control+Shift+L Meta+Shift+L" data-i18n-title="sidebar.fullPage.title" data-i18n-aria-label="sidebar.fullPage">
             <svg viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>
           </button>
@@ -154,6 +194,9 @@
       <div id="chat-usage" class="chat-usage" hidden></div>
       <div id="chat-list" class="chat-list" role="dialog" aria-label="Chats" data-i18n-aria-label="sidebar.chats" hidden></div>
       <div id="task-panel" class="chat-list task-panel" role="dialog" aria-label="Background tasks" data-i18n-aria-label="tasks.title" hidden></div>
+      <div id="research-panel" class="chat-list research-panel" role="dialog" aria-label="Research board" data-i18n-aria-label="research.title" hidden></div>
+      <div id="notes-panel" class="chat-list notes-panel" role="dialog" aria-label="Notes" data-i18n-aria-label="notes.title" hidden></div>
+      <div id="meeting-panel" class="chat-list meeting-panel" role="dialog" aria-label="Meeting helper" data-i18n-aria-label="meeting.title" hidden></div>
       <div id="task-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="tab-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
@@ -208,10 +251,15 @@
               <span class="setup-name" data-i18n="setup.antigravity">Use your own Antigravity</span>
               <span class="setup-detail" id="setup-antigravity-detail" data-i18n="setup.antigravity.detail">Google's coding agent, with your own Google sign-in.</span>
             </button>
+            <button class="setup-option" type="button" id="setup-codex" hidden>
+              <span class="setup-name" data-i18n="setup.codex">Use your own Codex</span>
+              <span class="setup-detail" id="setup-codex-detail" data-i18n="setup.codex.detail">Found on this computer: OpenAI's agent, with your own ChatGPT sign-in.</span>
+            </button>
             <button class="setup-option" type="button" id="setup-openrouter">
               <span class="setup-name" data-i18n="setup.openrouter">Sign in with OpenRouter</span>
               <span class="setup-detail" data-i18n="setup.openrouter.detail">One key, many models.</span>
             </button>
+            <p class="setup-more" id="setup-more" hidden><span data-i18n="setup.more">Have Codex, Grok Build or Antigravity? Install it on this computer and it shows up here.</span> <button class="link-btn" type="button" id="setup-more-link" data-i18n="setup.more.link">See how</button></p>
             <button class="setup-option" type="button" id="setup-keys">
               <span class="setup-name" data-i18n="setup.keys">Add an API key</span>
               <span class="setup-detail" data-i18n="setup.keys.detail">Anthropic, OpenAI, Grok or Gemini.</span>
@@ -236,13 +284,17 @@
         <div class="attachments" id="attachments" hidden></div>
         <div class="attachment-note" id="attachment-note" role="status" aria-live="polite" hidden></div>
         <textarea id="prompt" rows="1" placeholder="Ask anything…" aria-label="Message the AI assistant" data-i18n-placeholder="composer.placeholder" data-i18n-aria-label="composer.label"></textarea>
-        <input type="file" id="attach-input" accept="image/*,.heic,.heif" multiple hidden tabindex="-1" aria-hidden="true" />
-        <button class="attach-btn" id="attach" type="button" title="Attach images (up to 5)" aria-label="Attach images" data-i18n-aria-label="composer.attach">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="2"/><circle cx="5.8" cy="6" r="1.1"/><path d="m2.5 12 3.3-3.3 2.4 2.4 2-2L13.5 12"/></svg>
+        <input type="file" id="attach-input" multiple hidden tabindex="-1" aria-hidden="true" />
+        <button class="screen-btn" id="screen-btn" type="button" title="Include a screenshot of this tab with your message" aria-label="Include a screenshot of this tab" aria-pressed="false" data-state="idle" data-i18n-aria-label="composer.screen.label">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5a1 1 0 0 1 1-1h1.6l.8-1.3h4.2l.8 1.3h1.6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/><circle cx="8" cy="8.6" r="2.3"/></svg>
+        </button>
+        <button class="attach-btn" id="attach" type="button" title="Attach files (up to 10)" aria-label="Attach files" data-i18n-aria-label="composer.attach">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.8 7.2 7.6 12.4a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L6.2 10.8a1.1 1.1 0 0 1-1.5-1.5l4.7-4.7"/></svg>
         </button>
         <button class="send-bg" id="send-bg" type="button" title="Run in the background" aria-label="Run in the background" data-i18n-title="tasks.composer.run" data-i18n-aria-label="tasks.composer.run" disabled>
           <svg viewBox="0 0 16 16"><path d="M3.5 4.5 7 8l-3.5 3.5M8.5 4.5 12 8l-3.5 3.5"/></svg>
         </button>
+        <button class="send-now" id="send-now" type="button" title="Stop the reply and send this now (Ctrl+Enter)" data-i18n="composer.sendNow" data-i18n-title="composer.sendNow.title" hidden>Send now</button>
         <button class="send" id="send" type="submit" title="Send (Enter)" aria-label="Send" data-i18n-title="composer.send.title" data-i18n-aria-label="composer.send" disabled>
           <svg viewBox="0 0 16 16"><path d="M8 12.5v-9M4 7.5 8 3.5l4 4"/></svg>
         </button>

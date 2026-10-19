@@ -4,6 +4,7 @@
 // stand-in cipher (no plaintext on disk, a file it can't decrypt left alone), off by default, the
 // settings calls, and the AI side: run_script refused after a fill, nothing AI-facing requires the vault.
 // No Electron window; a temp folder, never the real profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 module.exports = async function passwordUnits(check) {
   const fs = require('fs');
   const os = require('os');
@@ -263,5 +264,5 @@ module.exports = async function passwordUnits(check) {
   let out;
   try { out = await agent.runTool('run_script', { code: 'return 1' }); } catch (err) { out = err.message; }
   check('agent: run_script runs where nothing was filled', ran.length === 1 && /ok/.test(out), out);
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 };

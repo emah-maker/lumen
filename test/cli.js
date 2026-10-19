@@ -1,5 +1,6 @@
 // Sign in with the Anthropic CLI: signed-in detection, a real install of `ant` from the official
 // release (checksum-verified), and the settings UI. The browser OAuth step itself needs a person.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { openSettingsTab } = require('./settings-tab');
 const path = require('path');
@@ -55,7 +56,7 @@ const os = require('os');
   check('signed in: shows the profile and Sign out', cli.status.includes('“work”') && cli.button === 'Sign out', JSON.stringify(cli));
   await app.close();
 
-  fs.rmSync(bin, { recursive: true, force: true });
+  fs.rmSync(bin, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

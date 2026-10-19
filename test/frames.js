@@ -87,7 +87,7 @@ const path = require('path');
   check('the cross-site frame runs in another process (an OOPIF)', procs.some((f) => /\/artifact$/.test(f.url) && !f.own), JSON.stringify(procs));
 
   // ---- the page context sent with a message
-  const sent = await ask('what is in the artifact?');
+  const sent = await ask('what is in this artifact?');
   const ctx = (sent.match(/<untrusted_page_content[\s\S]*<\/untrusted_page_content>/) || [''])[0];
   const site = `localhost:${other.address().port}`;
   check('page context: the top page text', ctx.includes('Top page text about walruses'), ctx.slice(0, 600));
@@ -97,10 +97,10 @@ const path = require('path');
   check('page context: the shadow-DOM component', ctx.includes('Shadow component text about seals'), ctx);
   check('page context: no tracking pixel, hidden frame or AI-off frame', !/PIXEL SECRET|HIDDEN FRAME|AI OFF FRAME/.test(sent), sent);
   check('page context: frame text cannot close the wrapper', (sent.match(/<\/untrusted_page_content>/g) || []).length === 1 && ctx.includes('‹/untrusted_page_content'), sent);
-  check('page context: the user text follows the page', sent.trim().endsWith('what is in the artifact?'), sent.slice(-80));
+  check('page context: the user text follows the page', sent.trim().endsWith('what is in this artifact?'), sent.slice(-80));
 
   // ---- read_page (full)
-  const full = await run('read_page', {});
+  const full = await run('read_page', { elements: true });
   const json = JSON.parse(full.split('\n')[1]);
   const byLabel = (label) => json.elements.find((e) => e.label === label);
   check('read_page: every frame\'s text, labelled', ['Top page text about walruses', `[embedded frame: ${site} — Artifact]`, 'Cross origin artifact text', 'Same origin frame text', 'Srcdoc frame text', 'Shadow component text'].every((t) => full.includes(t)), full.slice(0, 1500));

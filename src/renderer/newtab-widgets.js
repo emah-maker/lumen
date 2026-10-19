@@ -1,3 +1,4 @@
+/* global VisibleTicker */
 // [widgets] The new-tab page's widget cards (features/widgets.js fetches their data in the browser;
 // it arrives in the page's hash). Every value from the network is set with textContent, links must
 // be https, and each field is checked before use. Buttons act by loading this page with
@@ -72,12 +73,6 @@ const ICON_REFRESH = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M10 6
 const ICON_LOCATE = '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><path d="M6 .8v1.8M6 9.4v1.8M.8 6h1.8M9.4 6h1.8"/></svg>';
 const ICON_REPEAT = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 5.5V5a2 2 0 0 1 2-2h5M9 1.5 10.5 3 9 4.5M10 6.5V7a2 2 0 0 1-2 2H3M3 10.5 1.5 9 3 7.5"/></svg>';
 
-const SP_ICONS = { // Spotify card buttons (constant markup)
-  prev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3h1.7v10H3.5zM13 3.4v9.2L6.2 8z"/></svg>',
-  next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 3h1.7v10h-1.7zM3 3.4v9.2L9.8 8z"/></svg>',
-  play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>',
-  pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h2.6v10H4zM9.4 3H12v10H9.4z"/></svg>',
-};
 const spClock = (millis) => {
   const s = Math.floor(Math.max(0, millis) / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -88,6 +83,13 @@ const el = (tag, cls, text) => {
   if (cls) e.className = cls;
   if (text !== undefined && text !== null) e.textContent = String(text);
   return e;
+};
+// Tests only: the new-tab page's own script is the only code in this page (script-src 'self'), so only the test harness (main, via
+// executeJavaScript) can set this. It swaps the embed's origin for a local stand-in, so a test never reaches tradingview.com.
+const tvFrameSrc = (u) => {
+  const o = globalThis.__tvTestOrigin;
+  if (typeof o !== 'string' || !/^https:\/\/127\.0\.0\.1:\d+$/.test(o)) return u;
+  try { const p = new URL(u); return o + p.pathname + p.search + p.hash; } catch { return u; }
 };
 // Only the TradingView embed pages features/tradingview-view.js builds (a watchlist's hash is long: 8000).
 const tvUrl = (u) => { if (typeof u !== 'string' || u.length >= 8000 || !/^https:\/\/[^\s"'<>\\]+$/i.test(u)) return null; try { const p = new URL(u); return p.hostname === 's.tradingview.com' && !p.port && !p.username && ['/widgetembed/', '/embed-widget/mini-symbol-overview/', '/embed-widget/market-overview/'].includes(p.pathname) ? u : null; } catch { return null; } };
@@ -156,7 +158,32 @@ function iconButton(svg, label, onclick) {
   b.addEventListener('click', onclick);
   return b;
 }
-const refreshButton = (w) => iconButton(ICON_REFRESH, `Refresh ${w.title}`, () => widgetAct(w.id, 'refresh'));
+// A press is a real refresh (main never holds it back) and shows at once that it is running: the arrows turn and the button is off until
+// main says the run ended (w.refreshing goes away, setRefreshing below); a page that never hears back lets go after 25 s.
+function pressRefresh(w, btn) {
+  if (btn.disabled) return;
+  btn.dataset.spinSince = String(Date.now());
+  setRefreshButton(btn, true);
+  setTimeout(() => { if (btn.isConnected && btn.disabled) setRefreshButton(btn, false); }, 25e3);
+  widgetAct(w.id, 'refresh');
+}
+function setRefreshButton(btn, on) {
+  btn.classList.toggle('spinning', on);
+  btn.disabled = on;
+  btn.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+function refreshButton(w) {
+  const b = iconButton(ICON_REFRESH, `Refresh ${w.title}`, () => pressRefresh(w, b));
+  b.classList.add('w-refresh');
+  if (w.refreshing) setRefreshButton(b, true);
+  return b;
+}
+// What main says about a card's run, applied without drawing the card again (renderWidgets): its Refresh and Try again stop or keep turning.
+function setRefreshing(cardEl, w) {
+  const on = Boolean(w.refreshing);
+  for (const b of cardEl.querySelectorAll('.w-refresh')) if (b.disabled !== on) setRefreshButton(b, on);
+  for (const b of cardEl.querySelectorAll('.w-retry')) { b.disabled = on; b.textContent = on ? 'Trying…' : 'Try again'; }
+}
 
 // "2:00 PM" or "14:00" from an hour (the widget's clock setting, else the system's).
 function clockText(hour, minute, d) {
@@ -179,6 +206,335 @@ function agoText(ms) {
 }
 
 // ---- the renderers, one per connector type ----
+// A music site's own web player in the card (Spotify's Web player, Apple Music): main.js lays a native view over
+// the .sp-web-slot placeholder (features/web-player.js). The page only draws the header buttons, the slot and what main
+// says about the view; `name` and `site` are constants of ours.
+function webPlayerCard(w, card, name, site, { signInTab = true } = {}) {
+  const d = w.data;
+  card.el.classList.add('sp-web');
+  card.head.append(openLink(site, `Open in ${name}`));
+  if (signInTab && d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
+    const signIn = link(site, 'Open in a tab to sign in', 'w-btn primary');
+    signIn.classList.add('sp-web-signin');
+    card.head.append(signIn);
+  }
+  // What main knows about the view: it can't load (offline, the site down), or this Lumen has no Widevine, so the site
+  // can't play. Say so instead of leaving a blank frame.
+  const v = d.view && typeof d.view === 'object' ? d.view : {};
+  const down = v.state === 'offline' || v.state === 'failed';
+  if (v.drm === 'missing' && !down) {
+    const note = el('p', 'w-note sp-drm', `${name} can’t play sound here yet: Lumen’s Widevine component, which protected audio needs, isn’t available. It may still be installing; if this stays, restart Lumen. You can still browse ${name}.`);
+    note.setAttribute('role', 'status');
+    card.body.append(note);
+  }
+  const slot = el('div', 'sp-web-slot', down ? '' : `Loading ${name}…`);
+  slot.setAttribute('role', 'status');
+  if (down) {
+    slot.classList.add('sp-web-down');
+    slot.append(el('span', 'sp-web-msg', v.state === 'offline' ? `Can’t reach ${name}. Check your internet connection.` : `${name} didn’t load.`));
+    const retry = el('button', 'w-btn', 'Try again');
+    retry.type = 'button';
+    retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
+    slot.append(retry);
+  }
+  card.body.append(slot);
+}
+
+// The music cards (Apple Music, Spotify's status and API modes) are renderer/newtab-music.js: one card that does more as it gets bigger.
+
+// The Todoist card's page-side state, kept across redraws: the add box (what is typed, whether it has focus), where the list is scrolled,
+// which cards have "Show more" pressed. Page actions go one at a time, a moment apart (each is a page address main takes over).
+const tdDrafts = new Map();
+const tdScrolls = new Map();
+const tdExpanded = new Set();
+const tdQueue = [];
+let tdBusy = false;
+function tdSend(id, action, extra = {}) {
+  tdQueue.push([id, action, extra]);
+  if (tdBusy) return;
+  tdBusy = true;
+  const next = () => {
+    const job = tdQueue.shift();
+    if (!job) { tdBusy = false; return; }
+    widgetAct(job[0], job[1], job[2]);
+    setTimeout(next, 180);
+  };
+  next();
+}
+// ---- the Files card (features/files.js) ----
+// The card asks main for the list itself, through the page's own bridge (window.lumenFiles, preload/files-newtab-preload.js), and hears when it
+// changes: the list never travels through the page's hash. The bridge hands out ids; a click sends the id back and main opens the file, so
+// the page never names a path to open. Names and folders are only ever set with textContent. One list call serves every Files card on the page.
+const FILE_ICONS = { // constant markup; nothing from a file name goes in it
+  folder: '<path d="M1.8 4.6a1.2 1.2 0 0 1 1.2-1.2h2.9l1.4 1.6h5.7a1.2 1.2 0 0 1 1.2 1.2v5.6a1.2 1.2 0 0 1-1.2 1.2H3a1.2 1.2 0 0 1-1.2-1.2z"/>',
+  page: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/>',
+  pdf: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 11.6c1.6-1.5 2.4-3.4 2.4-4.6 0 1.3 1.4 3 3 3.4-1.7-.1-3.6.4-5.4 1.2z"/>',
+  doc: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.3 8h5.4M5.3 10h5.4M5.3 12h3"/>',
+  slides: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><rect x="5.2" y="7.4" width="5.6" height="3.6" rx=".6"/>',
+  sheet: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M5.2 8.2h5.6M5.2 10.6h5.6M7.8 6.8v6"/>',
+  mail: '<rect x="1.8" y="3.4" width="12.4" height="9.2" rx="1.6"/><path d="m2.4 4.6 5.6 4.2 5.6-4.2"/>',
+  image: '<rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6"/><circle cx="5.6" cy="6.4" r="1.1"/><path d="m2.4 12 3.6-3.4 2.4 2.2 2-1.8 3.2 3"/>',
+  zip: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="M7 5.6h1.4M7 7.4h1.4M7 9.2h1.4"/><rect x="6.5" y="10.4" width="2.4" height="2" rx=".5"/>',
+  code: '<path d="M4 1.8h5l3 3v8.4a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"/><path d="M9 1.8v3h3"/><path d="m6.6 8-1.4 1.5 1.4 1.5M9.4 8l1.4 1.5L9.4 11"/>',
+};
+const FILE_KINDS = {
+  pdf: 'pdf', doc: 'doc', docx: 'doc', rtf: 'doc', odt: 'doc', txt: 'doc', md: 'doc', pages: 'doc',
+  ppt: 'slides', pptx: 'slides', key: 'slides', odp: 'slides', xls: 'sheet', xlsx: 'sheet', csv: 'sheet', tsv: 'sheet', numbers: 'sheet', ods: 'sheet',
+  eml: 'mail', msg: 'mail', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image', heic: 'image', bmp: 'image',
+  zip: 'zip', rar: 'zip', '7z': 'zip', tar: 'zip', gz: 'zip', js: 'code', ts: 'code', py: 'code', json: 'code', html: 'code', css: 'code', java: 'code', c: 'code', cpp: 'code', rs: 'code', go: 'code',
+};
+const fileKind = (e) => (e.kind === 'folder' ? 'folder' : FILE_KINDS[/\.([A-Za-z0-9]{1,5})$/.exec(e.name)?.[1]?.toLowerCase()] || 'page');
+function fileIcon(e) {
+  const kind = fileKind(e);
+  const wrap = el('span', `fl-icon k-${kind}`);
+  wrap.setAttribute('aria-hidden', 'true');
+  wrap.innerHTML = `<svg viewBox="0 0 16 16">${FILE_ICONS[kind]}</svg>`;
+  return wrap;
+}
+// The card's words: the main process hands over the files.card.* strings of the language (preload/files-newtab-preload.js, locales/en.json); the
+// English written here is what shows without them. {name}-style holes are filled from `vars`.
+function ft(key, english, vars) {
+  const own = globalThis.lumenFiles?.strings?.[key];
+  const raw = typeof own === 'string' ? own : english;
+  return vars ? raw.replace(/{(\w+)}/g, (whole, name) => (Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : whole)) : raw;
+}
+// "just now", "5 min. ago", "3 hr. ago", "yesterday", "4 days ago" (Intl.RelativeTimeFormat, in the page's language), then the date.
+let fileRtf = null;
+function fileAgo(ms, now = Date.now()) {
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const sec = Math.max(0, (now - ms) / 1000);
+  if (sec < 45) return ft('files.card.justNow', 'just now');
+  try { fileRtf ||= new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto', style: 'short' }); } catch { fileRtf = null; }
+  if (fileRtf) {
+    if (sec < 3600) return fileRtf.format(-Math.max(1, Math.round(sec / 60)), 'minute');
+    if (sec < 86400) return fileRtf.format(-Math.round(sec / 3600), 'hour');
+    const startToday = new Date(new Date(now).setHours(0, 0, 0, 0)).getTime();
+    const days = Math.ceil((startToday - ms) / 86400e3);
+    if (days < 7) return fileRtf.format(-Math.max(1, days), 'day');
+  }
+  return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', ...(new Date(ms).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
+}
+// The folder a file is in, as the last two folders of its path ("Documents › Chapter 4"); a folder shows the one above it.
+function fileWhere(e) {
+  const parts = String(e.path || '').split(/[\\/]+/).filter(Boolean);
+  parts.pop();
+  const tail = parts.slice(-2);
+  return tail.length ? tail.join(' › ') : '';
+}
+const fileSize = (n) => (!Number.isFinite(n) || n < 0 ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`);
+const cleanFile = (e) => (e && typeof e === 'object' && typeof e.id === 'string' && e.id.length > 0 && e.id.length < 100 && typeof e.name === 'string'
+  ? { id: e.id, name: text(e.name, 260) || 'Untitled', path: text(e.path, 1000), kind: e.kind === 'folder' ? 'folder' : 'file', size: Number.isFinite(e.size) ? e.size : null, mtime: Number.isFinite(e.mtime) ? e.mtime : 0, openedAt: Number.isFinite(e.openedAt) ? e.openedAt : 0, pinned: e.pinned === true, missing: e.missing === true }
+  : null);
+const FILES_PINNED_MAX = 20;
+const FILES_RECENT_MAX = 12;
+const filesCards = new Set(); // { el, draw }: the Files cards on this page
+const fileFinds = new Map(); // entry id -> { busy } | { list: [candidates] } | { none: true }: "Find it", kept across redraws
+let filesData = null; // { pinned, recent, remember } as last heard
+let filesAsking = null;
+let filesAskedAt = 0;
+let filesHooked = false;
+function filesLoad() {
+  const bridge = globalThis.lumenFiles;
+  if (!bridge) return Promise.resolve(filesData);
+  if (filesAsking) return filesAsking;
+  filesAskedAt = Date.now();
+  filesAsking = Promise.resolve().then(() => bridge.list()).then((d) => {
+    const all = (v, max) => (Array.isArray(v) ? v : []).map(cleanFile).filter(Boolean).slice(0, max);
+    filesData = d && typeof d === 'object' ? { pinned: all(d.pinned, FILES_PINNED_MAX), recent: all(d.recent, FILES_RECENT_MAX), remember: d.remember !== false } : filesData;
+    for (const id of [...fileFinds.keys()]) if (![...(filesData?.pinned || []), ...(filesData?.recent || [])].some((x) => x.id === id && x.missing)) fileFinds.delete(id);
+    return filesData;
+  }).catch(() => filesData).finally(() => { filesAsking = null; });
+  return filesAsking;
+}
+function filesRefresh() {
+  return filesLoad().then(() => {
+    for (const c of [...filesCards]) { if (c.el.isConnected || !c.seen) c.draw(); else filesCards.delete(c); }
+  });
+}
+function filesHook() {
+  if (filesHooked || !globalThis.lumenFiles) return;
+  filesHooked = true;
+  let timer = 0;
+  // (a burst of changes, such as a folder pinned and indexed, is one redraw)
+  globalThis.lumenFiles.onChanged(() => { clearTimeout(timer); timer = setTimeout(() => { if (!document.hidden) filesRefresh(); else filesData = null; }, 40); });
+  // A page that comes back to the front hears nothing it missed while hidden: it asks again (main also re-checks missing files then).
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && filesCards.size) filesRefresh(); });
+}
+// The right-click (and "…") menu of a row. Closes on a click elsewhere, Esc, a change of the list, or the page losing focus.
+let fileMenu = null;
+function closeFileMenu(refocus = false) {
+  if (!fileMenu) return;
+  const { root, opener } = fileMenu;
+  fileMenu = null;
+  root.remove();
+  document.removeEventListener('pointerdown', fileMenuOutside, true);
+  document.removeEventListener('keydown', fileMenuKeys, true);
+  removeEventListener('blur', fileMenuBlur);
+  if (refocus && opener?.isConnected) opener.focus({ preventScroll: true });
+}
+const fileMenuOutside = (e) => { if (fileMenu && !fileMenu.root.contains(e.target)) closeFileMenu(); };
+const fileMenuBlur = () => closeFileMenu();
+function fileMenuKeys(e) {
+  if (!fileMenu) return;
+  const items = [...fileMenu.root.querySelectorAll('[role="menuitem"]')];
+  const at = items.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFileMenu(true); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus(); }
+  else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : items.length - 1]?.focus(); }
+  else if (e.key === 'Tab') { e.preventDefault(); closeFileMenu(true); }
+}
+function openFileMenu(opener, x, y, entries) { // entries: [[label, run]]
+  closeFileMenu();
+  const root = el('div', 'w-stack-menu w-ui fl-menu');
+  root.setAttribute('role', 'menu');
+  for (const [label, run] of entries) {
+    const item = el('button', 'w-stack-menu-item', label);
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.addEventListener('click', () => { closeFileMenu(); run(); });
+    root.append(item);
+  }
+  document.body.append(root);
+  const r = root.getBoundingClientRect();
+  root.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+  root.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+  fileMenu = { root, opener };
+  document.addEventListener('pointerdown', fileMenuOutside, true);
+  document.addEventListener('keydown', fileMenuKeys, true);
+  addEventListener('blur', fileMenuBlur);
+  root.querySelector('button')?.focus({ preventScroll: true });
+}
+// What a click, a menu item or a button does. Main answers { ok: false } when the file is gone: the list is read again and the row turns grey.
+const filesDo = (call) => Promise.resolve().then(call).catch((err) => console.error('files', err)).finally(() => { filesRefresh(); });
+const fileOpen = (e) => filesDo(() => globalThis.lumenFiles.open(e.id));
+const fileShow = (e) => filesDo(() => globalThis.lumenFiles.show(e.id));
+const filePick = (kind) => filesDo(() => globalThis.lumenFiles.pin({ pick: kind }));
+// Unpin and Remove from Files can be undone for a few seconds: a line at the foot of the card ("Removed lab3.pdf. Undo"); main keeps the entry
+// for 30 s (files.js restore).
+const FILE_UNDO_MS = 6000;
+let fileUndo = null; // { id, message, timer }
+function fileUndoClear() { if (fileUndo) { clearTimeout(fileUndo.timer); fileUndo = null; } }
+function fileUndoOffer(e, how) {
+  fileUndoClear();
+  const timer = setTimeout(() => { fileUndo = null; filesRefresh(); }, FILE_UNDO_MS);
+  fileUndo = { id: e.id, message: how === 'unpin' ? ft('files.card.unpinned', 'Unpinned {name}.', { name: e.name }) : ft('files.card.removed', 'Removed {name}.', { name: e.name }), timer };
+}
+const fileTakeOut = (e, how) => filesDo(() => Promise.resolve(globalThis.lumenFiles[how](e.id)).then((ok) => { if (ok !== false) fileUndoOffer(e, how); }));
+const fileTogglePin = (e) => (e.pinned ? fileTakeOut(e, 'unpin') : filesDo(() => globalThis.lumenFiles.pin({ id: e.id })));
+const fileRemove = (e) => fileTakeOut(e, 'remove');
+function fileUndoRun() {
+  const id = fileUndo?.id;
+  fileUndoClear();
+  if (id) filesDo(() => globalThis.lumenFiles.restore(id));
+  else filesRefresh();
+}
+let fileFocusAfter = null; // the entry whose Find it just answered: the next draw puts the focus on its first candidate
+function fileFind(e) {
+  if (fileFinds.get(e.id)?.busy) return;
+  fileFinds.set(e.id, { busy: true });
+  filesRefresh();
+  Promise.resolve().then(() => globalThis.lumenFiles.find(e.id)).then((r) => {
+    const list = (Array.isArray(r?.candidates) ? r.candidates : []).filter((c) => c && typeof c.path === 'string' && typeof c.name === 'string').slice(0, 6)
+      .map((c) => ({ path: text(c.path, 1000), name: text(c.name, 260), size: Number.isFinite(c.size) ? c.size : null, mtime: Number.isFinite(c.mtime) ? c.mtime : 0 }));
+    fileFinds.set(e.id, list.length ? { list } : { none: true });
+  }).catch(() => fileFinds.set(e.id, { none: true })).finally(() => { fileFocusAfter = e.id; filesRefresh(); });
+}
+// Pinned: Unpin (it stays in Recent if it was opened). Not pinned: Pin, or Remove from Files.
+function fileMenuFor(e) {
+  const items = [e.missing ? [ft('files.card.findIt', 'Find it'), () => fileFind(e)] : [e.kind === 'folder' ? ft('files.card.openFolder', 'Open folder') : ft('files.card.open', 'Open'), () => fileOpen(e)], [ft('files.card.show', 'Show in folder'), () => fileShow(e)]];
+  if (e.pinned) items.push([ft('files.card.unpin', 'Unpin'), () => fileTogglePin(e)]);
+  else items.push([ft('files.card.pin', 'Pin'), () => fileTogglePin(e)], [ft('files.card.remove', 'Remove from Files'), () => fileRemove(e)]);
+  return items;
+}
+const ICON_MORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6h.01M6 6h.01M9.6 6h.01"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.2v7.6M2.2 6h7.6"/></svg>';
+function fileRow(e, now) {
+  const row = el('div', `w-row fl-row${e.missing ? ' missing' : ''}${e.pinned ? ' pinned' : ''}`);
+  row.setAttribute('role', 'listitem');
+  row.dataset.id = e.id;
+  const main = el('button', 'fl-main');
+  main.type = 'button';
+  main.dataset.fid = e.id;
+  main.dataset.role = 'main';
+  main.title = e.path || e.name;
+  const words = el('span', 'w-main');
+  words.append(el('span', 'w-title', e.name));
+  const sub = el('span', 'w-sub');
+  if (e.missing) {
+    sub.textContent = ft('files.card.missing', 'moved or deleted');
+    sub.classList.add('late');
+    main.setAttribute('aria-label', ft('files.card.missingAria', '{name}, moved or deleted', { name: e.name }));
+  } else {
+    const when = e.pinned ? '' : fileAgo(e.openedAt, now);
+    const where = fileWhere(e);
+    sub.textContent = [where, when].filter(Boolean).join(' · ');
+    if (when) { sub.dataset.t = String(e.openedAt); sub.dataset.where = where; }
+  }
+  words.append(sub);
+  main.append(fileIcon(e), words);
+  // A missing file does not open: a click anywhere on its row (but its own buttons) is Find it, and the focus goes to the first match when there is one.
+  if (e.missing) row.addEventListener('click', (ev) => { if (!ev.target.closest?.('.fl-find, .fl-more')) fileFind(e); });
+  else main.addEventListener('click', () => fileOpen(e));
+  row.addEventListener('contextmenu', (ev) => {
+    if (!globalThis.lumenFiles) return;
+    ev.preventDefault();
+    ev.stopPropagation(); // (the card's own menu, newtab-stacks.js, is not for a row)
+    const keyboard = ev.clientX === 0 && ev.clientY === 0;
+    const r = main.getBoundingClientRect();
+    openFileMenu(main, keyboard ? r.left + 24 : ev.clientX, keyboard ? r.bottom : ev.clientY, fileMenuFor(e));
+  });
+  row.append(main);
+  if (e.missing) {
+    const find = el('button', 'w-btn fl-find', ft('files.card.findIt', 'Find it'));
+    find.type = 'button';
+    find.dataset.fid = e.id;
+    find.dataset.role = 'find';
+    find.title = ft('files.card.findItTitle', 'Look near the old place');
+    find.setAttribute('aria-label', ft('files.card.findAria', 'Find {name}', { name: e.name }));
+    const st = fileFinds.get(e.id);
+    if (st?.busy) { find.disabled = true; find.textContent = ft('files.card.looking', 'Looking…'); }
+    find.addEventListener('click', () => fileFind(e));
+    row.append(find);
+  }
+  const more = iconButton(ICON_MORE, ft('files.card.moreAria', 'More for {name}', { name: e.name }), () => { const r = more.getBoundingClientRect(); openFileMenu(more, r.left, r.bottom + 4, fileMenuFor(e)); });
+  more.classList.add('fl-more');
+  more.dataset.fid = e.id;
+  more.dataset.role = 'more';
+  more.setAttribute('aria-haspopup', 'menu');
+  row.append(more);
+  return row;
+}
+// What "Find it" found near the old place: pick one and the entry points at it again.
+function fileCandidates(e) {
+  const st = fileFinds.get(e.id);
+  if (!st || st.busy) return null;
+  const box = el('div', 'fl-cands');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', ft('files.card.candidates', 'Possible matches for {name}', { name: e.name }));
+  if (st.none) {
+    box.append(el('p', 'fl-none', ft('files.card.none', 'Nothing like it nearby.')));
+    const gone = el('button', 'w-btn', ft('files.card.remove', 'Remove from Files'));
+    gone.type = 'button';
+    gone.dataset.fid = e.id;
+    gone.dataset.role = 'cand';
+    gone.addEventListener('click', () => fileRemove(e));
+    box.append(gone);
+    return box;
+  }
+  for (const c of st.list) {
+    const b = el('button', 'fl-cand');
+    b.type = 'button';
+    b.dataset.fid = e.id;
+    b.dataset.role = 'cand';
+    b.title = c.path;
+    const where = fileWhere({ path: c.path });
+    b.append(el('span', 'w-title', c.name), el('span', 'w-sub', [where, fileSize(c.size), c.mtime ? fileAgo(c.mtime) : ''].filter(Boolean).join(' · ')));
+    b.setAttribute('aria-label', where ? ft('files.card.useIn', 'Use {name} in {where}', { name: c.name, where }) : ft('files.card.use', 'Use {name}', { name: c.name }));
+    b.addEventListener('click', () => { fileFinds.delete(e.id); filesDo(() => globalThis.lumenFiles.relocate(e.id, c.path)); });
+    box.append(b);
+  }
+  return box;
+}
 const WIDGET_RENDERERS = {
   weather(w, card) {
     const d = w.data;
@@ -317,126 +673,20 @@ const WIDGET_RENDERERS = {
     if (typeof d.hereNote === 'string' && d.hereNote && places.length) card.body.append(el('p', 'w-note small', text(d.hereNote, 200)));
   },
 
-  // Now playing. Everything is a checked string or number set with textContent; the album picture is a
-  // data: URL that main made from bytes it sniffed itself; the buttons ask main to call Spotify.
+  // Apple Music: music.apple.com in the card, the same kind of view as Spotify's Web player (features/apple-music-web.js), or the engine's card.
+  applemusic(w, card) {
+    const d = w.data;
+    if (d.mode === 'web') { webPlayerCard(w, card, 'Apple Music', 'https://music.apple.com/', { signInTab: false }); return; } // sign-in happens inside the card's own page
+    window.musicCard.engineCard(w, card, window.musicCard.ENGINES.applemusic);
+  },
+
+  // Spotify: its own site in the card (Web player), the engine's card (Play as Lumen), or the Web API's now-playing card. Everything is a checked
+  // string or number set with textContent; the album picture is a data: URL that main made from bytes it sniffed itself; the buttons ask main.
   spotify(w, card) {
     const d = w.data;
-    if (d.mode === 'web') { // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
-      card.el.classList.add('sp-web');
-      card.head.append(openLink('https://open.spotify.com/', 'Open in Spotify'));
-      if (d.signedIn === false) { // the site's sign-in page can be cramped at card size: a full tab shares the same session
-        const signIn = link('https://open.spotify.com/', 'Open in a tab to sign in', 'w-btn primary');
-        signIn.classList.add('sp-web-signin');
-        card.head.append(signIn);
-      }
-      // What main knows about the view: it can't load (offline, Spotify down), or this Lumen has no Widevine, so Spotify
-      // can't play. Say so instead of leaving a blank frame.
-      const v = d.view && typeof d.view === 'object' ? d.view : {};
-      const down = v.state === 'offline' || v.state === 'failed';
-      if (v.drm === 'missing' && !down) {
-        const note = el('p', 'w-note sp-drm', 'Spotify can’t play sound here yet: Lumen’s Widevine component, which protected audio needs, isn’t available. It may still be installing; if this stays, restart Lumen. You can still browse Spotify.');
-        note.setAttribute('role', 'status');
-        card.body.append(note);
-      }
-      const slot = el('div', 'sp-web-slot', down ? '' : 'Loading Spotify…');
-      slot.setAttribute('role', 'status');
-      if (down) {
-        slot.classList.add('sp-web-down');
-        slot.append(el('span', 'sp-web-msg', v.state === 'offline' ? 'Can’t reach Spotify. Check your internet connection.' : 'Spotify didn’t load.'));
-        const retry = el('button', 'w-btn', 'Try again');
-        retry.type = 'button';
-        retry.addEventListener('click', () => widgetAct(w.id, 'reload'));
-        slot.append(retry);
-      }
-      card.body.append(slot);
-      return;
-    }
-    card.head.append(refreshButton(w));
-    const open = typeof d.url === 'string' && /^https:\/\/open\.spotify\.com\/[\w/?=&.-]{1,200}$/.test(d.url) ? d.url : null;
-    if (open) card.head.append(openLink(open, 'Open in Spotify'));
-    const state = d.state === 'playing' || d.state === 'paused' ? d.state : 'idle';
-    card.el.classList.toggle('sp-card-idle', state === 'idle');
-    if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
-    const title = text(d.title, 200);
-    const wrap = el('div', 'sp-wrap');
-    const art = typeof d.art === 'string' && d.art.length < 200000 && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(d.art) ? d.art : '';
-    if (art) {
-      const img = document.createElement('img');
-      img.className = 'sp-art';
-      img.alt = '';
-      img.src = art;
-      wrap.append(img);
-    }
-    const info = el('div', 'sp-text');
-    if (state === 'idle') {
-      info.append(el('span', 'sp-title', 'Nothing is playing'), el('span', 'sp-artist', text(d.device, 60) ? `${text(d.device, 60)} is ready` : 'Start Spotify on any device'));
-    } else {
-      info.append(el('span', 'sp-title', title), el('span', 'sp-artist', text(d.artist, 200)));
-      if (text(d.album, 120)) info.append(el('span', 'sp-album', text(d.album, 120)));
-    }
-    wrap.append(info);
-    card.body.append(wrap);
-    const button = (name, label, act, cls = 'sp-btn') => {
-      const b = el('button', cls);
-      b.type = 'button';
-      b.innerHTML = SP_ICONS[name]; // constant markup
-      b.setAttribute('aria-label', label);
-      b.title = label;
-      b.addEventListener('click', () => widgetAct(w.id, act));
-      return b;
-    };
-    const controls = el('div', 'sp-controls');
-    if (state === 'idle') { // nothing to skip: Play resumes on the last device (Spotify says if there is none)
-      controls.append(button('play', 'Play on Spotify', 'play', 'sp-btn main'));
-      card.body.append(controls);
-      return;
-    }
-    const prev = button('prev', 'Previous track', 'previous');
-    const next = button('next', 'Next track', 'next');
-    if (d.kind === 'ad') { // Spotify refuses skipping during an ad
-      for (const b of [prev, next]) { b.disabled = true; b.title = 'Not during an ad'; b.setAttribute('aria-label', `${b.getAttribute('aria-label')} (not during an ad)`); }
-    }
-    controls.append(prev, state === 'playing' ? button('pause', 'Pause', 'pause', 'sp-btn main') : button('play', 'Play', 'play', 'sp-btn main'), next);
-    card.body.append(controls);
-    if (d.kind === 'ad' && state === 'playing') setTimeout(() => { if (controls.isConnected) widgetAct(w.id, 'refresh'); }, 16000); // an ad has no length: look again when it is likely over
-    // Progress: main sends where the playhead was and when; this page moves it on once a second.
-    const duration = Number.isFinite(d.durationMs) && d.durationMs > 0 ? d.durationMs : 0;
-    if (duration) {
-      const at = Number.isFinite(d.at) ? d.at : Date.now();
-      const from = Number.isFinite(d.progressMs) ? d.progressMs : 0;
-      const bar = el('div', 'sp-bar');
-      const fill = document.createElement('i');
-      bar.append(fill);
-      bar.setAttribute('role', 'progressbar');
-      bar.setAttribute('aria-label', `${title} progress`);
-      bar.setAttribute('aria-valuemin', '0');
-      bar.setAttribute('aria-valuemax', '100');
-      const elapsed = el('span', 'sp-elapsed');
-      const total = el('span', 'sp-total', spClock(duration));
-      const progress = el('div', 'sp-progress');
-      progress.append(elapsed, bar, total);
-      card.body.append(progress);
-      const draw = () => {
-        const now = Math.min(duration, Math.max(0, from + (state === 'playing' ? Math.max(0, Date.now() - at) : 0)));
-        elapsed.textContent = spClock(now);
-        fill.style.width = `${(now / duration) * 100}%`;
-        bar.setAttribute('aria-valuenow', String(Math.round((now / duration) * 100)));
-        return now;
-      };
-      draw();
-      if (state === 'playing') {
-        const timer = setInterval(() => {
-          if (!progress.isConnected) { clearInterval(timer); return; } // the card was redrawn or removed
-          if (!document.hidden && draw() >= duration) {
-            clearInterval(timer);
-            // The track is over: Spotify has moved on to the next one (or stopped). Without this the card sat at the end
-            // of the old song until its next scheduled refresh, up to two minutes. The later asks cover Spotify still
-            // answering with the old song, or the first coming too soon after the last fetch (a Spotify card is fetched at most every 4 s).
-            for (const wait of [1500, 6000, 15000]) setTimeout(() => { if (progress.isConnected) widgetAct(w.id, 'refresh'); }, wait);
-          }
-        }, 1000);
-      }
-    }
+    if (d.mode === 'web') { webPlayerCard(w, card, 'Spotify', 'https://open.spotify.com/'); return; } // Spotify's own site: main.js lays a view over .sp-web-slot (features/spotify-web.js)
+    const M = window.musicCard;
+    M.engineCard(w, card, d.mode === 'status' ? M.ENGINES.spotify : M.ENGINES.spotifyApi);
   },
 
   // GitHub: unread notifications and review requests as numbers on a small card; the lists on a bigger one.
@@ -548,6 +798,7 @@ const WIDGET_RENDERERS = {
       if (show.sun !== false) { row.append(sun); row.classList.add('has-sun'); }
       list.append(row);
       clockRows.set(row, { tz: p.tz, days: p.days, opts, icon, time, date: sub.querySelector('.wc-date'), off: sub.querySelector('.wc-off'), sun: show.sun !== false ? sun : null, sunKey: '', dayKey: '', born: Date.now(), seen: false });
+      wakeLive();
     }
     card.body.append(list);
     tickClocks();
@@ -569,20 +820,69 @@ const WIDGET_RENDERERS = {
     if (d.showCount && card.h2) card.h2.textContent = `${text(w.title, 60)} · ${total}`;
     if (typeof d.notice === 'string' && d.notice) card.body.append(el('p', 'w-note', d.notice.slice(0, 200)));
     const today = new Date();
-    const quick = d.quick === 'top' || d.quick === 'bottom' ? d.quick : 'off';
-    const adder = () => {
-      const box = el('div', 'td-add');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.maxLength = 300;
-      input.placeholder = 'Add a task… (“Pay rent tomorrow 9am”)';
-      input.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
-      const go = () => { const v = input.value.trim(); if (v) { input.disabled = true; widgetAct(w.id, 'add', { text: v }); } };
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); });
-      const btn = el('button', 'w-btn', 'Add');
-      btn.type = 'button';
-      btn.addEventListener('click', go);
-      box.append(input, btn);
+    const quick = d.quick === 'top' || d.quick === 'bottom' ? d.quick : 'off'; // off: a "+ Add task" row that opens the box
+    const draft = tdDrafts.get(w.id) || { text: '', focus: false, open: false };
+    tdDrafts.set(w.id, draft);
+    const list = el('div', 'w-list');
+    // A new task shows in the list at once (dimmed); the page's next read puts the real one there, or takes it away again with a note when Todoist said no.
+    const addNow = (value, at) => {
+      const row = el('div', 'w-row pending');
+      const mark = el('span', 'w-check');
+      mark.dataset.p = '1';
+      const main = el('div', 'w-main');
+      const note = el('div', 'td-meta td-pending-note', 'Adding…');
+      main.append(el('span', 'w-title', text(value, 300)), note);
+      row.append(mark, main);
+      if (at === 'top') list.prepend(row); else list.append(row);
+      list.parentElement?.querySelector('.w-empty')?.remove();
+      const sc = list.parentElement; if (sc && sc.classList.contains('td-scroll')) sc.scrollTop = at === 'top' ? 0 : sc.scrollHeight; // (only the list scrolls, never the page)
+      tdSend(w.id, 'add', { text: value });
+      setTimeout(() => { if (row.isConnected && row.classList.contains('pending')) { row.classList.add('stale'); note.textContent = 'Not confirmed'; } }, 12000);
+    };
+    const adder = (where) => {
+      const box = el('div', `td-add ${where}`);
+      const draw = () => {
+        box.replaceChildren();
+        if (quick === 'off' && !draft.open) {
+          const btn = el('button', 'td-addbtn');
+          btn.type = 'button';
+          btn.append(el('span', 'td-plus', '+'), 'Add task');
+          btn.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
+          btn.addEventListener('click', () => { draft.open = true; draw(); box.querySelector('input')?.focus(); });
+          box.append(btn);
+          return;
+        }
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 300;
+        input.value = draft.text;
+        input.placeholder = 'Add a task… (“Pay rent tomorrow 9am”)';
+        input.setAttribute('aria-label', `Add a task to ${text(w.title, 60)}`);
+        input.addEventListener('input', () => { draft.text = input.value; });
+        input.addEventListener('focus', () => { draft.focus = true; });
+        input.addEventListener('blur', () => {
+          draft.focus = false;
+          if (quick === 'off' && !input.value.trim()) { draft.open = false; setTimeout(() => { if (!draft.focus && box.isConnected) draw(); }, 0); }
+        });
+        const go = () => {
+          const v = input.value.trim();
+          if (!v) return;
+          input.value = '';
+          draft.text = '';
+          addNow(v, quick === 'bottom' ? 'bottom' : 'top');
+          input.focus({ preventScroll: true });
+        };
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); go(); } else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; draft.text = ''; input.blur(); }
+          e.stopPropagation();
+        });
+        const btn = el('button', 'w-btn', 'Add');
+        btn.type = 'button';
+        btn.addEventListener('click', go);
+        box.append(input, btn);
+        if (draft.focus) requestAnimationFrame(() => { if (input.isConnected) { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); } });
+      };
+      draw();
       return box;
     };
     // Small: how many, and the next one.
@@ -593,13 +893,44 @@ const WIDGET_RENDERERS = {
     else small.append(el('span', 'td-next', 'Nothing due. Enjoy it.'));
     card.body.append(small);
     const full = el('div', 'td-full');
-    if (quick === 'top') full.append(adder());
-    if (!groups.length) full.append(el('p', 'w-empty', 'Nothing here. Enjoy it.'));
-    const list = el('div', 'w-list');
+    // Today / Upcoming / Inbox: a card of one of those can be turned into another from here.
+    if (['today', 'upcoming', 'inbox'].includes(d.view)) {
+      const tabs = el('div', 'td-tabs');
+      tabs.setAttribute('role', 'tablist');
+      tabs.setAttribute('aria-label', 'Show');
+      for (const [key, label] of [['today', 'Today'], ['upcoming', 'Upcoming'], ['inbox', 'Inbox']]) {
+        const tab = el('button', 'td-tab', label);
+        tab.type = 'button';
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', String(d.view === key));
+        tab.addEventListener('click', () => {
+          if (d.view === key) return;
+          for (const t of tabs.children) t.setAttribute('aria-selected', String(t === tab));
+          full.classList.add('td-switching');
+          tdScrolls.delete(w.id);
+          tdExpanded.delete(w.id);
+          widgetAct(w.id, 'tdsource', { arg: key });
+        });
+        tabs.append(tab);
+      }
+      full.append(tabs);
+    }
+    if (quick !== 'bottom') full.append(adder('top'));
+    const scroll = el('div', 'td-scroll');
+    scroll.tabIndex = 0;
+    scroll.setAttribute('role', 'region');
+    scroll.setAttribute('aria-label', `${text(w.title, 60)} tasks`);
+    scroll.addEventListener('scroll', () => tdScrolls.set(w.id, scroll.scrollTop), { passive: true });
+    if (!groups.length) scroll.append(el('p', 'w-empty', 'Nothing here. Enjoy it.'));
+    // More than the card's short list (max) is sent: the rest is behind "Show more", or shown when the card is tall enough, and the list scrolls.
+    const collapsed = int(d.collapsed) || 0;
+    const expanded = tdExpanded.has(w.id);
+    let index = 0;
     for (const g of groups) {
       if (g.label) list.append(el('div', 'w-day', g.label));
       for (const t of g.tasks) {
-        const row = el('div', 'w-row');
+        const row = el('div', `w-row${collapsed > 0 && index >= collapsed && !expanded ? ' td-extra' : ''}`);
+        index++;
         const check = el('button', 'w-check');
         check.type = 'button';
         check.setAttribute('role', 'checkbox');
@@ -611,7 +942,7 @@ const WIDGET_RENDERERS = {
           if (check.getAttribute('aria-checked') === 'true') return;
           check.setAttribute('aria-checked', 'true');
           row.classList.add('done');
-          setTimeout(() => widgetAct(w.id, 'complete', { task: t.id }), 220);
+          setTimeout(() => tdSend(w.id, 'complete', { task: t.id }), 220);
         });
         const main = el('div', 'w-main');
         const url = safeUrl(t.url);
@@ -633,21 +964,69 @@ const WIDGET_RENDERERS = {
         if (meta.children.length) main.append(meta);
         if (t.description) main.append(el('span', 'td-desc', text(t.description, 120)));
         row.append(check, main);
+        // A small menu to move the task to another day (a repeating task keeps its repeat, so it has none).
+        if (!t.recurring) {
+          const when = el('button', 'td-when', '▾');
+          when.type = 'button';
+          when.title = 'Reschedule';
+          when.setAttribute('aria-label', `Reschedule “${title}”`);
+          when.setAttribute('aria-expanded', 'false');
+          when.addEventListener('click', () => {
+            const was = main.querySelector('.td-resched');
+            if (was) { was.remove(); when.setAttribute('aria-expanded', 'false'); return; }
+            when.setAttribute('aria-expanded', 'true');
+            const menu = el('div', 'td-resched');
+            menu.setAttribute('role', 'group');
+            menu.setAttribute('aria-label', 'Move to');
+            for (const [arg, label] of [['today', 'Today'], ['tomorrow', 'Tomorrow'], ['nextweek', 'Next week'], ['none', 'No date']]) {
+              const b = el('button', 'td-chip', label);
+              b.type = 'button';
+              b.addEventListener('click', () => { row.classList.add('done'); menu.remove(); tdSend(w.id, 'reschedule', { task: t.id, arg }); });
+              menu.append(b);
+            }
+            menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); menu.remove(); when.setAttribute('aria-expanded', 'false'); when.focus(); } });
+            main.append(menu);
+            menu.firstChild.focus();
+          });
+          row.append(when);
+        }
         list.append(row);
       }
       if (g.more > 0) list.append(el('p', 'w-more', `${g.more} more`));
     }
-    full.append(list);
-    if (total > shown) full.append(el('p', 'w-more', `${total - shown} more in Todoist`));
+    scroll.append(list);
+    const hidden = list.querySelectorAll('.td-extra').length;
+    if (hidden > 0) {
+      const more = el('button', 'td-showmore', `Show ${hidden} more`);
+      more.type = 'button';
+      more.addEventListener('click', () => { tdExpanded.add(w.id); list.querySelectorAll('.td-extra').forEach((r) => r.classList.remove('td-extra')); more.remove(); });
+      scroll.append(more);
+    } else if (collapsed > 0 && expanded && shown > collapsed) {
+      const less = el('button', 'td-showmore', 'Show fewer');
+      less.dataset.more = 'less';
+      less.type = 'button';
+      less.addEventListener('click', () => {
+        tdExpanded.delete(w.id);
+        tdScrolls.delete(w.id);
+        [...list.querySelectorAll('.w-row:not(.pending)')].slice(collapsed).forEach((r) => r.classList.add('td-extra'));
+        less.remove();
+        scroll.scrollTop = 0;
+        window.settleWidgetCard?.(card.el);
+      });
+      scroll.append(less);
+    }
+    if (total > shown) scroll.append(el('p', 'w-more', `${total - shown} more in Todoist`));
     const done = (Array.isArray(d.done) ? d.done : []).filter((x) => x && typeof x.title === 'string').slice(0, 10);
     if (done.length) {
       const sec = el('div', 'td-done');
       sec.append(el('div', 'w-day', 'Completed today'));
       for (const x of done) sec.append(el('div', 'td-done-row', text(x.title)));
-      full.append(sec);
+      scroll.append(sec);
     }
-    if (quick === 'bottom') full.append(adder());
+    full.append(scroll);
+    if (quick === 'bottom') full.append(adder('bottom'));
     card.body.append(full);
+    if (tdScrolls.get(w.id)) requestAnimationFrame(() => { scroll.scrollTop = tdScrolls.get(w.id) || 0; });
     if (d.undo && typeof d.undo.id === 'string' && /^[\w-]{1,40}$/.test(d.undo.id)) {
       const toast = el('div', 'td-toast');
       toast.setAttribute('role', 'status');
@@ -772,13 +1151,14 @@ const WIDGET_RENDERERS = {
     card.head.append(refreshButton(w));
     if (d.state === 'reconnect') {
       const note = el('p', 'w-note');
-      note.append(el('strong', null, 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
+      const google = d.google === true; // reading through the Google sign-in in Lumen (the default)
+      note.append(el('strong', null, google ? 'Sign in to Gmail' : 'Gmail needs to be connected'), text(d.message, 200) || 'Connect Gmail in Settings.');
       // oneClick: Lumen can start Google's sign-in (in the user's browser) straight from the card;
       // otherwise the button opens Settings, where the user's own Google Cloud client is set up.
       const oneClick = d.oneClick === true;
-      const fix = el('button', 'w-btn primary', oneClick ? 'Sign in with Google' : 'Open Settings');
+      const fix = el('button', 'w-btn primary', google ? 'Sign in to Gmail' : oneClick ? 'Sign in with Google' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
+      fix.setAttribute('aria-label', google ? `Sign in to Gmail${w.title && text(w.title, 60) !== 'Gmail' ? ` (${text(w.title, 60)})` : ''}` : oneClick ? `Sign in with Google for ${text(w.title, 60)}` : `Open settings to reconnect ${text(w.title, 60)}`);
       fix.addEventListener('click', () => widgetAct(w.id, oneClick ? 'signin' : 'configure'));
       const wrap = el('div');
       wrap.append(fix);
@@ -791,14 +1171,17 @@ const WIDGET_RENDERERS = {
     const head = el('div', 'gm-head');
     head.append(el('span', 'gm-count', String(unread)), el('span', 'gm-of', 'unread'));
     card.body.append(head);
+    // The account number the links use (Gmail's /mail/u/N/): a single digit, set by the app, never page text.
+    const acct = Number.isInteger(d.account) && d.account >= 0 && d.account <= 9 ? d.account : 0;
+    if (d.source === 'google' && text(d.email, 200)) card.body.append(el('p', 'w-sub gm-acct', text(d.email, 200)));
     const messages = (Array.isArray(d.messages) ? d.messages : []).filter((m) => m && typeof m.id === 'string' && /^[0-9a-f]{6,32}$/i.test(m.id)).slice(0, 10);
-    if (!messages.length) { card.body.append(el('p', 'w-empty', 'The inbox is empty.')); return; }
+    if (!messages.length) { card.body.append(el('p', 'w-empty', d.unreadOnly ? 'No unread messages.' : 'The inbox is empty.')); return; }
     const list = el('div', 'w-list');
     messages.forEach((m, i) => {
       const row = el('div', `w-row gm-row${m.unread ? ' unread' : ''}${i > 0 ? ' later' : ''}`);
       const main = el('div', 'w-main');
       const subject = text(m.subject, 200) || '(no subject)';
-      const a = link(`https://mail.google.com/mail/u/0/#inbox/${m.id}`, subject, '');
+      const a = link(`https://mail.google.com/mail/u/${acct}/#inbox/${m.id}`, subject, '');
       main.append(el('span', 'gm-from', text(m.from, 100) || 'Unknown sender'), a);
       if (m.snippet) main.append(el('span', 'gm-snip', text(m.snippet, 160)));
       row.append(main);
@@ -806,6 +1189,8 @@ const WIDGET_RENDERERS = {
       list.append(row);
     });
     card.body.append(list);
+    // Said plainly: the feed lists unread messages only, and at most the newest 20.
+    if (d.unreadOnly) card.body.append(el('p', 'w-sub gm-note', unread > messages.length ? 'Unread messages only, newest first.' : 'Shows unread messages only.'));
   },
 
   feed(w, card) {
@@ -945,7 +1330,7 @@ const WIDGET_RENDERERS = {
     const symbol = text(d.symbol, 60) || 'Chart';
     const scheme = matchMedia('(prefers-color-scheme: dark)');
     // A wallpaper or video background makes every card dark whatever the system scheme says (newtab.js does the same for the accent).
-    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || document.body.classList.contains('on-media')));
+    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || (document.body.classList.contains('on-media') && !document.body.classList.contains('tone-light'))));
     const url = tvUrl(isDark() ? d.dark : d.light);
     const list = d.view === 'watchlist';
     if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }
@@ -954,13 +1339,17 @@ const WIDGET_RENDERERS = {
     card.el.classList.add('embed', 'tradingview');
     if (list) card.el.classList.add('tv-watchlist');
     if (text(d.note, 200)) card.body.append(el('p', 'w-note tv-note', text(d.note, 200)));
-    const frame = document.createElement('iframe');
-    frame.className = 'w-frame';
-    // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
-    frame.referrerPolicy = 'no-referrer';
-    frame.loading = 'lazy';
-    frame.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
+    const newFrame = () => {
+      const f = document.createElement('iframe');
+      f.className = 'w-frame';
+      // No top navigation and no Lumen privileges; popups (TradingView's own links) open as tabs.
+      f.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+      f.referrerPolicy = 'no-referrer';
+      f.loading = 'lazy';
+      f.title = list ? `${text(d.name, 60) || 'Watchlist'} from TradingView` : `${symbol} chart from TradingView`;
+      return f;
+    };
+    let frame = newFrame();
     // The frame sits in a box that clips and positions it, so a small card can swap what TradingView shows
     // and shrink it to fit (features/tradingview-fit.js: the full chart is all toolbar below ~300 x 230, the
     // mini price view clips below ~190 x 104, a watchlist's tab row eats 45 px). The address is set once the
@@ -988,19 +1377,30 @@ const WIDGET_RENDERERS = {
     let src0 = pickUrl(true) || url;
     let shown = '';
     let was = null;
+    // The embeds read their options from the hash, and a change to only the hash is a same-page jump the frame never reloads for
+    // (the other theme's address differs from this one only there): go through a blank page so the widget starts over.
+    const load = (src) => {
+      src = tvFrameSrc(src);
+      const same = (() => { try { const a = new URL(frame.src); const b = new URL(src); a.hash = ''; b.hash = ''; return frame.src && a.href === b.href; } catch { return false; } })();
+      if (!same) { frame.src = src; return; }
+      frame.addEventListener('load', () => { if (tvFrameSrc(shown) === src) frame.src = src; }, { once: true });
+      frame.src = 'about:blank';
+    };
     const place = () => {
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       const next = fit ? fit.plan({ view: d.view, sections: d.sections, chart: d.chart === true }, w, h, was, Boolean(small)) : (w > 0 && h > 0 ? { compact: false, scale: 1 } : null);
       if (!next) return; // not laid out yet (a card in a stack that isn't showing): the observer calls again
       const src = next.compact && small ? small : src0;
-      if (src !== shown) { shown = src; frame.src = src; }
+      // TradingView's embed-widget pages (mini price view, watchlist) are see-through (isTransparent) and sit on the card; only the full chart paints its own background.
+      frame.classList.toggle('tv-clear', src.includes('/embed-widget/'));
+      if (src !== shown) { shown = src; load(src); }
       if (next.scale < 1) { frame.style.width = `${Math.round(w / next.scale)}px`; frame.style.height = `${Math.round(h / next.scale)}px`; frame.style.transform = `scale(${next.scale})`; }
       else { frame.style.width = ''; frame.style.height = ''; frame.style.transform = ''; }
       was = next;
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(place).observe(wrap);
-    else frame.src = url;
+    else frame.src = tvFrameSrc(url);
     // The system scheme (which the in-app dark setting drives) or the page's background changed: load the other theme's address.
     const restyle = () => {
       if (!frame.isConnected) return;
@@ -1008,7 +1408,7 @@ const WIDGET_RENDERERS = {
       if (next === src0) return;
       src0 = next;
       small = pickUrl(false);
-      if (shown) place(); else frame.src = src0;
+      if (shown) place(); else frame.src = tvFrameSrc(src0);
     };
     scheme.addEventListener('change', restyle);
     new MutationObserver(restyle).observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -1028,6 +1428,51 @@ const WIDGET_RENDERERS = {
       place();
     });
     card.head.append(menu);
+    // Reload: the embed is TradingView's own page in a cross-origin frame (Lumen fetches no quotes, so the shared Refresh has nothing to
+    // ask main for), and a cross-origin frame can't be told to reload itself. A new frame at the same address starts the widget over,
+    // which re-reads its quotes and chart, and keeps the card's symbols, interval and theme because they are in that address.
+    // The button turns and is off while it loads (so a double click is one reload); a frame that never finishes loads shows Try again.
+    let reloading = false;
+    let stall = 0;
+    let problem = null;
+    const reloadBtn = iconButton(ICON_REFRESH, `Reload ${symbol}`, () => reload());
+    reloadBtn.classList.add('w-reload');
+    const settle = (on) => { reloading = on; reloadBtn.classList.toggle('spinning', on); reloadBtn.disabled = on; reloadBtn.setAttribute('aria-busy', on ? 'true' : 'false'); };
+    const fail = () => {
+      clearTimeout(stall);
+      settle(false);
+      if (problem) return;
+      wrap.hidden = true;
+      const note = el('p', 'w-note');
+      note.append(el('strong', null, 'Couldn’t reload'), navigator.onLine === false ? 'You appear to be offline.' : 'TradingView didn’t answer.');
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${symbol} again`);
+      retry.classList.add('w-retry');
+      retry.addEventListener('click', () => reload());
+      const actions = el('div', 'w-actions');
+      actions.append(retry);
+      problem = [note, actions];
+      card.body.append(note, actions);
+    };
+    function reload() {
+      if (reloading || !frame.isConnected && !problem) return;
+      if (problem) { for (const n of problem) n.remove(); problem = null; wrap.hidden = false; }
+      settle(true);
+      if (navigator.onLine === false) { fail(); return; }
+      const next = newFrame();
+      next.loading = 'eager'; // pressed, so wanted now: a lazy frame in a card scrolled out of view would never load
+      next.addEventListener('load', () => { if (next !== frame) return; clearTimeout(stall); settle(false); }, { once: true });
+      if (shown) next.src = tvFrameSrc(shown); // before it is in the page, so the empty page's own load is not counted as this one
+      frame.replaceWith(next);
+      frame = next;
+      was = null;
+      place(); // styles the new frame (size, scale, see-through); the address is already set, so it loads nothing twice
+      if (!shown) { clearTimeout(stall); settle(false); return; } // not laid out yet: the box will load it when it has a size
+      clearTimeout(stall);
+      stall = setTimeout(fail, globalThis.__tvTestStallMs || 20e3);
+    }
+    card.head.append(reloadBtn);
   },
 
   // Custom recipes (features/custom-widget.js): plain strings only, as numbers or a list.
@@ -1105,6 +1550,7 @@ const WIDGET_RENDERERS = {
       const ms = target - now;
       const days = Math.floor(Math.abs(ms) / 86400e3);
       const past = ms < 0;
+      paint.coarse = past || ms >= 86400e3; // days only: a minute-apart tick is enough
       if (!past && ms < 86400e3) {
         const h = Math.floor(ms / 3600e3); const m = Math.floor((ms % 3600e3) / 60e3); const sec = Math.floor((ms % 60e3) / 1000);
         big.textContent = `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
@@ -1119,6 +1565,7 @@ const WIDGET_RENDERERS = {
     };
     paint(Date.now());
     liveTicks.set(card.el, paint);
+    wakeLive();
     card.body.append(big, unit, when);
   },
 
@@ -1145,7 +1592,7 @@ const WIDGET_RENDERERS = {
       const left = d.state === 'running' ? Math.max(0, d.endsAt - now) : d.state === 'done' ? 0 : Number(d.left) || 0;
       clock.textContent = fmt(left);
       fill.style.width = `${Math.round((1 - left / total) * 100)}%`;
-      if (d.state === 'running' && left === 0 && !card.el.classList.contains('tm-ended')) { card.el.classList.add('tm-ended'); widgetAct(w.id, 'refresh'); }
+      if (d.state === 'running' && left === 0 && !card.el.classList.contains('tm-ended')) { card.el.classList.add('tm-ended'); widgetAct(w.id, 'refresh', { arg: 'auto' }); }
     };
     if (d.state === 'running') btns.append(btn('Pause', 'pause', true), btn('Reset', 'reset'));
     else if (d.state === 'paused') btns.append(btn('Resume', 'start', true), btn('Reset', 'reset'));
@@ -1155,7 +1602,7 @@ const WIDGET_RENDERERS = {
       btns.append(btn(d.pomodoro ? (rest ? 'Start focus' : 'Start break') : 'Again', 'start', true), btn('Reset', 'reset'));
     } else btns.append(btn('Start', 'start', true), ...(d.pomodoro ? [btn(rest ? 'Skip to focus' : 'Skip to break', 'skip')] : []));
     paint(Date.now());
-    if (d.state === 'running') liveTicks.set(card.el, paint);
+    if (d.state === 'running') { liveTicks.set(card.el, paint); wakeLive(); }
     card.body.append(phase, clock, bar, btns);
   },
 
@@ -1170,6 +1617,24 @@ const WIDGET_RENDERERS = {
     const name = (a) => text(a.name, 40);
     const stateOf = (a) => (STATES.includes(a.state) ? a.state : 'missing');
     const full = (a) => `${name(a)}: ${text(a.stateText, 40)}`;
+    // [usage bars] the plan's 5-hour window as a thin bar (the percent is in the words beside it too, so colour is never the only signal)
+    const ubar = (a, cls) => {
+      const u = a.usage;
+      if (!u || !Number.isFinite(u.percent)) return null;
+      const p = Math.max(0, Math.min(100, Math.round(u.percent)));
+      const b = el('span', `ai-ubar ${cls}`);
+      b.dataset.level = ['ok', 'warn', 'high'].includes(u.level) ? u.level : 'ok';
+      b.setAttribute('role', 'progressbar');
+      b.setAttribute('aria-valuemin', '0');
+      b.setAttribute('aria-valuemax', '100');
+      b.setAttribute('aria-valuenow', String(p));
+      b.setAttribute('aria-valuetext', `${p}% of the 5-hour limit used`);
+      b.setAttribute('aria-label', `${name(a)} usage`);
+      const fill = el('i');
+      fill.style.width = `${p}%`; // through the CSSOM: the page's CSP drops inline style attributes
+      b.append(fill);
+      return b;
+    };
     const mark = (a) => { const m = el('i', 'ai-mark'); m.setAttribute('aria-hidden', 'true'); return m; };
     // The compact view: one line of words, a dot per AI (each with its name and state as text for a screen reader), a note.
     const compact = el('div', 'ai-compact');
@@ -1183,6 +1648,8 @@ const WIDGET_RENDERERS = {
       lab.setAttribute('aria-hidden', 'true');
       if (a.fact) { const f = el('span', 'ai-fact', `· ${text(a.fact, 14)}`); lab.append(' ', f); }
       li.append(aiLogo(a.brand), mark(a), lab, el('span', 'ai-sr', whole));
+      const dotBar = ubar(a, 'ai-ubar-dot');
+      if (dotBar) li.append(dotBar);
       dots.append(li);
     }
     const sum = el('p', 'ai-sum');
@@ -1197,6 +1664,8 @@ const WIDGET_RENDERERS = {
       const detail = [a.model ? `Using ${text(a.model, 60)}` : '', text(a.note, 140), a.fullAccess ? 'Full access on' : ''].filter(Boolean).join(' · ');
       li.append(mark(a), el('span', 'ai-name', name(a)), el('span', 'ai-state', text(a.stateText, 40)));
       if (detail) li.append(el('span', 'ai-detail', detail));
+      const rowBar = ubar(a, 'ai-ubar-row');
+      if (rowBar) li.append(rowBar);
       rows.append(li);
     }
     const live = el('p', 'ai-live');
@@ -1205,6 +1674,225 @@ const WIDGET_RENDERERS = {
     list.append(rows, live);
     card.body.append(compact, list);
     card.el.setAttribute('aria-label', `${text(w.title, 60) || 'AI status'}: ${text(d.summary, 90)}`);
+  },
+
+  // Routines (features/routines-card.js): what the scheduled routines run next and what they did last. Main shapes it from the runner's
+  // view and the page formats the times in its own language. Every row is a real button: a result opens that routine's page in the
+  // sidebar, the plus (and the empty card's button) opens its editor. Nothing here is a secret or markup: names and snippets are text.
+  // The words come from locales/en.json routines.card.* (ft, like the Files card); newtab.html decides how many rows the card's height has room for.
+  routines(w, card) {
+    const d = w.data;
+    card.el.classList.add('routines');
+    const STATUS = ['done', 'failed', 'stopped', 'interrupted', 'skipped'];
+    const now = Date.now();
+    const num = (v) => (Number.isFinite(v) && v > 0 ? v : 0);
+    const rows = (v) => (Array.isArray(v) ? v : []).filter((r) => r && typeof r === 'object' && typeof r.id === 'string' && /^[\w-]{1,60}$/.test(r.id)).slice(0, 3);
+    const upcoming = rows(d.upcoming).filter((r) => num(r.nextRun));
+    const latest = rows(d.latest).filter((r) => num(r.at));
+    const counts = d.counts && typeof d.counts === 'object' ? d.counts : {};
+    const total = Math.max(0, int(counts.total) || 0);
+    const on = Math.max(0, int(counts.on) || 0);
+    const paused = d.enabled === false;
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || 'Routines'}: ${ft('routines.card.summary', '{on} of {total} on', { on, total })}`);
+    const newRoutine = () => widgetAct(w.id, 'routine-new');
+    if (!paused) {
+      const add = iconButton(ICON_PLUS, ft('routines.card.newAria', 'Create a new routine'), newRoutine);
+      add.title = ft('routines.card.new', 'New routine');
+      add.classList.add('rt-add', 'always');
+      card.head.append(add);
+    }
+    const wrap = el('div', 'rt-wrap');
+    card.body.append(wrap);
+    const note = (title, hint) => { const n = el('div', 'rt-state'); n.append(el('p', 'rt-state-title', title), el('p', 'rt-state-hint', hint)); return n; };
+    if (paused) {
+      wrap.append(note(ft('routines.card.paused', 'Routines are paused'), ft('routines.card.pausedHint', 'Switch them back on in Settings.')));
+      return;
+    }
+    if (!total) {
+      const n = note(ft('routines.card.empty', 'No routines yet'), ft('routines.card.emptyHint', 'A routine runs a request on a schedule and keeps what it finds.'));
+      const b = el('button', 'w-btn rt-new', ft('routines.card.new', 'New routine'));
+      b.type = 'button';
+      b.setAttribute('aria-label', ft('routines.card.newAria', 'Create a new routine'));
+      b.addEventListener('click', newRoutine);
+      n.append(b);
+      wrap.append(n);
+      return;
+    }
+    // Times, in the page's language: "3:40 PM" today, "tomorrow 8:00 AM", "Fri 8:00 AM", else "Oct 9, 8:00 AM".
+    const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const when = (ms) => {
+      const day = (t) => new Date(t).setHours(0, 0, 0, 0);
+      const diff = Math.round((day(ms) - day(now)) / 864e5);
+      if (diff === 0) return clock(ms);
+      if (Math.abs(diff) === 1) {
+        let word = diff === 1 ? 'tomorrow' : 'yesterday';
+        try { word = new Intl.RelativeTimeFormat(document.documentElement.lang || undefined, { numeric: 'auto' }).format(diff, 'day'); } catch { /* the English word stays */ }
+        return `${word} ${clock(ms)}`;
+      }
+      if (Math.abs(diff) < 7) return `${new Date(ms).toLocaleDateString([], { weekday: 'short' })} ${clock(ms)}`;
+      return `${new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${clock(ms)}`;
+    };
+    const section = (cls, label) => { const s = el('section', `rt-sec ${cls}`); s.setAttribute('aria-label', label); s.append(el('h3', 'rt-h', label)); return s; };
+    const list = (s) => { const u = el('ul', 'rt-list'); s.append(u); return u; };
+    const row = (ul, r, mark, aria, parts) => {
+      const li = el('li', 'rt-item');
+      const b = el('button', 'rt-row');
+      b.type = 'button';
+      b.dataset.routine = r.id;
+      b.setAttribute('aria-label', aria);
+      b.addEventListener('click', () => widgetAct(w.id, 'routine-open', { id: r.id }));
+      b.append(mark, el('span', 'rt-title', text(r.title, 80)), el('span', 'rt-when', parts.when));
+      if (parts.sub) b.append(el('span', 'rt-sub', parts.sub));
+      li.append(b);
+      ul.append(li);
+    };
+    // Next runs.
+    const nextSec = section('rt-next', ft('routines.card.next', 'Next runs'));
+    if (!upcoming.length) nextSec.append(el('p', 'rt-none', ft('routines.card.nothingNext', 'Nothing is scheduled')));
+    else {
+      const ul = list(nextSec);
+      for (const r of upcoming) {
+        const mark = el('i', 'rt-mark rt-st-next');
+        mark.setAttribute('aria-hidden', 'true');
+        row(ul, r, mark, ft('routines.card.nextAria', '{title}, next run {when}. Open', { title: text(r.title, 80), when: when(r.nextRun) }), { when: when(r.nextRun) });
+      }
+    }
+    // Latest results.
+    const lastSec = section('rt-latest', ft('routines.card.latest', 'Latest results'));
+    if (!latest.length) lastSec.append(el('p', 'rt-none', ft('routines.card.noResults', 'No results yet')));
+    else {
+      const ul = list(lastSec);
+      const label = { done: ['routines.card.done', 'Done'], failed: ['routines.card.failed', 'Failed'], stopped: ['routines.card.stopped', 'Stopped'], interrupted: ['routines.card.interrupted', 'Interrupted'], skipped: ['routines.card.skipped', 'Skipped'] };
+      for (const r of latest) {
+        const status = STATUS.includes(r.status) ? r.status : 'done';
+        const waiting = r.waiting === true;
+        const mark = el('i', `rt-mark rt-st-${waiting ? 'wait' : status}`);
+        mark.setAttribute('aria-hidden', 'true');
+        const words = [];
+        if (waiting) words.push(ft('routines.card.needsOk', 'Needs your OK'));
+        else if (status !== 'done') words.push(ft(...label[status]));
+        if (r.trigger === 'catch-up') words.push(ft('routines.card.late', 'ran late'));
+        if (r.unseen === true && !waiting) words.push(ft('routines.card.unseen', 'New'));
+        const body = text(status === 'done' || status === 'skipped' ? r.snippet || r.error : r.error || r.snippet, 140);
+        const sub = [words.join(' · '), body].filter(Boolean).join(' — ');
+        const spoken = [words.join(', '), body].filter(Boolean).join('. ');
+        row(ul, r, mark, ft('routines.card.resultAria', '{title}: {status}, {when}. Open result', { title: text(r.title, 80), status: spoken || ft(...label[status]), when: when(r.at) }), { when: when(r.at), sub });
+        const li = ul.lastElementChild;
+        if (waiting) li.classList.add('rt-waiting');
+      }
+    }
+    wrap.append(nextSec, lastSec);
+    if (d.offline === true) wrap.append(el('p', 'rt-off', ft('routines.card.offline', 'Offline: runs wait for the connection.')));
+  },
+
+  // Files (features/files.js): pinned folders and files, then the ones opened lately. Rows are what fitLists trims, from the bottom, to the
+  // card's height ("+N more"); a missing file is grey, says "moved or deleted" and offers Find it. The list is read through the page's own
+  // bridge (see filesLoad above), so this card has no data of its own.
+  files(w, card) {
+    card.el.classList.add('files');
+    filesHook();
+    const add = iconButton(ICON_PLUS, ft('files.card.pinAria', 'Pin a file or folder'), () => {
+      const r = add.getBoundingClientRect();
+      openFileMenu(add, r.left, r.bottom + 4, [[ft('files.card.pinFile', 'Pin a file…'), () => filePick('file')], [ft('files.card.pinFolder', 'Pin a folder…'), () => filePick('folder')]]);
+    });
+    add.setAttribute('aria-haspopup', 'menu');
+    add.classList.add('fl-add');
+    card.head.append(add);
+    const wrap = el('div', 'fl-wrap');
+    card.body.append(wrap);
+    for (const c of [...filesCards]) if (c.id === w.id) filesCards.delete(c); // (a card drawn again replaces its old one)
+    const entry = { id: w.id, el: card.el, seen: false, draw: null };
+    const section = (label, list, empty, now) => {
+      const sec = el('section', 'fl-sec');
+      sec.setAttribute('aria-label', label);
+      sec.append(el('h3', 'fl-h', label));
+      if (!list.length) { sec.append(el('p', 'fl-empty', empty)); return sec; }
+      const rows = el('div', 'w-list');
+      rows.setAttribute('role', 'list');
+      for (const e of list) {
+        rows.append(fileRow(e, now));
+        const cands = e.missing ? fileCandidates(e) : null;
+        if (cands) rows.append(cands);
+      }
+      sec.append(rows);
+      return sec;
+    };
+    const paint = (now) => { // the times move on (a minute at a time) without asking main again
+      for (const s of card.el.querySelectorAll('.w-sub[data-t]')) s.textContent = [s.dataset.where, fileAgo(Number(s.dataset.t), now)].filter(Boolean).join(' · ');
+    };
+    // The ticker's minute: the times move on, and the list is asked for again if nothing has asked lately (main then re-checks the
+    // files that were missing or may have gone since; a minute apart, only while the page is in front).
+    const tick = (now) => { paint(now); if (Date.now() - filesAskedAt > 50e3 && !document.hidden) filesRefresh(); };
+    tick.coarse = true;
+    const draw = () => {
+      const t0 = performance.now();
+      entry.seen ||= card.el.isConnected;
+      const had = document.activeElement;
+      const key = had && card.el.contains(had) && had.dataset?.fid ? `${had.dataset.role}|${had.dataset.fid}` : null;
+      const now = Date.now();
+      wrap.replaceChildren();
+      const data = filesData;
+      if (!globalThis.lumenFiles) wrap.append(el('p', 'w-note', ft('files.card.unavailable', 'Files can’t be shown on this page.')));
+      else if (!data) {
+        const skel = el('div', 'w-skel');
+        skel.setAttribute('aria-label', ft('files.card.loading', 'Loading files'));
+        skel.setAttribute('role', 'status');
+        skel.append(el('i'), el('i'), el('i'));
+        wrap.append(skel);
+      } else if (!data.pinned.length && !data.recent.length) {
+        const empty = el('div', 'fl-first');
+        empty.append(el('p', 'w-note', data.remember ? ft('files.card.emptyOn', 'Pin a folder or open a file to see it here') : ft('files.card.emptyOff', 'Pin a folder or a file to see it here. Lumen isn’t remembering the files you open.')));
+        const acts = el('div', 'w-actions');
+        for (const [label, kind] of [[ft('files.card.pinFile', 'Pin a file…'), 'file'], [ft('files.card.pinFolder', 'Pin a folder…'), 'folder']]) {
+          const b = el('button', 'w-btn', label);
+          b.type = 'button';
+          b.addEventListener('click', () => filePick(kind));
+          acts.append(b);
+        }
+        if (!data.remember) { // Remember files I open is off: one click turns it on (Settings > General > Files has it too)
+          const on = el('button', 'w-btn fl-turn-on', ft('files.card.turnOn', 'Turn on'));
+          on.type = 'button';
+          on.addEventListener('click', () => filesDo(() => globalThis.lumenFiles.remember()));
+          acts.append(on);
+        }
+        empty.append(acts);
+        wrap.append(empty);
+      } else {
+        wrap.append(
+          section(ft('files.card.pinned', 'Pinned'), data.pinned, ft('files.card.pinnedEmpty', 'Nothing pinned yet. Use + to pin a file or a folder.'), now),
+          section(ft('files.card.recent', 'Recent'), data.recent, data.remember ? ft('files.card.recentEmpty', 'Files you open show up here.') : ft('files.card.recentEmptyOff', 'Not remembering files you open.'), now),
+        );
+      }
+      if (fileUndo && data) {
+        const strip = el('div', 'fl-undo');
+        strip.setAttribute('role', 'status');
+        strip.append(el('span', null, fileUndo.message));
+        const undo = el('button', 'w-btn', ft('files.card.undo', 'Undo'));
+        undo.type = 'button';
+        undo.addEventListener('click', fileUndoRun);
+        strip.append(undo);
+        wrap.append(strip);
+      }
+      if (key) {
+        const [role, fid] = key.split('|');
+        const again = [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid && n.dataset.role === role) || [...wrap.querySelectorAll('[data-fid]')].find((n) => n.dataset.fid === fid);
+        again?.focus({ preventScroll: true });
+      }
+      if (fileFocusAfter) { // Find it answered: the first match (or, with none, the way to remove the entry) takes the focus
+        const first = wrap.querySelector(`[data-role="cand"][data-fid="${CSS.escape(fileFocusAfter)}"]`);
+        if (first) { first.focus({ preventScroll: true }); fileFocusAfter = null; }
+      }
+      paint(now);
+      requestAnimationFrame(() => { if (card.el.isConnected) window.settleWidgetCard?.(card.el); });
+      window.__filesPerf?.push(['card-draw', performance.now() - t0]); // (a test makes the array)
+    };
+    entry.draw = draw;
+    filesCards.add(entry);
+    liveTicks.set(card.el, tick);
+    wakeLive();
+    draw();
+    if (!filesData) filesLoad().then(() => draw());
+    card.el.setAttribute('aria-label', `${text(w.title, 60) || ft('files.card.defaultTitle', 'Files')}`);
   },
 
   embed(w, card) {
@@ -1422,6 +2110,8 @@ function dueText(t, today) {
 }
 
 // ---- the cards ----
+// An error that is really a missing key, token or sign-in ("Add your GitHub token in Settings.").
+const errorNeedsSetup = (message) => /^(Add|Paste|Log in|Sign in|Connect) /.test(String(message || '')) && /\bSettings\b/.test(String(message));
 const shownWidgets = new Map(); // id -> { key, el, title }
 function buildCard(w) {
   const title = text(w.title, 60) || 'Widget';
@@ -1448,7 +2138,8 @@ function buildCard(w) {
       const retry = el('button', 'w-btn', 'Try again');
       retry.type = 'button';
       retry.setAttribute('aria-label', `Try ${title} again`);
-      retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+      retry.classList.add('w-retry');
+      retry.addEventListener('click', () => { retry.disabled = true; retry.textContent = 'Trying…'; setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 25e3); widgetAct(w.id, 'refresh'); });
       wrap.append(retry);
       if (w.setup && window.widgetSetup?.can(w.type)) {
         const fix = el('button', 'w-btn', 'Edit settings');
@@ -1461,21 +2152,39 @@ function buildCard(w) {
       editPencil(w, title, card, true);
     }
   } else if (typeof w.error === 'string' && w.error) {
+    // A card with nothing to connect with yet ("Add your Todoist API token in Settings.") is not broken and trying
+    // again can't fix it: it says what is missing, and its one button goes to where that is set.
+    const missing = errorNeedsSetup(w.error);
     const note = el('p', 'w-note');
-    note.append(el('strong', null, 'Couldn’t update'), text(w.error, 200));
-    const retry = el('button', 'w-btn', 'Try again');
-    retry.type = 'button';
-    retry.setAttribute('aria-label', `Try ${title} again`);
-    retry.addEventListener('click', () => widgetAct(w.id, 'refresh'));
+    // A message that already begins "Couldn't ..." is its own heading: "Couldn't update" above "Couldn't connect" said it twice.
+    const selfTitled = !missing && /^(Couldn’t|Couldn't|Can’t|Can't)/.test(w.error);
+    if (selfTitled) note.append(el('strong', null, text(w.error, 200)));
+    else note.append(el('strong', null, missing ? 'Needs setup' : 'Couldn’t update'), text(w.error, 200));
     body.append(note);
     const wrap = el('div', 'w-actions');
-    wrap.append(retry);
-    // A card that can't load is often one whose address or place is wrong: fix it here, next to Try again.
-    if (w.setup && window.widgetSetup?.can(w.type)) {
-      const fix = el('button', 'w-btn', 'Edit settings');
+    const editable = Boolean(w.setup && window.widgetSetup?.can(w.type));
+    if (!missing) {
+      const retry = el('button', 'w-btn', 'Try again');
+      retry.type = 'button';
+      retry.setAttribute('aria-label', `Try ${title} again`);
+      retry.classList.add('w-retry');
+      if (w.refreshing) { retry.disabled = true; retry.textContent = 'Trying…'; }
+      retry.addEventListener('click', () => {
+        // Say something happened: the card keeps its error until the answer arrives (a failure again looks the same).
+        // Main says when the run ended (setRefreshing); a page that never hears back lets go after 25 s.
+        retry.disabled = true;
+        retry.textContent = 'Trying…';
+        setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = 'Try again'; } }, 25e3);
+        widgetAct(w.id, 'refresh');
+      });
+      wrap.append(retry);
+    }
+    // A card that can't load is often one whose address, place or key is wrong: fix it here, next to Try again.
+    if (editable || /\bSettings\b/.test(w.error)) {
+      const fix = el('button', missing ? 'w-btn primary' : 'w-btn', editable ? 'Edit settings' : 'Open Settings');
       fix.type = 'button';
-      fix.setAttribute('aria-label', `Edit ${title}`);
-      fix.addEventListener('click', () => openEditor(w));
+      fix.setAttribute('aria-label', editable ? `Edit ${title}` : `Open Settings for ${title}`);
+      fix.addEventListener('click', () => (editable ? openEditor(w) : widgetAct(w.id, 'configure')));
       wrap.append(fix);
     }
     body.append(wrap);
@@ -1495,7 +2204,9 @@ function updateFoot(cardEl, w) {
   const foot = cardEl.querySelector('.w-foot');
   if (!foot) return;
   const parts = [];
-  if (w.updated) parts.push(`Updated ${agoText(w.updated)}`);
+  // "Updated just now" under a sign-in prompt says nothing a person can use.
+  const signIn = w.data?.state === 'reconnect' || Boolean(cardEl.querySelector('.am-signin, .sp-web-signin'));
+  if (w.updated && !signIn) parts.push(`Updated ${agoText(w.updated)}`);
   if (typeof w.warning === 'string' && w.warning) parts.push(text(w.warning, 120));
   foot.textContent = parts.join(' · ');
   foot.classList.toggle('warn', Boolean(w.warning));
@@ -1511,18 +2222,33 @@ function renderWidgets(list) {
   const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
   const cards = valid.map((w) => {
-    const { span, height, layout, updated, warning, colors, setup, stack, sid, top, rotate, smart, ...rest } = w; // a new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked)
-    const key = JSON.stringify(rest);
+    // A new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked), and
+    // a music card read again with its playhead where the card already shows it is kept (features/widget-card-key.js): drawing a card
+    // again replaces its buttons and its search field mid-use.
+    const key = window.WidgetCardKey.cardKey(w);
     const kept = shownWidgets.get(w.id);
-    const card = kept && kept.key === key ? kept.el : buildCard(w);
+    let card;
+    if (kept && window.WidgetCardKey.sameCard(kept.key, key)) card = kept.el;
+    else if (kept && kept.el._music && window.WidgetCardKey.updatesInPlace(kept.key, key)) { // a music card whose data moved on (a song, a switch, a list that came): its parts are updated, the card stays
+      try { kept.el._music.update({ ...w, title: text(w.title, 60) || 'Widget' }); card = kept.el; shownWidgets.set(w.id, { key, el: card }); } catch (err) { console.error('music card', err); card = buildCard(w); }
+    } else card = buildCard(w);
     if (card !== kept?.el) {
-      if (kept?.el) { kept.el.replaceWith(card); } // same place in the DOM order
+      if (kept?.el) { // same place in the DOM order, and on the grid: the new card starts where the old one is, it does not slide in from the corner
+        card.style.transform = kept.el.style.transform;
+        card.style.width = kept.el.style.width;
+        card.style.height = kept.el.style.height;
+        card._pos = kept.el._pos;
+        kept.el.replaceWith(card);
+      }
       shownWidgets.set(w.id, { key, el: card });
     }
     updateFoot(card, w);
-    card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(colors) ? colors : 'calendar';
+    setRefreshing(card, w);
+    card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
+    if (w.react === true && (w.type === 'spotify' || w.type === 'applemusic')) card.dataset.mreact = '1'; else delete card.dataset.mreact; // [look] "React to music" (newtab-music-react.js)
     return card;
   });
+  window.musicCardsChanged?.();
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);
@@ -1593,18 +2319,31 @@ function tickClocks() {
     } catch (err) { console.error('world clock', err); clockRows.delete(row); }
   }
 }
-setInterval(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 1000);
 // Countdown and Timer cards count seconds here between reads (a card that left the page drops out).
 const liveTicks = new Map(); // card element -> paint(now)
 const noteDrafts = new Map(); // Notes card id -> { text, saved, focus, start, end }: what is typed survives a redraw
-setInterval(() => {
-  if (document.hidden || !liveTicks.size) return;
+function tickLive() {
   const now = Date.now();
   for (const [cardEl, paint] of liveTicks) {
     if (!cardEl.isConnected) { liveTicks.delete(cardEl); continue; }
     try { paint(now); } catch (err) { console.error('widget tick', err); liveTicks.delete(cardEl); }
   }
-}, 1000);
+}
+// One ticker for the clocks and the Countdown/Timer cards (features/visible-ticker.js): it exists only while the page is visible and one of them is on
+// it; a second apart when something shows seconds (a clock with seconds, a Timer, a Countdown inside its last day), a minute apart otherwise.
+// Hidden pages, the resident spare and a page with none of these cards have no timer at all.
+const secondsShown = () => [...clockRows.values()].some((c) => c.opts?.seconds) || [...liveTicks.values()].some((p) => p.coarse !== true);
+const liveTicker = VisibleTicker.createTicker({
+  needed: () => clockRows.size > 0 || liveTicks.size > 0,
+  period: () => (secondsShown() ? 1000 : 60e3),
+  run() { if (clockRows.size) tickClocks(); if (liveTicks.size) tickLive(); },
+});
+window.liveTicker = liveTicker; // (tests: whether a timer is armed)
+// The music card's playhead joins the same ticker while a song plays (renderer/newtab-music.js): one wakeup a second for clocks and music together.
+window.liveTick = { add(el, paint) { if (liveTicks.get(el) !== paint) { paint.coarse = false; liveTicks.set(el, paint); } liveTicker.poke(); }, remove(el) { liveTicks.delete(el); } };
+document.addEventListener('visibilitychange', () => liveTicker.onVisibility());
+// A row or card that just appeared is drawn at once (it is drawn before it is put on the page: tickClocks keeps it a while); the ticker then lines up.
+const wakeLive = () => { setTimeout(() => { if (!document.hidden && clockRows.size) tickClocks(); }, 0); liveTicker.poke(); };
 // Show as many places as fit whole (at least the first); the rest are hidden, so the list never needs a scrollbar.
 function fitClockRows(body, list) {
   if (!body.isConnected) return;
@@ -1624,7 +2363,7 @@ const SLACK = 2; // px of rounding that is not overflow
 const tooTall = (n) => n.scrollHeight > n.clientHeight + SLACK;
 const tooWide = (n) => n.scrollWidth > n.clientWidth + SLACK;
 const fitOff = (n) => n.classList.add('fit-off');
-const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'custom'];
+const NO_LIST_FIT = ['weather', 'worldclock', 'spotify', 'applemusic', 'embed', 'muse', 'stocks', 'crypto', 'tradingview', 'notes', 'countdown', 'timer', 'aistatus', 'routines', 'custom', 'todoist'];
 function fitPlace(sec, cycle) {
   // Sideways strips (hours, days laid across): drop what doesn't fit from the end.
   for (const strip of sec.querySelectorAll('.wx-hours, .wx-days')) {
@@ -1770,6 +2509,18 @@ function fitAiChips(body, parts, bad, hide) {
   }
   if (bad() && parts[1]) fitOff(parts[1]);
 }
+// A Todoist card with room shows more of its list than the short one (the rest is behind "Show more", or scrolls).
+function fitTodoist(cardEl) {
+  const scroll = cardEl.querySelector('.td-scroll');
+  if (!scroll || !isShown(scroll)) return;
+  for (const r of [...scroll.querySelectorAll('.td-extra')]) {
+    r.classList.remove('td-extra');
+    if (tooTall(scroll)) { r.classList.add('td-extra'); break; }
+  }
+  const btn = scroll.querySelector('.td-showmore');
+  const left = scroll.querySelectorAll('.td-extra').length;
+  if (btn && btn.dataset.more !== 'less') { if (left) btn.textContent = `Show ${left} more`; else btn.remove(); }
+}
 function settleCard(cardEl) {
   if (!cardEl?.isConnected || cardEl.classList.contains('sys')) return; // the page's own sections fit themselves (newtab-system.js)
   const body = cardEl.querySelector('.w-body');
@@ -1780,6 +2531,7 @@ function settleCard(cardEl) {
   cardEl.querySelectorAll('.w-fit-more').forEach((n) => n.remove());
   if (cardEl.classList.contains('weather')) fitWeather(cardEl);
   else if (cardEl.classList.contains('aistatus')) fitAiStatus(cardEl, body);
+  else if (cardEl.classList.contains('todoist')) fitTodoist(cardEl);
   else if (!NO_LIST_FIT.some((c) => cardEl.classList.contains(c))) fitLists(cardEl, body);
   // Only what still overflows may scroll (thin, and only while hovered); a card that fits doesn't move or catch the wheel.
   for (const n of scrollers) {
@@ -1806,7 +2558,7 @@ function settleCard(cardEl) {
 
 // Events end and "Tomorrow" becomes "Today": the calendar and task cards redraw once a minute; a card
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
-const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
+const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, applemusic: 30e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 function tick() {
   if (document.hidden) return;
@@ -1816,13 +2568,27 @@ function tick() {
   for (const w of lastList.current) {
     // Stocks and Crypto say how often they refresh (a closed market: hourly).
     const after = (w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type];
-    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh'); return; }
+    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh', { arg: 'auto' }); return; }
   }
   const box = document.getElementById('widgets');
   if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));
 }
-setInterval(tick, 60e3);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+// (the minute tick: one timer per visible page, none while hidden; a page that comes back catches up at once)
+const refreshTicker = VisibleTicker.createTicker({ period: 60e3, align: false, run: tick });
+refreshTicker.poke();
+// A card that couldn't load (or shows an older answer) asks again when the page is shown, and when the machine is back online;
+// main also asks again by itself after 2, 10 and 30 seconds, and when the computer wakes up.
+let retriedAt = 0;
+function retryFailed() {
+  if (document.hidden || Date.now() - retriedAt < 4000) return false;
+  const bad = lastList.current.find((w) => w && !w.sys && (w.error || w.warning));
+  if (!bad) return false;
+  retriedAt = Date.now();
+  widgetAct(bad.id, 'retry');
+  return true;
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) refreshTicker.stop(); else { if (!retryFailed()) tick(); refreshTicker.poke(); } });
+window.addEventListener('online', () => setTimeout(retryFailed, 800));
 // A framed page (Google Calendar's embed) may focus itself as it loads, and then the search box
 // stops taking typing. Focus that goes into a frame without the pointer on it or a Tab press goes
 // back where it was.

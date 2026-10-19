@@ -3,6 +3,7 @@
 // no about:blank in its back list, Chrome's identity from its first request, its title and address in the strip; that
 // an address typed into the new-tab page lands in the same tab (Back returns to a new-tab page), a load that never
 // commits leaves the new-tab page as it was, and a restored tab wakes in it.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -108,7 +109,7 @@ const os = require('os');
   check('no page errors in the browser UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch {}
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -8,6 +8,8 @@ let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
 const { netFetch } = require('../browser/net-fetch');
 const genImages = require('../features/gen-images');
+const effortLib = require('./effort');
+const providerUsage = require('../features/provider-usage');
 
 const PROVIDERS = {
   openai: {
@@ -25,7 +27,7 @@ const PROVIDERS = {
   gemini: {
     label: 'Gemini',
     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    defaults: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    defaults: ['gemini-3.1-pro-preview', 'gemini-3.8-flash'], // ai.google.dev/gemini-api/docs/models, 2026-10-09: the 2.5 models are limited to past users
     include: (id) => /^gemini/.test(id) && !/(embedding|image|tts|aqa|live|audio|computer-use|robotics)/.test(id),
   },
   // One key for many companies' models. Ids look like "anthropic/claude-opus-5.5".
@@ -33,10 +35,24 @@ const PROVIDERS = {
     label: 'OpenRouter',
     baseURL: 'https://openrouter.ai/api/v1',
     headers: { 'HTTP-Referer': 'https://github.com/emah-maker/lumen', 'X-Title': 'Lumen' },
-    defaults: ['anthropic/claude-sonnet-5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
+    defaults: ['anthropic/claude-sonnet-5.5', 'openai/gpt-5.6', 'google/gemini-2.5-flash'],
     include: () => true,
   },
+  // Models on this computer (Ollama, LM Studio): no key, the address is in settings.localAI (ai/local-models.js, loaded on first use).
+  local: {
+    label: 'Local',
+    baseURL: undefined,
+    defaults: [],
+    include: () => true,
+    local: true,
+  },
 };
+
+// Where the local settings come from: main.js sets it (settings.localAI). chatOnly(model) is told when a server refuses tools for a model.
+let localSource = { get: () => null, chatOnly: () => {} };
+const setLocalSource = (src) => { localSource = { ...localSource, ...src }; };
+const localModels = () => require('./local-models');
+const localConfig = () => localModels().clean(localSource.get());
 
 // ---------- OpenRouter's model catalog (GET /models, kept for 24 hours) ----------
 
@@ -106,6 +122,7 @@ function curatedOpenRouter(models) {
 
 // Can this model use tools (click, type, read pages)? Unknown models are assumed to.
 function canUseTools(provider, model) {
+  if (provider === 'local') return localConfig().models.find((m) => m.id === model)?.tools !== false; // unknown: tried, and said so if the server refuses
   if (provider !== 'openrouter' || !catalog) return true;
   const entry = catalog.models.find((m) => m.id === model);
   return entry ? entry.tools : true;
@@ -120,12 +137,18 @@ function splitModel(id) {
 
 function clientFor(provider, apiKey) {
   const OpenAI = OpenAISDK();
+  if (provider === 'local') {
+    const cfg = localConfig();
+    if (!localModels().allowed(cfg)) throw new Error('The local AI address isn’t on this computer. Check Settings → AI → Local.');
+    return new OpenAI({ apiKey: 'local', baseURL: localModels().baseURL(cfg), maxRetries: 0, fetch: netFetch() });
+  }
   return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2, fetch: netFetch() });
 }
 
 // Does the provider accept this key? { ok: true }, { ok: false, message } when it's rejected, or
 // { ok: null } when it couldn't be checked (offline, or the provider having trouble).
 async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
+  if (provider === 'local') return { ok: null }; // no key to check
   const rejected = { ok: false, message: `${PROVIDERS[provider].label} didn't accept that key. Check it and try again.` };
   try {
     if (provider === 'openrouter') {
@@ -147,6 +170,7 @@ async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
 // Lists chat models the key can use (newest-looking first); falls back to defaults on error.
 async function listModels(provider, apiKey, { cacheFile, onRefresh = null } = {}) {
   try {
+    if (provider === 'local') return localConfig().models.map((m) => m.id); // what Detect found; the server isn't asked at startup
     if (provider === 'openrouter') return curatedOpenRouter((await openRouterCatalog({ cacheFile, onRefresh })).models); // (a day-old copy at once, refreshed behind)
     const page = await clientFor(provider, apiKey).models.list();
     const ids = [];
@@ -225,18 +249,38 @@ function toChatMessages(system, messages) {
 // chunk when asked; OpenRouter also reports the request's cost. Gemini sends usage without asking.
 function usageOptions(provider) {
   if (provider === 'openrouter') return { stream_options: { include_usage: true }, usage: { include: true } };
-  if (provider === 'openai' || provider === 'xai') return { stream_options: { include_usage: true } };
+  if (provider === 'openai' || provider === 'xai' || provider === 'local') return { stream_options: { include_usage: true } };
   return {};
 }
 
 const safeId = (id) => (id && /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : `call_${Math.random().toString(36).slice(2, 12)}`);
 
 // One streamed turn. Returns an Anthropic-shaped message: { content, stop_reason, model }.
-async function streamTurn({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null }) {
-  const stream = await (client || clientFor(provider, apiKey)).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider) },
+// effort: the user's reasoning-effort choice for this provider ('' = its default; ai/effort.js decides whether this model takes it).
+async function streamTurn(args) {
+  try {
+    return await streamTurnOnce(args);
+  } catch (err) {
+    // A local model whose server refuses tools: the same turn as plain chat, remembered so the picker says "chat only".
+    if (args.provider !== 'local' || !args.tools?.length || args.signal?.aborted || !localModels().isNoToolsError(err)) throw err;
+    try { localSource.chatOnly(args.model); } catch { /* the note below still tells the user */ }
+    args.emit({ type: 'notice', text: `${args.model} can't use tools, so it answers as plain chat: it can read the page you're on but can't click or type in your tabs. Pick a tool-capable local model for that.` });
+    return streamTurnOnce({ ...args, tools: [] });
+  }
+}
+async function streamTurnOnce({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
+  const request = (client || clientFor(provider, apiKey)).chat.completions.create(
+    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
     { signal },
   );
+  // The response's rate-limit headers come with the same request (no extra call): x-ratelimit-* for OpenAI, xAI and OpenRouter.
+  let rate = null;
+  let stream;
+  if (typeof request.withResponse === 'function') {
+    const got = await request.withResponse();
+    stream = got.data;
+    try { rate = providerUsage.parseRateLimitHeaders(provider, got.response?.headers); } catch { rate = null; }
+  } else stream = await request;
   let text = '';
   let finish = null;
   const calls = [];
@@ -275,7 +319,7 @@ async function streamTurn({ provider, model, apiKey, system, messages, tools, si
   }
   if (!content.length && !pictures.length) content.push({ type: 'text', text: '(no reply)' });
   const stopReason = calls.length ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';
-  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage, ...(pictures.length ? { pictures } : {}) };
+  return { content, stop_reason: stopReason, model: `${provider}:${model}`, usage, ...(rate ? { rate } : {}), ...(pictures.length ? { pictures } : {}) };
 }
 
 // One non-streaming request that must answer with a JSON object.
@@ -283,11 +327,16 @@ async function completeJSON({ provider, model, apiKey, system, user, maxTokens, 
   const res = await clientFor(provider, apiKey).chat.completions.create({
     model,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-    response_format: { type: 'json_object' },
-    ...(maxTokens ? { max_completion_tokens: maxTokens } : {}),
+    // (LM Studio refuses response_format json_object, so a local model is asked in the prompt and its reply is read as JSON below)
+    ...(provider === 'local' ? { messages: [{ role: 'system', content: `${system}\n\nAnswer with one JSON object and nothing else.` }, { role: 'user', content: user }] } : { response_format: { type: 'json_object' } }),
+    ...(maxTokens ? { [provider === 'local' ? 'max_tokens' : 'max_completion_tokens']: maxTokens } : {}),
     ...(temperature != null ? { temperature } : {}),
   }, signal ? { signal } : undefined);
-  return JSON.parse(res.choices?.[0]?.message?.content || '{}');
+  const content = res.choices?.[0]?.message?.content || '{}';
+  if (provider !== 'local') return JSON.parse(content);
+  const body = String(content).replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
+  const start = body.indexOf('{');
+  return JSON.parse(start >= 0 ? body.slice(start, body.lastIndexOf('}') + 1) : body);
 }
 
 // ---------- making a picture on purpose ("draw a cat") ----------
@@ -295,7 +344,7 @@ async function completeJSON({ provider, model, apiKey, system, user, maxTokens, 
 const IMAGE_MODELS = {
   openai: { fallback: 'gpt-image-1', pick: /^gpt-image/ },
   xai: { fallback: 'grok-2-image', pick: /image|imagine/, skip: /video|edit/ },
-  gemini: { fallback: 'gemini-2.5-flash-image', pick: /flash-image|pro-image|image-preview/, skip: /imagen|live|tts/ },
+  gemini: { fallback: 'gemini-3.1-flash-image', pick: /flash-image|pro-image|image-preview/, skip: /imagen|live|tts/ },
 };
 // Can this model make pictures when asked? (OpenAI, Grok and Gemini: through their image models; OpenRouter: only
 // the models its catalog lists as making images, which answer in the chat itself.)
@@ -317,44 +366,90 @@ async function imageModelFor(provider, apiKey) {
 
 // One picture for `prompt`: { images: [{ data (base64) | url, alt }], model, said } (see features/gen-images.js extractImages),
 // from the images API of OpenAI or xAI, or Gemini's generateContent. `fetchImpl` / `client` let tests pass fakes.
-async function generateImage({ provider, apiKey, prompt, model = null, signal, fetchImpl = netFetch(), client = null }) {
+// source: { buffer, mime } to edit a picture instead of making one (OpenAI, Gemini and OpenRouter take it; Grok's API does not here).
+// Errors carry `policy: true` when the provider refused the content (never a reason to ask another provider), see ai/image-router.js.
+const SAFETY_FINISH = /SAFETY|PROHIBITED|BLOCKLIST|SPII/i;
+const POLICY_TEXT = /content[_ ]policy|moderation[_ ]blocked|safety system|violat\w* .{0,30}polic|policy violation|not allowed by|prohibited content|rejected by the safety/i;
+const canEditImages = (provider) => provider === 'openai' || provider === 'gemini' || provider === 'openrouter';
+async function generateImage({ provider, apiKey, prompt, model = null, signal, fetchImpl = netFetch(), client = null, source = null }) {
+  if (provider === 'openrouter') return generateOpenRouterImage({ apiKey, prompt, model, signal, client, source });
   const cfg = IMAGE_MODELS[provider];
   if (!cfg) throw new Error(`${PROVIDERS[provider]?.label || provider} has no image model Lumen can ask.`);
+  if (source && !canEditImages(provider)) throw Object.assign(new Error(`${PROVIDERS[provider].label} can't edit pictures here.`), { imageApi: true });
   const id = model || await imageModelFor(provider, apiKey);
   if (provider === 'gemini') {
     const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(id)}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, ...(source ? [{ inlineData: { mimeType: source.mime, data: source.buffer.toString('base64') } }] : [])] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
       credentials: 'omit',
       ...(signal ? { signal } : {}),
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(json?.error?.message || `Gemini error ${res.status}`), { status: res.status, imageApi: true });
+    if (!res.ok) throw Object.assign(new Error(json?.error?.message || `Gemini error ${res.status}`), { status: res.status, imageApi: true, ...(POLICY_TEXT.test(String(json?.error?.message || '')) ? { policy: true } : {}) });
     const parts = json?.candidates?.[0]?.content?.parts || [];
     const said = parts.filter((p) => typeof p?.text === 'string').map((p) => p.text).join(' ').trim();
     const found = genImages.extractImages(json).map((i) => ({ ...i, alt: i.alt || said.slice(0, 300) }));
     if (!found.length) {
       const blocked = json?.promptFeedback?.blockReason || json?.candidates?.[0]?.finishReason;
-      throw Object.assign(new Error(said || `Gemini made no picture${blocked ? ` (${blocked})` : ''}.`), { imageApi: true });
+      throw Object.assign(new Error(said || `Gemini made no picture${blocked ? ` (${blocked})` : ''}.`), { imageApi: true, ...(json?.promptFeedback?.blockReason || SAFETY_FINISH.test(String(json?.candidates?.[0]?.finishReason || '')) ? { policy: true } : {}) });
     }
     return { images: found, model: id, said };
   }
   const api = client || clientFor(provider, apiKey);
   const body = { model: id, prompt, n: 1, ...(/^dall-e|^grok/.test(id) ? { response_format: 'b64_json' } : {}) };
-  const res = await api.images.generate(body, signal ? { signal } : undefined);
+  let res;
+  try {
+    res = source
+      ? await api.images.edit({ model: id, prompt, n: 1, image: await OpenAISDK().toFile(source.buffer, `picture.${source.mime === 'image/jpeg' ? 'jpg' : source.mime.split('/')[1]}`, { type: source.mime }) }, signal ? { signal } : undefined)
+      : await api.images.generate(body, signal ? { signal } : undefined);
+  } catch (err) {
+    if (isPolicyError(err)) err.policy = true;
+    throw err;
+  }
   const found = genImages.extractImages(res);
   if (!found.length) throw Object.assign(new Error(`${PROVIDERS[provider].label} made no picture.`), { imageApi: true });
+  return { images: found.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300) })), model: id, said: '' };
+}
+
+// Did the provider refuse the picture itself (its content policy), as opposed to being down, limited or misconfigured?
+function isPolicyError(err) {
+  if (err?.policy === true) return true;
+  const code = String(err?.code || err?.error?.code || err?.error?.error?.code || '');
+  return /content_policy|moderation_blocked/i.test(code) || (POLICY_TEXT.test(String(err?.message || '')) && (!err?.status || err.status === 400 || err.status === 403));
+}
+
+// OpenRouter makes pictures through its chat endpoint: a model that lists image output, asked with modalities.
+function openRouterImageModel(preferred = null) {
+  if (preferred && openRouterInfo(preferred)?.imageOut) return preferred;
+  const list = (catalog?.models || []).filter((m) => m.imageOut);
+  return [...list].sort((a, b) => (a.pricePerM ?? 1e9) - (b.pricePerM ?? 1e9))[0]?.id || null;
+}
+async function generateOpenRouterImage({ apiKey, prompt, model, signal, client, source }) {
+  const id = model || openRouterImageModel();
+  if (!id) throw Object.assign(new Error('OpenRouter lists no picture model for this key.'), { imageApi: true });
+  const api = client || clientFor('openrouter', apiKey);
+  const content = source ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:${source.mime};base64,${source.buffer.toString('base64')}` } }] : prompt;
+  let res;
+  try { res = await api.chat.completions.create({ model: id, messages: [{ role: 'user', content }], modalities: ['image', 'text'] }, signal ? { signal } : undefined); } catch (err) { if (isPolicyError(err)) err.policy = true; throw err; }
+  const found = genImages.extractImages(res);
+  const said = String(res?.choices?.[0]?.message?.content || '').trim();
+  if (!found.length) throw Object.assign(new Error(said || 'OpenRouter made no picture.'), { imageApi: true, ...(res?.choices?.[0]?.finish_reason === 'content_filter' ? { policy: true } : {}) });
   return { images: found.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300) })), model: id, said: '' };
 }
 
 function describeProviderError(err, provider) {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
+  if (provider === 'local') { // a server on this computer: not the internet, and no key
+    if (err instanceof OpenAIModule.APIConnectionError) return { text: 'Couldn’t reach your local AI server. Start Ollama or LM Studio (with its local server on) and check the address in Settings → AI → Local.' };
+    if (err.status === 404) return { text: 'The local server doesn’t have this model. Press Detect in Settings → AI → Local to refresh the list, or pull or load the model first.' };
+  }
   // Offline, DNS, a timeout: there is no HTTP status to report.
   if (err instanceof OpenAIModule.APIConnectionError) {
-    const why = String(err.cause?.code || err.cause?.message || '').split('\n')[0].slice(0, 80);
-    return { text: `Could not reach ${label}${why ? ` (${why})` : ''}. Check your internet connection and try again.` };
+    const code = String(err.cause?.code || '');
+    const how = /TIMEDOUT|TIMEOUT/i.test(code) || /timed? ?out/i.test(String(err.message || '')) ? `${label} took too long to answer. Try again, or pick another model.` : `Could not reach ${label}. Check your internet connection and try again.`;
+    return { text: how };
   }
   if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   // A model that takes no images, given a chat that holds some (a catalog can be wrong or silent about it).
@@ -364,7 +459,10 @@ function describeProviderError(err, provider) {
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
   if (err.status === 429) return { text: provider === 'openrouter' ? 'OpenRouter is rate limiting this model. Wait a moment, or pick another model.' : `${label} rate limit or quota reached. Wait a moment, or check your ${label} billing.` };
   if (err.status >= 500) return { text: `${label} is having trouble right now (error ${err.status}). Try again in a minute, or pick another model.` };
-  return { text: err.status ? `${label} error ${err.status}: ${err.message}` : `${label} error: ${err.message}` };
+  // The rest (a 400, a 422): the provider's own sentence, without the status prefix or a raw JSON body the SDK sometimes leaves in.
+  const said = String(err.message || '').replace(/^\d{3}\s*/, '');
+  const plain = /^\s*[{[]/.test(said) ? (() => { try { const j = JSON.parse(said); return String(j?.error?.message || j?.message || ''); } catch { return ''; } })() : said;
+  return { text: `${label} couldn't answer${err.status ? ` (error ${err.status})` : ''}${plain ? `: ${plain.slice(0, 240)}` : '.'}` };
 }
 
 // OpenRouter's own name for a model, without its vendor ("Anthropic: Claude Opus 5.5" -> "Claude Opus 5.5"), if known.
@@ -380,4 +478,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { imageUrl, clientFor, canGenerateImages, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { setLocalSource, imageUrl, clientFor, canGenerateImages, canEditImages, isPolicyError, openRouterImageModel, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

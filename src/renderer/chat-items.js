@@ -26,8 +26,14 @@
     rename: '<svg viewBox="0 0 16 16"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>',
     export: '<svg viewBox="0 0 16 16"><path d="M8 2.5v8M5 5.5l3-3 3 3M3.5 10.5v3h9v-3"/></svg>',
     delete: '<svg viewBox="0 0 16 16"><path d="M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.5 9h5l.5-9"/></svg>',
+    pin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5"/></svg>',
+    unpin: '<svg viewBox="0 0 16 16"><path d="M6 2.5h4l-.6 4 2.1 2.5H4.5L6.6 6.5zM8 9v4.5M2.5 2.5l11 11"/></svg>',
+    archive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M6.5 9h3"/></svg>',
+    more: '<svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>',
+    unarchive: '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6.5h9V6.5M8 12V8.5M6.3 10L8 8.3 9.7 10"/></svg>',
     close: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
     showtab: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 9.5h3M10 8l1.5 1.5L10 11"/></svg>',
+    project: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>',
     closetabs: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M6.3 8.6l3.4 3M9.7 8.6l-3.4 3"/></svg>', // [ai manners] close the tabs this chat opened
     sharehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 8.2v3.6M6.2 10h3.6"/></svg>',
     movehere: '<svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path d="M8 11V8.5M6.5 10L8 11.5 9.5 10"/></svg>',
@@ -46,21 +52,134 @@
   // A long history stays usable: grouped by when it was last used (Today, Yesterday, Previous 7 days, Earlier),
   // filtered by a search over titles, and walked with Up/Down/Home/End. Shared by the sidebar and lumen://chat.
   window.chatListTools = {
-    // chats -> [{ label, chats }] in order; empty groups are left out.
-    group(chats, now = Date.now()) {
+    // chats -> [{ label, chats }] in order; empty groups are left out. `months`: lumen://chat's list, which adds Previous 30 days
+    // and then names each older month instead of one "Earlier".
+    group(chats, now = Date.now(), { months = false } = {}) {
+      const pinned = chats.filter((c) => c.pinned && !c.archived);
+      if (pinned.length) chats = chats.filter((c) => !pinned.includes(c));
       const day = new Date(now); day.setHours(0, 0, 0, 0);
       const start = day.getTime();
       const bands = [
         { label: window.chatTr('chats.today', 'Today'), test: (t) => t >= start },
         { label: window.chatTr('chats.yesterday', 'Yesterday'), test: (t) => t >= start - 864e5 },
         { label: window.chatTr('chats.week', 'Previous 7 days'), test: (t) => t >= start - 7 * 864e5 },
+        ...(months ? [{ label: window.chatTr('chats.month', 'Previous 30 days'), test: (t) => t >= start - 30 * 864e5 }] : []),
         { label: window.chatTr('chats.earlier', 'Earlier'), test: () => true },
       ];
       const out = bands.map((b) => ({ label: b.label, chats: [] }));
-      for (const c of chats) out[bands.findIndex((b) => b.test(c.updated || c.created || 0))].chats.push(c);
-      return out.filter((g) => g.chats.length);
+      const monthly = new Map(); // older than 30 days: one group per month (chats arrive newest first)
+      for (const c of chats) {
+        const at = c.updated || c.created || 0;
+        const i = bands.findIndex((b) => b.test(at));
+        if (months && i === bands.length - 1) {
+          const d = new Date(at);
+          const key = at ? `${d.getFullYear()}-${d.getMonth()}` : 'none';
+          if (!monthly.has(key)) monthly.set(key, { label: at ? d.toLocaleDateString([], { month: 'long', year: 'numeric' }) : bands[i].label, chats: [] });
+          monthly.get(key).chats.push(c);
+        } else out[i].chats.push(c);
+      }
+      if (months) { out.pop(); out.push(...monthly.values()); }
+      return [...(pinned.length ? [{ label: window.chatTr('chats.pinned', 'Pinned'), chats: pinned }] : []), ...out.filter((g) => g.chats.length)];
     },
-    matches: (chat, q) => !q || String(chat.title || '').toLowerCase().includes(q.toLowerCase()),
+    // A list that follows the chats' last activity live (a chat in use moves to the top). `host` holds the list (it may be rebuilt on every
+    // draw); `redraw` draws it again. The row under the pointer or the keyboard stays where it is: while the pointer is moving over the
+    // list, or focus is inside it, rows keep the order they were drawn in (new rows go on top) and the true order is drawn when the
+    // pointer rests, leaves or focus moves out. Rows that moved slide to their place (a short FLIP; none with reduced motion).
+    //   const live = tools.liveOrder(host, redraw);  chats = live.order(chats);  const play = live.flip();  ...redraw the DOM...;  play();
+    liveOrder(host, redraw) {
+      let ids = [], lastMove = 0, timer = null;
+      const HOLD_MS = 1200;
+      const held = () => host.contains(document.activeElement) && document.activeElement !== host || (host.matches(':hover') && Date.now() - lastMove < HOLD_MS);
+      const release = () => { clearTimeout(timer); timer = null; if (!held()) redraw(); else if (host.matches(':hover') && !host.contains(document.activeElement)) timer = setTimeout(release, HOLD_MS - (Date.now() - lastMove) + 30); };
+      host.addEventListener('pointermove', () => { lastMove = Date.now(); clearTimeout(timer); timer = setTimeout(release, HOLD_MS + 30); });
+      host.addEventListener('pointerleave', () => { lastMove = 0; clearTimeout(timer); timer = setTimeout(release, 0); });
+      host.addEventListener('focusout', (e) => { if (!host.contains(e.relatedTarget)) { clearTimeout(timer); timer = setTimeout(release, 0); } });
+      const rows = () => [...host.querySelectorAll('.chat-item[data-id]')];
+      return {
+        held,
+        order(chats) {
+          if (held() && ids.length) {
+            const at = new Map(ids.map((id, i) => [id, i]));
+            chats = [...chats].sort((a, b) => (at.has(a.id) ? at.get(a.id) : -1) - (at.has(b.id) ? at.get(b.id) : -1));
+          }
+          ids = chats.map((c) => c.id);
+          return chats;
+        },
+        flip() {
+          const before = new Map(rows().map((r) => [r.dataset.id, r.getBoundingClientRect().top]));
+          return () => {
+            if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || !before.size) return;
+            for (const r of rows()) {
+              const was = before.get(r.dataset.id);
+              if (was === undefined || !r.animate) continue;
+              const dy = was - r.getBoundingClientRect().top;
+              if (Math.abs(dy) < 2) continue;
+              r.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+            }
+          };
+        },
+      };
+    },
+    // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
+    // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
+    pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+      if (query) {
+        const q = query.toLowerCase();
+        return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
+      }
+      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+    },
+    // Chats / Archived switch (shown once something is archived or the Archived view is open).
+    views(view, archivedCount, onPick) {
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
+      bar.setAttribute('role', 'group');
+      for (const [id, label] of [['chats', window.chatTr('chats.viewAll', 'Chats')], ['archived', window.chatTr('chats.viewArchived', 'Archived') + (archivedCount ? ` (${archivedCount})` : '')]]) {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: `chat-view${view === id ? ' on' : ''}`, textContent: label });
+        b.setAttribute('aria-pressed', String(view === id));
+        b.onclick = () => onPick(id);
+        bar.append(b);
+      }
+      return bar;
+    },
+    // Search state shared by both lists: titles match at once, message text a moment later (main-side search over saved chats).
+    searcher(api, redraw) {
+      let query = '', hits = null, timer = null, seq = 0;
+      return {
+        get query() { return query; },
+        get hits() { return hits; },
+        set(q) {
+          query = q; hits = null; clearTimeout(timer); const mine = ++seq;
+          redraw();
+          if (!q || !api.search) return;
+          timer = setTimeout(async () => {
+            let found = null;
+            try { found = await api.search(q); } catch { /* titles only */ }
+            if (mine !== seq || !Array.isArray(found)) return;
+            hits = new Map(found.map((h) => [h.id, h.snippet || '']));
+            redraw();
+          }, 160);
+        },
+        clear() { query = ''; hits = null; seq++; clearTimeout(timer); },
+      };
+    },
+    // "Chat deleted. Undo" for a few seconds, fixed to the window so a redrawn list keeps it.
+    undoToast(text, ms, onUndo) {
+      document.querySelector('.chat-undo-toast')?.remove();
+      const bar = Object.assign(document.createElement('div'), { className: 'chat-undo-toast' });
+      bar.setAttribute('role', 'status');
+      const undo = Object.assign(document.createElement('button'), { type: 'button', textContent: window.chatTr('chats.undo', 'Undo') });
+      const timer = setTimeout(() => bar.remove(), ms);
+      undo.onclick = async () => {
+        clearTimeout(timer);
+        undo.disabled = true;
+        let ok = false;
+        try { ok = await onUndo(); } catch { /* too late */ }
+        if (ok === false) { bar.firstChild.textContent = window.chatTr('chats.undoLate', 'Too late to undo'); setTimeout(() => bar.remove(), 2000); } else bar.remove();
+      };
+      bar.append(Object.assign(document.createElement('span'), { textContent: text }), undo);
+      document.body.append(bar);
+      return bar;
+    },
     heading(label) {
       const li = Object.assign(document.createElement('li'), { className: 'chat-group', textContent: label });
       li.setAttribute('role', 'presentation');
@@ -87,7 +206,9 @@
     },
   };
   window.chatTr = tr;
-  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared }) => {
+  // `menu`: the row's actions live in a "⋯" menu (lumen://chat's list) instead of a strip of icon buttons.
+  // `extra(chat)`: more buttons for the row's menu (the chat page's "Move to project").
+  window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true, menu = false, extra = null }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
       const input = Object.assign(document.createElement('input'), { className: 'chat-rename-input', value: chat.title || '', maxLength: 120 });
@@ -119,6 +240,51 @@
       unread: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M3.4 6.2l1.8 1.8 3.4-3.8"/></svg>',
       approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx="6" cy="6" r="6"/><path class="cm-glyph" d="M6 3v3.4M6 8.7v.1"/></svg>',
     };
+    // The row's actions as a menu: a "⋯" button shows on hover and focus, and the same buttons open under it with their names.
+    // Escape, a click elsewhere or choosing one closes it; near the bottom of the window it opens upward.
+    const closeMenus = () => {
+      for (const li of document.querySelectorAll('.chat-item.menu-open')) { li.classList.remove('menu-open'); li.querySelector('.chat-more')?.setAttribute('aria-expanded', 'false'); }
+    };
+    if (menu && !window.chatRowMenuWired) {
+      window.chatRowMenuWired = true;
+      document.addEventListener('pointerdown', (e) => { if (!e.target.closest?.('.chat-item.menu-open')) closeMenus(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const open = document.querySelector('.chat-item.menu-open');
+        if (open) { e.preventDefault(); closeMenus(); open.querySelector('.chat-more')?.focus(); }
+      });
+    }
+    function rowMenu(li, actions) {
+      actions.classList.add('chat-menu');
+      actions.setAttribute('role', 'menu');
+      for (const b of actions.children) {
+        b.setAttribute('role', 'menuitem');
+        b.append(Object.assign(document.createElement('span'), { className: 'chat-menu-label', textContent: b.getAttribute('aria-label') }));
+        b.addEventListener('click', closeMenus);
+      }
+      const more = iconButton('more', tr('chats.more', 'More actions'));
+      more.setAttribute('aria-haspopup', 'menu');
+      more.setAttribute('aria-expanded', 'false');
+      more.onclick = (e) => {
+        e.stopPropagation();
+        const was = li.classList.contains('menu-open');
+        closeMenus();
+        if (was) return;
+        li.classList.add('menu-open');
+        more.setAttribute('aria-expanded', 'true');
+        actions.classList.toggle('up', li.getBoundingClientRect().bottom + actions.offsetHeight + 8 > window.innerHeight);
+        actions.querySelector('button')?.focus();
+      };
+      actions.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        const items = [...actions.querySelectorAll('button:not(:disabled)')];
+        const at = items.indexOf(document.activeElement);
+        e.preventDefault();
+        e.stopPropagation();
+        items[(at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+      });
+      li.insertBefore(more, actions);
+    }
     return function item(chat, isCurrent) {
       const li = document.createElement('li');
       li.className = `chat-item${isCurrent ? ' current' : ''}`;
@@ -133,14 +299,27 @@
       // Shown in several tabs at once ("Also show in this tab"): every tab it is in, its home marked.
       const tabs = Array.isArray(chat.tabs) ? chat.tabs : [];
       const shared = tabs.length > 1;
+      // What a click on the row does. A chat in another tab that is working or shown in several tabs is attached to this tab's
+      // sidebar ('share': it stays where it is, so its run keeps working in its home tab and page actions keep going there; nothing is
+      // pulled away unasked); an idle chat in one other tab moves here; one already in this tab just opens. Without a share handler
+      // (an older page) a working or shared chat's click goes to its tab, as before. The chat page (jump false) always opens it itself.
+      const working = ['running', 'queued', 'approval'].includes(chat.badge);
+      const rowAction = !jump ? 'open'
+        : elsewhere && onShare && (working || shared) ? 'share'
+        : ((shared && api.showTab) || (elsewhere && working && api.showTab)) && !(shared && chat.tab?.here) ? 'tab'
+        : 'open';
       const tabName = (x) => (x.here ? tr('chats.thisTab', 'This tab') : x.title || tr('chats.tabUntitled', 'another tab'));
-      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + ' · ' + tr('chats.clickGoes', 'click to go there') : '';
-      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + (['running', 'queued', 'approval'].includes(chat.badge) ? ' · ' + tr('chats.clickGoes', 'click to go there') : ' · ' + tr('chats.clickMoves', 'click moves it here')) : '';
+      const clickHint = () => (rowAction === 'open' && !elsewhere ? '' : rowAction === 'share' ? tr('chats.clickShares', 'click opens it here too') : rowAction === 'tab' ? tr('chats.clickGoes', 'click to go there') : tr('chats.clickMoves', 'click moves it here'));
+      const inTabs = shared ? tr('chats.inTabs', 'In {n} tabs: {titles}').replace('{n}', tabs.length).replace('{titles}', tabs.map((x) => (x.home ? tr('chats.homeTab', '{title} (home)').replace('{title}', tabName(x)) : tabName(x))).join(', ')) + (clickHint() ? ' · ' + clickHint() : '') : '';
+      const inTab = elsewhere ? tr('chats.inTab', 'In tab: {title}').replace('{title}', elsewhere.title || tr('chats.tabUntitled', 'another tab')) + ' · ' + clickHint() : '';
       const meta = Object.assign(document.createElement('span'), { className: 'chat-meta' });
-      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage].filter(Boolean).join(' · ') }); // (the state word sits beside it)
+      const metaText = Object.assign(document.createElement('span'), { className: 'chat-meta-text', textContent: [when(chat.updated), chat.usage, chat.projectName].filter(Boolean).join(' · ') }); // (the state word sits beside it)
       meta.append(metaText);
       if (chat.tab?.here) li.classList.add('in-this-tab');
+      if (chat.pinned) li.classList.add('pinned');
+      if (chat.archived) li.classList.add('archived');
       openBtn.append(name, meta);
+      if (chat.snippet) openBtn.append(Object.assign(document.createElement('span'), { className: 'chat-snippet', textContent: chat.snippet })); // where a search found the words in the messages
       // The place line: the tab it lives in, or "This tab" for the chat bound to the tab in front.
       const place = inTabs || inTab || (chat.tab?.here ? tr('chats.thisTab', 'This tab') : tr('chats.noTab', 'Not in a tab'));
       if (place) openBtn.append(Object.assign(document.createElement('span'), { className: `chat-place${chat.tab?.here ? ' here' : ''}`, textContent: place }));
@@ -158,13 +337,13 @@
           li.classList.add(`has-${chat.badge}`);
         }
       }
-      // A chat that is working in another tab is shown where it works; moving it unasked would pull its work to this tab.
-      const working = ['running', 'queued', 'approval'].includes(chat.badge);
       const stateWord = { running: tr('chats.state.running', 'Working'), queued: tr('chats.state.queued', 'Waiting'), approval: tr('chats.state.approval', 'Needs OK'), unread: tr('chats.state.unread', 'Done') }[chat.badge];
       openBtn.setAttribute('aria-label', [name.textContent, stateWord, place].filter(Boolean).join(', '));
       openBtn.onclick = async () => {
-        if (shared && api.showTab) await goToTab(); // a shared chat: the tab you are not on, or its home
-        else if (!(elsewhere && working && api.showTab)) await moveHere(); else await goToTab();
+        if (!jump) await moveHere(); // (the chat page opens a chat on the page itself: it keeps what it shows, whatever the tabs do)
+        else if (rowAction === 'share') await alsoShow(); // attach it to this sidebar: it stays in its tab(s)
+        else if (rowAction === 'tab') await goToTab(); // (no share handler) the tab you are not on, or its home
+        else await moveHere();
       };
 
       const actions = document.createElement('div');
@@ -203,27 +382,33 @@
           else if (out?.reason !== 'canceled') say(tr('chats.exportFailed', 'Could not export'));
         } catch { say(tr('chats.exportFailed', 'Could not export')); }
       };
+      const pinBtn = iconButton(chat.pinned ? 'unpin' : 'pin', chat.pinned ? tr('chats.unpin', 'Unpin') : tr('chats.pin', 'Pin to top'));
+      pinBtn.onclick = async () => {
+        pinBtn.disabled = true;
+        try { if ((await api.pin(chat.id, !chat.pinned)) === false) throw new Error('refused'); await rerender(); } catch { pinBtn.disabled = false; say(tr('chats.pinFailed', 'Could not pin')); }
+      };
+      const archiveBtn = iconButton(chat.archived ? 'unarchive' : 'archive', chat.archived ? tr('chats.unarchive', 'Unarchive') : tr('chats.archive', 'Archive'));
+      archiveBtn.onclick = async () => {
+        archiveBtn.disabled = true;
+        try { if ((await api.archive(chat.id, !chat.archived)) === false) throw new Error('refused'); await rerender(); } catch { archiveBtn.disabled = false; say(tr('chats.archiveFailed', 'Could not archive')); }
+      };
+      // Delete goes at once and says so with an Undo for a few seconds (nothing is erased until the time is up).
       const del = iconButton('delete', tr('chats.delete', 'Delete'));
-      let armed = null;
       del.onclick = async () => {
-        if (!armed) { // two clicks: the first asks, the second deletes
-          const again = tr('chats.deleteAgain', 'Click again to delete');
-          del.classList.add('armed');
-          del.dataset.confirm = tr('chats.deleteConfirm', 'Delete?');
-          del.title = again;
-          del.setAttribute('aria-label', again);
-          armed = setTimeout(() => { armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete')); }, 3000);
-          return;
-        }
-        clearTimeout(armed);
         del.disabled = true; // pending: a second click cannot delete twice
         try {
           const out = await api.remove(chat.id);
           if (out?.cleared) cleared();
+          if (out?.undo) {
+            window.chatListTools.undoToast(tr('chats.deleted', 'Chat deleted'), out.undoMs || 8000, async () => {
+              const ok = await api.undoRemove(chat.id);
+              if (ok) { if (out.cleared) await onOpen?.(chat.id); await rerender(); }
+              return ok;
+            });
+          }
           await rerender();
         } catch {
           del.disabled = false;
-          armed = null; del.classList.remove('armed'); delete del.dataset.confirm; del.title = tr('chats.delete', 'Delete'); del.setAttribute('aria-label', tr('chats.delete', 'Delete'));
           say(tr('chats.deleteFailed', 'Could not delete'));
         }
       };
@@ -231,7 +416,7 @@
       // list drops that button: "open in its tab" for a working chat, "move here" for an idle one.
       const dropsOne = Boolean(elsewhere && api.showTab);
       if (dropsOne) li.classList.add('drops-one');
-      const clickGoes = working || shared; // (the row's click goes to the tab; otherwise it moves the chat here)
+      const clickGoes = rowAction === 'tab'; // (the row's click goes to the tab; otherwise it moves the chat here or shows it here too)
       const tabActions = [];
       if ((elsewhere || shared) && api.showTab) {
         const show = iconButton('showtab', tr('chats.showTab', 'Open chat in its tab'));
@@ -256,17 +441,19 @@
       }
       // [ai manners] The tabs this chat's AI opened and that are still its (not used, pinned or the chat's own): one click closes them.
       if (chat.aiTabs > 0 && api.closeTabs) {
-        const closeLabel = tr('chats.closeTabs', 'Close this chat’s tabs');
+        const closeLabel = tr('chats.closeTabs', 'Close tabs this chat opened');
         const closeTabs = iconButton('closetabs', closeLabel);
         closeTabs.onclick = async () => {
           closeTabs.disabled = true;
           const out = await api.closeTabs(chat.id).catch(() => null);
-          say(out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : tr('chats.closeTabs.none', 'This chat has no tabs it opened'));
+          const busyNote = out?.busy > 0 ? tr(out.busy === 1 ? 'chat.aiTabs.busy.one' : 'chat.aiTabs.busy.other', out.busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.').replace('{count}', out.busy) : '';
+          say([out?.closed ? tr(out.closed === 1 ? 'chat.aiTabs.closed.one' : 'chat.aiTabs.closed.other', out.closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.').replace('{count}', out.closed) : busyNote ? '' : tr('chats.closeTabs.none', 'This chat has no tabs it opened'), busyNote].filter(Boolean).join(' '));
           closeTabs.remove();
         };
         tabActions.push(closeTabs);
       }
-      actions.append(...tabActions, rename, exportBtn, del);
+      if (menu) actions.append(rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, ...tabActions, del);
+      else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
@@ -309,6 +496,7 @@
         li.append(stop);
       }
       li.append(actions);
+      if (menu) rowMenu(li, actions);
       return li;
     };
   };

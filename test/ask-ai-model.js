@@ -8,6 +8,7 @@
 // limit (fallback), plus a pick made while a reply is streaming and a pick that is no longer connected.
 // What the next ask used is read from the fake engines (Claude client + providers.streamTurn).
 // Each surface must show the change within 200 ms of the change being accepted.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const { openSettingsTab } = require('./settings-tab');
@@ -58,8 +59,8 @@ const LIMIT_MS = 200;
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   const opts = await ui.$$eval('#model option', (os) => os.map((o) => o.value));
   const OPUS = 'claude-opus-5-5';
-  const HAIKU = 'claude-haiku-4-5';
-  const GPT = opts.find((o) => o.startsWith('openai:'));
+  const HAIKU = 'claude-haiku-5-5';
+  const GPT = opts.find((o) => o.startsWith('openai:') && !o.endsWith(':auto'));
   check('the picker lists Claude and OpenAI models', opts.includes(OPUS) && opts.includes(HAIKU) && Boolean(GPT), JSON.stringify(opts));
 
   // ---- surfaces -----------------------------------------------------------------------------
@@ -98,7 +99,7 @@ const LIMIT_MS = 200;
     new Promise((_r, reject) => setTimeout(() => { const w = global.__homeTab.webContents; reject(new Error(`new-tab page did not answer: loading=${w.isLoading()} crashed=${w.isCrashed()} destroyed=${w.isDestroyed()} url=${w.getURL().slice(0, 60)}`)); }, 5000)),
   ]), code);
   await newTab();
-  await home("document.getElementById('mode-ask').click()");
+  await home("document.getElementById('mode-ask').getAttribute('aria-checked') === 'true' || document.getElementById('mode-ask').click()");
 
   // A second window.
   await app.evaluate(() => global.__basics.openNewWindow());
@@ -151,7 +152,15 @@ const LIMIT_MS = 200;
   }
 
   // The sidebar may be folded away (the chat page, a full-page chat): drive the composer through the DOM.
-  const typeAndSend = (page, text) => page.evaluate((t) => { const p = document.getElementById('prompt'); p.value = t; p.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('send').click(); }, text);
+  // A sidebar that was folded away can miss a run's end and keep its Stop button; Send as a button would then stop instead of send.
+  const typeAndSend = async (page, text) => {
+    await page.evaluate(() => { if (document.body.classList.contains('sidebar-hidden')) document.getElementById('toggle-sidebar')?.click(); }); // (the sidebar is open or closed tab by tab)
+    await page.waitForFunction(() => !document.body.classList.contains('sidebar-hidden'), null, { timeout: 4000 }).catch(() => {});
+    await page.evaluate(() => document.getElementById('prompt').focus());
+    await page.waitForFunction(() => !document.getElementById('send').classList.contains('stop'), null, { timeout: 4000 }).catch(() => {});
+    return page.evaluate((t) => { const p = document.getElementById('prompt'); p.value = t; p.dispatchEvent(new Event('input', { bubbles: true })); p.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); }, text); // (Enter, as a user sends: with a stale Stop showing it first asks main what the chat is doing, where the button would stop)
+  };
+  let keepHome = null; let chatsBefore = [];
   async function nextAsk(id, how) {
     await ensureChatPage();
     // The one before has finished (nothing running or waiting): its reply must not count as this ask's.
@@ -161,12 +170,18 @@ const LIMIT_MS = 200;
     else if (how === 'window 2') await typeAndSend(ui2, `ask ${before} from window 2`);
     else if (how === 'chat page') { await chatWc(`(() => { const p = document.getElementById('prompt'); p.value = 'ask ${before} from the chat page'; p.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('send').click(); })()`); }
     else if (how === 'new tab') {
-      await home("document.getElementById('mode-ask').click()"); // the same new-tab page every time (a tab opened now would land in whichever window is in front)
+      // An ask turns its new-tab page into a chat tab, so each ask gets a throwaway new-tab page (and tab) of its own; the long-lived one stays.
+      keepHome = await app.evaluate(() => global.__homeTab.id); chatsBefore = await app.evaluate(() => global.__chatPage.tabs().filter((t) => t.chat).map((t) => t.id));
+      await app.evaluate(() => { global.__keptHome = global.__homeTab; });
+      await newTab();
+      await home("document.getElementById('mode-ask').getAttribute('aria-checked') === 'true' || document.getElementById('mode-ask').click()"); 
       await home(`(() => { const q = document.getElementById('q'); q.value = 'ask ${before} from the new tab'; q.form.requestSubmit(); })()`);
     }
     const got = await waitFor(async () => (await used()).length > before && (await used()).slice(before));
     check(`next ask (${how}) used ${id}`, Boolean(got) && got[0] === (id.includes(':') ? id : `anthropic:${id}`), JSON.stringify(got));
     await sleep(400); // let the reply end
+    if (how === 'new tab') await app.evaluate((_e, before) => { for (const t of global.__chatPage.tabs()) if (t.chat && !before.includes(t.id)) global.__agent.browser.closeTab(t.id); global.__homeTab = global.__keptHome; }, chatsBefore);
+    if (how === 'new tab') { await sleep(800); await ensureChatPage(); await waitFor(async () => (await chatWc("document.readyState === 'complete' && Boolean(document.getElementById('model')?.value)")) === true); }
   }
 
   // ---- ways to change the model -------------------------------------------------------------
@@ -212,8 +227,9 @@ const LIMIT_MS = 200;
 
   // ---- a pick made while a reply is streaming ------------------------------------------------
   await hold();
+  const usedBefore = (await used()).length;
   await typeAndSend(ui, 'a long one');
-  await waitFor(async () => (await used()).length && (await ui.evaluate(() => document.getElementById('send').classList.contains('stop'))));
+  await waitFor(async () => (await used()).length > usedBefore && (await ui.evaluate(() => document.getElementById('send').classList.contains('stop'))));
   const midBefore = (await used()).slice();
   await changes['Settings picker'](HAIKU);
   await followed(HAIKU, OPUS, 'mid-reply (Settings picker)');
@@ -252,7 +268,7 @@ const LIMIT_MS = 200;
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* temp */ }
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch { /* temp */ }
   console.log(failures ? `\n${failures} check(s) failed` : '\nall ask-ai-model checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

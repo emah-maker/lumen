@@ -42,6 +42,7 @@ const LIMITS = {
   calendar: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   todoist: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   spotify: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  applemusic: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   gmail: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   slack: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   github: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
@@ -54,12 +55,14 @@ const LIMITS = {
   countdown: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   timer: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   aistatus: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  routines: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
+  files: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   custom: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   embed: { minW: 2, minH: 2, maxW: 12, maxH: 20 },
   muse: { minW: 3, minH: 3, maxW: 12, maxH: 20 },
 };
 const FALLBACK_LIMITS = { minW: 2, minH: 2, maxW: 12, maxH: 20 };
-const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, tradingview: { w: 6, h: 6 }, notes: { w: 3, h: 4 }, countdown: { w: 3, h: 3 }, timer: { w: 3, h: 3 }, aistatus: { w: 3, h: 3 }, custom: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
+const DEFAULT_SIZE = { weather: { w: 4, h: 3 }, calendar: { w: 6, h: 5 }, todoist: { w: 6, h: 5 }, spotify: { w: 4, h: 3 }, applemusic: { w: 4, h: 4 }, gmail: { w: 4, h: 4 }, slack: { w: 4, h: 4 }, github: { w: 6, h: 4 }, feed: { w: 4, h: 4 }, worldclock: { w: 4, h: 3 }, muse: { w: 4, h: 4 }, stocks: { w: 4, h: 3 }, crypto: { w: 4, h: 3 }, tradingview: { w: 6, h: 6 }, notes: { w: 3, h: 4 }, countdown: { w: 3, h: 3 }, timer: { w: 3, h: 3 }, aistatus: { w: 3, h: 3 }, routines: { w: 4, h: 4 }, files: { w: 3, h: 4 }, custom: { w: 4, h: 3 }, embed: { w: 12, h: 6 } };
 // A new card's width is capped to the free side area beside the centre column (3 columns of 12 with a 6-column
 // centre), so it lands beside the search bar instead of below it. A web page (embed) and a TradingView chart keep their wide defaults.
 const SIDE_DEFAULT = 3;
@@ -187,6 +190,11 @@ function compact(items, { cols = COLS, obstacle = null } = {}) {
   }
   return inOrder(items, out);
 }
+
+// ---- page room ----
+// The breathing room kept under the last thing on the page (the cards, the centre column). It exists only for a page that
+// scrolls anyway: content that fits the window gets none, so a spacer never makes a page that fits scroll by a few px.
+const pageRoom = (contentBottom, viewport, room) => (contentBottom > viewport + 0.5 ? room : 0);
 
 // ---- snapping ----
 // The window's rows for docks: how many rows of cells fit in a window `height` px tall.
@@ -486,7 +494,7 @@ function decode(text) {
 const api = {
   COLS, ROW, GAP, MAX_Y, LIMITS, DEFAULT_SIZE, SIDE_DEFAULT, defaultSize, PRESETS, SPANS, SNAPS, FRAME_PX,
   limitsOf, cleanRect, cleanSnap, sizeFromLegacy, mirror, fromLegacy, flowPack, overlap, rectOf, same,
-  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, compact, stack, firstFit, flowOrder,
+  resolve, movedBy, move, resize, snapMove, keySnap, detectSnap, snapRectFor, bannerRows, pageRows, pageRoom, compact, stack, firstFit, flowOrder,
   MARGIN, MARGIN_WIDE, WIDE_AT, MIN_CENTRE, metrics, centreSpan, spanPx, obstacleFor, cellToPx, encode, decode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

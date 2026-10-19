@@ -7,9 +7,12 @@
 // app.isDefaultProtocolClient reads that handler back, not the user's choice: it said "default" after one click
 // even when the user never picked Lumen. The user's real choice is the UserChoice ProgId.
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile } = require('../ai/cli-utils');
+const instance = require('./instance');
 
 const PROG_ID = 'LumenHTML';
+// The icon for Lumen's registry entries: the shipped .ico for the installed exe, the exe itself for a dev run.
+const registrationIcon = (exe) => (instance.isInstalledExe() ? instance.appIcon() : `${exe},0`);
 const CLIENT_KEY = 'Software\\Clients\\StartMenuInternet\\Lumen';
 
 function reg(args) {
@@ -38,7 +41,8 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   };
   async function registerOnWindows() {
     const exe = process.execPath;
-    const icon = `${exe},0`;
+    // Lumen.exe's own icon is Electron's (the exe stays untouched, see features/instance.js): name the shipped .ico.
+    const icon = registrationIcon(exe);
     const open = `${launchCommand()} "%1"`;
     const values = [
       [`HKCU\\Software\\Classes\\${PROG_ID}`, null, 'Lumen HTML Document'],
@@ -63,16 +67,32 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   }
 
   let lastDefault = null; // the last answer, for the synchronous app menu
-  async function isDefault() {
-    if (process.platform === 'win32') {
-      // (Newer Windows 11 builds keep the choice under UserChoiceLatest, older ones under UserChoice.)
-      const base = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https';
-      const outs = await Promise.all(['UserChoiceLatest', 'UserChoice'].map((k) => reg(['query', `${base}\\${k}`, '/v', 'ProgId'])));
-      lastDefault = progIdIs(outs.find(Boolean), PROG_ID);
-    } else {
-      lastDefault = app.isDefaultProtocolClient('https');
+  let lastDefaultAt = 0;
+  let probing = null;
+  // Each look starts a process (reg.exe), which holds the main process for about 10 ms: one at a time, not both together.
+  function probeDefault() {
+    probing ||= (async () => {
+      if (process.platform === 'win32') {
+        // (Newer Windows 11 builds keep the choice under UserChoiceLatest, older ones under UserChoice.)
+        const base = 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https';
+        const out = (await reg(['query', `${base}\\UserChoiceLatest`, '/v', 'ProgId'])) || (await reg(['query', `${base}\\UserChoice`, '/v', 'ProgId']));
+        lastDefault = progIdIs(out, PROG_ID);
+      } else {
+        lastDefault = app.isDefaultProtocolClient('https');
+      }
+      lastDefaultAt = Date.now();
+      return lastDefault;
+    })().finally(() => { probing = null; });
+    return probing;
+  }
+  // { maxAgeMs }: a look newer than that is the answer (an older one is given at once and looked for again in the background),
+  // so the Settings page doesn't wait for a process to start. With no options: look now.
+  async function isDefault({ maxAgeMs = 0 } = {}) {
+    if (maxAgeMs && lastDefault !== null) {
+      if (Date.now() - lastDefaultAt > maxAgeMs) probeDefault().catch(() => {});
+      return lastDefault;
     }
-    return lastDefault;
+    return probeDefault();
   }
   // The user's choice either way: Windows opens its Default apps page on Lumen (it asks there), macOS asks by itself.
   async function makeDefault() {
@@ -111,4 +131,4 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
 }
 
-module.exports = { create, PROG_ID, progIdIs };
+module.exports = { create, PROG_ID, progIdIs, registrationIcon };

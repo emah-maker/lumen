@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const http = require('http');
 const { createSession } = require('./mcp');
+const { AGY_LUMEN_PREFIX, agyAllowed } = require('../ai/agy-tools'); // the allowlist antigravity.js (offToolOf) shares
 
 const MAX_BODY = 1024 * 1024;
 const same = (a, b) => typeof a === 'string' && a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -57,25 +58,28 @@ function terminalCommand(msg) {
   try { return JSON.stringify(input, null, 2).slice(0, 4000); } catch { return '(Lumen could not read the command Grok wants to run.)'; }
 }
 
-// { tools, callTool, enabled, onEvent, onTerminalApproval }: as mcp.js startServer, plus
+// { tools, callTool, enabled, onEvent, onTerminalApproval, terminalEnabled }: as mcp.js startServer, plus
+// terminalEnabled() -> false: Settings > AI turned Grok's terminal off, so every run_terminal_command is denied
+// without a card (checked before an earlier "always" too), and
 // onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
 // Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
-// armed(tag), listed(tag), allowed(tag), denied(tag), port and stop().
-function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, holdMs = 8000, terminalHoldMs = 20000 }) {
+// armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
+function startHttp({ tools, extraTools = null, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, terminalEnabled = () => true, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
   const chatSessionsAllowed = new Set(); // chatSessionId -> terminal commands approved for the rest of this chat
   let port = 0;
   const byMcp = (token) => [...runs.values()].find((r) => same(token, r.mcpToken));
   const byHook = (token) => [...runs.values()].find((r) => same(token, r.hookToken));
-  const toolNames = () => tools.map((t) => t.name);
+  const toolNames = (run) => [...tools.map((t) => t.name), ...(extraTools?.({ engine: run?.tag }) || []).map((t) => t.name)]; // (a run's own extras: the connector tool)
 
   // The PreToolUse verdict for run_terminal_command specifically: an automatic allow once this chat
   // has said "always", otherwise held until onTerminalApproval's card is answered (or times out, a
   // deny -- same fail-closed default as an unreachable gate). No onTerminalApproval wired up (a
   // caller that never expects Grok to reach this far): deny, same as before this existed.
   async function terminalDecision(run, msg) {
+    if (!terminalEnabled()) return DENY("Terminal commands are turned off in Lumen (Settings > AI). Do not try again: answer with Lumen's browser tools only.");
     if (run.chatSessionId && chatSessionsAllowed.has(run.chatSessionId)) return null;
     if (!onTerminalApproval) return DENY("Lumen isn't set up to approve terminal commands here.");
     const command = terminalCommand(msg);
@@ -96,13 +100,11 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   // Antigravity's hooks (antigravity.js hooksFor, agy's hooks.md): PreToolUse posts { toolCall: { name, args } } and reads
   // { decision: allow | deny, reason }, before agy's own permission layer; PreInvocation posts no toolCall and only marks the run as
   // seen. Fail closed, like gateDecision for Grok: only a qualified Lumen MCP tool (AGY_LUMEN_PREFIX + one of Lumen's tool names)
-  // or one of agy's read-only built-ins (AGY_READS) is allowed; every other name (generate_image, invoke_subagent, anything
-  // unknown, a "lumen" that is only part of another server's name) is denied. An Antigravity run has Lumen's tools only.
+  // or a read (view_file, list_dir) of Lumen's own tool descriptor folder in this chat's home is allowed (ai/agy-tools.js, the
+  // allowlist antigravity.js offToolOf shares); every other name (generate_image, invoke_subagent, anything unknown, a "lumen"
+  // that is only part of another server's name) and any read outside that folder is denied.
   // UNVERIFIED: agy's real qualified MCP tool names have not been captured from a signed-in run. Run one signed-in `agy` turn
-  // with LUMEN_AGY_DEBUG set; if Lumen's tools are denied, add the real prefix form to AGY_LUMEN_PREFIX. AGY_READS is the same
-  // kind of list: extend it if a harmless built-in is refused.
-  const AGY_LUMEN_PREFIX = /^(?:mcp[_-]{1,2})?lumen(?:__|_|\/|\.|:)([\w-]+)$/i; // mcp_lumen_click, mcp__lumen__click, lumen__click, lumen/click
-  const AGY_READS = /^(view_file|view_file_outline|view_code_item|view_content_chunk|list_dir|grep_search|find_by_name|command_status|read_terminal|list_resources|read_resource)$/i;
+  // with LUMEN_AGY_DEBUG set; if Lumen's tools are denied, add the real prefix form to AGY_LUMEN_PREFIX in agy-tools.js.
   // [full access] A run the user gave full access (antigravity.js FULL_FLAGS): the CLI's own tools are allowed, but a name
   // in the form of one of Lumen's (AGY_LUMEN_PREFIX) must still be one of Lumen's real tools: the gate stays closed for those.
   function agyDecision(run, msg) {
@@ -110,7 +112,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
     const name = String(msg.toolCall.name || '');
     const m = AGY_LUMEN_PREFIX.exec(name);
     if (run.fullAccess && !m && !/^(?:mcp[_-]{1,2})?lumen/i.test(name)) return { decision: 'allow' };
-    if ((m && toolNames().includes(m[1])) || (!run.fullAccess && AGY_READS.test(name))) return { decision: 'allow' };
+    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames(run) })) return { decision: 'allow' };
     return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
@@ -118,17 +120,21 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
   function mcpSession(run) {
     if (run.session) return run.session;
     const pending = new Map();
-    const s = createSession({ tools, callTool, enabled, onEvent, engine: run.tag, send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
+    const s = createSession({ tools, extraTools, callTool, enabled, onEvent, engine: run.tag, onListed: () => wake(run), send: (msg) => { const done = pending.get(msg.id); if (done) { pending.delete(msg.id); done(msg); } } });
     run.session = { ...s, pending };
     return run.session;
   }
 
   // UserPromptSubmit: hold the answer (up to holdMs) until Grok has listed Lumen's tools, so the
   // model call that follows has them.
+  // Event-driven: woken when the session lists the tools (onListed) or the run closes, else after holdMs.
+  const wake = (run) => { const waiting = run.waiters; run.waiters = new Set(); for (const w of waiting) w(); };
   async function armed(run) {
     run.armed = true;
-    const until = Date.now() + holdMs;
-    while (!run.session?.session.listed && Date.now() < until && runs.has(run.tag)) await new Promise((r) => setTimeout(r, 50));
+    if (run.session?.session.listed || !runs.has(run.tag)) return {};
+    let timer;
+    await new Promise((resolve) => { run.waiters.add(resolve); timer = setTimeout(resolve, holdMs); });
+    clearTimeout(timer);
     return {};
   }
 
@@ -164,7 +170,7 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
         if (/^user_?prompt_?submit$/i.test(event)) return json(200, await armed(run));
         if (/^pre_?tool_?use$/i.test(event)) {
           const name = msg?.toolName ?? msg?.tool_name;
-          const verdict = run.fullAccess ? fullGateDecision(name, toolNames()) : String(name) === 'run_terminal_command' ? await terminalDecision(run, msg) : gateDecision(name, toolNames());
+          const verdict = run.fullAccess ? fullGateDecision(name, toolNames(run)) : String(name) === 'run_terminal_command' ? await terminalDecision(run, msg) : gateDecision(name, toolNames(run));
           (verdict ? run.denied : run.allowed).push(String(name));
           return json(200, verdict || undefined);
         }
@@ -176,12 +182,18 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       const session = mcpSession(run);
       const isRequest = msg.id !== undefined && msg.id !== null;
       if (!isRequest) { session.handle(msg); return json(202); }
-      const answer = new Promise((resolve) => session.pending.set(msg.id, resolve));
+      // handle() replies (through send) before it returns, so nothing needs to wait for the answer afterwards.
+      let answer = null;
+      session.pending.set(msg.id, (m) => { answer = m; });
       await session.handle(msg);
-      const out = await Promise.race([answer, new Promise((r) => setTimeout(() => r(null), 10))]) || (session.pending.delete(msg.id), { jsonrpc: '2.0', id: msg.id, result: {} });
-      return json(200, out);
+      session.pending.delete(msg.id);
+      return json(200, answer || { jsonrpc: '2.0', id: msg.id, result: {} });
     }
   });
+  // Node's default keep-alive (5 s) closes a socket the CLI reuses after the model has thought for longer: the next tool
+  // call hit ECONNRESET. Answers are plain JSON (no SSE), so the per-request limits stay at their defaults.
+  server.keepAliveTimeout = keepAliveMs;
+  server.headersTimeout = keepAliveMs + 5000; // must exceed keepAliveTimeout
   server.on('clientError', (_err, socket) => socket.destroy());
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -189,17 +201,22 @@ function startHttp({ tools, callTool, enabled = () => true, onEvent = () => {}, 
       port = server.address().port;
       resolve({
         port,
-        open(tag, chatSessionId = null, { agy = false, fullAccess = false } = {}) {
-          const run = { tag, chatSessionId, agy, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, allowed: [], denied: [], session: null };
+        open(tag, chatSessionId = null, { agy = false, fullAccess = false, home = null } = {}) {
+          const run = { tag, chatSessionId, agy, home, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, waiters: new Set(), allowed: [], denied: [], session: null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },
         close(tag) {
           const run = runs.get(tag);
           runs.delete(tag);
+          if (run) wake(run);
           if (run?.session) { run.session.close(); onEvent({ type: 'session', active: false, clientName: run.session.session.clientName, engine: tag }); }
         },
         armed: (tag) => Boolean(runs.get(tag)?.armed),
+        // A kept Grok process (features/grok-warm.js) keeps its run for many messages: each message must arm it again
+        // (its own UserPromptSubmit), and the chat session it serves is known only once its session exists.
+        rearm(tag) { const run = runs.get(tag); if (run) run.armed = false; },
+        bindChat(tag, chatSessionId) { const run = runs.get(tag); if (run && chatSessionId) run.chatSessionId = chatSessionId; },
         listed: (tag) => Boolean(runs.get(tag)?.session?.session.listed),
         allowed: (tag) => [...(runs.get(tag)?.allowed || [])],
         denied: (tag) => [...(runs.get(tag)?.denied || [])],

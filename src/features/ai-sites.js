@@ -5,11 +5,17 @@
 // moved there), for the page attached to a message, and in list_tabs. main.js keeps those tabs out
 // of "Organize Tabs with AI". Stored as settings.json aiOffSites.
 const { registrableDomain } = require('../browser/tab-groups');
+const fileTabs = require('./file-tabs');
 
-// The site of a web address, or '' for anything that isn't http(s).
+// "Turn off AI here" for a file on this computer (a text file, a PDF or deck in Lumen's viewer, a picture): one switch for all local files, whatever folder.
+const LOCAL_FILES = 'file://';
+
+// The site of a web address, or '' for anything that isn't http(s) or a file. A PDF in Lumen's viewer is the site (or local files) of the PDF's own address.
 function siteOf(url) {
+  const file = fileTabs.addressOf(url);
+  if (file && file.startsWith('file:')) return LOCAL_FILES;
   let parsed;
-  try { parsed = new URL(String(url)); } catch { return ''; }
+  try { parsed = new URL(file || String(url)); } catch { return ''; }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
   return registrableDomain(parsed.href) || parsed.hostname.toLowerCase();
 }
@@ -18,6 +24,7 @@ function siteOf(url) {
 function siteFromInput(value) {
   const text = String(value || '').trim();
   if (!text) return '';
+  if (/^local files?$/i.test(text)) return LOCAL_FILES;
   return siteOf(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}/`);
 }
 

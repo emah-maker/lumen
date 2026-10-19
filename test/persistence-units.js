@@ -1,5 +1,6 @@
 // Crash-safe persistence: the chat index (features/chat-store.js), loadJsonAsync (settings/settings-file.js)
 // and the favicon cache (browser/favicon-store.js). Plain node: node test/persistence-units.js
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');

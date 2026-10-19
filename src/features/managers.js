@@ -1,4 +1,4 @@
-// The Bookmarks and Downloads pages (renderer/bookmarks.html, renderer/downloads.html).
+// The Bookmarks, Reading list and Downloads pages (renderer/bookmarks.html, readinglist.html, downloads.html).
 // Like the History page, each is a local file in an ordinary tab. Only a tab opened as that page
 // gets managers-preload.js, the preload exposes its API only to that page's own document, and
 // every call below checks that it came from the top frame of such a tab showing that page. The AI
@@ -6,12 +6,14 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { toNetscape, parseNetscape } = require('./bookmark-html');
+const toNetscape = (...a) => require('./bookmark-html').toNetscape(...a); // (bookmark import/export, loaded on first use)
+const parseNetscape = (...a) => require('./bookmark-html').parseNetscape(...a);
 const chatPage = require('./chat-page'); // lumen://chat opens and is switched to like these pages, with its own preload
 
 const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'bookmarks.html')).href;
 const DOWNLOADS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'downloads.html')).href;
-const PAGES = { bookmarks: BOOKMARKS_URL, downloads: DOWNLOADS_URL, chat: chatPage.CHAT_URL };
+const READINGLIST_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'readinglist.html')).href;
+const PAGES = { bookmarks: BOOKMARKS_URL, readinglist: READINGLIST_URL, downloads: DOWNLOADS_URL, chat: chatPage.CHAT_URL };
 const PRELOAD = path.join(__dirname, 'managers-preload.js');
 const preloadFor = (page) => (page === 'chat' ? chatPage.PRELOAD : PRELOAD);
 
@@ -34,7 +36,7 @@ const webUrl = (u) => {
 };
 
 // deps: { ipcMain, dialog, win, tabs, alive, openTab, switchTab, bookmarks, saveBookmarks,
-//         bookmarksChanged, downloads, hostOf }
+//         bookmarksChanged, downloads, hostOf, readingList (the store, made on first use), readingIcon(host) }
 function createManagers(deps) {
   // The file pickers, replaceable by tests (test/managers.js): native dialogs can't be clicked there.
   const pickers = {
@@ -89,6 +91,17 @@ function createManagers(deps) {
     save(next);
     return true;
   }
+  // Undo of a removal (the Bookmarks page): the bookmark goes back where it was in the list.
+  function restore({ url, title, folder, index } = {}) {
+    const href = webUrl(url);
+    if (!href) return { ok: false, error: 'Enter a web address (http or https).' };
+    const all = list();
+    if (all.some((b) => b.url === href)) return { ok: true }; // already back (added again by hand)
+    const at = Number.isInteger(index) ? Math.max(0, Math.min(index, all.length)) : all.length;
+    all.splice(at, 0, { url: href, title: cleanTitle(title) || deps.hostOf(href) || href, folder: cleanFolder(folder) });
+    save(all);
+    return { ok: true };
+  }
   // Adds bookmarks from a Netscape file, skipping addresses already bookmarked.
   function importHtml(html) {
     const all = list();
@@ -109,6 +122,9 @@ function createManagers(deps) {
   function pushBookmarks() {
     for (const t of deps.tabs()) if (t.managerPage === 'bookmarks' && deps.alive(t)) t.view.webContents.send('bookmarks:changed');
   }
+  function pushReadingList() {
+    for (const t of deps.tabs()) if (t.managerPage === 'readinglist' && deps.alive(t)) t.view.webContents.send('readinglist:changed');
+  }
   function pushDownloads() {
     for (const t of deps.tabs()) if (t.managerPage === 'downloads' && deps.alive(t)) t.view.webContents.send('downloads:changed');
   }
@@ -120,6 +136,7 @@ function createManagers(deps) {
     on('bookmarks:add', 'bookmarks', (_e, b) => add(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:update', 'bookmarks', (_e, b) => update(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:remove', 'bookmarks', (_e, url) => remove(url), false);
+    on('bookmarks:restore', 'bookmarks', (_e, b) => restore(b), { ok: false, error: 'Not allowed' });
     on('bookmarks:open', 'bookmarks', (_e, url) => { const href = webUrl(url); if (href) deps.openTab(href); return Boolean(href); }, false);
     on('bookmarks:export', 'bookmarks', async () => {
       const w = deps.win();
@@ -141,12 +158,22 @@ function createManagers(deps) {
       return { ok: true, added: importHtml(await fs.promises.readFile(filePaths[0], 'utf8')) };
     }, { ok: false });
 
+    // The Reading list page. Opening a page marks it read; every change reaches the page through the store's own change event (main.js).
+    const reading = () => deps.readingList();
+    const withIcon = (e) => ({ url: e.url, title: e.title, host: e.host, savedAt: e.savedAt, read: e.read, icon: deps.readingIcon?.(e.host) || '' });
+    on('readinglist:list', 'readinglist', () => reading().list().map(withIcon), []);
+    on('readinglist:open', 'readinglist', (_e, url) => { const href = webUrl(url); if (!href || !reading().has(href)) return false; reading().markRead(href); deps.openTab(href); return true; }, false);
+    on('readinglist:remove', 'readinglist', (_e, url) => reading().remove(String(url)), false);
+    on('readinglist:restore', 'readinglist', (_e, item) => reading().restore(item), false);
+    on('readinglist:mark', 'readinglist', (_e, url, read) => reading().markRead(String(url), read !== false), false);
+    on('readinglist:markall', 'readinglist', () => reading().markAllRead(), 0);
+
     on('downloads:list', 'downloads', () => deps.downloads.summary(), []);
     on('downloads:act', 'downloads', (_e, id, action) => deps.downloads.act(Number(id), String(action)), false);
     on('downloads:folder', 'downloads', () => { deps.openFolder(); return true; }, false);
   }
 
-  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushBookmarks, pickers, add, update, remove, importHtml, exportHtml, list };
+  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushReadingList, pushBookmarks, pickers, add, update, remove, restore, importHtml, exportHtml, list };
 }
 
-module.exports = { createManagers, pageOf, BOOKMARKS_URL, DOWNLOADS_URL, PRELOAD, preloadFor };
+module.exports = { createManagers, pageOf, BOOKMARKS_URL, READINGLIST_URL, DOWNLOADS_URL, PRELOAD, preloadFor };

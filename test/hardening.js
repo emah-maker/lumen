@@ -1,5 +1,6 @@
 // Hardening: Lumen's own UI window can't be navigated or made to open windows, its IPC answers only
 // its own top-level document, and the AI's hidden reader views get no permissions or downloads.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -34,6 +35,10 @@ const http = require('http');
     .filter((c) => c !== 'ui-preload:loaded'); // open to every sender on purpose: it only restricts the view that sends it
   const ungated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), channels);
   check(`every preload.js channel (${channels.length}) is gated to the UI`, channels.length > 30 && ungated.length === 0, ungated.join(', '));
+  // The Files bridge builds its channels from a list (`files:${op}`, to keep the preload small), which the pattern above cannot see: each op of the list is checked here.
+  const filesOps = (/Object\.fromEntries\('([a-z ]+)'\.split\(' '\)/.exec(preloadSrc) || [])[1]?.split(' ') || [];
+  const filesUngated = await app.evaluate((_e, list) => list.filter((c) => !global.__ipcGate.gated(c)), filesOps.map((o) => `files:${o}`));
+  check(`every op of the Files bridge (${filesOps.length}) is gated to the UI`, filesOps.length >= 12 && filesUngated.length === 0, filesUngated.join(', ') || 'no ops found');
 
   // ---- the UI window runs sandboxed, and its bundled preload still works there
   const prefs = await app.evaluate(({ BrowserWindow }) => {
@@ -126,11 +131,14 @@ const http = require('http');
       subframe: await invoke('agent:auto-allow', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }, true),
       uiAllowed: await invoke('agent:auto-allow', { sender: uiWc, senderFrame: uiWc.mainFrame }),
       tabsOpened: global.__settings.tabs().length - before,
+      connectors: Object.fromEntries(await Promise.all(['list', 'detect', 'connect', 'disconnect', 'sign-in'].map(async (n) => [n, await invoke(`connectors:${n}`, { sender: twc, senderFrame: twc.mainFrame }, 'github', {})]))),
+      connectorsSubframe: await invoke('connectors:list', { sender: uiWc, senderFrame: { url: 'https://evil.example/' } }),
     };
   }, web);
   check('tab: agent:auto-allow refused', ipc.autoAllow === 'Not allowed', ipc.autoAllow);
   check('tab: settings:set-key refused', ipc.setKey === 'Not allowed', ipc.setKey);
   check('UI webContents but not its main frame: refused', ipc.subframe === 'Not allowed', ipc.subframe);
+  check('connectors:* (a web page could otherwise connect, read or disconnect your accounts) are refused from a tab and from a foreign frame', Object.values(ipc.connectors).length === 5 && Object.values(ipc.connectors).every((v) => v === 'Not allowed') && ipc.connectorsSubframe === 'Not allowed', JSON.stringify([ipc.connectors, ipc.connectorsSubframe]));
   check('tab / foreign frame: tab:new ignored', ipc.tabsOpened === 0, ipc.tabsOpened);
   check('the UI document itself is still allowed', ipc.uiAllowed === 'allowed', ipc.uiAllowed);
   const realUi = await ui.evaluate(async () => typeof (await window.assistant.autoAllow()));
@@ -182,7 +190,7 @@ const http = require('http');
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 
   // ---- a packaged build ignores CLAUDE_BROWSER_TEST / CLAUDE_BROWSER_PROFILE
   // A stand-in entry makes app.isPackaged true, gives Lumen its own throwaway profile (as a packaged
@@ -224,8 +232,8 @@ const http = require('http');
   const testCalls = await packedUi.evaluate(() => Object.keys(window.assistant).filter((k) => ['mcpInfo', 'setMcpEnabled', 'automationInfo', 'setAutomation', 'setAutoGroup', 'setProviderKey'].includes(k)));
   check('packaged: the UI bridge has no test-only calls', testCalls.length === 0, testCalls.join(', '));
   await packed.close();
-  fs.rmSync(packedDir, { recursive: true, force: true });
-  fs.rmSync(plantedProfile, { recursive: true, force: true });
+  fs.rmSync(packedDir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(plantedProfile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   server.close();
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

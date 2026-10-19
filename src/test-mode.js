@@ -18,4 +18,22 @@ const isTest = () => !isPackaged() && Boolean(process.env.CLAUDE_BROWSER_TEST);
 // The UI preload has no `app`; main passes it this switch (webPreferences.additionalArguments).
 const PRELOAD_FLAG = '--lumen-test-mode';
 
-module.exports = { isTest, isPackaged, PRELOAD_FLAG };
+// An extension test sets LUMEN_TEST_WEBSTORE_ORIGIN=http://127.0.0.1:<port>: the extension library's download from Google's update
+// address goes to that stand-in server, and the main process refuses every other non-loopback fetch, so the test never reaches the
+// real network. Called at startup, before electron-chrome-web-store loads (it keeps the global fetch it finds). Nothing happens
+// without the variable, so other tests are untouched.
+function standInWebStore() {
+  const origin = process.env.LUMEN_TEST_WEBSTORE_ORIGIN;
+  if (!origin) return;
+  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) throw new Error('LUMEN_TEST_WEBSTORE_ORIGIN must be http://127.0.0.1:<port>');
+  const realFetch = globalThis.fetch;
+  const STORE = 'https://clients2.google.com/service/update2/crx';
+  globalThis.fetch = (input, init) => {
+    const url = String(input?.url || input);
+    if (url.startsWith(STORE)) return realFetch(origin + '/crx' + url.slice(STORE.length), init);
+    if (!/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(url)) return Promise.reject(new TypeError(`test mode: no network (${url.slice(0, 60)})`));
+    return realFetch(input, init);
+  };
+}
+
+module.exports = { isTest, isPackaged, PRELOAD_FLAG, standInWebStore };

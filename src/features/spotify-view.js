@@ -12,7 +12,13 @@ const SW = require('./spotify-web');
 // address over http is allowed, so this one is fixed and Settings tells the user to register it.
 const REDIRECT_PORT = 43917;
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`;
-const SCOPES = 'user-read-playback-state user-modify-playback-state';
+// What the card needs: playback (read state, devices, the queue; control it), and for the bigger sizes the library: playlists, recent plays, saved
+// songs (the heart), saved albums, followed artists. An account signed in before these were added keeps working for the playback buttons; the calls that need a new one answer
+// 403 "Insufficient client scope" and the card then offers to reconnect (scopeError() recognises that answer).
+const ALLOWLIST_MESSAGE = 'This Spotify account isn’t on the list for Lumen’s own Spotify app (while Spotify keeps it in development mode it lets 25 people in). Use your own free Spotify app instead: it takes a minute.';
+const BASE_SCOPES = ['user-read-playback-state', 'user-modify-playback-state'];
+const LIBRARY_SCOPES = ['playlist-read-private', 'playlist-read-collaborative', 'user-read-recently-played', 'user-library-read', 'user-library-modify', 'user-follow-read', 'user-top-read']; // (user-top-read: the Home tab's top artists and songs)
+const SCOPES = [...BASE_SCOPES, ...LIBRARY_SCOPES].join(' ');
 const MAX_ART_BYTES = 96e3; // the picture travels in the new-tab page's address, so it stays small
 const ACTIONS = { play: ['PUT', '/me/player/play'], pause: ['PUT', '/me/player/pause'], next: ['POST', '/me/player/next'], previous: ['POST', '/me/player/previous'] };
 
@@ -45,7 +51,33 @@ function clientIdSource({ user, env, builtin = BUILTIN_SPOTIFY_CLIENT_ID } = {})
 // user's own and may be empty: the built-in or environment one is used then.
 function cleanConfig(c) {
   if (!c || typeof c !== 'object') return null;
-  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false };
+  const pins = cleanPins(c.pins);
+  return { mode: SW.cleanMode(c), clientId: cleanClientId(c.clientId), art: c.art !== false, ...(pins.length ? { pins } : {}) };
+}
+// ---- pinned playlists: their own tabs in the card ----
+// Up to MAX_PINS playlists or albums, each { kind, id, title }; the title is Spotify's name for it, short. Anything else is dropped (a stored list, a form).
+const MAX_PINS = 4;
+const PIN_KINDS = ['playlist', 'album'];
+function cleanPins(v) {
+  const out = [];
+  for (const p of Array.isArray(v) ? v : []) {
+    if (!p || typeof p !== 'object' || !PIN_KINDS.includes(p.kind) || !SAFE_ID.test(p.id || '')) continue;
+    const title = flat(p.title, 60);
+    if (title && !out.some((q) => q.kind === p.kind && q.id === p.id)) out.push({ kind: p.kind, id: p.id, title });
+    if (out.length >= MAX_PINS) break;
+  }
+  return out;
+}
+// The pins after pinning (add) or unpinning (remove) one: the new list, or an Error's message in { error } (full, not a playlist, no name).
+function applyPin(pins, op, kind, id, title) {
+  const have = cleanPins(pins);
+  if (!PIN_KINDS.includes(kind) || !SAFE_ID.test(id || '')) return { error: 'That can’t be pinned.' };
+  if (op === 'remove') return { pins: have.filter((p) => !(p.kind === kind && p.id === id)) };
+  if (have.some((p) => p.kind === kind && p.id === id)) return { pins: have };
+  if (have.length >= MAX_PINS) return { error: `Up to ${MAX_PINS} pinned playlists. Unpin one first.` };
+  const name = flat(title, 60);
+  if (!name) return { error: 'Open your library again, then pin it.' };
+  return { pins: [...have, { kind, id, title: name }] };
 }
 
 // ---- sign-in (RFC 7636 PKCE) ----
@@ -87,8 +119,11 @@ function errorCode(text) {
   } catch { return { error: '', reason: '', message: '' }; }
 }
 // A failed token request -> what the user should read.
+// Did Spotify refuse because the account is not on the list of Lumen's own Spotify app (development mode: 25 people)?
+const isAllowlistError = (status, text) => (status === 400 || status === 401 || status === 403) && /not registered|developer dashboard|user_not_approved|not approved/i.test(String(text || '').slice(0, 600));
 function tokenError(status, text) {
   const { error } = errorCode(text);
+  if (isAllowlistError(status, text)) return ALLOWLIST_MESSAGE;
   if (error === 'invalid_client') return 'Spotify doesn’t know that Client ID. Check it in Settings.';
   if (error === 'invalid_grant' || status === 400 || status === 401) return 'Spotify signed Lumen out. Connect Spotify again in Settings.';
   if (status === 429) return 'Spotify asked Lumen to slow down. It will try again shortly.';
@@ -105,12 +140,32 @@ function playerError(status, text) {
   return `Spotify answered ${status}.`;
 }
 
+// Did a call fail because the signed-in account never agreed to a scope the call needs (a card from before the bigger sizes)?
+function scopeError(status, text) {
+  if (status !== 403) return false;
+  return /scope/i.test(errorCode(text).message) || /insufficient/i.test(String(text || '').slice(0, 400));
+}
+
+// Why a call for a list's songs failed, as the card words it: 'scope' (the account never agreed to the permission, or Spotify refused the sign-in), 'forbidden' (any other 403:
+// since February 2026 Spotify gives apps the songs of a playlist only when the account owns it or collaborates on it, and answers 403 for the rest), 'missing' (404), 'rate' (429),
+// 'big' (the answer was cut), 'offline' (no answer at all), else 'page' (Spotify answered something the card cannot use).
+function failureWhy(res) {
+  if (!res || res.ok) return '';
+  if (scopeError(res.status, res.body) || res.status === 401) return 'scope';
+  if (res.error && res.error.why === 'big') return 'big';
+  if (res.status === 403) return 'forbidden';
+  if (res.status === 404) return 'missing';
+  if (res.status === 429 || (res.error && res.error.waitMs > 0)) return 'rate';
+  if (!res.status) return 'offline';
+  return 'page';
+}
+
 // ---- the picture ----
-// Only Spotify's own image host, over https.
+// Only Spotify's own image hosts (i.scdn.co, mosaic.scdn.co, image-cdn-*.spotifycdn.com), over https.
 function isImageUrl(u) {
   try {
     const url = new URL(u);
-    return url.protocol === 'https:' && !url.username && !url.password && /(^|\.)scdn\.co$/.test(url.hostname);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.port && /(^|\.)(scdn\.co|spotifycdn\.com)$/.test(url.hostname);
   } catch { return false; }
 }
 // Album art candidates: Spotify's own hosts only, the one nearest 300px first, then smaller ones.
@@ -142,7 +197,7 @@ const openUrl = (u) => {
 // GET /me/player (a 204 gives no body: pass null) -> what the card shows. `images` are candidate
 // picture addresses that widgets.js swaps for a data: URL; the page never gets an address.
 function normalizePlayback(body, now = Date.now()) {
-  const idle = { state: 'idle', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: now, device: flat(body?.device?.name, 60), kind: 'none', url: '', images: [] };
+  const idle = { state: 'idle', title: '', artist: '', album: '', progressMs: 0, durationMs: 0, at: now, device: flat(body?.device?.name, 60), kind: 'none', url: '', images: [], ...switches(body) };
   if (!body || typeof body !== 'object') return idle;
   const type = body.currently_playing_type;
   const item = body.item && typeof body.item === 'object' ? body.item : null;
@@ -168,6 +223,23 @@ function normalizePlayback(body, now = Date.now()) {
     kind: episode ? 'episode' : 'track',
     url: openUrl(item.external_urls?.spotify),
     images: imageUrls(episode ? (item.images?.length ? item.images : item.show?.images) : item.album?.images),
+    itemId: !episode && SAFE_ID.test(item.id || '') ? item.id : '', // (the heart and the queue are for songs: an episode has none)
+    ...switches(body),
+  };
+}
+const SAFE_ID = /^[A-Za-z0-9]{1,64}$/;
+// The player's switches from GET /me/player: shuffle, repeat (Spotify's off / context / track are the card's off / all / one), the volume of the
+// active device (null when that device has none to set), what it is playing from (a context: an album, a playlist or an artist) and the device's id.
+function switches(body) {
+  if (!body || typeof body !== 'object') return { shuffle: null, repeat: null, volume: null, context: null, deviceId: '' };
+  const v = body.device?.volume_percent;
+  const ctx = typeof body.context?.uri === 'string' ? /^spotify:(album|playlist|artist):([A-Za-z0-9]{1,64})$/.exec(body.context.uri) : null;
+  return {
+    shuffle: typeof body.shuffle_state === 'boolean' ? body.shuffle_state : null,
+    repeat: body.repeat_state === 'off' ? 'off' : body.repeat_state === 'context' ? 'all' : body.repeat_state === 'track' ? 'one' : null,
+    volume: Number.isFinite(v) && body.device?.supports_volume !== false ? Math.max(0, Math.min(1, v / 100)) : null,
+    context: ctx ? { kind: ctx[1], id: ctx[2] } : null,
+    deviceId: DEVICE_ID_RE.test(body.device?.id || '') ? body.device.id : '',
   };
 }
 // Where the playhead is at `now`: it moves on while playing, and never past the end.
@@ -177,14 +249,328 @@ function progressNow(data, now = Date.now()) {
   const at = data.progressMs + moved;
   return data.durationMs > 0 ? Math.min(at, data.durationMs) : at;
 }
+// Did a player call fail only because no Spotify device is active (nothing has played for a while, or the app was closed)?
+function noActiveDevice(status, text) {
+  const { reason } = errorCode(text);
+  return reason === 'NO_ACTIVE_DEVICE' || (status === 404 && !reason);
+}
+// GET /me/player/devices -> the id of the device to wake for a button pressed with none active, or ''. The active one if any, else one
+// that takes commands: this computer first (Lumen's own web player, the desktop app), then any other. Restricted devices can't be driven.
+const DEVICE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+function pickDevice(text) {
+  let body;
+  try { body = JSON.parse(text); } catch { return ''; }
+  const list = (Array.isArray(body?.devices) ? body.devices : []).filter((d) => d && typeof d.id === 'string' && DEVICE_ID_RE.test(d.id) && d.is_restricted !== true);
+  const pick = list.find((d) => d.is_active === true) || list.find((d) => d.type === 'Computer') || list[0];
+  return pick ? pick.id : '';
+}
+// A button pressed with no active device -> the call that makes `deviceId` play (or skip) instead: play goes straight to that device,
+// and next / previous first move playback there (PUT /me/player, which then plays) and are pressed again. null for anything else.
+function deviceRequest(name, deviceId) {
+  if (!DEVICE_ID_RE.test(String(deviceId || ''))) return null;
+  if (name === 'play') return { method: 'PUT', path: `/me/player/play?device_id=${encodeURIComponent(deviceId)}`, retry: false };
+  if (name === 'next' || name === 'previous') return { method: 'PUT', path: '/me/player', body: { device_ids: [deviceId], play: true }, retry: true };
+  return null;
+}
 // A card's button -> the player call it makes, or null.
 function actionRequest(name) {
   const a = Object.prototype.hasOwnProperty.call(ACTIONS, name) ? ACTIONS[name] : null;
   return a ? { method: a[0], path: a[1] } : null;
 }
 
+// ---- the lists of the bigger sizes (the queue, playlists, recent plays, devices, search, the album or playlist playing) ----
+// Every answer is cut down to what the card draws: { id, kind, title, sub, ms, images } (images: candidate picture addresses; the widget swaps the
+// smallest for a data: URL), every text bounded, every id checked. Anything that is not one of ours is dropped.
+const KIND_OF = { track: 'song', album: 'album', artist: 'artist', playlist: 'playlist' };
+// The smallest picture that is still sharp at a thumbnail (about 64 px), Spotify's own hosts only.
+function thumbUrls(images) {
+  const list = (Array.isArray(images) ? images : []).filter((i) => i && typeof i.url === 'string' && isImageUrl(i.url));
+  const w = (i) => (Number.isFinite(i.width) ? i.width : 300);
+  const ok = list.filter((i) => w(i) >= 56).sort((a, b) => w(a) - w(b));
+  return [...ok, ...list.filter((i) => w(i) < 56)].map((i) => i.url).slice(0, 2);
+}
+// Cover pictures for a Home tile (drawn about 112 px wide): the smallest that is at least 128 px, else the biggest there is; Spotify's own hosts only.
+function tileUrls(images) {
+  const list = (Array.isArray(images) ? images : []).filter((i) => i && typeof i.url === 'string' && isImageUrl(i.url));
+  const w = (i) => (Number.isFinite(i.width) ? i.width : 300);
+  const big = list.filter((i) => w(i) >= 128).sort((a, b) => w(a) - w(b));
+  const small = list.filter((i) => w(i) < 128).sort((a, b) => w(b) - w(a));
+  return [...big, ...small].map((i) => i.url).slice(0, 2);
+}
+function listItem(o, kind, tile = false) {
+  if (!o || typeof o !== 'object' || !SAFE_ID.test(o.id || '')) return null;
+  if (kind === 'track' && o.type && o.type !== 'track') return null; // (an episode is not a song)
+  const k = KIND_OF[kind || o.type];
+  const title = flat(o.name, 120);
+  if (!k || !title) return null;
+  const artists = (Array.isArray(o.artists) ? o.artists : []).map((a) => flat(a?.name, 60)).filter(Boolean).slice(0, 3).join(', ');
+  const sub = k === 'song' ? artists : k === 'album' ? [flat(o.artists?.[0]?.name, 60), o.release_date ? String(o.release_date).slice(0, 4) : ''].filter(Boolean).join(' · ') : k === 'playlist' ? flat(o.owner?.display_name, 60) : '';
+  const pics = k === 'song' ? o.album?.images : o.images;
+  const images = tile ? tileUrls(pics) : thumbUrls(pics);
+  const genres = k === 'artist' && Array.isArray(o.genres) ? o.genres.map((g) => flat(g, 40).toLowerCase()).filter(Boolean).slice(0, 4) : [];
+  const count = k === 'playlist' ? o.items?.total ?? o.tracks?.total : k === 'album' ? o.total_tracks : undefined; // (how many songs: a playlist's list is `items` since February 2026, `tracks` before)
+  return { id: o.id, kind: k, title, sub, ms: k === 'song' ? ms(o.duration_ms, 48 * 3600e3) : 0, images, ...(k === 'song' && o.album?.name ? { album: flat(o.album.name, 120) } : {}), ...(k === 'album' && typeof o.release_date === 'string' ? { released: o.release_date.slice(0, 10) } : {}), ...(genres.length ? { genres } : {}), ...(Number.isInteger(count) && count >= 0 ? { count } : {}), ...(k === 'playlist' && typeof o.owner?.id === 'string' ? { ownerId: flat(o.owner.id, 60) } : {}) };
+}
+const parse = (text) => { try { const b = JSON.parse(text); return b && typeof b === 'object' ? b : null; } catch { return null; } };
+// GET /me/player/queue -> what plays next (the song playing now is not in it).
+function normalizeQueue(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.queue) ? b.queue : []).map((t) => listItem(t, 'track')).filter(Boolean).slice(0, 50);
+}
+// GET /me/playlists -> the account's playlists.
+function normalizePlaylists(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.items) ? b.items : []).map((p) => listItem(p, 'playlist')).filter(Boolean);
+}
+// The address of the next page of a paged answer ({ next } or { artists: { next } }), as a path the card's own call can make: only Spotify's API host
+// and its /v1 paths count, whatever the answer says; '' when there is no next page.
+function nextPath(text) {
+  const b = parse(text);
+  const next = typeof b?.next === 'string' ? b.next : typeof b?.artists?.next === 'string' ? b.artists.next : '';
+  if (!next || next.length > 600) return '';
+  try {
+    const u = new URL(next);
+    if (u.protocol !== 'https:' || u.hostname !== 'api.spotify.com' || u.username || u.password || u.port || !u.pathname.startsWith('/v1/')) return '';
+    return u.pathname.slice(3) + u.search;
+  } catch { return ''; }
+}
+// GET /me/albums -> the saved albums (each { added_at, album }), newest first.
+function normalizeAlbums(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.items) ? b.items : []).map((e) => listItem(e?.album, 'album')).filter(Boolean);
+}
+// GET /me/following?type=artist -> the followed artists.
+function normalizeFollowing(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.artists?.items) ? b.artists.items : []).map((a) => listItem(a, 'artist')).filter(Boolean);
+}
+// GET /me/tracks -> the saved songs (Liked Songs), newest first.
+function normalizeLiked(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const e of Array.isArray(b?.items) ? b.items : []) {
+    const it = listItem(e?.track, 'track');
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out;
+}
+// GET /me/player/recently-played -> the last songs, each once.
+function normalizeRecent(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const it = listItem(h?.track, 'track');
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out.slice(0, 20);
+}
+// GET /me/player/devices -> the places that can play.
+function normalizeDevices(text) {
+  const b = parse(text);
+  return (Array.isArray(b?.devices) ? b.devices : []).filter((d) => d && DEVICE_ID_RE.test(d.id || '') && d.is_restricted !== true).map((d) => ({ id: d.id, name: flat(d.name, 60) || 'Device', type: flat(d.type, 20), active: d.is_active === true })).slice(0, 12);
+}
+// GET /search (tracks, albums, artists, playlists) -> the card's results, songs first.
+function normalizeSearch(text) {
+  const b = parse(text);
+  const pick = (page, kind) => (Array.isArray(page?.items) ? page.items : []).map((o) => listItem(o, kind)).filter(Boolean).slice(0, SEARCH_LIMIT);
+  return [...pick(b?.tracks, 'track'), ...pick(b?.albums, 'album'), ...pick(b?.artists, 'artist'), ...pick(b?.playlists, 'playlist')];
+}
+// The album or playlist playing -> { title, items }: GET /albums/{id} (its tracks come in the answer), GET /playlists/{id} (its items; Spotify names the
+// list `items` or, older, `tracks`, and each entry's song `item` or `track`). An artist has no list: Spotify removed GET /artists/{id}/top-tracks in
+// February 2026 (the card says there is nothing to list).
+function normalizeContext(kind, text) {
+  const b = parse(text);
+  if (!b) return { title: '', items: [] };
+  const title = flat(b.name, 120);
+  if (kind === 'album') {
+    const cover = b.images;
+    const items = (Array.isArray(b.tracks?.items) ? b.tracks.items : []).map((t) => listItem({ ...t, album: { images: cover } }, 'track')).filter(Boolean);
+    return { title, items: items.slice(0, 100) };
+  }
+  if (kind === 'playlist') {
+    const page = b.items && !Array.isArray(b.items) ? b.items : b.tracks;
+    const entries = Array.isArray(page?.items) ? page.items : Array.isArray(b.items) ? b.items : [];
+    return { title, items: entries.map((e) => listItem(e?.track || e?.item, 'track')).filter(Boolean).slice(0, 100) };
+  }
+  return { title: '', items: [] }; // (an artist: its top tracks endpoint is gone)
+}
+// GET /playlists/{id}/items (February 2026: `items`, each entry's song under `item`; older `track`) or GET /albums/{id} -> { title, items }. Each row
+// keeps `pos`, its place in the list as Spotify counts it (an episode, a removed or a local song is skipped but still counts), which is what
+// "play from here" sends.
+function normalizeListing(kind, text) {
+  const b = parse(text);
+  if (!b) return { title: '', items: [] };
+  if (kind === 'album') {
+    const cover = b.images;
+    const entries = Array.isArray(b.tracks?.items) ? b.tracks.items : [];
+    const items = [];
+    entries.forEach((t, pos) => { const it = listItem({ ...t, album: { images: cover } }, 'track'); if (it) items.push({ ...it, pos }); });
+    return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
+  }
+  const entries = Array.isArray(b.items) ? b.items : Array.isArray(b.items?.items) ? b.items.items : Array.isArray(b.tracks?.items) ? b.tracks.items : [];
+  const items = [];
+  entries.forEach((e, pos) => { const it = listItem(e?.item || e?.track, 'track'); if (it) items.push({ ...it, pos }); });
+  return { title: flat(b.name, 120), items: items.slice(0, MAX_LIST) };
+}
+const MAX_LIST = 100;
+// ---- recommendations for the Home tab ----
+// Spotify closed these to apps created after November 2024 (and to most older ones without an extended-quota agreement): GET /recommendations, GET /artists/{id}/related-artists,
+// GET /audio-features, the featured and category playlists, and the Spotify-made playlists' contents. The card asks each once (features/spotify-recs.js probes) and uses it only when
+// Spotify answers; otherwise it builds suggestions from endpoints that still work (the albums and singles of your artists, genre searches, ...), and says which it did.
+const asTiles = (items, kind) => (Array.isArray(items) ? items : []).map((o) => tile(o, kind)).filter(Boolean);
+const normalizeRecTracks = (text) => asTiles(parse(text)?.tracks, 'track').slice(0, 20); // GET /recommendations
+const normalizeRelated = (text) => asTiles(parse(text)?.artists, 'artist').slice(0, 20); // GET /artists/{id}/related-artists
+const normalizeArtistTopTracks = (text) => asTiles(parse(text)?.tracks, 'track'); // GET /artists/{id}/top-tracks
+const normalizeArtistReleases = (text) => asTiles(parse(text)?.items, 'album'); // GET /artists/{id}/albums (each with its release date)
+const normalizeSearchSongs = (text) => asTiles(parse(text)?.tracks?.items, 'track'); // GET /search?type=track
+const normalizeSearchArtists = (text) => asTiles(parse(text)?.artists?.items, 'artist'); // GET /search?type=artist
+const parseSavedMany = (text) => { try { const a = JSON.parse(text); return Array.isArray(a) ? a.map((v) => v === true) : null; } catch { return null; } };
+// ---- the Library: every playlist, Liked Songs, a playlist or album opened in the card, an artist ----
+// One page of songs -> { total, raw (entries read, skipped ones included: the next offset), items: [{ ...song, pos }] }. `kind`: 'playlist' (GET /playlists/{id}/items: each entry's song
+// under `item`, older `track`), 'liked' (GET /me/tracks: `track`), 'album' (GET /albums/{id}/tracks: songs without their album: `cover` is the album's pictures).
+// `pos` is the entry's place in the list as Spotify counts it (an episode, a removed or a local song is skipped but still counts): what "play from here" sends.
+function normalizeTrackPage(kind, text, offset = 0, cover = null) {
+  const b = parse(text);
+  const entries = Array.isArray(b?.items) ? b.items : [];
+  const items = [];
+  entries.forEach((e, i) => {
+    const o = kind === 'album' ? e : (e?.item || e?.track);
+    const it = listItem(kind === 'album' && o ? { ...o, album: { name: '', images: cover || [] } } : o, 'track');
+    if (it) items.push({ ...it, pos: offset + i });
+  });
+  // `bad`: the answer is not a list of songs (not JSON, or no `items` list: Spotify leaves it out of a playlist it will not share), or it says there are songs but sends none at the start.
+  const bad = !b || !Array.isArray(b.items) || (offset === 0 && !entries.length && Number.isInteger(b.total) && b.total > 0);
+  return { total: Number.isInteger(b?.total) ? b.total : offset + entries.length, raw: entries.length, items, bad };
+}
+// GET /artists/{id}/albums -> the albums and singles
+const normalizeArtistAlbums = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => listItem(o, 'album')).filter(Boolean).slice(0, 50);
+// GET /artists/{id}/top-tracks -> { tracks }
+const normalizeArtistTop = (text) => (Array.isArray(parse(text)?.tracks) ? parse(text).tracks : []).map((o, i) => { const it = listItem(o, 'track'); return it ? { ...it, pos: i } : null; }).filter(Boolean).slice(0, 10);
+// GET /me/tracks?limit=1 / /me/playlists... -> a list's total
+const totalOf = (text) => { const b = parse(text); const n = b?.total ?? b?.artists?.total; return Number.isInteger(n) && n >= 0 ? n : null; };
+// GET /me -> the account's id (for the Liked Songs collection uri)
+const normalizeMeId = (text) => { const id = parse(text)?.id; return typeof id === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(id) ? id : ''; };
+// ---- the Home tab (shelves like open.spotify.com's Home, from the endpoints the Web API gives apps) ----
+// Every answer is cut down to tiles: { id, kind, title, sub, ms, images } (images: candidate addresses for the tile's cover; the card swaps them for small data: URLs).
+const HOME_MAX = 10; // tiles in a shelf
+const tile = (o, kind) => listItem(o, kind, true);
+// GET /me/player/recently-played -> the songs, each once, newest first.
+function normalizeRecentTiles(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const it = tile(h?.track, 'track');
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out.slice(0, HOME_MAX);
+}
+// ...the albums those songs are on, each once (the quick picks: what you have been listening to).
+function normalizeRecentAlbums(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const a = h?.track?.album;
+    const it = a ? tile({ ...a, artists: a.artists || h.track.artists }, 'album') : null;
+    if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
+  }
+  return out;
+}
+// ...the playlists, albums and artists they were played from ("jump back in"): [{ kind, id }], each once, newest first.
+function recentContexts(text) {
+  const b = parse(text);
+  const seen = new Set();
+  const out = [];
+  for (const h of Array.isArray(b?.items) ? b.items : []) {
+    const m = typeof h?.context?.uri === 'string' ? /^spotify:(album|playlist|artist):([A-Za-z0-9]{1,64})$/.exec(h.context.uri) : null;
+    if (m && !seen.has(m[0])) { seen.add(m[0]); out.push({ kind: m[1], id: m[2] }); }
+  }
+  return out;
+}
+// GET /me/top/artists, /me/top/tracks
+const normalizeTopArtists = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'artist')).filter(Boolean).slice(0, HOME_MAX);
+const normalizeTopTracks = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'track')).filter(Boolean).slice(0, HOME_MAX);
+// GET /browse/new-releases -> { albums: { items } }
+const normalizeNewReleases = (text) => (Array.isArray(parse(text)?.albums?.items) ? parse(text).albums.items : []).map((o) => tile(o, 'album')).filter(Boolean).slice(0, HOME_MAX);
+// The Home sources of your own library, as tiles.
+const tilePlaylists = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => tile(o, 'playlist')).filter(Boolean);
+const tileAlbums = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((e) => tile(e?.album, 'album')).filter(Boolean);
+const tileFollowing = (text) => (Array.isArray(parse(text)?.artists?.items) ? parse(text).artists.items : []).map((o) => tile(o, 'artist')).filter(Boolean);
+// "Made for you": Spotify's own personalised playlists in the account's list (Spotify owns them; the API has no endpoint for them).
+const MADE_RE = /^(?:daily mix \d*|discover weekly|release radar|on repeat|repeat rewind|time capsule|your top songs \d{4}|your summer rewind|your daylist|daylist.*|your \d{4} wrapped|blend)\b/i;
+const madeForYou = (items) => items.filter((p) => p.kind === 'playlist' && p.ownerId === 'spotify' && MADE_RE.test(p.title));
+// Where each list comes from, and what a card button does. All paths are fixed; only checked ids and numbers are put into them.
+const enc = encodeURIComponent;
+const SEARCH_LIMIT = 10; // per kind (the most Spotify's search answers for an app in development mode)
+const PLAYER = {
+  queue: () => ['GET', '/me/player/queue'],
+  playlists: () => ['GET', '/me/playlists?limit=50'],
+  albums: () => ['GET', '/me/albums?limit=50&market=from_token'], // (the saved albums: scope user-library-read)
+  following: () => ['GET', '/me/following?type=artist&limit=50'], // (the followed artists: scope user-follow-read; answers { artists: { items, next, cursors } })
+  recent: () => ['GET', '/me/player/recently-played?limit=30'],
+  // Library
+  libPlaylists: () => ['GET', '/me/playlists?limit=50'],
+  libAlbums: () => ['GET', '/me/albums?limit=50&market=from_token'],
+  libArtists: () => ['GET', '/me/following?type=artist&limit=50'],
+  likedPage: (offset) => ['GET', `/me/tracks?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token`],
+  playlistPage: (id, offset) => ['GET', `/playlists/${id}/items?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token&additional_types=track`],
+  albumPage: (id, offset) => ['GET', `/albums/${id}/tracks?limit=50&offset=${Math.max(0, Math.min(1e5, Math.round(offset)))}&market=from_token`],
+  artistAlbums: (id) => ['GET', `/artists/${id}/albums?include_groups=album,single&limit=50&market=from_token`],
+  artistTop: (id) => ['GET', `/artists/${id}/top-tracks?market=from_token`],
+  me: () => ['GET', '/me'],
+  // Play a row of the Liked Songs: its collection context with an offset; when Spotify refuses that, the songs read so far as a list.
+  playLiked: (userId, pos) => ['PUT', '/me/player/play', { context_uri: `spotify:user:${userId}:collection`, offset: { position: pos } }],
+  playUris: (ids, pos) => ['PUT', '/me/player/play', { uris: ids.map((i) => `spotify:track:${i}`), offset: { position: pos } }],
+  // Home (each shelf's source; one request each, cached a minute by the card)
+  homeRecent: () => ['GET', '/me/player/recently-played?limit=50'],
+  homePlaylists: () => ['GET', '/me/playlists?limit=50'],
+  homeAlbums: () => ['GET', '/me/albums?limit=12&market=from_token'],
+  homeFollowing: () => ['GET', '/me/following?type=artist&limit=12'],
+  // Recommendations (see features/spotify-recs.js)
+  recommendations: ({ artists = [], tracks = [], genres = [] }) => ['GET', `/recommendations?limit=20&market=from_token${artists.length ? `&seed_artists=${artists.slice(0, 5).join(',')}` : ''}${tracks.length ? `&seed_tracks=${tracks.slice(0, 5).join(',')}` : ''}${genres.length ? `&seed_genres=${genres.slice(0, 5).map(enc).join(',')}` : ''}`],
+  relatedArtists: (id) => ['GET', `/artists/${id}/related-artists`],
+  artistTopTracks: (id) => ['GET', `/artists/${id}/top-tracks?market=from_token`],
+  artistReleases: (id) => ['GET', `/artists/${id}/albums?include_groups=album,single&limit=6&market=from_token`],
+  searchGenre: (genre, type) => ['GET', `/search?q=${enc(`genre:"${flat(genre, 40)}"`)}&type=${type}&limit=${SEARCH_LIMIT}&market=from_token`],
+  savedMany: (ids) => ['GET', `/me/library/contains?uris=${enc(ids.slice(0, 40).map((i) => `spotify:track:${i}`).join(','))}`],
+  topArtists: () => ['GET', '/me/top/artists?limit=10&time_range=medium_term'],
+  topTracks: () => ['GET', '/me/top/tracks?limit=10&time_range=medium_term'],
+  newReleases: () => ['GET', '/browse/new-releases?limit=10'],
+  liked: () => ['GET', '/me/tracks?limit=50&market=from_token'], // (the saved songs, newest first: still there after Spotify's February 2026 changes)
+  devices: () => ['GET', '/me/player/devices'],
+  // More songs for a search: the songs alone, the next page (Spotify's development mode answers 10 at most per request).
+  searchMore: (term, offset) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track&limit=${SEARCH_LIMIT}&offset=${Math.max(0, Math.min(200, Math.round(offset)))}&market=from_token`],
+  search: (term) => ['GET', `/search?q=${enc(flat(term, 80))}&type=track,album,artist,playlist&limit=${SEARCH_LIMIT}&market=from_token`], // (one request for every kind; from_token: the account's own market, so what is shown plays)
+  context: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}`] : kind === 'playlist' ? ['GET', `/playlists/${id}`] : null), // (an artist: null, no endpoint any more)
+  // A playlist's or album's songs (the card's playlist tabs). Playlist: /items (the Feb 2026 name; `tracks` is gone for apps in development mode).
+  listing: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}?market=from_token`] : kind === 'playlist' ? ['GET', `/playlists/${id}/items?limit=${MAX_LIST}&market=from_token&additional_types=track`] : null),
+  // Start a playlist or album (from its `pos`th entry when given).
+  // `song`: a song id, to start at that song instead of a place (for a list read from the player's page, whose places may not be Spotify's)
+  playContext: (kind, id, pos, song) => ['PUT', '/me/player/play', { context_uri: `spotify:${kind}:${id}`, ...(typeof song === 'string' && SAFE_ID.test(song) ? { offset: { uri: `spotify:track:${song}` } } : Number.isInteger(pos) && pos >= 0 && pos < 10000 ? { offset: { position: pos } } : {}) }],
+  shuffle: (on) => ['PUT', `/me/player/shuffle?state=${on ? 'true' : 'false'}`],
+  repeat: (mode) => ['PUT', `/me/player/repeat?state=${mode === 'all' ? 'context' : mode === 'one' ? 'track' : 'off'}`],
+  volume: (percent) => ['PUT', `/me/player/volume?volume_percent=${Math.max(0, Math.min(100, Math.round(percent)))}`],
+  seek: (sec) => ['PUT', `/me/player/seek?position_ms=${Math.max(0, Math.round(sec * 1000))}`],
+  queueAdd: (id) => ['POST', `/me/player/queue?uri=${enc(`spotify:track:${id}`)}`],
+  // (February 2026: /me/tracks and /me/tracks/contains were replaced by the uri-based library endpoints)
+  saved: (id) => ['GET', `/me/library/contains?uris=${enc(`spotify:track:${id}`)}`],
+  save: (id, on) => [on ? 'PUT' : 'DELETE', `/me/library?uris=${enc(`spotify:track:${id}`)}`],
+  transfer: (deviceId, play) => ['PUT', '/me/player', { device_ids: [deviceId], play: Boolean(play) }],
+  playItem: (kind, id) => ['PUT', '/me/player/play', kind === 'song' ? { uris: [`spotify:track:${id}`] } : { context_uri: `spotify:${kind}:${id}` }],
+  playFrom: (ctx, index) => ['PUT', '/me/player/play', { context_uri: `spotify:${ctx.kind}:${ctx.id}`, offset: { position: index } }],
+};
+const PLAYABLE_KINDS = ['song', 'album', 'playlist', 'artist'];
+// GET /me/library/contains -> true | false | null (one uri asked, one boolean answered).
+function parseSaved(text) {
+  try { const a = JSON.parse(text); return Array.isArray(a) && typeof a[0] === 'boolean' ? a[0] : null; } catch { return null; }
+}
+
 module.exports = {
-  REDIRECT_PORT, REDIRECT_URI, SCOPES, MAX_ART_BYTES, ACTIONS,
+  REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
+  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, failureWhy, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS, normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
-  isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest,
+  isAllowlistError, ALLOWLIST_MESSAGE, isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };

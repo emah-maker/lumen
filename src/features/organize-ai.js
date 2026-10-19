@@ -15,6 +15,15 @@ const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16
 const clip = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 const estimateTokens = (s) => Math.ceil(String(s).length / 3.6);
 
+// What a tab's "site" is in a request: its host, or for a file on this computer its folder's name ("Physics") or its type ("PDFs"): never a path.
+// A file on the web is on its site. The viewer's address never appears (tab-groups entry() has already unwrapped it).
+const siteOf = (e) => (e.file?.local ? `file:${clip(e.file.folder || e.file.label, 30)}` : hostOf(e.url));
+// A tab's short description: a page's meta description, or for a file its type and the first words of its text (aiText: tab-groups entry(); empty when AI is off for it).
+// Never more than DESC_MAX characters: a file's full text never leaves this computer.
+// Long numbers (an ID, an account or a card number a first page may carry) are left out of a file's snippet.
+const withoutNumbers = (s) => String(s).replace(/\d[ \d-]{6,}\d/g, '').replace(/ {2,}/g, ' ');
+const descOf = (e) => (e.file ? clip(`${e.file.typeName}${e.aiText ? `: ${withoutNumbers(e.aiText)}` : ''}`, DESC_MAX) : clip(e.text, DESC_MAX));
+
 const TITLE_MAX = 70; // characters of a title in a group's samples
 const DESC_MAX = 80; // characters of a leftover tab's description
 const MIN_COHESION = 0.25; // a group looser than this is worth a second opinion
@@ -58,7 +67,7 @@ function topWords(entries, k = 4) {
 
 function hostCounts(entries) {
   const count = new Map();
-  for (const e of entries) { const h = hostOf(e.url); if (h) count.set(h, (count.get(h) || 0) + 1); }
+  for (const e of entries) { const h = siteOf(e); if (h) count.set(h, (count.get(h) || 0) + 1); }
   return [...count].sort((a, b) => b[1] - a[1]).map(([h]) => h);
 }
 
@@ -95,9 +104,12 @@ function groupSummary(g) {
 // Never the page text beyond ~80 characters of its description, never an address or query string.
 function leftoverSummary(entries) {
   const byHost = {};
+  const folders = new Set();
   for (const e of entries) {
-    const host = hostOf(e.url) || '-';
-    const desc = clip(e.text, DESC_MAX);
+    const host = siteOf(e) || '-';
+    // Files count against the same per-request limit as sites asked about (MAX_HINT_HOSTS): the folders of at most that many are described.
+    if (e.file?.local && !folders.has(host)) { if (folders.size >= MAX_HINT_HOSTS) continue; folders.add(host); }
+    const desc = descOf(e);
     (byHost[host] ||= []).push(desc ? [e.id, cleanTitle(e), desc] : [e.id, cleanTitle(e)]);
   }
   return byHost;
@@ -135,7 +147,23 @@ function legacyWire(entries, pathWords = tg.pathWords) {
   return entries.map((e) => ({ id: e.id, title: String(e.title).slice(0, 100), host: hostOf(e.url), ...(pathWords(e.url) ? { path: pathWords(e.url) } : {}) }));
 }
 
-const REFINE_PROMPT = `Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given. q = hosts to classify: h = [{s host, k}] for each, k what the site is nearly always used for (${AI_HINTS.join(', ')}), or none when it is used for many things or you do not know it (a university's own site is School).`;
+const REFINE_PROMPT = `You refine an automatic grouping of browser tabs. Input JSON: g = groups [{i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]}]; u = ungrouped tabs by host {host: [[tabId, title, description?]]}; k = site hints of ungrouped tabs {hint: [tabIds]}; q = hosts to classify.
+Reply with JSON only. Every key is optional: leave out whatever is fine, and use only the ids given.
+n = [{i, s}] rename group i to s.
+p = [{t, i}] put ungrouped tab t into group i.
+g = [{s, t:[tabIds]}] a new group named s from 2 or more ungrouped tabs.
+m = [{a, b}] merge group b into group a.
+h = [{s: host, k}] for each host in q: what the site is nearly always used for (${AI_HINTS.join(', ')}), or none when it serves many purposes or you do not know it (a university's own site is School).
+Principles:
+- A group is one task or subject a person would keep together: a trip, a course, a purchase decision, a project, a news story, a hobby. Not one website, not a broad field. Two courses, two products or two trips are two groups.
+- Place a tab when its title or description is clearly about the group's subject. A roundup ("Best X"), a review, a forum thread, a price page or a bare place name about that subject belongs with it (a tab that is only "Iceland" goes with the Iceland trip; "coffee after noon" goes with caffeine and sleep). Tabs with one site hint, or on one host, usually belong together unless their titles are different subjects.
+- When unsure, leave it out: a wrong placement costs more than a loose tab. Mail, calendars, social feeds, search and home pages, sign-in pages and new tabs stay ungrouped.
+- Prefer p over g: a tab about the subject of an existing group goes into it, even when the group's name is narrower or broader than the tab (a gene-editing group takes base editing and gene-therapy pieces). Use g only for tabs no group fits.
+- Merge only pieces of one subject (a trip's flights and hotels, a course's notes and quizzes), never two subjects that merely share a field.
+- Names: 1 to 3 words, Title Case, a specific noun phrase for the subject ("Gene Editing", "Tokyo Trip", "Standing Desks", "Organic Chemistry"). Never a website, never generic ("Research", "Misc", "Tabs", "Group"), no emoji, no punctuation. Rename a group whose name is a category label, a stray word or a site ("Change", "Research", "Lab & bioinformatics", "Mail & notes" over unrelated tabs) or wrong for most of its tabs; keep a good name and any name the user chose. No years or dates in names.
+Example answer: {"n":[{"i":3,"s":"Standing Desks"}],"p":[{"t":14,"i":2}],"g":[{"s":"Gene Editing","t":[21,25]}],"m":[{"a":1,"b":5}]}`;
+// The prompt as it was before round 2 (PR #215), kept for scripts/eval-organize-ai.js to compare against.
+const REFINE_PROMPT_V1 = `Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given. q = hosts to classify: h = [{s host, k}] for each, k what the site is nearly always used for (${AI_HINTS.join(', ')}), or none when it is used for many things or you do not know it (a university's own site is School).`;
 
 const intItems = (props) => ({ type: 'array', items: { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false } });
 const REFINE_SCHEMA = {
@@ -312,7 +340,7 @@ function chunkView(view, { tabs = 0, maxChunks = MAX_PARALLEL, items = CHUNK_ITE
   const home = new Map();
   chunks.forEach((c, ci) => c.groups.forEach((g) => hostCounts(g.entries).forEach((h) => { if (!home.has(h)) home.set(h, ci); })));
   let rr = 0;
-  for (const e of view.leftovers) chunks[home.get(hostOf(e.url)) ?? (rr++ % n)].leftovers.push(e);
+  for (const e of view.leftovers) chunks[home.get(siteOf(e)) ?? (rr++ % n)].leftovers.push(e);
   return chunks.filter((c) => c.groups.length || c.leftovers.length);
 }
 
@@ -391,8 +419,11 @@ async function pool(items, limit, fn) {
 // and learnAiHints. Sites no hint is known for ride along in the same request (q, host names only), and
 // what the model says they are for is kept for next time and for local grouping; with nothing else to
 // ask, a request with only those hosts is made. A failed or late answer teaches nothing.
-async function organizeProgressive({ tabGroups, ask, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
+async function organizeProgressive({ tabGroups, ask, prepare = null, cache = createRefineCache(), onPhase = () => {}, signal, timeoutMs = TIMEOUT_MS, now = Date.now, maxTabs = 400, skipId = () => false, alwaysAsk = false, hints = null } = {}) {
   const t0 = now();
+  // `prepare` (optional): works out the route to a model (a CLI's sign-in check can take a second) AFTER the local groups are
+  // on screen, not before: it starts now, alongside the local pass, and is only awaited once there is something to ask.
+  const preparing = typeof prepare === 'function' ? Promise.resolve().then(prepare).catch(() => null) : null;
   const stats = { unchanged: false, groups: 0, aiUsed: false, reason: '', cached: false, requests: 0, chunks: 0, failed: '', wire: [], renamed: 0, placed: 0, created: 0, merged: 0, hinted: 0, localMs: 0, totalMs: 0 };
   const sigBefore = tabGroups.layoutSignature?.() || null; // what the strip shows now: when it is the same afterwards, Organize changed nothing
   const count = tabGroups.organizeByTopic(null);
@@ -415,6 +446,11 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
     return stats;
   };
   if (signal?.aborted) return finish('cancelled');
+  if (preparing) {
+    const ready = await preparing; // { ask, timeoutMs } or null: no route, so the local groups are the answer
+    if (ready && typeof ready.ask === 'function') { ask = ready.ask; if (ready.timeoutMs) timeoutMs = ready.timeoutMs; }
+    if (signal?.aborted) return finish('cancelled');
+  }
   if (typeof ask !== 'function') return finish(count ? 'local' : 'none'); // AI off or no route: the local groups are the answer
   // One request: it has its own AbortController (aborted by a cancel and by its own timeout), so a timeout stops the request itself.
   const request = (wire) => {
@@ -526,6 +562,6 @@ async function organizeProgressive({ tabGroups, ask, cache = createRefineCache()
 
 module.exports = {
   hostOf, tabKey, groupKey, setKey, estimateTokens, topWords, groupSummary, leftoverSummary, buildWire, legacyWire, unknownHosts, MAX_HINT_HOSTS,
-  REFINE_PROMPT, REFINE_SCHEMA, REFINE_MAX_TOKENS, parseRefinement, askable, clearName, assess, createRefineCache, chunkView,
+  REFINE_PROMPT, REFINE_PROMPT_V1, REFINE_SCHEMA, REFINE_MAX_TOKENS, parseRefinement, askable, clearName, assess, createRefineCache, chunkView,
   planApply, mergePlans, fragments, withTimeout, askIfEnabled, summaryKey, organizeProgressive, failureOf, timeoutFor, TIMEOUT_MS, TIMEOUT_CLI_MS, TIMEOUT_API_MS, MIN_NEW_GROUP_TABS, MAX_PARALLEL, MIN_COHESION,
 };

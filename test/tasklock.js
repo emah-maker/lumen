@@ -23,10 +23,13 @@ const path = require('path');
   await ui.waitForSelector('.tab');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // The checks about the sidebar following a tab are about a chat per tab: the old behaviour, now a setting (a8a1251; the chat otherwise carries on across tabs).
+  await app.evaluate(() => global.__settings.backend.set('oneChatPerTab', true));
   const picked = await ui.evaluate(async () => (await window.assistant.getSettings()).model);
   const used = await app.evaluate(() => global.__agent.getOptions().model);
-  check('with only an OpenAI key, the picker shows an OpenAI model', /^openai:/.test(String(picked)), picked);
-  check('and the agent uses that same model (not Claude)', used === picked, `${used} vs ${picked}`);
+  // A profile that never chose a model starts on Auto once more than one model is on offer (main.js effectiveModel): the pick is 'auto', and the model that answers is an OpenAI one.
+  check('with only an OpenAI key, the picker shows Auto or an OpenAI model, never Claude', picked === 'auto' || /^openai:/.test(String(picked)), picked);
+  check('and the agent uses that same model (not Claude)', used === picked && !/claude/i.test(String(used)), `${used} vs ${picked}`);
 
   // Tab lock. Tab A is in front when the task starts; the user switches to tab B while the model is
   // thinking; the click the model then asks for must land in tab A.
@@ -90,6 +93,9 @@ const path = require('path');
     global.__release = null;
     global.__agent.reset();
     global.__agent.messages.settings = { model: 'claude-opus-5', adhdMode: true };
+    // The sidebar's chat is on Auto (a profile that never chose a model): left to route, it picks the OpenAI model this profile has a key
+    // for and never reaches the fake Claude below, so Auto's choice is pinned to the fake.
+    global.__agent.routeAuto = (messages) => { if (messages.settings?.model === 'auto') messages.settings.model = 'claude-opus-5'; };
     global.__agent.getClient = () => ({ beta: { messages: { stream: () => {
       turn++;
       const message = turn === 1
@@ -134,6 +140,9 @@ const path = require('path');
   await waitFor(() => app.evaluate(() => global.__tabChats.runs().every((r) => !r.live)));
   await clickTab(idW1);
   await sleep(600);
+  // (a chat that finished while its tab's sidebar was closed is drawn when the sidebar opens: renderer/chat-core.js flushLazyHistory)
+  await app.evaluate((_e, id) => global.__tabChats.setSidebar(id, true), idW1);
+  await waitFor(() => ui.evaluate(() => document.querySelectorAll('.step').length > 0));
   const after = await ui.evaluate(() => ({ hidden: document.getElementById('working-in').hidden, away: document.body.classList.contains('agent-away'), steps: document.querySelectorAll('.step').length, done: document.querySelectorAll('.step.done').length }));
   check('when the run ends the line and the away state go', after.hidden && !after.away, JSON.stringify(after));
   check('the step list survived the tab switches', after.steps >= 1 && after.done === after.steps, JSON.stringify(after));
@@ -148,7 +157,7 @@ const path = require('path');
   }, [await tabIdOf('/l1'), await (async () => { const id = await tabIdOf('/l2'); await clickTab(id); await sleep(300); return id; })()]);
   const ltA = lt.find((t) => t.url.endsWith('/l1'));
   const ltB = lt.find((t) => t.url.endsWith('/l2'));
-  check('list_tabs in a task shows the task\'s tab as active and the one in front as in_front', ltA?.active === true && ltB?.active === false && ltB?.in_front === true, JSON.stringify(lt));
+  check('list_tabs in a task shows the task\'s tab as active and the one in front as in_front', ltA?.active === true && ltB && !('active' in ltB) && ltB.in_front === true, JSON.stringify(lt));
 
   // Element ids read in one tab are refused in the tab the task moved to (they'd hit another element).
   const refs = await app.evaluate(async (_e, ids) => {
@@ -191,7 +200,7 @@ const path = require('path');
     agent.messages.settings = { model: 'claudecode:default', adhdMode: true };
     agent.claudeCodeTurn = async (_m, _t, _i, signal, emit) => {
       const session = { engine: 'tag-1', approvedHosts: new Set(), clientName: 'Claude', controller: new AbortController() };
-      global.__fakeEngine = { owns: (t) => t === 'tag-1', active: { emit, signal } };
+      global.__fakeEngine = { owns: (t) => t === 'tag-1', active: { emit, signal, scope: agent.runScope } }; // (a sidebar run carries its own task scope: agent.js claudeCodeTurn)
       const found = await agent.execute('find', { query: 'Go' });
       const id = Number(/\[(\d+)\]/.exec(found)?.[1]);
       agent.browser.switchTab(ids[1]); // the user goes elsewhere mid-run

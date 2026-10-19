@@ -14,7 +14,8 @@ const KINDS = {
   calendar: ['Calendar', 'Upcoming events from a calendar link'],
   todoist: ['Todoist', 'Your tasks'],
   feed: ['Headlines', 'News from an RSS or Atom feed'],
-  spotify: ['Spotify', 'What is playing, with play and skip'],
+  spotify: ['Spotify', 'Plays in Lumen, with what is playing and a search'],
+  applemusic: ['Apple Music', 'What is playing in the Apple Music app, or its web player'],
   gmail: ['Gmail', 'Unread count and latest messages'],
   slack: ['Slack', 'Unread direct messages, mentions and channels'],
   github: ['GitHub', 'Review requests, assigned items, notifications'],
@@ -25,12 +26,14 @@ const KINDS = {
   countdown: ['Countdown', 'Days until a date'],
   timer: ['Timer', 'A timer or Pomodoro focus and break'],
   aistatus: ['AI status', 'Which AIs are ready, working or at a limit'],
+  routines: ['Routines', 'What your routines run next and their latest results'],
+  files: ['Files', 'Pinned and recent files, opened with a click'],
   custom: ['Custom', 'Your own card from a JSON recipe'],
   muse: ['Muse', 'Ask Meta’s Muse model with a saved prompt'],
   embed: ['Web page', 'Any page that allows being shown in a frame'],
 };
 // The order the Add widget picker lists them in: everyday first, accounts and keys after.
-const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'gmail', 'slack', 'github', 'notes', 'countdown', 'timer', 'aistatus', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
+const ORDER = ['weather', 'worldclock', 'calendar', 'todoist', 'feed', 'spotify', 'applemusic', 'gmail', 'slack', 'github', 'notes', 'files', 'countdown', 'timer', 'aistatus', 'routines', 'stocks', 'crypto', 'tradingview', 'muse', 'custom', 'embed'];
 
 const kindName = (type) => (KINDS[type] ? KINDS[type][0] : String(type || 'Widget'));
 const kindHint = (type) => (KINDS[type] ? KINDS[type][1] : 'Set up in Settings');
@@ -46,12 +49,19 @@ function accountStatus(w, ctx = {}) {
   const secrets = ctx.secrets || {};
   switch (w && w.type) {
     case 'spotify': {
-      if (w.mode === 'web') return null; // Spotify's own site in the card: nothing to connect here
+      if (w.mode === 'web' || w.mode === 'status') return null; // Spotify's own page in the card or in the engine: nothing to connect here
       const on = Boolean(secrets.spotify);
       const name = ctx.spotify && ctx.spotify.name;
       return { connected: on, text: on ? (name ? `Connected as ${name}` : 'Connected') : 'Not connected' };
     }
-    case 'gmail': { const on = Boolean(ctx.connections && ctx.connections.gmail); return { connected: on, text: on ? 'Connected' : 'Not connected' }; }
+    case 'gmail': {
+      if (w.mode !== 'oauth') { // the default: the Google sign-in already in Lumen
+        const g = ctx.gmailGoogle || {};
+        return g.signedIn === false ? { connected: false, text: 'Sign in to Google in Lumen' } : { connected: true, text: g.email ? `Using ${g.email}` : 'Uses your Google sign-in in Lumen' };
+      }
+      const on = Boolean(ctx.connections && ctx.connections.gmail);
+      return { connected: on, text: on ? 'Connected' : 'Not connected' };
+    }
     case 'slack': {
       const s = ctx.slack || {};
       if (s.connected && s.reconnect) return { connected: false, text: 'Needs to be connected again' };
@@ -109,7 +119,7 @@ function widgetSummary(w, ctx = {}) {
         if (t.max) parts.push(`${t.max} shown`);
         break;
       }
-      case 'spotify': if (!acct) { parts.push('Web player'); break; } parts.push(acct.text); if (acct.connected && w.art === false) parts.push('no album art'); break;
+      case 'spotify': if (!acct) { parts.push(w.mode === 'status' ? 'Plays in Lumen' : 'Web player'); if (w.mode === 'status' && w.art === false) parts.push('no album art'); break; } parts.push(acct.text); if (acct.connected && w.art === false) parts.push('no album art'); break;
       case 'gmail': parts.push(acct.text); if (acct.connected && w.count) parts.push(`${w.count} latest`); break;
       case 'slack': parts.push(acct.text); break;
       case 'github': {
@@ -146,6 +156,9 @@ function widgetSummary(w, ctx = {}) {
       case 'countdown': { const c = w.cd || {}; parts.push([c.date, c.time].filter(Boolean).join(' ') || 'No date yet'); break; }
       case 'timer': { const t = w.tm || {}; parts.push(t.pomodoro === false ? `${t.work || 25} minutes` : `${t.work || 25} min focus · ${t.rest || 5} min break`); break; }
       case 'aistatus': parts.push('Ready, working and limits'); break;
+      case 'routines': parts.push('Next runs and latest results'); break;
+      case 'files': parts.push('Pinned and recent files'); break;
+      case 'applemusic': parts.push(w.mode === 'web' ? 'Web player' : 'Status card'); if (w.mode !== 'web' && w.art === false) parts.push('no album art'); break;
       case 'custom': { const r = w.recipe || {}; parts.push(host(r.url) || 'No recipe yet'); if (r.every) parts.push(`every ${r.every} min`); break; }
       case 'muse': {
         if (!acct.connected) { parts.push(acct.text); break; }
@@ -162,7 +175,22 @@ function widgetSummary(w, ctx = {}) {
   return w.stack ? [line, 'In a stack'].filter(Boolean).join(' · ') : line; // shown in turn with others of its size (features/widget-stacks.js)
 }
 
-const api = { KINDS, ORDER, kindName, kindHint, accountStatus, widgetSummary };
+
+// What a kind that has a key or a sign-in asks for, and where to get it. The new-tab Add widget list says it before opening
+// Settings, and Settings' new-widget form repeats it. Kinds with nothing to paste or connect are not here.
+const SETUP_NOTES = {
+  todoist: 'Paste your personal API token. Find it in Todoist under Settings, Integrations, Developer.',
+  github: 'Paste a read-only access token. Create one at github.com/settings/personal-access-tokens with read access to Issues and Pull requests.',
+  stocks: 'Paste a free Twelve Data API key. Get one at twelvedata.com (the free plan is enough).',
+  muse: 'Paste your Meta API key. Get one at dev.meta.ai.',
+  gmail: 'Sign in with Google there. Nothing to paste: Lumen only reads your inbox.',
+  slack: 'Create the Lumen app in Slack there, then copy its token back. Lumen guides you through it.',
+  spotify: 'Connect your Spotify account there, or paste your own app’s Client ID.',
+  crypto: 'Optional: paste a free CoinGecko Demo key for steadier prices.',
+};
+const setupNote = (type) => (Object.prototype.hasOwnProperty.call(SETUP_NOTES, type) ? SETUP_NOTES[type] : '');
+
+const api = { SETUP_NOTES, setupNote, KINDS, ORDER, kindName, kindHint, accountStatus, widgetSummary };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetSummary = api;
 })();

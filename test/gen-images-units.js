@@ -2,6 +2,7 @@
 // one, the images APIs and the streamed chat form with fake clients, the saved store (encrypted, per chat, cleaned up), the
 // "draw a cat" request, web pictures, pictures a CLI engine names by path, markdown images, and how a made picture enters the
 // chat, its history and its export. Each backend is a row in the PR's audit table; the checks here are its evidence.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -155,6 +156,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
   }
   {
     // Claude, a CLI engine, or an OpenRouter model without picture output: a clear notice, and the text answer still comes
+    // (Settings > AI > Image generation off: nothing is routed to another provider, so the model's own notice is what shows. Routing: test/image-router-units.js)
+    agent.browser.imageGen = () => 'off';
     for (const [model, who] of [['claude-sonnet-5', 'Claude'], ['claudecode:default', 'Claude Code'], ['grokbuild:default', 'Grok Build'], ['antigravity:default', 'Antigravity']]) {
       const messages = chat(model);
       events.length = 0;
@@ -248,11 +251,16 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     events.length = 0;
     const off = await inChat(() => agent.imageTurn(chat('claudecode:default'), 'draw a cat', new AbortController().signal, emit));
     check('full access off: the notice still shows, and says how to turn on drawing', off === false && /Settings > AI/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
-    const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => true }, () => null, () => ({}), () => null);
+    const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => false }, () => null, () => ({}), () => null);
     events.length = 0;
     await grokFull.inTask(null, new AbortController().signal, () => grokFull.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
     check('Grok Build keeps its own behaviour (the notice), whatever Claude Code\'s setting', /Grok Build can't make pictures/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
+    const grokOwn = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', grokBuildFullAccess: () => true }, () => null, () => ({}), () => null);
+    events.length = 0;
+    const grokOwnTurn = await grokOwn.inTask(null, new AbortController().signal, () => grokOwn.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });
+    check('Grok Build with full access: no "can not make pictures" notice (its image_gen makes it, and the reply shows it)', grokOwnTurn === false && !events.some((e) => e.type === 'notice'), J(events));
 
+    delete agent.browser.imageGen;
     // pictures: written during the run under the home folder / a folder the run was pointed at -> shown; the rest -> not
     const home = path.join(tmp, 'home'); fs.mkdirSync(path.join(home, 'Pictures'), { recursive: true });
     const pointed = path.join(tmp, 'pointed-out'); fs.mkdirSync(pointed, { recursive: true });
@@ -346,7 +354,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     check('store: unreadable (other keys) is just "gone"', wrong.read(b.id) === null);
   }
 
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -2,6 +2,7 @@
 // hint, a skill made in Settings showing up in the menu, the import review, "create from this chat",
 // and web pages having no way to the skills calls. A fake Claude client (no network, no key) records
 // what the model would have received. Hidden windows; nothing touches a real profile.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -224,16 +225,17 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   }, code);
   await waitFor(async () => (await inChat('window.slashCommands?.list().length')) > 5);
   await inChat(`(() => { const p = document.getElementById('prompt'); p.focus(); p.value = '/tl'; p.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-  const chatMenu = await waitFor(async () => { const n = await inChat("[...document.querySelectorAll('#slash-menu .slash-name')].map((e) => e.textContent).join()"); return n === '/tldr' && n; });
-  check('the full-page chat has the "/" menu too', chatMenu === '/tldr' && Boolean(chatTab), String(chatMenu));
+  const chatMenu = await waitFor(async () => { const n = await inChat("[...document.querySelectorAll('#slash-menu .slash-name')].map((e) => e.textContent).join()"); return n.split(',')[0] === '/tldr' && n; });
+  // (the menu matches loosely: "/tl" also lists /outlier-finder after /tldr, which comes first)
+  check('the full-page chat has the "/" menu too', String(chatMenu).split(',')[0] === '/tldr' && Boolean(chatTab), String(chatMenu));
   const chatApi = await inChat(`({ menu: typeof window.skillsApi?.menu, save: typeof window.skillsApi?.save, list: typeof window.skillsApi?.list, settings: typeof window.lumenSettings })`);
   check('and its bridge has the run calls only', chatApi.menu === 'function' && chatApi.save === 'undefined' && chatApi.list === 'undefined' && chatApi.settings === 'undefined', JSON.stringify(chatApi));
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
-  fs.rmSync(profile, { recursive: true, force: true });
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

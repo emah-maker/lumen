@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Lumen test extension",
+  "version": "1.0.0",
+  "description": "A tiny fixture for test/extensions.js: a toolbar popup of a known size (320 by 240) and a content script that marks the page.",
+  "action": { "default_popup": "popup.html", "default_title": "Lumen test extension" },
+  "content_scripts": [{ "matches": ["http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_idle" }]
+}

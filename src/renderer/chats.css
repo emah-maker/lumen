@@ -50,23 +50,29 @@
 .chat-actions { position: absolute; right: 4px; top: 3px; display: flex; opacity: 0; pointer-events: none; border-radius: var(--radius); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)); transition: opacity var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-actions, .chat-item:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
 .chat-actions .icon-btn { width: 24px; height: 22px; }
-/* The title gives way to the buttons (it never sits under them); the armed "Delete?" pill is wider. */
+/* The title gives way to the buttons (it never sits under them);. */
 .chat-title { transition: padding-right var(--t-fast) var(--ease-out); }
 .chat-item:hover .chat-title, .chat-item:focus-within .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } /* (the title always keeps some width) */
-.chat-item:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w, 100px) + 56px), 70%); }
 /* A narrow list: a chat in another tab drops one button (the row's own click does the same). */
 .chat-items { container: chatlist / inline-size; }
 @container chatlist (max-width: 240px) {
   .chat-item.drops-one .chat-act-drop { display: none; }
   .chat-item.drops-one:hover .chat-title, .chat-item.drops-one:focus-within .chat-title { padding-right: min(var(--actions-w-narrow), 55%); }
-  .chat-item.drops-one:has(.chat-delete.armed) .chat-title { padding-right: min(calc(var(--actions-w-narrow) + 56px), 70%); }
   @media (hover: none) { .chat-item.drops-one .chat-title { padding-right: min(var(--actions-w-narrow), 55%); } }
 }
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
 @media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
-.chat-actions .chat-delete.armed { display: inline-flex; align-items: center; width: auto; padding: 0 8px 0 6px; gap: 4px; color: var(--danger); background: var(--danger-soft); }
-.chat-actions .chat-delete.armed::after { content: attr(data-confirm); font-size: 12px; font-weight: 500; } /* "Delete?" said, not only in a tooltip */
-.chat-item:has(.chat-delete.armed) .chat-actions { opacity: 1; pointer-events: auto; }
+/* Pinned chats: a small mark before the title; a search hit shows the words around the match under it. */
+.chat-item.pinned .chat-title::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-snippet { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-views { display: flex; gap: 4px; margin: 0 8px 6px; }
+.chat-view { flex: 1; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
+.chat-view.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.chat-view:focus-visible { outline: 2px solid var(--accent); }
+/* The Undo bar after a delete, fixed to the window so a redrawn list does not remove it. */
+.chat-undo-toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)), 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 13px; }
+.chat-undo-toast button { border: 0; border-radius: 6px; padding: 4px 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: default; }
+.chat-undo-toast button:focus-visible { outline: 2px solid var(--accent); }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
@@ -114,6 +120,19 @@
 .chat-item.has-unread:not(.current):not(:hover):not(:focus-within) { background: color-mix(in srgb, var(--success) 11%, transparent); }
 .chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
 /* High-contrast mode drops colours and shadows: the glyphs take the system colours and the unread bar becomes a border. */
+/* The "New in Lumen" card in the empty chat (renderer/offer-card.js): what is new and still off, one line each. */
+.offer-card { margin: 14px 0 0; padding: 10px 12px; border-radius: var(--r-lg); background: var(--field); text-align: left; }
+.offer-title { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.offer-row { display: flex; align-items: center; gap: 10px; }
+.offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.offer-name { font-weight: 500; }
+.offer-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.offer-go { flex: none; padding: 4px 10px; border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
+.offer-go:disabled { opacity: 0.6; }
+.offer-foot { margin-top: 8px; display: flex; gap: 14px; font-size: 12px; }
+.offer-foot .link-btn { color: var(--muted); }
+
 @media (forced-colors: active) {
   .chat-badge, .chat-badge.queued, .chat-badge.unread { color: CanvasText; forced-color-adjust: none; }
   .chat-badge.running, .chat-badge.needs-ok { color: Highlight; forced-color-adjust: none; }
@@ -121,6 +140,7 @@
   .chat-badge .cm-glyph { stroke: Canvas; }
   .chat-item.has-unread { box-shadow: none; border-left: 3px solid Highlight; }
   .chat-actions { background: Canvas; border: 1px solid CanvasText; }
-  .chat-actions .chat-delete.armed { border: 1px solid CanvasText; color: CanvasText; background: Canvas; forced-color-adjust: none; }
+  .chat-undo-toast { background: Canvas; border: 1px solid CanvasText; }
+  .chat-view.on { border: 1px solid CanvasText; }
   .chat-stop-wait { color: LinkText; border-color: LinkText; forced-color-adjust: none; }
 }

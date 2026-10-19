@@ -1,0 +1,663 @@
+{
+ "32cc2e988485a8f55fbb": {
+  "model": "haiku",
+  "ms": 53216,
+  "answer": {
+   "n": [
+    {
+     "i": 1,
+     "s": "Organic Chemistry II"
+    }
+   ],
+   "p": [
+    {
+     "t": 8,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "jstor.org",
+     "k": "School"
+    },
+    {
+     "s": "owl.purdue.edu",
+     "k": "Reference"
+    }
+   ]
+  }
+ },
+ "0c64f93e4ceabd76d3ab": {
+  "model": "haiku",
+  "ms": 25326,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 5,
+     "i": 1
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "pganalyze.com",
+     "k": "Code"
+    },
+    {
+     "s": "github.com",
+     "k": "Code"
+    },
+    {
+     "s": "app.slack.com",
+     "k": "Work"
+    }
+   ]
+  }
+ },
+ "18c9be7ea215b69c9626": {
+  "model": "haiku",
+  "ms": 43604,
+  "answer": {
+   "n": [
+    {
+     "i": 2,
+     "s": "Gene Editing"
+    }
+   ],
+   "p": [],
+   "g": [
+    {
+     "s": "Climate Change",
+     "t": [
+      6,
+      7,
+      8,
+      9
+     ]
+    }
+   ],
+   "m": [],
+   "h": [
+    {
+     "s": "climate.nasa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "ipcc.ch",
+     "k": "Reference"
+    },
+    {
+     "s": "ncei.noaa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "theatlantic.com",
+     "k": "News"
+    }
+   ]
+  }
+ },
+ "e8539da8df821e679966": {
+  "model": "haiku",
+  "ms": 50886,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 3,
+     "i": 1
+    },
+    {
+     "t": 8,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "recetasgratis.net",
+     "k": "Entertainment"
+    },
+    {
+     "s": "verbraucherzentrale.de",
+     "k": "none"
+    }
+   ]
+  }
+ },
+ "f41c90ad7b87e9825024": {
+  "model": "haiku",
+  "ms": 35825,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 2,
+     "i": 1
+    },
+    {
+     "t": 9,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "nerdwallet.com",
+     "k": "none"
+    },
+    {
+     "s": "taxfoundation.org",
+     "k": "Finance"
+    }
+   ]
+  }
+ },
+ "1570dc42c6c9d1a1f0bf": {
+  "model": "haiku",
+  "ms": 13174,
+  "answer": {
+   "n": [
+    {
+     "i": 1,
+     "s": "Paris Trip"
+    },
+    {
+     "i": 2,
+     "s": "Iceland Trip"
+    }
+   ],
+   "p": [],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "localhost",
+     "k": "Work"
+    }
+   ]
+  }
+ },
+ "ccd44d8d73ec7b402ee6": {
+  "model": "haiku",
+  "ms": 69553,
+  "answer": {
+   "n": [
+    {
+     "i": 6,
+     "s": "Docker"
+    },
+    {
+     "i": 13,
+     "s": "Gene Editing"
+    }
+   ],
+   "p": [
+    {
+     "t": 20,
+     "i": 4
+    }
+   ],
+   "g": [
+    {
+     "s": "Climate Research",
+     "t": [
+      51,
+      52,
+      53,
+      54
+     ]
+    }
+   ],
+   "m": [],
+   "h": [
+    {
+     "s": "secure.chase.com",
+     "k": "Finance"
+    },
+    {
+     "s": "pganalyze.com",
+     "k": "Code"
+    },
+    {
+     "s": "github.com",
+     "k": "Code"
+    },
+    {
+     "s": "owl.purdue.edu",
+     "k": "Reference"
+    },
+    {
+     "s": "climate.nasa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "ipcc.ch",
+     "k": "Reference"
+    },
+    {
+     "s": "ncei.noaa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "theatlantic.com",
+     "k": "News"
+    }
+   ]
+  }
+ },
+ "508b7ecbbbf2324bc47b": {
+  "model": "haiku",
+  "ms": 24151,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 8,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "559c05fdb73860667213": {
+  "model": "haiku",
+  "ms": 35889,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 5,
+     "i": 1
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "dee5c2909e89f0ff2e6e": {
+  "model": "haiku",
+  "ms": 39869,
+  "answer": {
+   "n": [],
+   "p": [],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "37c389bfa6abb72b0f8b": {
+  "model": "haiku",
+  "ms": 61537,
+  "answer": {
+   "n": [
+    {
+     "i": 2,
+     "s": "Prime Editing"
+    }
+   ],
+   "g": [
+    {
+     "s": "Sea Level Rise",
+     "t": [
+      6,
+      7,
+      8,
+      9
+     ]
+    }
+   ],
+   "h": [
+    {
+     "s": "climate.nasa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "ipcc.ch",
+     "k": "Reference"
+    },
+    {
+     "s": "ncei.noaa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "theatlantic.com",
+     "k": "News"
+    }
+   ],
+   "p": [],
+   "m": []
+  }
+ },
+ "b4a6dcceec5ac22edd38": {
+  "model": "haiku",
+  "ms": 41898,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 3,
+     "i": 1
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "5c21e479ddceed0dcc2c": {
+  "model": "haiku",
+  "ms": 35353,
+  "answer": {
+   "n": [
+    {
+     "i": 1,
+     "s": "Home Purchase"
+    },
+    {
+     "i": 2,
+     "s": "Tax Filing 2026"
+    }
+   ],
+   "p": [
+    {
+     "t": 2,
+     "i": 1
+    },
+    {
+     "t": 9,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "32eb95ee372e8951d23a": {
+  "model": "haiku",
+  "ms": 76439,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 20,
+     "i": 4
+    },
+    {
+     "t": 39,
+     "i": 9
+    }
+   ],
+   "g": [
+    {
+     "s": "Sea Level Rise",
+     "t": [
+      51,
+      52,
+      53,
+      54
+     ]
+    }
+   ],
+   "m": [],
+   "h": [
+    {
+     "s": "secure.chase.com",
+     "k": "Finance"
+    },
+    {
+     "s": "pganalyze.com",
+     "k": "Code"
+    },
+    {
+     "s": "github.com",
+     "k": "Code"
+    },
+    {
+     "s": "owl.purdue.edu",
+     "k": "Reference"
+    },
+    {
+     "s": "climate.nasa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "ipcc.ch",
+     "k": "Reference"
+    },
+    {
+     "s": "ncei.noaa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "theatlantic.com",
+     "k": "News"
+    }
+   ]
+  }
+ },
+ "b26f6d4fcfbdd47e64ce": {
+  "model": "haiku",
+  "ms": 21205,
+  "answer": {
+   "n": [
+    {
+     "i": 1,
+     "s": "Organic Chemistry"
+    }
+   ],
+   "p": [
+    {
+     "t": 8,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "jstor.org",
+     "k": "Reference"
+    },
+    {
+     "s": "owl.purdue.edu",
+     "k": "Reference"
+    }
+   ]
+  }
+ },
+ "3770ba93220d96847d1c": {
+  "model": "haiku",
+  "ms": 19894,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 5,
+     "i": 1
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "4db20dad32733cc44ebb": {
+  "model": "haiku",
+  "ms": 48935,
+  "answer": {
+   "n": [
+    {
+     "i": 2,
+     "s": "Base Editing"
+    }
+   ],
+   "p": [],
+   "g": [
+    {
+     "s": "Sea Level Rise",
+     "t": [
+      6,
+      7,
+      8,
+      9
+     ]
+    }
+   ],
+   "m": [],
+   "h": []
+  }
+ },
+ "8287e19511cc3207e44a": {
+  "model": "haiku",
+  "ms": 21380,
+  "answer": {
+   "n": [],
+   "p": [
+    {
+     "t": 3,
+     "i": 1
+    },
+    {
+     "t": 8,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "c073230b00dbda639f2c": {
+  "model": "haiku",
+  "ms": 24776,
+  "answer": {
+   "n": [
+    {
+     "i": 2,
+     "s": "Tax Filing"
+    }
+   ],
+   "p": [
+    {
+     "t": 2,
+     "i": 1
+    },
+    {
+     "t": 9,
+     "i": 2
+    }
+   ],
+   "g": [],
+   "m": [],
+   "h": [
+    {
+     "s": "nerdwallet.com",
+     "k": "Finance"
+    },
+    {
+     "s": "taxfoundation.org",
+     "k": "Finance"
+    }
+   ]
+  }
+ },
+ "b7d4a3ca81680ba2c780": {
+  "model": "haiku",
+  "ms": 30232,
+  "answer": {
+   "n": [],
+   "p": [],
+   "g": [],
+   "m": [],
+   "h": []
+  }
+ },
+ "4a69142bba861c936030": {
+  "model": "haiku",
+  "ms": 44880,
+  "answer": {
+   "n": [
+    {
+     "i": 13,
+     "s": "Gene Editing"
+    }
+   ],
+   "p": [
+    {
+     "t": 38,
+     "i": 9
+    },
+    {
+     "t": 20,
+     "i": 4
+    },
+    {
+     "t": 39,
+     "i": 9
+    }
+   ],
+   "g": [
+    {
+     "s": "Sea Level Rise",
+     "t": [
+      51,
+      52,
+      53,
+      54
+     ]
+    }
+   ],
+   "m": [
+    {
+     "a": 13,
+     "b": 10
+    }
+   ],
+   "h": [
+    {
+     "s": "secure.chase.com",
+     "k": "Finance"
+    },
+    {
+     "s": "pganalyze.com",
+     "k": "Code"
+    },
+    {
+     "s": "github.com",
+     "k": "Code"
+    },
+    {
+     "s": "owl.purdue.edu",
+     "k": "Reference"
+    },
+    {
+     "s": "climate.nasa.gov",
+     "k": "News"
+    },
+    {
+     "s": "ipcc.ch",
+     "k": "Reference"
+    },
+    {
+     "s": "ncei.noaa.gov",
+     "k": "Reference"
+    },
+    {
+     "s": "theatlantic.com",
+     "k": "News"
+    }
+   ]
+  }
+ }
+}

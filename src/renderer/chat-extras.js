@@ -1,6 +1,7 @@
 // Shared by the sidebar and the full-page chat (loaded after chat-core.js on both):
 //  - the Claude Code / Grok Build engines' placeholder,
-//  - [usage] the plan meter under the composer's first row while a Claude Code model is picked,
+//  - [usage] the strip right above the textbox: the plan meter (every AI that has plan numbers; Auto of an engine counts as
+//    that engine) and the open chat's context-window use, both in one line,
 //  - [ai controls] "Undo tab changes" under a reply.
 // What only the sidebar has (the "Using: <page>" chip, the toolbar's approval badge) stays in extras.js.
 (() => {
@@ -10,7 +11,7 @@
   // ---------- local agent engines: the placeholder ----------
 
   const select = $('model');
-  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }) };
+  const ENGINE_PLACEHOLDERS = { 'claudecode:': window.t('composer.ask', { name: 'Claude' }), 'grokbuild:': window.t('composer.ask', { name: 'Grok' }), 'antigravity:': window.t('composer.ask', { name: 'Antigravity' }), 'codex:': window.t('composer.ask', { name: 'Codex' }) };
   function syncEngine() {
     const value = String(select?.value || '');
     const prefix = Object.keys(ENGINE_PLACEHOLDERS).find((p) => value.startsWith(p));
@@ -29,7 +30,8 @@
   // publishes no plan limits, shows the chat's context-window fill with today's tokens and cost, a
   // progress bar toward the budget the user set, or "limit reached" with its reset time; never a
   // plan percentage. With nothing real yet it shows a hint instead of a bar. Live during a Claude turn (rate_limit_event),
-  // refreshed after each one; a click opens Settings → Usage.
+  // refreshed after each one; a click opens a small popover with the details (limit windows, what Lumen counted, rate
+  // limits) and a link to Settings → Usage (renderer/usage-popover.js works out what it says).
   const meter = Object.assign(document.createElement('button'), { type: 'button', id: 'usage-meter', className: 'usage-meter', hidden: true });
   const meterBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
   const meterFill = document.createElement('i');
@@ -39,12 +41,22 @@
   meterBar.setAttribute('aria-valuemax', '100');
   const meterText = Object.assign(document.createElement('span'), { className: 'um-text' });
   meter.append(meterBar, meterText);
-  if ($('page-context')) $('page-context').after(meter); // under the sidebar's page chip
-  else $('composer')?.prepend(meter); // the chat page has no chip
-  meter.addEventListener('click', () => extras.openUsage?.());
+  // One strip right above the textbox holds the plan meter and the context meter (built further down); it is hidden when both are.
+  const strip = Object.assign(document.createElement('div'), { id: 'meter-strip', className: 'meter-strip', hidden: true });
+  strip.append(meter);
+  if ($('prompt')) $('prompt').before(strip);
+  else $('composer')?.prepend(strip);
+  const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
+  meter.setAttribute('aria-haspopup', 'dialog');
+  meter.setAttribute('aria-expanded', 'false');
   let usage = null;
-  const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' };
-  const engineKey = () => String(select?.value || '').split(':')[0];
+  // Every AI has a bar: the CLIs by their prefix, an API provider by its prefix or (a bare Claude model id) Anthropic; Auto has none.
+  const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex', antigravity: 'Antigravity', anthropic: 'Claude', openai: 'OpenAI', xai: 'Grok', gemini: 'Gemini', openrouter: 'OpenRouter' };
+  // 'claudecode:auto' (Auto within one engine) is that engine's; only the plain mixed 'auto' has none (renderer/usage-bars.js engineOf).
+  const engineKey = () => {
+    const prefix = window.usageBars?.engineOf ? window.usageBars.engineOf(select?.value) : '';
+    return ENGINE_NAMES[prefix] ? prefix : '';
+  };
   const clock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   const pts = (n) => (n < 1 ? '<1' : String(Math.round(n)));
@@ -54,19 +66,20 @@
   let limitTimer = null;
   // What Grok's bar says (features/usage.js barFor, kinds limit | budget | context). Grok publishes
   // no plan limits, so nothing here is "plan remaining": the title says whose use it is.
-  function grokParts(bar, text, title) {
+  function grokParts(bar, text, title, engine = 'Grok') {
+    const grok = engine === 'Grok';
     let head = null;
     if (bar.kind === 'limit') {
-      head = bar.resetsAt ? window.t('usage.grok.limit', { time: when(bar.resetsAt) }) : window.t('usage.grok.limit.unknown');
+      head = grok ? (bar.resetsAt ? window.t('usage.grok.limit', { time: when(bar.resetsAt) }) : window.t('usage.grok.limit.unknown')) : (bar.resetsAt ? window.t('usage.limit', { engine, time: when(bar.resetsAt) }) : window.t('usage.limit.unknown', { engine }));
       text.push(head);
-      title.push(window.t('usage.grok.limit.title'));
+      title.push(grok ? window.t('usage.grok.limit.title') : window.t('usage.limit.title', { engine }));
       if (bar.message) title.push(bar.message);
     } else if (bar.kind === 'budget') {
       const fmt = bar.unit === 'tokens' ? (n) => window.t('usage.tokens', { tokens: compact(n) }) : money;
       const period = window.t(bar.period === 'weekly' ? 'usage.period.weekly' : 'usage.period.daily');
       head = window.t('usage.grok.budget', { percent: Math.round(bar.percent) });
       text.push(head, window.t('usage.grok.budget.of', { used: fmt(bar.used), limit: fmt(bar.limit), period }), window.t('usage.resets', { time: when(bar.resetsAt) }));
-      title.push(window.t('usage.grok.budget.title', { percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }));
+      title.push(grok ? window.t('usage.grok.budget.title', { percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }) : window.t('usage.budget.title', { engine, percent: Math.round(bar.percent), used: fmt(bar.used), limit: fmt(bar.limit), period }));
     } else {
       if (bar.percent != null) {
         head = window.t('usage.grok.context', { percent: Math.round(bar.percent) });
@@ -74,14 +87,22 @@
         title.push(window.t('usage.context.title', { percent: Math.round(bar.percent), used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
         if (bar.compactPercent) title.push(window.t('usage.grok.compact.title', { percent: bar.compactPercent }));
       }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
-      if (bar.costUSD > 0) text.push(window.t('usage.grok.cost', { cost: money(bar.costUSD) }));
+      // This chat's own tokens and cost are the one line under the header (chats.js). Today's total shows here only
+      // when there is no context percent to show; otherwise it sits in the tooltip, so two lines never read alike.
+      const todayParts = [];
+      if (bar.tokens) todayParts.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }));
+      if (bar.costUSD > 0) todayParts.push(money(bar.costUSD));
+      if (todayParts.length) {
+        if (bar.percent == null) text.push(window.t('usage.todayTotal', { usage: todayParts.join(' · ') }));
+        else title.push(`${window.t('usage.todayTotal', { usage: todayParts.join(' · ') })}.`);
+      }
     }
     const w = bar.windows;
     if (w && w.d7?.turns) {
       title.push(window.t('usage.grok.windows.title', { t5: compact(w.h5.tokens), c5: money(w.h5.costUSD), t7: compact(w.d7.tokens), c7: money(w.d7.costUSD) }));
     }
-    title.push(window.t('usage.grok.noplan.title'));
+    if (bar.rate) text.push(window.t('usage.rate', { label: bar.rate.label, percent: Math.round(bar.rate.percent) }));
+    title.push(grok ? window.t('usage.grok.noplan.title') : window.t('usage.noplan.title', { engine }));
     return head;
   }
   function renderMeter() {
@@ -89,8 +110,11 @@
     const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
     clearTimeout(limitTimer);
     // Grok Build, nothing real yet: the bar stays hidden, and a hint says how to get one.
-    const hint = !bar && key === 'grokbuild' && Boolean(usage);
-    meter.hidden = !bar && !hint;
+    const off = usage?.showBars === false; // Settings → Usage → Show usage bars
+    const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
+    meter.hidden = off || (!bar && !hint);
+    syncStrip();
+    if (meter.hidden) closePopover(false); else if (!pop.hidden) renderPopover();
     meter.classList.toggle('hint', hint);
     if (hint) {
       meterBar.hidden = true;
@@ -100,7 +124,7 @@
       meter.title = `${window.t('usage.grok.noplan.title')} ${window.t('usage.more')}`;
       return;
     }
-    if (!bar) return;
+    if (!bar || off) return;
     const engine = ENGINE_NAMES[key];
     const text = [];
     const title = [];
@@ -112,22 +136,14 @@
       if (resets) text.push(window.t('usage.resets', { time: resets }));
       if (bar.weekly) text.push(window.t('usage.week', { percent: Math.round(bar.weekly.percent) }));
       if (bar.lumenPoints != null) text.push(window.t('usage.lumen', { points: pts(bar.lumenPoints) }));
-      title.push(window.t('usage.plan.title', { percent }));
+      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : window.t('usage.plan.title.other', { engine, percent }));
       if (resets) title.push(window.t('usage.resets.title', { time: resets }));
       if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
       if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
       head = text[0];
-    } else if (key === 'grokbuild') {
-      head = grokParts(bar, text, title);
-      if (bar.kind === 'limit' && bar.resetsAt) limitTimer = setTimeout(() => refreshUsage(false), Math.min(2 ** 31 - 1, Math.max(1000, bar.resetsAt - Date.now() + 1000)));
     } else {
-      if (percent != null) {
-        text.push(window.t('usage.context', { percent }));
-        title.push(window.t('usage.context.title', { percent, used: compact(bar.contextTokens), total: compact(bar.contextWindow) }));
-        head = text[0];
-      }
-      if (bar.tokens) text.push(window.t('usage.tokens', { tokens: compact(bar.tokens) }) + (bar.costUSD > 0 ? ` · ~$${bar.costUSD < 0.01 ? bar.costUSD.toFixed(4) : bar.costUSD.toFixed(2)}` : ''));
-      title.push(window.t('usage.tokens.title', { engine }));
+      head = grokParts(bar, text, title, key === 'grokbuild' ? 'Grok' : engine);
+      if (bar.kind === 'limit' && bar.resetsAt) limitTimer = setTimeout(() => refreshUsage(false), Math.min(2 ** 31 - 1, Math.max(1000, bar.resetsAt - Date.now() + 1000)));
     }
     meterBar.hidden = percent == null;
     if (percent != null) {
@@ -148,7 +164,96 @@
     usage = await extras.usage(force).catch(() => usage);
     renderMeter();
   }
-  select?.addEventListener('change', () => setTimeout(() => refreshUsage(false)));
+  // ---------- [usage] the popover a click on the plan meter opens ----------
+  // Above the strip, not a page change: the limit windows with their exact reset times, what Lumen counted today and
+  // over 7 days, the plan, an API key's per-minute limits, when the numbers were read, and a link to Settings → Usage.
+  // It only reads the summary already loaded (`usage`). Esc, a click outside or the meter again closes it, and focus
+  // goes into it and back to the meter.
+  const pop = Object.assign(document.createElement('div'), { id: 'usage-popover', className: 'usage-popover', hidden: true, tabIndex: -1 });
+  pop.setAttribute('role', 'dialog');
+  meter.setAttribute('aria-controls', 'usage-popover');
+  strip.append(pop);
+  let popTimer = null;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  // One row: a label and value, a thin bar (through the CSSOM: a page's CSP may drop inline style attributes), a line of detail.
+  function barRow(label, percent, level, detail, valueText) {
+    const row = el('div', 'up-row');
+    const top = el('div', 'up-line');
+    top.append(el('span', 'up-label', label), el('span', 'up-value', valueText));
+    const track = el('span', 'up-bar');
+    track.dataset.level = level;
+    track.setAttribute('role', 'progressbar');
+    track.setAttribute('aria-valuemin', '0');
+    track.setAttribute('aria-valuemax', '100');
+    track.setAttribute('aria-valuenow', String(Math.round(percent)));
+    track.setAttribute('aria-label', label);
+    const fill = document.createElement('i');
+    fill.style.width = `${Math.round(percent)}%`;
+    track.append(fill);
+    row.append(top, track);
+    if (detail) row.append(el('div', 'up-sub', detail));
+    return row;
+  }
+  function renderPopover() {
+    const key = engineKey();
+    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key] }) : null;
+    if (!v) { closePopover(false); return; }
+    pop.replaceChildren();
+    const label = window.t('usage.bar.labelFor', { name: v.name });
+    pop.setAttribute('aria-label', label);
+    const head = el('div', 'up-head');
+    head.append(el('span', 'up-title', label));
+    if (v.plan) head.append(el('span', 'up-plan', v.plan));
+    pop.append(head);
+    if (v.message) pop.append(el('p', 'up-note', v.message));
+    for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
+    if (v.rates.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.rates')));
+      for (const r of v.rates) pop.append(barRow(r.label, r.percent, window.usageBars?.levelOf(r.percent) || 'ok', r.text, window.t('usage.bar.used', { percent: Math.round(r.percent) })));
+    }
+    if (v.note && !v.windows.length) pop.append(el('p', 'up-note', v.note));
+    if (v.counted.length) {
+      pop.append(el('div', 'up-section', window.t('usage.pop.counted')));
+      for (const c of v.counted) {
+        const line = el('div', 'up-line up-count');
+        line.append(el('span', 'up-label', c.label), el('span', 'up-value', c.text));
+        pop.append(line);
+      }
+    } else if (!v.windows.length && !v.rates.length && !v.note) pop.append(el('p', 'up-note', window.t('usage.pop.none')));
+    const foot = el('div', 'up-foot');
+    foot.append(el('span', 'up-updated', v.updated));
+    const link = Object.assign(document.createElement('button'), { type: 'button', className: 'up-link', textContent: window.t('usage.pop.settings') });
+    link.addEventListener('click', () => { closePopover(true); extras.openUsage?.(); });
+    foot.append(link);
+    pop.append(foot);
+  }
+  function openPopover() {
+    if (!pop.hidden || !usage) return;
+    renderPopover();
+    if (!pop.childNodes.length) return;
+    pop.hidden = false;
+    meter.setAttribute('aria-expanded', 'true');
+    pop.focus({ preventScroll: true });
+    clearInterval(popTimer);
+    popTimer = setInterval(renderPopover, 30000); // "in 12 m" and "updated 3 min ago" stay honest while it is open
+    document.addEventListener('pointerdown', onOutside, true);
+  }
+  function closePopover(refocus) {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    meter.setAttribute('aria-expanded', 'false');
+    clearInterval(popTimer);
+    document.removeEventListener('pointerdown', onOutside, true);
+    if (refocus) meter.focus({ preventScroll: true });
+  }
+  function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+  meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+  const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
+  pop.addEventListener('keydown', escape);
+  meter.addEventListener('keydown', escape);
+  strip.addEventListener('focusout', (e) => { if (!pop.hidden && e.relatedTarget && !strip.contains(e.relatedTarget)) closePopover(false); });
+
+  select?.addEventListener('change', () => { closePopover(false); setTimeout(() => refreshUsage(false)); });
   // Another chat is open (New chat, one from the chat list, or a new topic starting its own chat):
   // Grok's context bar is that chat's, empty for a new one. Main has switched chats by then.
   $('new-chat')?.addEventListener('click', () => setTimeout(() => refreshUsage(false), 50));
@@ -163,31 +268,38 @@
   setTimeout(() => refreshUsage(false), 1500); // after the model list has loaded
 
   // ---------- [context] how full the open chat's context window is ----------
-  // A ring left of Send, for every AI (features/chat-usage.js contextView: the last request's whole input against
-  // the model's window, kept per chat and saved with it). Its tooltip has the numbers; a click runs /context. Main
-  // pushes it after each request (chats:context); it is read again when another chat opens.
+  // The strip's second part, for every AI (features/chat-usage.js contextView: the last request's whole input against
+  // the model's window, kept per chat and saved with it): "Context 68k / 1M" and a thin bar. Its tooltip has the
+  // numbers; a click runs /context. Main pushes it after each request (chats:context); it is read again when another
+  // chat opens.
   const chatsApi = window.assistant?.chats;
-  const SVG = 'http://www.w3.org/2000/svg';
-  const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'context-meter', hidden: true });
-  const ringSvg = document.createElementNS(SVG, 'svg');
-  ringSvg.setAttribute('viewBox', '0 0 20 20');
-  ringSvg.setAttribute('aria-hidden', 'true');
-  const circle = (cls) => { const c = document.createElementNS(SVG, 'circle'); c.setAttribute('class', cls); c.setAttribute('cx', '10'); c.setAttribute('cy', '10'); c.setAttribute('r', '7.5'); c.setAttribute('pathLength', '100'); return c; };
-  const ringFill = circle('cm-fill');
-  ringSvg.append(circle('cm-track'), ringFill);
-  ring.append(ringSvg);
-  ($('send-bg') || $('send'))?.before(ring);
+  const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'usage-meter context-meter', hidden: true });
+  const ringBar = Object.assign(document.createElement('span'), { className: 'um-bar' });
+  const ringFill = document.createElement('i');
+  ringBar.append(ringFill);
+  ringBar.setAttribute('role', 'progressbar');
+  ringBar.setAttribute('aria-valuemin', '0');
+  ringBar.setAttribute('aria-valuemax', '100');
+  const ringText = Object.assign(document.createElement('span'), { className: 'um-text' });
+  ring.append(ringBar, ringText);
+  strip.append(ring);
+  // "68k", "1M", "200k", "1.5k": whole thousands from 10k up, one decimal below, no trailing ".0".
+  const short = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   function renderContext(view) {
     const show = Boolean(view && view.window > 0 && view.tokens > 0);
     ring.hidden = !show;
+    syncStrip();
     if (!show) return;
     const percent = Math.round(view.percent);
-    ringFill.setAttribute('stroke-dasharray', `${Math.max(view.percent, 1.5)} 100`);
+    ringFill.style.width = `${Math.max(view.percent, 1.5)}%`;
+    ringBar.setAttribute('aria-valuenow', String(percent));
     ring.classList.toggle('warn', percent >= 75 && percent < 90);
     ring.classList.toggle('high', percent >= 90);
     const vars = { percent, used: compact(view.tokens), total: compact(view.window) };
     const label = window.t(view.estimated ? 'context.label.estimated' : 'context.label', vars);
     ring.setAttribute('aria-label', label);
+    ringBar.setAttribute('aria-valuetext', label);
+    ringText.textContent = window.t(view.estimated ? 'context.strip.estimated' : 'context.strip', { used: short(view.tokens), total: short(view.window) });
     ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)} ${window.t(percent >= 75 ? 'context.compact' : 'context.more')}`;
   }
   async function refreshContext() {
@@ -219,7 +331,12 @@
     return append(Object.assign(document.createElement('div'), { className: 'run-undo ai-tabs', role: 'status' }));
   }
   const plural = (base, n, en) => { const k = `${base}.${n === 1 ? 'one' : 'other'}`; const s = window.t ? window.t(k, { count: n }) : k; return s && s !== k ? s : en.replace('{count}', n); };
-  function undoRow(box, closed, token, kept = 0) {
+  // What a close left open: tabs that hold typed text or ask before closing, and tabs a chat is still working in.
+  const heldNote = (kept, busy) => [
+    kept > 0 ? plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '',
+    busy > 0 ? plural('chat.aiTabs.busy', busy, busy === 1 ? 'Kept {count} tab the AI is still using.' : 'Kept {count} tabs the AI is still using.') : '',
+  ].filter(Boolean).join(' ');
+  function undoRow(box, closed, token, kept = 0, busy = 0) {
     box.replaceChildren();
     box.append(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.closed', closed, closed === 1 ? 'Closed {count} tab the AI opened.' : 'Closed {count} tabs the AI opened.') }), ' ');
     const undo = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: window.t?.('chat.aiTabs.undo') || 'Undo' });
@@ -229,7 +346,7 @@
       box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: result?.reopened ? plural('chat.aiTabs.reopened', result.reopened, 'Reopened {count} tabs.') : (window.t?.('chat.aiTabs.nothingReopened') || 'Nothing to reopen.') })); // (a second Undo of the same close finds nothing)
     });
     box.append(undo);
-    if (kept > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: plural('chat.aiTabs.kept', kept, kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') }));
+    if (kept > 0 || busy > 0) box.append(' ', Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: heldNote(kept, busy) }));
     box.setAttribute('role', 'status');
   }
   window.showAiTabs = function showAiTabs(append, info, runId) {
@@ -238,16 +355,16 @@
     const n = info.n;
     const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text' });
     if (info.mode === 'ask') text.textContent = plural('chat.aiTabs.ask', n, n === 1 ? 'The AI opened {count} tab. Close it?' : 'The AI opened {count} tabs. Close them?');
-    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab the AI opened' : 'Close {count} tabs the AI opened') });
+    const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: plural('chat.aiTabs.close', n, n === 1 ? 'Close {count} tab this chat opened' : 'Close {count} tabs this chat opened') });
     close.addEventListener('click', async () => {
       close.disabled = true;
       const result = await window.assistant.closeAiTabs({ runId }).catch(() => null);
       if (!result?.closed) {
-        const keptText = result?.kept > 0 ? plural('chat.aiTabs.kept', result.kept, result.kept === 1 ? '{count} stayed open: it holds text you typed, or asks before closing.' : '{count} stayed open: they hold text you typed, or ask before closing.') : '';
+        const keptText = heldNote(result?.kept || 0, result?.busy || 0);
         box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: keptText || window.t?.('chat.aiTabs.none') || 'Nothing to close.' }));
         return;
       }
-      undoRow(box, result.closed, result.token, result.kept);
+      undoRow(box, result.closed, result.token, result.kept, result.busy);
     });
     box.append(...(info.mode === 'ask' ? [text, ' ', close] : [close]));
     if (info.mode === 'ask') {
@@ -258,17 +375,33 @@
   };
   window.showAiTabsClosed = function showAiTabsClosed(append, event) {
     if (!event?.n || !event.token) return;
-    undoRow(aiTabsRow(append), event.n, event.token, event.kept);
+    undoRow(aiTabsRow(append), event.n, event.token, event.kept, event.busy);
   };
 
   window.showRunUndo = function showRunUndo(append, undo) {
-    if (!undo?.undoable) return;
+    if (!undo?.undoable && !undo?.edits) return;
     const box = append(Object.assign(document.createElement('div'), { className: 'run-undo' }));
     const tr = (k, en, v) => { const s = window.t ? window.t(k, v) : k; return s && s !== k ? s : en.replace(/\{(\w+)\}/g, (_, x) => v?.[x] ?? ''); };
     const button = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.button', 'Undo tab changes') });
     const lasting = undo.lasting?.length ? tr('undo.lasting', 'Can’t be undone here: {what}.', { what: undo.lasting.join('; ') }) : '';
     button.title = `${tr('undo.title', 'Close the tabs this reply opened, reopen the ones it closed, and take its tabs back to where they were.')}${lasting ? `\n${lasting}` : ''}`;
-    box.append(button);
+    if (undo.undoable) box.append(button);
+    // [content guard] The editors and fields the run typed in, deleted from or scripted: back to how they started (ai/content-guard.js).
+    if (undo.edits) {
+      const edits = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('undo.edits.button', 'Undo the AI’s edits on this page') });
+      edits.title = tr('undo.edits.title', 'Put the text fields and editors this reply changed back to how they were. A site that saves your work online keeps its own version history.');
+      box.append(edits);
+      edits.addEventListener('click', async () => {
+        edits.disabled = true;
+        let result;
+        try { result = await window.assistant.undoEdits(undo.id); } catch (err) { result = { ok: false, message: String(err?.message || err) }; }
+        edits.remove();
+        const lines = result?.ok ? [...result.done, ...result.skipped] : [result?.message || 'Nothing was undone.'];
+        const list = Object.assign(document.createElement('ul'), { className: 'run-undo-result' });
+        for (const line of lines.length ? lines : ['Nothing was left to undo.']) list.append(Object.assign(document.createElement('li'), { textContent: line }));
+        box.append(list);
+      });
+    }
     button.addEventListener('click', async () => {
       button.disabled = true;
       let result;
@@ -282,4 +415,102 @@
       box.append(list);
     });
   };
+})();
+
+// ---------- composer hint, chat shortcuts and their sheet ----------
+// The hint above the box says something only when it matters: a very long message, or the attachment limit close. The shortcuts work
+// anywhere in the chat; "?" or Ctrl+/ lists them. (Ctrl+K stays the browser's: web pages never get it.) Up (edit the last message)
+// and Esc (stop) live in the composer's own key handler in chat-core.js.
+(() => {
+  const prompt = document.getElementById('prompt');
+  if (!prompt) return;
+  const mac = navigator.platform.startsWith('Mac');
+
+  const hint = Object.assign(document.createElement('div'), { className: 'composer-hint', hidden: true });
+  document.getElementById('attachment-note')?.after(hint);
+  const HINT_CHARS = 4000;
+  function updateHint() {
+    const parts = [];
+    const chars = prompt.value.length;
+    if (chars >= HINT_CHARS) parts.push(window.t('composer.hint.chars', { n: chars.toLocaleString() }));
+    const files = window.chatAttachments;
+    const count = files?.count() || 0;
+    const near = Boolean(files && count >= files.max - 2);
+    if (near) parts.push(window.t('composer.hint.files', { n: count, max: files.max }));
+    hint.textContent = parts.join(' · ');
+    hint.hidden = parts.length === 0;
+    hint.classList.toggle('near', near && count >= files.max);
+  }
+  prompt.addEventListener('input', updateHint);
+  document.addEventListener('lumen:attachments', updateHint);
+
+  // The sheet: built the first time it is asked for.
+  let sheet = null;
+  let returnTo = null;
+  const key = (k) => ({ mod: mac ? '⌘' : 'Ctrl', shift: mac ? '⇧' : 'Shift' })[k] || k;
+  const ROWS = [
+    ['shortcuts.chat.send', [['Enter']]],
+    ['shortcuts.chat.newline', [['shift', 'Enter']]],
+    ['shortcuts.chat.sendNow', [['mod', 'Enter']]],
+    ['shortcuts.chat.stop', [['Esc']]],
+    ['shortcuts.chat.editLast', [['↑']]],
+    ['shortcuts.chat.newChat', [['mod', 'shift', 'O']]],
+    ['shortcuts.chat.copyLast', [['mod', 'shift', 'C']]],
+    ['shortcuts.chat.commands', [['/']]],
+    ['shortcuts.chat.sheet', [['?'], ['mod', '/']]],
+  ];
+  function closeSheet() {
+    if (!sheet || sheet.hidden) return;
+    sheet.hidden = true;
+    (returnTo && returnTo.isConnected ? returnTo : prompt).focus();
+  }
+  function openSheet() {
+    if (!sheet) {
+      sheet = Object.assign(document.createElement('div'), { className: 'shortcut-sheet', hidden: true });
+      const card = Object.assign(document.createElement('div'), { className: 'shortcut-card' });
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-labelledby', 'shortcut-title');
+      const title = Object.assign(document.createElement('h2'), { id: 'shortcut-title', textContent: window.t('shortcuts.chat.title') });
+      const list = document.createElement('dl');
+      for (const [label, chords] of ROWS) {
+        const dd = document.createElement('dd');
+        chords.forEach((chord, i) => {
+          if (i) dd.append(Object.assign(document.createElement('span'), { textContent: window.t('shortcuts.chat.or') }));
+          for (const k of chord) dd.append(Object.assign(document.createElement('kbd'), { textContent: key(k) }));
+        });
+        list.append(Object.assign(document.createElement('dt'), { textContent: window.t(label) }), dd);
+      }
+      const close = Object.assign(document.createElement('button'), { type: 'button', className: 'btn shortcut-close', textContent: window.t('shortcuts.chat.close') });
+      close.onclick = closeSheet;
+      card.append(title, list, close);
+      sheet.append(card);
+      sheet.addEventListener('pointerdown', (e) => { if (e.target === sheet) closeSheet(); });
+      sheet.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSheet(); } else if (e.key === 'Tab') { e.preventDefault(); close.focus(); } // (one control: focus stays in the card)
+      });
+      document.body.append(sheet);
+    }
+    returnTo = document.activeElement;
+    sheet.hidden = false;
+    sheet.querySelector('.shortcut-close').focus();
+  }
+
+  window.chatShortcuts = { open: openSheet };
+  const typing = (el) => Boolean(el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable));
+  document.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') { // new chat (ChatGPT, Claude.ai)
+      e.preventDefault();
+      document.getElementById('new-chat')?.click();
+      prompt.focus();
+    } else if (mod && !e.shiftKey && !e.altKey && e.key === '/') {
+      e.preventDefault();
+      if (sheet && !sheet.hidden) closeSheet(); else openSheet();
+    } else if (e.key === '?' && !mod && !e.altKey && !typing(e.target) && !(sheet && !sheet.hidden)) {
+      e.preventDefault();
+      openSheet();
+    }
+  });
 })();

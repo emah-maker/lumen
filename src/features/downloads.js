@@ -11,25 +11,45 @@ const fs = require('fs');
 const path = require('path');
 const { hostOf } = require('./adblock');
 const { t } = require('./i18n');
+const { menuLabel } = require('../browser/menu-label'); // a file name as a menu label (a literal & is written &&)
 const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
 
-const RISKY_TYPES = /^\.(exe|msi|msix|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|hta|jar|dll|lnk|reg|appx)$/i;
-const KEEP = 50; // downloads remembered in the list (the menu shows the latest 10)
+// Programs, installers and scripts Windows runs on open, and shortcut/settings files that launch them (a .url, .scf,
+// .inf or .diagcab file runs something when opened). Not disk images or documents: those are ordinary downloads.
+const RISKY_TYPES = /^\.(exe|msi|msp|mst|msix|msixbundle|bat|cmd|com|scr|pif|cpl|msc|ps1|ps1xml|psm1|psd1|vbs|vbe|vb|js|jse|wsf|wsh|wsc|sct|hta|jar|jnlp|dll|ocx|lnk|url|scf|inf|reg|appx|appxbundle|appinstaller|application|gadget|diagcab|settingcontent-ms)$/i;
+const { trailingThrottle } = require('../browser/trailing-throttle');
+const PROGRESS_MS = 250; // how often a running download's progress reaches the panel and the page
+const KEEP = 1000; // downloads remembered in the list (the Downloads page pages through them; the panel shows the latest PANEL_ROWS, the menu 10)
+const PANEL_ROWS = 50;
+const UNDO_KEEP = 20; // removed rows held for the page's Undo
 
-// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)? }
+// deps: { app, session, dialog, shell, win, ui, panel, fallbackIcon, downloadDir, askWhereToSave, askOnce(urls)?,
+//         openInstead(item, contents)? (true: not downloaded, shown instead), onCompleted(entry)? }
 function createDownloads(deps) {
   const downloads = []; // { id, name, path, state, received, total, paused, awaitingOk, url, started, endedAt, speed } (+ item, contents: not sent)
+  const removed = []; // rows taken off the list a moment ago, { entry, index }: the Downloads page's Undo puts one back
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
   let downloadSeq = 0;
   const icons = new Map(); // path -> { image (nativeImage, for dragging), dataUrl (for the panel) }
   const listFile = () => path.join(deps.app.getPath('userData'), 'downloads.json');
   let saveTimer = null;
+  let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
+  const keptList = () => downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
   function save() {
     clearTimeout(saveTimer);
+    const gen = ++saveGen;
     saveTimer = setTimeout(() => {
-      const kept = downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
-      settingsFile.writeJsonAtomicAsync(listFile(), kept, undefined, 0).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
+      saveTimer = null;
+      settingsFile.writeJsonAtomicAsync(listFile(), keptList(), () => gen === saveGen, 0).catch((err) => console.error('[lumen] could not save the downloads list:', err.message));
     }, 500);
+  }
+  // Quitting: a change from the last half second is written now, synchronously (temp file and rename, so never half a file).
+  function flush() {
+    if (!saveTimer) return;
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    saveGen++;
+    try { settingsFile.writeJsonAtomic(listFile(), keptList(), 0); } catch (err) { console.error('[lumen] could not save the downloads list:', err.message); }
   }
   // Last session's list. A download that was still running when Lumen quit can only be retried.
   function load() {
@@ -53,12 +73,18 @@ function createDownloads(deps) {
     missing: d.state === 'completed' && !exists(d), canResume: Boolean(d.item && d.state === 'interrupted' && d.item.canResume()),
     icon: icons.get(d.path)?.dataUrl || null,
   });
-  const sendDownloads = () => {
+  const pushDownloads = () => {
     deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
     deps.onChange?.(); // the Downloads page (features/managers.js)
-    deps.panel?.()?.send('downloads:list', downloads.map(panelEntry)); // the toolbar's panel
+    deps.panel?.()?.send('downloads:list', downloads.slice(0, PANEL_ROWS).map(panelEntry)); // the toolbar's panel (the latest rows: each is stat()ed, and the panel is small)
     save();
   };
+  // Chromium reports a running download's progress many times a second. Each report rebuilt the whole panel list (and
+  // stat()ed every finished file in it), and the panel redraws its rows from scratch, so a click on a button could land
+  // on a row that had just been replaced. Progress goes out a few times a second; anything else (a start, a finish,
+  // a pause, a removal) goes out at once.
+  const sendProgress = trailingThrottle(pushDownloads, PROGRESS_MS);
+  const sendDownloads = () => sendProgress.now();
   function loadIcon(entry) {
     if (!entry.path || icons.has(entry.path) || !exists(entry)) return;
     deps.app.getFileIcon(entry.path, { size: 'normal' }).then((image) => {
@@ -76,6 +102,9 @@ function createDownloads(deps) {
     return target;
   }
 
+  // A finished file opens in the system's program, except the kinds Lumen shows itself in a tab (deps.openLocal: an .eml).
+  const openFile = (file) => { deps.onOpened?.(file); return deps.openLocal?.(file) ? true : deps.shell.openPath(file); }; // (onOpened: the Files list)
+
   function progress() {
     const active = downloads.filter((d) => d.state === 'progressing' && d.total > 0);
     const sum = active.reduce((a, d) => [a[0] + d.received, a[1] + d.total], [0, 0]);
@@ -92,7 +121,10 @@ function createDownloads(deps) {
   }
 
   function setup() {
-    deps.session.defaultSession.on('will-download', (_event, item, contents) => {
+    deps.session.defaultSession.on('will-download', (event, item, contents) => {
+      if (deps.blocked?.(contents)) { event.preventDefault(); try { item.cancel(); } catch {} return; } // [agent window] an outside agent's page
+      // A file the browser shows itself instead (a local .pptx opened in a tab: features/slides-viewer.js).
+      if (deps.openInstead?.(item, contents)) { event.preventDefault(); return; }
       const dir = deps.downloadDir(); // [settings] Downloads folder unless changed in Settings
       const base = path.basename(item.getFilename() || 'download');
       const url = item.getURL();
@@ -114,7 +146,7 @@ function createDownloads(deps) {
         else item.setSavePath(target);
       }
       const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now(), url, endedAt: null, speed: 0 };
-      Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents } });
+      Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents }, saveAs: { value: ask } });
       let lastAt = Date.now();
       let lastReceived = 0;
       downloads.unshift(entry);
@@ -133,7 +165,8 @@ function createDownloads(deps) {
         entry.paused = item.isPaused() || entry.awaitingOk;
         entry.state = state === 'interrupted' ? 'interrupted' : 'progressing';
         progress();
-        sendDownloads();
+        if (entry.state === 'interrupted') sendDownloads();
+        else sendProgress();
       });
       Object.defineProperty(entry, 'holding', { value: holding });
       item.once('done', (_ev, state) => {
@@ -168,6 +201,7 @@ function createDownloads(deps) {
     progress();
     sendDownloads();
     if (entry.state === 'completed') loadIcon(entry);
+    if (entry.state === 'completed') deps.onCompleted?.(entry); // a downloaded deck opens in the slide viewer (main.js)
     const w = deps.win();
     if (entry.state === 'completed' && w && !w.isDestroyed()) w.flashFrame(!w.isFocused());
   }
@@ -214,12 +248,12 @@ function createDownloads(deps) {
     const items = downloads.slice(0, 10).map((d) => {
       const percent = d.total ? `${Math.round((d.received / d.total) * 100)}%` : '';
       if (d.state === 'completed') {
-        return { label: d.name, click: () => deps.shell.openPath(d.path) };
+        return { label: menuLabel(d.name, 80), click: () => openFile(d.path) };
       }
       if (d.state === 'progressing') {
         const status = d.awaitingOk ? t('downloads.waitingOk') : d.paused ? (percent ? t('downloads.pausedAt', { percent }) : t('downloads.paused')) : percent || t('downloads.downloading');
         return {
-          label: t('downloads.item', { name: d.name, status }),
+          label: t('downloads.item', { name: menuLabel(d.name, 80), status }),
           submenu: [
             ...(d.awaitingOk ? [] : [d.paused
               ? { label: t('downloads.resume'), click: () => { d.item.resume(); } }
@@ -229,7 +263,7 @@ function createDownloads(deps) {
         };
       }
       return { // cancelled | interrupted
-        label: t('downloads.item', { name: d.name, status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
+        label: t('downloads.item', { name: menuLabel(d.name, 80), status: d.state === 'cancelled' ? t('downloads.cancelled') : t('downloads.failed') }),
         submenu: [{ label: d.state === 'interrupted' && d.item?.canResume() ? t('downloads.resume') : t('downloads.retry'), click: () => retry(d) }],
       };
     });
@@ -239,24 +273,47 @@ function createDownloads(deps) {
     return items;
   }
 
-  // The Downloads page: every remembered download, and what its buttons do.
+  // The Downloads page: every remembered download, and what its buttons do. Up to a thousand rows are asked about on every
+  // progress refresh, so whether a file is still there is remembered for a few seconds.
+  const seen = new Map(); // path -> { at, there }
+  const stillThere = (d) => {
+    const now = Date.now();
+    const hit = seen.get(d.path);
+    if (hit && now - hit.at < 3000) return hit.there;
+    const there = fs.existsSync(d.path);
+    seen.set(d.path, { at: now, there });
+    if (seen.size > KEEP * 2) seen.clear();
+    return there;
+  };
   const summary = () => downloads.map((d) => ({
     id: d.id, name: d.name, path: d.path, state: d.state, received: d.received, total: d.total, paused: d.paused,
-    awaitingOk: Boolean(d.awaitingOk), started: d.started, url: d.url,
+    awaitingOk: Boolean(d.awaitingOk), started: d.started, endedAt: d.endedAt || null, url: d.url,
     canResume: d.state === 'interrupted' && Boolean(d.item?.canResume?.()),
-    exists: d.state === 'completed' && Boolean(d.path) && fs.existsSync(d.path),
+    exists: d.state === 'completed' && Boolean(d.path) && stillThere(d),
   }));
   function act(id, action) {
     const d = downloads.find((x) => x.id === id);
+    if (action === 'restore') return restore(id);
     if (!d) return false;
-    if (action === 'open' && d.state === 'completed' && exists(d)) { deps.shell.openPath(d.path); return true; }
+    if (action === 'open' && d.state === 'completed' && exists(d)) { openFile(d.path); return true; }
     if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
+    if (action === 'pin' && d.state === 'completed' && exists(d)) { deps.onPin?.(d.path); return true; } // Pin to Files (the panel's right-click menu)
     if (action === 'pause' && d.state === 'progressing' && d.item && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
     if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }
     if (action === 'cancel' && d.state === 'progressing') { if (d.held) finish(d, 'cancelled'); else d.item?.cancel(); return true; }
     if (action === 'retry' && (d.state === 'cancelled' || d.state === 'interrupted')) { retry(d); return true; }
-    if (action === 'remove' && d.state !== 'progressing') { downloads.splice(downloads.indexOf(d), 1); sendDownloads(); return true; }
+    if (action === 'remove' && d.state !== 'progressing') { const index = downloads.indexOf(d); downloads.splice(index, 1); removed.push({ entry: d, index }); if (removed.length > UNDO_KEEP) removed.shift(); sendDownloads(); return true; }
     return false;
+  }
+  // Undo of a removal (the Downloads page): the row goes back where it was.
+  function restore(id) {
+    const at = removed.findIndex((r) => r.entry.id === id);
+    if (at === -1 || downloads.some((x) => x.id === id)) return false;
+    const [{ entry, index }] = removed.splice(at, 1);
+    downloads.splice(Math.min(index, downloads.length), 0, entry);
+    trim();
+    sendDownloads();
+    return true;
   }
 
   function clearFinished() {
@@ -272,7 +329,20 @@ function createDownloads(deps) {
     sender.startDrag({ file: d.path, icon });
   }
 
-  return { list: downloads, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
+  // A file Lumen wrote itself (a screen recording): listed as a finished download, with Open and Show in folder like any other.
+  function addFile(file, name = path.basename(file)) {
+    let size;
+    try { size = fs.statSync(file).size; } catch { return null; }
+    const entry = { id: ++downloadSeq, name, path: file, state: 'completed', received: size, total: size, paused: false, awaitingOk: false, speed: 0, url: '', started: Date.now(), endedAt: Date.now() };
+    Object.defineProperties(entry, { item: { value: null, writable: true }, contents: { value: null } });
+    downloads.unshift(entry);
+    trim();
+    loadIcon(entry);
+    sendDownloads();
+    return entry.id;
+  }
+
+  return { list: downloads, addFile, flush, send: sendDownloads, setup, menu, summary, act, load, clearFinished, drag, panelList: () => downloads.slice(0, PANEL_ROWS).map(panelEntry), openFolder: () => deps.shell.openPath(deps.downloadDir()) };
 }
 
 module.exports = { createDownloads, RISKY_TYPES };

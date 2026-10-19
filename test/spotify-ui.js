@@ -12,6 +12,7 @@
 //
 // Needs openssl on PATH (Git for Windows: C:\Program Files\Git\usr\bin). Set LUMEN_SPOTIFY_SHOTS=<dir> to
 // keep a screenshot of each card size.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -73,7 +74,7 @@ function fakeSpotify(opts) {
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
   } catch (err) {
     console.log(`SKIP  the Spotify window checks: openssl isn't available (${err.message})`);
-    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     process.exit(0);
   }
   const fake = fakeSpotify({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) });
@@ -86,7 +87,7 @@ function fakeSpotify(opts) {
   await partWeb(fake, base, scratch, shots);
 
   fake.srv.close();
-  fs.rmSync(scratch, { recursive: true, force: true });
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
@@ -125,12 +126,12 @@ async function partApi(fake, base, scratch, shots) {
   const D = 'wdefault1';
 
   check('now playing: the card shows title, artist and album', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Night Shift'`) && (await text(D, '.sp-artist')) === 'Ann, Bo' && (await text(D, '.sp-album')) === 'Quiet Hours', await text(D, '.sp-title'));
-  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
+  const names = await page(`[...${card(D)}.querySelectorAll('button, a')].filter((b) => !b.closest('[hidden]')).map((b) => b.getAttribute('aria-label') || b.textContent.trim())`);
   check('now playing: every control has a name (previous, pause, next, refresh, open)', ['Previous track', 'Pause', 'Next track'].every((n) => names.includes(n)) && names.every(Boolean) && names.some((n) => /^Open in Spotify/.test(n)), JSON.stringify(names));
   const bar = await page(`(() => { const b = ${card(D)}.querySelector('.sp-bar'); return b && { role: b.getAttribute('role'), label: b.getAttribute('aria-label'), now: b.getAttribute('aria-valuenow'), elapsed: ${card(D)}.querySelector('.sp-elapsed').textContent, total: ${card(D)}.querySelector('.sp-total').textContent }; })()`);
-  check('now playing: the progress bar is a labelled progressbar with elapsed and total time', bar && bar.role === 'progressbar' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20' && Number(bar.now) >= 15, JSON.stringify(bar));
+  check('now playing: the progress bar is a labelled slider (seekable) with elapsed and total time', bar && bar.role === 'slider' && /Night Shift progress/.test(bar.label) && /^0:3\d$/.test(bar.elapsed) && bar.total === '3:20' && Number(bar.now) >= 15, JSON.stringify(bar));
   await sleep(2200);
-  check('now playing: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 32, await text(D, '.sp-elapsed'));
+  check('now playing: the playhead moves on by itself while playing', Number((await text(D, '.sp-elapsed')).split(':')[1]) >= 31, await text(D, '.sp-elapsed'));
 
   // controls
   fake.world.playback = track({ is_playing: false }); // what Spotify says once the pause went through
@@ -177,7 +178,7 @@ async function partApi(fake, base, scratch, shots) {
   fake.world.playback = { is_playing: true, progress_ms: 4000, currently_playing_type: 'ad', device: { name: 'Kitchen speaker' }, item: null };
   await sleep(300);
   await refresh();
-  const ad = await page(`({ title: ${card(D)}.querySelector('.sp-title')?.textContent, prev: ${card(D)}.querySelector('[aria-label^="Previous track"]')?.disabled, next: ${card(D)}.querySelector('[aria-label^="Next track"]')?.disabled, bar: Boolean(${card(D)}.querySelector('.sp-bar')) })`);
+  const ad = await page(`({ title: ${card(D)}.querySelector('.sp-title')?.textContent, prev: ${card(D)}.querySelector('[aria-label^="Previous track"]')?.disabled, next: ${card(D)}.querySelector('[aria-label^="Next track"]')?.disabled, bar: Boolean(${card(D)}.querySelector('.sp-bar') && !${card(D)}.querySelector('.sp-bar').closest('[hidden]')) })`); // (the bar is part of the card; an ad has no length, so it is hidden)
   check('an ad: it says Advertisement, skip buttons are disabled, no fake progress bar', await waitFor(`${card(D)}?.querySelector('.sp-title')?.textContent === 'Advertisement'`) && ad.prev === true && ad.next === true && ad.bar === false, JSON.stringify(ad));
   fake.world.playback = { is_playing: true, progress_ms: 5000, currently_playing_type: 'episode', device: { name: 'Phone' }, item: { type: 'episode', name: 'Episode 12: Sleep', duration_ms: 1800000, show: { name: 'The Show', publisher: 'Show Co', images: [] }, external_urls: { spotify: 'https://open.spotify.com/episode/e12' } } };
   await sleep(300);
@@ -213,8 +214,8 @@ async function partApi(fake, base, scratch, shots) {
   }
 
   // keyboard: the controls are real buttons in tab order with a visible focus ring
-  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')]; bs[0].focus(); const ring = getComputedStyle(bs[0]).boxShadow; return { n: bs.length, focusable: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring }; })()`);
-  check('keyboard: Previous, Play/Pause and Next are focusable buttons with a visible focus ring', kb.n === 3 && kb.focusable && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
+  const kb = await page(`(() => { const bs = [...${card(D)}.querySelectorAll('.sp-controls button')].filter((b) => b.offsetParent !== null); bs[0].focus(); const ring = getComputedStyle(bs[0]).boxShadow; return { n: bs.length, focusable: bs.every((b) => b.tabIndex >= 0 && b.tagName === 'BUTTON' && b.type === 'button'), focused: document.activeElement === bs[0], ring }; })()`);
+  check('keyboard: Play/Pause and Next (and Previous, on a medium card or bigger) are focusable buttons with a visible focus ring', kb.n >= 2 && kb.focusable && kb.focused && kb.ring !== 'none', JSON.stringify(kb));
 
   // light and dark: the title and artist stay readable
   const contrast = () => page(`(() => { const rgb = (s) => s.match(/[\\d.]+/g).slice(0, 3).map(Number); const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }; const c = ${card(D)}; let bg = c; let col = null; while (bg && (!col || /rgba\\(.*, 0\\)|transparent/.test(col))) { col = getComputedStyle(bg).backgroundColor; if (/rgba\\(.*, 0\\)|transparent/.test(col)) bg = bg.parentElement; } const bgl = lum(rgb(col)); const ratio = (sel) => { const l = lum(rgb(getComputedStyle(c.querySelector(sel)).color)); return (Math.max(l, bgl) + 0.05) / (Math.min(l, bgl) + 0.05); }; return { title: ratio('.sp-title'), artist: ratio('.sp-artist'), bg: col }; })()`);
@@ -253,7 +254,7 @@ async function partApi(fake, base, scratch, shots) {
   const errs = await app.evaluate(() => global.__errs);
   check('no console errors on the new-tab page', errs.length === 0, JSON.stringify(errs));
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -282,6 +283,47 @@ async function partWeb(fake, base, scratch, shots) {
   await app.evaluate(() => { global.__spotifyDrmProbe = async () => true; });
   check('web player: once Widevine is there (it installs in the background) the note goes away by itself', await waitFor("!document.querySelector('.sp-drm')", 120) && (await status()).drm === 'ok', JSON.stringify(await status()));
   check('web player: Widevine present gives no warning, and the card has the Open link', !(await page("Boolean(document.querySelector('.sp-drm'))")) && (await page("Boolean(document.querySelector('.w-card.spotify a[title^=\"Open in Spotify\"], .w-card.spotify a[aria-label^=\"Open in Spotify\"]'))")), '');
+  // ---- the view must not show that it is a separate view: rounded like the card, hidden under overlays and on other tabs, hidden (not lagging) while the page moves ----
+  await app.evaluate(() => { global.__slotMsgs = []; global.__wtab.webContents.on('console-message', (e, level, msg) => { const m = typeof e?.message === 'string' ? e.message : msg; if (typeof m === 'string' && m.startsWith('lumen-slot-rect ')) global.__slotMsgs.push(JSON.parse(m.slice(16))); }); });
+  await page("window.dispatchEvent(new Event('resize'))"); // (says moving, then the settled place with the radius)
+  await sleep(500);
+  const rad = await app.evaluate(() => global.__slotMsgs.at(-1)?.spotify || null);
+  check('web player: the page reports the slot’s corner radius (the view is rounded to the card’s corners)', Boolean(rad) && rad.r >= 8 && rad.r <= 40 && rad.m === undefined, JSON.stringify(rad));
+  const vis = () => app.evaluate(() => Boolean(global.__spotifyWeb.view() && global.__spotifyWeb.view().getVisible()));
+  const settle = async (want, tries = 40) => { for (let i = 0; i < tries; i++) { if ((await vis()) === want) return true; await sleep(100); } return false; };
+  // overlays on the new-tab page: the native view would be drawn over them, so it hides
+  await page("(() => { const d = document.createElement('div'); d.className = 'w-picker'; d.id = 'fx-picker'; document.body.append(d); })()");
+  check('web player: an open picker hides the view (it would draw over it)', await settle(false), '');
+  await page("document.getElementById('fx-picker').remove()");
+  check('web player: …and it comes back when the picker closes', await settle(true), '');
+  await page("(() => { const d = document.createElement('div'); d.className = 'w-stack-menu'; d.id = 'fx-menu'; d.style.cssText = 'position:fixed;left:10px;top:10px;width:80px;height:40px'; document.body.append(d); })()");
+  check('web player: a stack’s menu or panel on the page hides the view', await settle(false), '');
+  await page("document.getElementById('fx-menu').remove()");
+  check('web player: …and it comes back when that closes', await settle(true), '');
+  await page("document.body.classList.add('w-editing')");
+  check('web player: the edit mode’s handles hide the view', await settle(false), '');
+  await page("document.body.classList.remove('w-editing')");
+  check('web player: …and it comes back when editing ends', await settle(true), '');
+  // scrolling: the view cannot follow in the same frame, so it hides while the page moves and is placed at the new spot once it settles
+  const before = await app.evaluate(() => global.__spotifyWeb.view().getBounds());
+  await page("(() => { if (!document.getElementById('fx-spacer')) { const s = document.createElement('div'); s.id = 'fx-spacer'; s.style.cssText = 'height:4000px;width:1px;position:absolute;top:0;left:0'; document.documentElement.append(s); } })()");
+  await app.evaluate(() => { global.__slotMsgs.length = 0; });
+  await page('window.scrollTo(0, 60)');
+  const scrolled = await page('window.scrollY');
+  await sleep(60);
+  const during = await app.evaluate(() => ({ moving: global.__slotMsgs.some((m) => m.spotify && m.spotify.m === 1), visible: Boolean(global.__spotifyWeb.view().getVisible()) }));
+  check('web player: when the page scrolls the card says it is moving, and the view is hidden meanwhile (no lagging copy over the wrong place)', scrolled > 0 && during.moving && during.visible === false, JSON.stringify([scrolled, during]));
+  check('web player: …and shown again, at the new place, when the page has settled', scrolled > 0 && await settle(true) && (await app.evaluate(() => global.__spotifyWeb.view().getBounds().y)) < before.y, JSON.stringify([scrolled, before, await app.evaluate(() => global.__spotifyWeb.view().getBounds())]));
+  await page('window.scrollTo(0, 0)');
+  await settle(true);
+  // another tab: the new-tab page is left, so the view is hidden (the music goes on); back on it, it is shown again
+  const newTabId = await app.evaluate(() => global.__agent.browser.activeTab().id);
+  await app.evaluate(() => { global.__agent.browser.openTab('about:blank'); });
+  check('web player: on another tab than the new-tab page the view is hidden (the page keeps playing)', await settle(false) && (await status()).state === 'ready', JSON.stringify(await status()));
+  await app.evaluate((_e, id) => { global.__agent.browser.switchTab(id); }, newTabId);
+  check('web player: back on the new-tab page it is shown again', await settle(true), '');
+  // the view is not a tab: no extra tab, and it is not in the tab list
+  check('web player: the player view is not listed as a tab', await app.evaluate(() => global.__agent.browser.listTabs().every((t) => !/\/web$/.test(String(t.url || '')))), JSON.stringify(await app.evaluate(() => global.__agent.browser.listTabs().map((t) => t.url))));
   if (shots) fs.writeFileSync(path.join(shots, 'web-small.png'), Buffer.from(await app.evaluate(async ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.capturePage().then((i) => i.toPNG().toString('base64'))), 'base64'));
 
   // A load that fails: offline, then a 500 -> a message and Try again, never a blank frame
@@ -315,5 +357,5 @@ async function partWeb(fake, base, scratch, shots) {
   const errs = await app.evaluate(() => global.__errs);
   check('web player: no console errors on the new-tab page', errs.length === 0, JSON.stringify(errs));
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }

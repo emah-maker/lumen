@@ -7,6 +7,12 @@
 // the day, with a revision history per list; the newest revision is used here, with the dated files
 // picked up by year, and the scriptlet/redirect resources from the same place.
 const CDN = 'https://cdn.ghostery.com/adblocker/resources';
+// A test run (never a packaged Lumen: test-mode.isTest is false there) can point the lists at a stand-in server on this machine,
+// LUMEN_TEST_ADBLOCK_CDN=http://127.0.0.1:<port>, so a first start's list build needs no real network.
+function cdn() {
+  const stand = process.env.LUMEN_TEST_ADBLOCK_CDN;
+  return stand && /^http:\/\/127\.0\.0\.1:\d+$/.test(stand) && require('../test-mode').isTest() ? stand : CDN;
+}
 
 // Ghostery's "full" set (ads, tracking, annoyances/cookies) by CDN name.
 const CORE = [
@@ -47,12 +53,12 @@ async function get(fetchImpl, url, attempts = 3) {
 
 // The newest revision's text of one list (or of the resources), null if the list doesn't exist.
 async function latest(fetchImpl, name) {
-  const meta = await get(fetchImpl, `${CDN}/${name}/metadata.json`);
+  const meta = await get(fetchImpl, `${cdn()}/${name}/metadata.json`);
   if (!meta) return null;
   const { revisions } = await meta.json();
   const revision = revisions?.[revisions.length - 1];
   if (!revision) return null;
-  const res = await get(fetchImpl, `${CDN}/${name}/${revision}/list.txt`);
+  const res = await get(fetchImpl, `${cdn()}/${name}/${revision}/list.txt`);
   return res ? res.text() : null;
 }
 

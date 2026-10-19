@@ -3,6 +3,7 @@
 // closes a tab, the hover card under a tab you rest on, Shift/Ctrl/Cmd+click multi-selection, and
 // closing a run of tabs with their ✕ without the tabs resizing under the pointer.
 // `TABUI_SHOTS=<dir>` also saves screenshots of the strip there (light and dark).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -90,7 +91,7 @@ function toneWav() {
   check('it shows crossed out', await waitFor(() => ui.evaluate((sel) => Boolean(document.querySelector(`${sel} .tab-audio.muted`)), tabSel(soundId))), 'not muted in the strip');
   check('and the click did not switch to the tab', (await activeId()) === beforeActive, `${await activeId()} vs ${beforeActive}`);
   const label = await ui.evaluate((sel) => document.querySelector(`${sel} .tab-audio`).getAttribute('aria-label'), tabSel(soundId));
-  check('its label says what a click does', /^Unmute Tab: Sound page$/.test(label), label);
+  check('its label says what a click does', /^Unmute tab: Sound page$/.test(label), label);
   if (shots) {
     for (const scheme of ['light', 'dark']) {
       await ui.emulateMedia({ colorScheme: scheme });
@@ -269,7 +270,7 @@ function toneWav() {
   check('no renderer errors', errors.length === 0, errors.join('; '));
   server.close();
   await app.close();
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

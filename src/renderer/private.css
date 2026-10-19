@@ -20,13 +20,13 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 #strip > *:not(#drag-space) { -webkit-app-region: no-drag; }
 #drag-space { flex: 1 0 24px; align-self: stretch; }
 
-#badge { align-self: center; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 7px; border-radius: 11px; background: var(--p-badge); color: #fff; font-weight: 600; font-size: 12px; margin-right: 6px; flex: none; }
+#badge { align-self: center; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 7px; border-radius: var(--r-lg); background: var(--p-badge); color: var(--on-accent); font-weight: 600; font-size: 12px; margin-right: 6px; flex: none; }
 #badge svg { width: 15px; height: 15px; stroke-width: 1.7; }
 
 #tabs { display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
 .tab { position: relative; display: flex; align-items: center; gap: 7px; height: 30px; flex: 0 1 220px; min-width: 44px; padding: 0 6px 0 10px; border-radius: 8px 8px 0 0; background: var(--p-tab); color: var(--p-tab-text); cursor: default; }
 .tab:hover { background: var(--p-tab-hover); }
-.tab.active { background: var(--p-raised); color: #fff; }
+.tab.active { background: var(--p-raised); color: var(--on-accent); }
 .tab:not(.active) + .tab:not(.active):not(:hover)::before { content: ""; position: absolute; left: -2px; top: 8px; bottom: 8px; width: 1px; background: var(--p-line); }
 .tab.dragging { z-index: 1; box-shadow: 0 0 0 1px var(--p-line); background: var(--p-raised); }
 .tab .icon { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--p-muted); }
@@ -37,7 +37,7 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 @media (prefers-reduced-motion: reduce) { .tab.loading .icon::after { animation-duration: 2.4s; } }
 .tab .title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tab .audio { flex: none; color: var(--p-muted); }
-.tab .close { flex: none; display: grid; place-items: center; border: 0; background: transparent; color: inherit; width: 20px; height: 20px; padding: 0; border-radius: 5px; cursor: pointer; }
+.tab .close { flex: none; display: grid; place-items: center; border: 0; background: transparent; color: inherit; width: 20px; height: 20px; padding: 0; border-radius: var(--r-xs); cursor: pointer; }
 .tab .close svg { width: 10px; height: 10px; stroke-width: 2; }
 .tab .close:hover { background: var(--p-close-hover); }
 /* Narrow tabs: the icon stays, the active tab keeps its ×. */
@@ -45,32 +45,32 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 .tab.narrow:not(.active) .close { display: none; }
 .tab.narrow { justify-content: center; padding: 0 4px; }
 
-#new-tab { align-self: center; display: grid; place-items: center; border: 0; background: transparent; color: var(--p-tab-text); width: 28px; height: 28px; border-radius: 7px; cursor: pointer; flex: none; margin-left: 2px; }
-#new-tab:hover { background: var(--p-raised); color: #fff; }
+#new-tab { align-self: center; display: grid; place-items: center; border: 0; background: transparent; color: var(--p-tab-text); width: 28px; height: 28px; border-radius: var(--r-sm); cursor: pointer; flex: none; margin-left: 2px; }
+#new-tab:hover { background: var(--p-raised); color: var(--on-accent); }
 
 #toolbar { height: 42px; display: flex; align-items: center; gap: 2px; padding: 0 8px; background: var(--p-raised); border-bottom: 1px solid var(--p-line); }
-#toolbar > button, #find button { display: grid; place-items: center; border: 0; background: transparent; color: var(--p-text); width: 30px; height: 30px; border-radius: 7px; cursor: pointer; flex: none; }
+#toolbar > button, #find button { display: grid; place-items: center; border: 0; background: transparent; color: var(--p-text); width: 30px; height: 30px; border-radius: var(--r-sm); cursor: pointer; flex: none; }
 #toolbar > button:hover:not(:disabled), #find button:hover { background: var(--p-line); }
 #toolbar > button:disabled { opacity: 0.35; cursor: default; }
 #reload .stop-icon { display: none; }
 #reload.loading .stop-icon { display: block; }
 #reload.loading .reload-icon { display: none; }
 
-#address-form { flex: 1; min-width: 120px; display: flex; align-items: center; height: 30px; margin: 0 4px; border: 1px solid var(--p-field-line); border-radius: 15px; background: var(--p-field); padding: 0 6px 0 10px; }
+#address-form { flex: 1; min-width: 120px; display: flex; align-items: center; height: 30px; margin: 0 4px; border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); padding: 0 6px 0 10px; }
 #address-form:focus-within { border-color: var(--p-accent); }
-#address { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0 6px; background: transparent; color: #fff; font: inherit; outline: none; user-select: text; }
+#address { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0 6px; background: transparent; color: var(--on-accent); font: inherit; outline: none; user-select: text; }
 #address::placeholder { color: var(--p-muted); }
 .security { flex: none; display: none; align-items: center; gap: 4px; color: var(--p-muted); font-size: 12px; white-space: nowrap; }
 .security svg { width: 13px; height: 13px; }
-.security.secure, .security.insecure, .security.broken, .security.mixed { display: inline-flex; }
+.security.secure, .security.insecure, .security.broken, .security.mixed, .security.local { display: inline-flex; }
 .security.insecure, .security.broken { color: var(--p-warn); }
-#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: 10px; padding: 1px 8px; font-size: 11px; cursor: pointer; color: var(--p-muted); }
-#zoom:hover { color: #fff; border-color: var(--p-accent); }
+#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: var(--r-lg); padding: 1px 8px; font-size: 11px; cursor: pointer; color: var(--p-muted); }
+#zoom:hover { color: var(--on-accent); border-color: var(--p-accent); }
 
-#find { display: flex; align-items: center; gap: 2px; height: 30px; margin-right: 4px; padding: 0 2px 0 8px; border: 1px solid var(--p-field-line); border-radius: 15px; background: var(--p-field); }
+#find { display: flex; align-items: center; gap: 2px; height: 30px; margin-right: 4px; padding: 0 2px 0 8px; border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); }
 #find[hidden] { display: none; }
 #find:focus-within { border-color: var(--p-accent); }
-#find-text { width: 160px; border: 0; background: transparent; color: #fff; font: inherit; outline: none; user-select: text; }
+#find-text { width: 160px; border: 0; background: transparent; color: var(--on-accent); font: inherit; outline: none; user-select: text; }
 #find-text::placeholder { color: var(--p-muted); }
 #find-count { min-width: 42px; text-align: right; padding-right: 4px; color: var(--p-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 #find.none #find-count { color: var(--p-warn); }

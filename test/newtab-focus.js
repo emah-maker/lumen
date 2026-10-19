@@ -4,6 +4,7 @@
 // whichever contents has native focus: the text must land in the address bar. Tabs opened in the
 // background (middle-click, Open link in new tab, an AI tab) must leave the cursor where it was.
 // Needs a window that can take OS focus: with LUMEN_TEST_BACKGROUND set, the native-focus checks are skipped.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
@@ -132,7 +133,7 @@ const os = require('os');
   const opens = {
     'Ctrl+T (keyboard in the UI)': async (from) => ctrl('t', from === 'ui' || from === 'page' ? from : 'ui'),
     'the + button': async () => ui.click('#new-tab'),
-    'tab context menu: New tab to the right': async () => { const id = await activeId(); await app.evaluate((_e, id) => global.__tabMenu(id, 'New Tab to the Right'), id); },
+    'tab context menu: New tab to the right': async () => { const id = await activeId(); await app.evaluate((_e, id) => global.__tabMenu(id, 'New tab to the right'), id); },
     'Ctrl+Shift+T (reopen closed tab)': async () => { await app.evaluate(async () => { const b = global.__agent.browser; const t = b.openTab(global.__ntBase + '/closed', { background: true }); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 3000); }); global.__closeTabInteractive(t.id); }); await sleep(300); await ctrl('t', 'ui', true); },
   };
 

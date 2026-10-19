@@ -3,6 +3,7 @@
 // copies that can't swap themselves in place, and that "Restart to update" saves the session first.
 // The stager is a stand-in too: nothing is downloaded, unpacked or swapped here (test/units.js covers
 // the swap logic; the swap itself was exercised on a scratch folder).
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');

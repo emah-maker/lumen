@@ -3,6 +3,7 @@
 // throwaway certificate; Lumen runs with a throwaway profile. Checks: the card shows one merged, time-ordered agenda with
 // each event's calendar colour and name, the legend toggles (remembered per card), a failing calendar gets a note while
 // the others show, an older single-address card is unchanged, and the Settings editor edits the list of calendars.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -28,7 +29,7 @@ const vcal = (name, events) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:$
     execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert, '-days', '2', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
   } catch (err) {
     console.log(`SKIP  the browser checks: openssl isn't available (${err.message})`);
-    fs.rmSync(scratch, { recursive: true, force: true });
+    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
     process.exit(0);
   }
   // Events two and three days from now, at fixed hours, so the merged order is known: they interleave across the calendars.
@@ -173,8 +174,8 @@ const vcal = (name, events) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:$
   await Promise.race([app.close().catch(() => {}), sleep(10000)]);
   if (proc.exitCode === null) proc.kill();
   srv.close();
-  fs.rmSync(scratch, { recursive: true, force: true });
-  fs.rmSync(profile, { recursive: true, force: true });
+  fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   console.log(`screenshots: ${shots}`);
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);

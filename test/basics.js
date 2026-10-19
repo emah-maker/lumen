@@ -4,6 +4,7 @@
 // Keyboard Shortcuts sheet, Esc stops a page that is still loading, a zoom picked by hand comes back
 // after a restart, and after a crash with "Open the new-tab page" at startup Lumen offers the old tabs
 // (and a normal quit leaves nothing to offer). Throwaway profiles; run with LUMEN_TEST_BACKGROUND=1.
+require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
 const os = require('os');
@@ -99,15 +100,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     }, [linksTab, params]);
     const onLink = await menuFor({ linkURL: `${base}/target` });
     check('link menu: Open Link in New Tab, New Window, Private Window, Save Link As, Copy Link',
-      ['Open Link in New Tab', 'Open Link in New Window', 'Open Link in Private Window', 'Save Link As…', 'Copy Link'].every((l) => onLink.includes(l)), onLink.join(' | '));
+      ['Open link in new tab', 'Open link in new window', 'Open link in private window', 'Save link as…', 'Copy link'].every((l) => onLink.includes(l)), onLink.join(' | '));
     const onImage = await menuFor({ mediaType: 'image', srcURL: `${base}/pic.svg` });
-    check('image menu: Save Image As, Copy Image, Copy Image Address', ['Save Image As…', 'Copy Image', 'Copy Image Address'].every((l) => onImage.includes(l)), onImage.join(' | '));
+    check('image menu: Save Image As, Copy Image, Copy Image Address', ['Save image as…', 'Copy image', 'Copy image address'].every((l) => onImage.includes(l)), onImage.join(' | '));
     const onPage = await menuFor({});
-    check('page menu: Save Page As, Print and View Page Source, all localized', ['Save Page As…', 'Print…', 'View Page Source'].every((l) => onPage.includes(l)), onPage.join(' | '));
+    check('page menu: Save Page As, Print and View Page Source, all localized', ['Save page as…', 'Print…', 'View page source'].every((l) => onPage.includes(l)), onPage.join(' | '));
     await app.evaluate((_e, [id, url]) => {
       const wc = global.__settings.contents(id);
       wc.emit('context-menu', { preventDefault() {} }, { x: 5, y: 5, selectionText: '', isEditable: false, mediaType: 'none', srcURL: '', linkURL: url, mediaFlags: {}, editFlags: {}, dictionarySuggestions: [], misspelledWord: '', frame: null });
-      global.__menu.find((i) => i.label === 'Open Link in New Window').click();
+      global.__menu.find((i) => i.label === 'Open link in new window').click();
     }, [linksTab, `${base}/target`]);
     const withLink = await waitFor(async () => (await windows(app)).find((w) => w.tabs.some((t) => (t.url || '').endsWith('/target'))));
     check('Open Link in New Window opens the link in a new normal window', Boolean(withLink) && withLink.tabs.length === 1, JSON.stringify(await windows(app)));
@@ -122,7 +123,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const info = async () => app.evaluate(async () => (await global.__basics.openPageInfo()).map((i) => ({ label: i.label || i.type, sub: (i.submenu || []).map((s) => `${s.checked ? '*' : ''}${s.label}`) })));
     let menu = await info();
     check('page info: the site, its (plain http) connection and its two cookies', menu[0].label === `127.0.0.1:${server.address().port}` && menu[1].label === 'Connection is not secure' && menu.some((i) => i.label === '2 cookies in use'), JSON.stringify(menu));
-    check('page info: every permission starts at Ask', menu.filter((i) => /: Ask$|: Block \(default\)$/.test(i.label)).length === 4, menu.map((i) => i.label).join(' | '));
+    check('page info: every permission starts at Ask (camera and microphone each have their own)', menu.filter((i) => /: Ask$|: Block \(default\)$/.test(i.label)).length === 5 && menu.some((i) => i.label === 'Camera: Ask') && menu.some((i) => i.label === 'Microphone: Ask'), menu.map((i) => i.label).join(' | '));
     await app.evaluate(async () => { const tpl = await global.__basics.openPageInfo(); tpl.find((i) => /^Location/.test(i.label || '')).submenu.find((s) => s.label === 'Block').click(); });
     const decided = await app.evaluate((_e, origin) => global.__settings.permissions.get(`${origin}|geolocation`), base);
     check('page info: Block saves a decision for the site', decided === false, String(decided));
@@ -183,15 +184,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await app.evaluate(() => global.__pageTools.handleShortcut({ control: process.platform !== 'darwin', meta: process.platform === 'darwin', key: '=' }));
     await sleep(500);
     const host = `127.0.0.1:${server.address().port}`;
-    check('zooming in remembers the level for the site', settingsOf(profile).siteZoom?.[host] === 0.5, JSON.stringify(settingsOf(profile).siteZoom));
+    const ONE_TEN = Math.log(1.1) / Math.log(1.2); // zoom stops are Chrome's (110%); Electron's level is log base 1.2 of the factor
+    check('zooming in remembers the level for the site', Math.abs((settingsOf(profile).siteZoom?.[host] ?? 99) - ONE_TEN) < 1e-9, JSON.stringify(settingsOf(profile).siteZoom));
     menu = await info();
     check('page info shows the remembered zoom', menu.some((i) => /^Zoom: 110%/.test(i.label)), menu.map((i) => i.label).join(' | '));
     await app.close();
 
     ({ app } = await launch(profile));
     const again = await openIn(app, `${base}/zoomed-again`);
-    const level = await waitFor(() => app.evaluate((_e, id) => { const wc = global.__settings.contents(id); return wc && wc.getZoomLevel() === 0.5 ? 0.5 : null; }, again));
-    check('after a restart the site opens at that zoom', level === 0.5, String(level));
+    const level = await waitFor(() => app.evaluate((_e, { id, want }) => { const wc = global.__settings.contents(id); return wc && Math.abs(wc.getZoomLevel() - want) < 1e-9 ? 'ok' : null; }, { id: again, want: ONE_TEN }));
+    check('after a restart the site opens at that zoom', level === 'ok', String(level));
+    await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), again); // (Actual Size acts on the tab in front, as in the first half)
     await app.evaluate(() => global.__pageTools.handleShortcut({ control: process.platform !== 'darwin', meta: process.platform === 'darwin', key: '0' }));
     await sleep(500);
     check('Actual Size forgets it', !(host in (settingsOf(profile).siteZoom || {})), JSON.stringify(settingsOf(profile).siteZoom));
@@ -230,7 +233,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } finally {
     for (const res of held) res.destroy();
     server.close();
-    for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true });
+    for (const dir of profiles) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
   }
   console.log(failures ? `\n${failures} failed` : '\nall basics passed');
   process.exit(failures ? 1 : 0);
