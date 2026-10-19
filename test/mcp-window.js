@@ -240,7 +240,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.evaluate(() => window.browser.hideAiTabs(true)); // "hide the tabs the AI opened" on: it must not hide the agent's tabs
   await sleep(500);
   const strip = await (await agentUi()).evaluate(() => [...document.querySelectorAll('#tabs .tab')].map((e) => ({ ai: e.classList.contains('ai-opened') || e.dataset.ai || '', hidden: e.hidden })));
-  check('the agent\'s tabs are not marked or hidden as AI tabs', strip.length >= 2 && strip.every((t) => !t.hidden && !t.ai), JSON.stringify(strip));
+  // (#539: every tab in an outside app's own window is marked as that app's, "Opened by <app>", with the ai-opened class; "hide the tabs the AI opened" still must not hide them.)
+  check('the agent\'s tabs are marked as the app\'s (ai-opened, #539) but never hidden by "hide the tabs the AI opened"', strip.length >= 2 && strip.every((t) => !t.hidden && t.ai), JSON.stringify(strip));
   r = await A.call('read_page');
   await ui.evaluate(() => window.browser.hideAiTabs(false));
   check('the agent is unaffected by the AI\'s tab', /PAGE-A1/.test(A.text(r)), A.text(r).slice(0, 200));
