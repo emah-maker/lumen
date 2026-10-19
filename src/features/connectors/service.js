@@ -259,18 +259,31 @@ function create({
   }
 
   // ---- the AI's tool
-  const defs = () => { const d = registry.toolDef(); return d ? [d] : []; };
+  const defs = ({ readOnly = false } = {}) => { const d = registry.toolDef({ readOnly }); return d ? [d] : []; }; // readOnly: background tasks and routines
   const validate = (input) => registry.validate(input);
   const label = (input) => registry.stepLabel(input);
   const isWrite = (input) => Boolean(registry.get(input?.app)?.actions?.[input?.action]?.write);
   const hasAny = () => registry.connectedIds().length > 0;
   const connectedIds = () => registry.connectedIds();
 
-  // What the confirm card says before a write.
-  function describeWrite(input) {
+  // What the confirm card says before a write: `detail` is everything it will send, `fixed` the part the user can't change
+  // (where it goes) and `fields` the text the user can edit there (registry.editable). A provider may look up a name for
+  // the card (Notion: the page's title), which is a read; when that fails the card shows the id instead.
+  async function describeWrite(input) {
     const def = registry.get(input.app);
-    const text = provider(def.id).describeWrite?.(input.action, input.args || {});
-    return { title: `Use ${def.name}: ${def.actions[input.action].label}`, detail: text || JSON.stringify(input.args || {}, null, 2) };
+    const args = input.args || {};
+    const p = provider(def.id);
+    const entry = connected[def.id];
+    let names = {};
+    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, null), input.action, args)) || {}; } catch { names = {}; } }
+    const text = p.describeWrite?.(input.action, args, names);
+    const fields = registry.editable(input);
+    return {
+      title: `Use ${def.name}: ${def.actions[input.action].label}`,
+      detail: text || JSON.stringify(args, null, 2),
+      fixed: p.describeWhere?.(input.action, args, names) || '',
+      fields,
+    };
   }
 
   const wrap = (source, text) => {
@@ -278,7 +291,9 @@ function create({
     return `<untrusted_page_content source="${source}">\n${body.replace(/<(\/?)untrusted_page_content/gi, '‹$1untrusted_page_content')}\n</untrusted_page_content>`;
   };
 
-  async function call(input, { signal } = {}) {
+  // A write's provider answers { text, link?, done }: `done` and `link` go to onWritten (the chat's step: "Gmail · Draft created", with
+  // the link), the text to the AI. readOnly (a background task or routine) refuses a write before anything is sent.
+  async function call(input, { signal, readOnly = false, onWritten = null } = {}) {
     const problem = validate(input);
     if (problem) throw new Error(problem);
     const def = registry.get(input.app);
@@ -288,6 +303,7 @@ function create({
     const args = input.args || {};
     const key = `${def.id}:${input.action}:${JSON.stringify(args)}`;
     const write = def.actions[input.action].write === true;
+    if (write && readOnly) throw new Error(`Background tasks and routines can only read from ${def.name}. Tell the user what you would have changed.`);
     const hit = !write && cache.get(key);
     if (hit && now() - hit.at < CACHE_MS) return hit.text;
     let text;
@@ -296,6 +312,11 @@ function create({
     } catch (err) {
       if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; }
       throw err;
+    }
+    if (text && typeof text === 'object') {
+      const link = /^https:\/\//.test(String(text.link || '')) ? String(text.link) : '';
+      if (write && onWritten) { try { onWritten({ label: `${def.name} · ${flat(text.done || def.actions[input.action].label, 80)}`, link }); } catch { /* the step is extra; the result still goes back */ } }
+      text = `${text.text}${link ? `\nLink: ${link}` : ''}`;
     }
     const out = wrap(`connector:${def.id}/${input.action}`, text);
     if (write) { for (const k of [...cache.keys()]) if (k.startsWith(`${def.id}:`)) cache.delete(k); } else cache.set(key, { at: now(), text: out });

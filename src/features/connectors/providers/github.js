@@ -1,5 +1,6 @@
-// GitHub through a personal access token (read-only is enough), api.github.com only. Pull requests and issues come
-// from the search API ("@me" is the token's owner); one pull request is read from its own endpoints.
+// GitHub through a personal access token, api.github.com only. Pull requests and issues come from the search API ("@me" is the
+// token's owner); one pull request is read from its own endpoints. Two writes, each after the user allows its card: a comment on an
+// issue or pull request, and a new issue. A read-only token can't do them, and GitHub's 403 says so.
 'use strict';
 const { flat, clip, when, ConnectorError } = require('../util');
 
@@ -38,6 +39,22 @@ async function search(ctx, kind, role, state) {
   return `${items.slice(0, 20).map(row).join('\n')}${body.total_count > items.length ? `\n(${body.total_count} in all, newest ${items.length} shown)` : ''}`;
 }
 
+// A write: POST with the JSON body. A token without write access answers 403 ("Resource not accessible"), or 404 for a repository it can't see.
+async function post(ctx, path, json) {
+  const res = await ctx.http(path, { method: 'POST', json, headers: HEADERS });
+  if (res.status === 401) throw new ConnectorError('GitHub refused the token. Connect GitHub again with a new one.', 'auth');
+  if (res.status === 403 || res.status === 404) {
+    const limited = res.status === 403 && (/rate limit|secondary/i.test(res.text) || res.headers.get('x-ratelimit-remaining') === '0');
+    if (limited) throw new ConnectorError('GitHub is limiting requests right now. Try again in a minute.', 'rate');
+    throw new ConnectorError('The GitHub token can only read here. To comment or open issues, edit the token at github.com/settings/personal-access-tokens: give it this repository and Issues and Pull requests “Read and write”. Then connect GitHub again in Settings → You and AI → Connectors.', 'scope');
+  }
+  if (res.status === 410) throw new ConnectorError('Issues are turned off in that repository.', 'missing');
+  if (res.status === 422) throw new ConnectorError(`GitHub didn’t accept that: ${flat(res.text, 160)}`, 'args');
+  if (!res.ok) throw new ConnectorError(`GitHub answered ${res.status}.`);
+  try { return JSON.parse(res.text); } catch { throw new ConnectorError('GitHub sent something unexpected.'); }
+}
+const webLink = (u) => (/^https:\/\/github\.com\//.test(String(u || '')) ? String(u) : '');
+
 const actions = {
   prs: (ctx, { role = 'author', state = 'open' } = {}) => search(ctx, 'pr', role, state),
   issues: (ctx, { role = 'assigned', state = 'open' } = {}) => search(ctx, 'issue', role, state),
@@ -58,6 +75,32 @@ const actions = {
       ...list,
     ].join('\n');
   },
+
+  // Issues and pull requests share the comments endpoint.
+  async comment(ctx, { repo, number, body }) {
+    const c = await post(ctx, `/repos/${repo}/issues/${number}/comments`, { body });
+    return { text: `Commented on ${repo}#${number}.`, link: webLink(c?.html_url), done: `Commented on ${repo}#${number}` };
+  },
+
+  async create_issue(ctx, { repo, title, body }) {
+    const json = { title };
+    if (body) json.body = body;
+    const i = await post(ctx, `/repos/${repo}/issues`, json);
+    const n = Number(i?.number) || 0;
+    return { text: `Opened ${repo}#${n}: ${flat(i?.title || title, 200)}`, link: webLink(i?.html_url), done: `Opened ${repo}#${n}` };
+  },
 };
 
-module.exports = { verify, actions };
+// What the card shows: where it goes (fixed) and, in `describeWrite`, everything that will be sent.
+function describeWhere(action, args) {
+  if (action === 'comment') return `Comment on ${args.repo}#${args.number}`;
+  if (action === 'create_issue') return `New issue in ${args.repo}`;
+  return '';
+}
+function describeWrite(action, args) {
+  if (action === 'comment') return `${describeWhere(action, args)}:\n\n${args.body}`;
+  if (action === 'create_issue') return `${describeWhere(action, args)}\nTitle: ${args.title}\n\n${args.body || '(no description)'}`;
+  return '';
+}
+
+module.exports = { verify, actions, describeWrite, describeWhere };
