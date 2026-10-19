@@ -196,8 +196,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const allowWord = [{ app: key(WORDX), name: 'Microsoft Word' }];
 
   {
-    const rig = makeRig({ apps: [word], platform: 'darwin' });
-    check('not Windows: every action answers "Not available on this platform"', /Not available on this platform/.test(await rejects(() => rig.d.run({ action: 'list_apps' }, rig.ctx))) && rig.calls.length === 0);
+    const rig = makeRig({ apps: [word], platform: 'linux' });
+    check('not Windows or macOS (Linux): every action answers "Not available on this platform"', /Not available on this platform/.test(await rejects(() => rig.d.run({ action: 'list_apps' }, rig.ctx))) && rig.calls.length === 0);
   }
   {
     const rig = makeRig({ apps: [word], master: false });
@@ -237,7 +237,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     rig.setAnswer(true);
     const out = await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
     check('Once: it reads, wrapped as untrusted content, the password field left out and counted', /^<untrusted_page_content source="app: Microsoft Word">/.test(out) && /\[e2\] Edit "Name" = "Ada"/.test(out) && /1 password field left out/.test(out), out);
-    check('every helper call names the program it was approved for (pid, hosted pid, start time)', J(rig.calls.find(([c]) => c === 'tree')[1]) === J({ hwnd: 100, pid: 10, hpid: 0, start: 1010, max: 700 }), J(rig.calls.find(([c]) => c === 'tree')[1]));
+    check('every helper call names the program it was approved for (pid, hosted pid, start time) and the window title', J(rig.calls.find(([c]) => c === 'tree')[1]) === J({ hwnd: 100, pid: 10, hpid: 0, start: 1010, title: 'Report.docx - Word', max: 700 }), J(rig.calls.find(([c]) => c === 'tree')[1]));
     check('Once: remembered for this chat (the second call does not ask), by path, not saved to Settings', rig.asked.length === 2 && rig.ctx.once.has(key(WORDX)) && rig.store.allowed.length === 0);
     await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
     check('...and a later call asks nothing more', rig.asked.length === 2);
@@ -343,7 +343,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const results = [];
     for (const [label, proc, exe] of others) { const r = await readThenAct(mk(220 + results.length, 60 + results.length, proc, 'x', exe)); results.push([label, r.rig.asked.length]); }
     check('browsers, mail, chat, file managers and shell-capable apps all ask after being read: ' + others.map((o) => o[0]).join(', '), results.every(([, n]) => n === 1), J(results));
-    check('the document list is exactly Word, Excel, PowerPoint, Notepad and MATLAB', J([...policy.DOCUMENT_APPS].sort()) === '["excel","matlab","notepad","powerpnt","winword"]' && policy.isDocumentApp({ proc: 'excel', exe: 'C:\\Office\\EXCEL.EXE' }) && !policy.isDocumentApp({ proc: 'mystery', exe: 'C:\\x\\mystery.exe' }));
+    check('the document list is exactly Word, Excel, PowerPoint, Notepad and MATLAB (Windows names; the macOS names are Word, Excel, PowerPoint, TextEdit, Pages, Numbers, Keynote)', J([...policy.DOCUMENT_APPS].filter((n) => /^[a-z]+$/.test(n) && !['textedit', 'pages', 'numbers', 'keynote'].includes(n)).sort()) === '["excel","matlab","notepad","powerpnt","winword"]' && [...policy.DOCUMENT_APPS].filter((n) => !/^[a-z]+$/.test(n)).every((n) => /^(microsoft (word|excel|powerpoint)|com\.(microsoft\.(word|excel|powerpoint)|apple\.(textedit|iwork\.(pages|numbers|keynote))))$/.test(n)) && policy.isDocumentApp({ proc: 'excel', exe: 'C:\\Office\\EXCEL.EXE' }) && !policy.isDocumentApp({ proc: 'mystery', exe: 'C:\\x\\mystery.exe' }));
     const helperSrcPw = fs.readFileSync(path.join(__dirname, '..', 'src', 'desktop', 'uia-helper.ps1'), 'utf8');
     const re = new RegExp(/\$PWRE = '\(\?i\)([^']+)'/.exec(helperSrcPw)[1], 'i');
     check('password-name heuristic also covers token, API key, secret key and recovery code (and not ordinary names)', ['Access token', 'API key', 'api_key', 'Secret key', 'Recovery code', 'Password', 'PIN', 'CVV'].every((n) => re.test(n)) && ['Your name', 'Search', 'Pinterest', 'Tokenize'].every((n) => !re.test(n)));
