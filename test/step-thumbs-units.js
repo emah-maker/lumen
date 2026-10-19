@@ -86,17 +86,38 @@ function rig(opts = {}) {
     check('a failed capture is skipped quietly and tried again', sent.length === 0, String(sent.length));
     t.stop();
   }
-  // live: a probe (the page's signature) decides, so a moving page is about 3 frames a second and a still one none
+  // live: a probe (the page's signature) decides, so a moving page is about 3 frames a second and a still one none.
+  // On a fake clock: the counts are ticks, not wall-clock time (a loaded CI machine ran fewer ticks in 520 ms and failed it).
   {
+    const clock = (() => {
+      let at = 0; let seq = 0; const q = [];
+      const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+      return {
+        now: () => at,
+        setTimer: (fn, ms) => { const h = { id: ++seq, due: at + Math.max(0, Number(ms) || 0), fn, unref() {} }; q.push(h); return h; },
+        clearTimer: (h) => { const i = q.indexOf(h); if (i >= 0) q.splice(i, 1); },
+        async advance(ms) {
+          const until = at + ms;
+          for (;;) {
+            await drain();
+            q.sort((a, b) => a.due - b.due || a.id - b.id);
+            if (!q.length || q[0].due > until) break;
+            const h = q.shift(); at = h.due; h.fn();
+          }
+          at = until; await drain();
+        },
+      };
+    })();
+    const sleep = (ms) => clock.advance(ms);
     let sigN = 0;
     let moving = true;
     const sent = [];
     let n = 0;
     const flags = { visible: true, light: false };
     const t = createThumbs({
-      capture: async () => { await sleep(3); return { data: `f${++n}`, url: 'http://x/', title: 't', tabId: 1 }; },
+      capture: async () => { await Promise.resolve(); return { data: `f${++n}`, url: 'http://x/', title: 't', tabId: 1 }; },
       probe: async () => (moving ? `s${++sigN}` : 'still'),
-      send: (e) => sent.push(e), light: () => flags.light, visible: () => flags.visible, intervalMs: 50, settleMs: 10, hotMs: 100,
+      send: (e) => sent.push(e), light: () => flags.light, visible: () => flags.visible, intervalMs: 50, settleMs: 10, hotMs: 100, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
     });
     t.activity();
     await sleep(520);
