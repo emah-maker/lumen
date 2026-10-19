@@ -24,7 +24,7 @@ const branches = require('../features/chat-branches'); // [versions] per-message
 const genImages = require('../features/gen-images'); // pictures the AI made or returned: saved with the chat, shown in it
 const imageRouter = require('./image-router'); // [image routing] generate_image: any engine's picture request goes to a connected provider that makes pictures
 const annotate = require('./annotate'); // [annotate] the annotate tool: marks drawn over the page (or the PDF viewer, or a screenshot)
-const annotateRaster = require('./annotate-raster');
+const annotateRaster = { rasterize: (...args) => require('./annotate-raster').rasterize(...args) }; // (loaded with the first annotation)
 const pdfZoom = require('../features/pdf-zoom'); // viewerFrame: the PDF viewer's own frame
 const imageGrok = require('./image-grok'); // [image routing] Grok Build's own image_gen / image_edit, through the user's sign-in
 const screenContext = require('./screen-context'); // [screen context] a screenshot of the tab when the message points at what is on screen
@@ -50,7 +50,7 @@ const screenIntent = require('./screen-intent');
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const memoryLib = require('./memory'); // [memory] saved memory across chats: the system prompt's block and the memory tool
-const postAnalysis = require('./post-analysis'); // [research pack] analyze_posts: outliers vs each account's median, local math
+const postAnalysis = { run: (input) => require('./post-analysis').run(input) }; // [research pack] analyze_posts: outliers vs each account's median, local math (loaded with the first call)
 const macroPage = require('./macro-page'); // [macros] run_macro: a stored locator -> the element id click / type_text take
 const pageDebug = require('./page-debug'); // get_console, get_network, handle_dialog: capture per tab, JS dialog policy
 const idle = require('./idle-tracker'); // wait_for url / gone / network_idle

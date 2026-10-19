@@ -138,7 +138,7 @@ const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
 const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
-const planModeLib = require('./ai/plan-mode'); // [plan mode] an approved plan's sites
+const planModeLib = { approvedKeys: (plan) => require('./ai/plan-mode').approvedKeys(plan) }; // [plan mode] an approved plan's sites (loaded with the first approved plan)
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
@@ -1041,6 +1041,7 @@ function ownPageMic(wc, permission, details) {
   if (permission !== 'media') return false;
   const own = (url) => isUiUrl(url) || chatPage.isChatUrl(url);
   const isOwnView = uiContents.has(wc) ? isUiUrl(wc.getURL()) : Boolean(chatPageRt?.everyChatTab().some((t) => t.view.webContents === wc));
+  if (!isOwnView || details?.isMainFrame !== true) return false; // (the rule's own first checks: web pages and frames never load the dictation module)
   return require('./ai/dictation').ownPageMic({ permission, mediaTypes: details?.mediaTypes, requestingUrl: details?.requestingUrl, pageUrl: wc.getURL(), isMainFrame: details?.isMainFrame, isOwnView, isOwnPage: own });
 }
 
@@ -8111,9 +8112,10 @@ signedInSites.register(ipcMain);
 const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
 sharedFiles.register(ipcMain);
 // [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
-const gapLog = require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false });
-ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog.list(), report: gapLog.report() }));
-ipcMain.handle('settings:clear-ai-gaps', () => { gapLog.clear(); return { entries: [], report: '' }; });
+let gapLogRt = null; // (loaded with the first gap recorded, or Settings asking for the list)
+const gapLog = () => (gapLogRt ||= require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false }));
+ipcMain.handle('settings:ai-gaps', () => ({ entries: gapLog().list(), report: gapLog().report() }));
+ipcMain.handle('settings:clear-ai-gaps', () => { gapLog().clear(); return { entries: [], report: '' }; });
 const tabAnywhere = (id) => {
   for (const rec of winRecs) {
     const t = rcAlive(rec) ? tabsOf(rec).find((x) => x.id === id) : null;
@@ -8228,7 +8230,7 @@ const agent = new Agent({
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
-  recordGap: (info) => gapLog.record(info), // [no handoff]
+  recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
@@ -8363,7 +8365,17 @@ if (TEST) global.__bg = bgTasks;
 // [telegram] Phone (Telegram): requests from the user's own Telegram bot run as background tasks (features/telegram.js).
 // Off by default (telegramChannel); the bot token is encrypted like the API keys (keys.telegram) and never leaves this
 // process except to api.telegram.org. Tests never reach Telegram: only a stand-in (global.__telegramFetch).
-const telegram = require('./features/telegram').create({
+// Loaded only once it is needed (Phone on, or its Settings section asked): most starts never touch it (perf-budget's module count).
+let telegramRt = null;
+const telegramHandlers = {};
+const telegramNow = () => {
+  if (telegramRt) return telegramRt;
+  telegramRt = require('./features/telegram').create(telegramDeps());
+  telegramRt.register({ handle: (channel, fn) => { telegramHandlers[channel] = fn; } });
+  if (TEST) global.__telegram = telegramRt;
+  return telegramRt;
+};
+const telegramDeps = () => ({
   fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
   readSettings, writeSettings, t,
   getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !safeStorage.isEncryptionAvailable()) return null; try { return decryptKey(enc); } catch { return null; } },
@@ -8378,9 +8390,11 @@ const telegram = require('./features/telegram').create({
   isOnline: () => net.isOnline(),
   tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
 });
-telegram.register(ipcMain);
-app.on('will-quit', () => telegram.shutdown());
-if (TEST) global.__telegram = telegram;
+for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
+  ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
+}
+const telegram = { refresh: () => { if (telegramRt || readSettings().telegramChannel === true) telegramNow().refresh(); } };
+app.on('will-quit', () => telegramRt?.shutdown());
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -8538,12 +8552,12 @@ if (TEST) global.__meetingHelper = meetingHelper;
 // [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). The recording arrives once, goes to the
 // provider chosen in Settings with the user's key (the page never sees the key), and the buffer is cleared afterwards;
 // nothing is written to disk. The sidebar and the chat page may ask (UI_ONLY_IPC, chat-page.js CHAT_IPC).
-const dictationLib = require('./ai/dictation');
+const dictationLib = () => require('./ai/dictation'); // (loaded with the first use of the mic)
 function dictationState() {
   const s = readSettings();
-  const choice = dictationLib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
-  if (!choice.provider) { const m = dictationLib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
-  return { provider: choice.provider, label: dictationLib.LABELS[choice.provider], format: dictationLib.FORMATS[choice.provider], maxSeconds: dictationLib.MAX_SECONDS, maxBytes: dictationLib.MAX_BYTES, autoSend: s.dictationAutoSend === true };
+  const choice = dictationLib().choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
+  if (!choice.provider) { const m = dictationLib().unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
+  return { provider: choice.provider, label: dictationLib().LABELS[choice.provider], format: dictationLib().FORMATS[choice.provider], maxSeconds: dictationLib().MAX_SECONDS, maxBytes: dictationLib().MAX_BYTES, autoSend: s.dictationAutoSend === true };
 }
 ipcMain.handle('dictation:status', () => dictationState());
 ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
@@ -8553,7 +8567,7 @@ ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
   if (format !== state.format) return { error: t('dictation.error.changed') }; // the setting changed while recording
   const audio = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   try {
-    const res = await dictationLib.transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
+    const res = await dictationLib().transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
     return res.error ? { error: t(res.error.key, res.error.params), settings: res.error.key === 'dictation.error.key' } : { text: res.text, autoSend: state.autoSend };
   } finally {
     audio.fill(0); // (the only copy in this process)
