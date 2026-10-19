@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Fixed: the Browser card showed only the top-left corner of the page.** While the AI worked in a tab behind the one you were looking at, the live preview took just the left 800 pixels of the page and stretched them across the card, so a wide page (Todoist, Canvas) showed its sidebar and a sliver of the rest. The preview now shows the whole width of the page.
+
 ## 0.5.53 (2026-10-18)
 
 - **The AI can remember things about you between chats (off by default).** Turn on Settings → AI and agents → **Memory** (`aiMemory`) and tell the AI something about yourself or "remember that …": it saves a short note, shown in the chat as **Remembered: …** with **Undo** and **Forget**, and every later chat starts with your notes in its instructions (all engines read them; the API models can save, update and search them). It only saves what you said, never text from a page; once the chat holds outside content (the page text sent with your message, a page, file, email, app or past chat it read), a save asks on a card first that Bypass doesn't answer. If the notes can't be read on this computer, Settings offers **Start over** (the file is kept as `memory.json.bad`). Passwords, codes, card numbers and keys are refused. Up to 200 notes, about 8,000 characters per chat; never in temporary chats, private windows or background tasks. **Search past chats** (`aiMemoryChatSearch`, on with Memory) lets it find an earlier conversation by its words. See and edit the notes in Settings, or type `/memory`. Encrypted on your computer like your chats. See [Memory](docs/memory.md). Tests: `test/memory-units.js`.
