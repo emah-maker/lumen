@@ -617,6 +617,11 @@ contextBridge.exposeInMainWorld('assistant', {
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
 
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
+
   research: {
     get: () => ipcRenderer.invoke('research:get'),
     addPage: () => ipcRenderer.invoke('research:add-page'),
