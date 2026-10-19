@@ -16,8 +16,8 @@ const head = html.slice(html.indexOf('<div class="sidebar-actions">'), html.inde
 const menu = head.slice(head.indexOf('id="more-menu"'));
 const bar = head.slice(0, head.indexOf('id="more-menu"'));
 check('the header keeps four buttons: permissions bolt, chat history, new chat, More', ['auto-allow', 'chat-history', 'new-chat', 'more-actions'].every((id) => bar.includes(`id="${id}"`)) && (bar.match(/<button /g) || []).length === 4, (bar.match(/<button /g) || []).length);
-check('Helpers, Background tasks, the Research board and Meeting helper are labelled rows of the More menu, not bare icons in the header', ['helpers-btn', 'tasks-btn', 'research-btn', 'meeting-btn'].every((id) => menu.includes(`id="${id}"`) && !bar.includes(`id="${id}"`)));
-check('each of those rows has a real text label', (menu.match(/class="menu-label"/g) || []).length === 4);
+check('Helpers, Background tasks, AI activity, the Research board and Meeting helper are labelled rows of the More menu, not bare icons in the header', ['helpers-btn', 'tasks-btn', 'mission-btn', 'research-btn', 'meeting-btn'].every((id) => menu.includes(`id="${id}"`) && !bar.includes(`id="${id}"`)));
+check('each of those rows has a real text label', (menu.match(/class="menu-label"/g) || []).length === 5);
 check('Helpers is a checkbox row with a visible On/Off state', /id="helpers-btn"[^>]*role="menuitemcheckbox"|role="menuitemcheckbox"[^>]*id="helpers-btn"/.test(menu) && /id="helpers-state"/.test(menu) && /aria-checked/.test(core) && /sidebar\.state\.on/.test(core) && en['sidebar.state.on'] === 'On' && en['sidebar.state.off'] === 'Off');
 check('the bolt names its level beside it (Auto / Bypass) and its accessible name says the level', /perm-state/.test(core) && /sidebar\.perm\.label/.test(core) && en['sidebar.perm.short.auto'] === 'Auto' && en['sidebar.perm.short.bypass'] === 'Bypass' && /Permissions: \{mode\}/.test(en['sidebar.perm.label']));
 check('the clock button says "Chat history" in the markup too', /id="chat-history" title="Chat history" aria-label="Chat history"/.test(head));

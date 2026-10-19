@@ -1,9 +1,9 @@
-// The Bookmarks and Downloads pages' bridge (features/managers.js). Only a tab opened as one of
+// The Bookmarks and Downloads pages' bridge (features/managers.js), and lumen://tasks's (renderer/mission.html; main.js answers it). Only a tab opened as one of
 // those pages gets this preload, and only that page's own document sees the API; main checks the
 // sender again before answering.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const page = location.protocol === 'file:' ? (/\/renderer\/(bookmarks|downloads)\.html$/.exec(location.pathname) || [])[1] : null;
+const page = location.protocol === 'file:' ? (/\/renderer\/(bookmarks|downloads|mission)\.html$/.exec(location.pathname) || [])[1] : null;
 const onChange = (channel) => (fn) => { if (typeof fn === 'function') ipcRenderer.on(channel, () => fn()); };
 
 if (page) contextBridge.exposeInMainWorld('lumenI18n', ipcRenderer.sendSync('pages:strings') || { locale: 'en', strings: {} }); // renderer/i18n.js
@@ -25,5 +25,13 @@ if (page === 'bookmarks') {
     act: (id, action) => ipcRenderer.invoke('downloads:act', id, action),
     openFolder: () => ipcRenderer.invoke('downloads:folder'),
     onChange: onChange('downloads:changed'),
+  });
+} else if (page === 'mission') {
+  // lumen://tasks: what the AI is doing (features/mission-control.js). act() takes { op, kind, id, approvalId, choice, on }:
+  // answer a card, Stop, Go to, or a routine on / off, through the same paths as the sidebar and the Tasks panel.
+  contextBridge.exposeInMainWorld('lumenMission', {
+    state: () => ipcRenderer.invoke('mission:state'),
+    act: (req) => ipcRenderer.invoke('mission:act', req),
+    onChange: onChange('mission:changed'),
   });
 }

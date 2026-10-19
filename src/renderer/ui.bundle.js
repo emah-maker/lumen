@@ -3714,6 +3714,8 @@ $('model').addEventListener('change', async (e) => {
   for (const item of menu.querySelectorAll('.menu-item')) item.removeAttribute('title');
   const full = optional('open-chat-page');
   if (full) full.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘L' : t('shortcut.ctrlShiftL');
+  const mission = optional('mission-btn');
+  if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '⇧⌘Y' : t('shortcut.ctrlShiftY');
 })();
 
 
@@ -7788,6 +7790,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  tasks: '<rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1"/><rect x="9" y="9" width="4.5" height="4.5" rx="1"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
@@ -10711,6 +10714,7 @@ chatHost.identity = (who, first) => {
 
 
 $('open-chat-page').onclick = () => window.assistant.openFullPage();
+$('mission-btn').onclick = () => window.assistant.tasks?.openFull?.();
 window.assistant.onSidebar?.((visible) => {
 
   if (($('toggle-sidebar').getAttribute('aria-pressed') === 'true') !== Boolean(visible)) showSidebar(Boolean(visible));
@@ -11071,6 +11075,7 @@ $('agent-stop')?.addEventListener('click', () => {
   const btn = (text, onclick, cls = 'btn') => h('button', { type: 'button', className: cls, textContent: text, onclick });
   const iconBtn = (svg, label, onclick, cls = 'icon-btn') => { const b = h('button', { type: 'button', className: cls, title: label, onclick }); b.setAttribute('aria-label', label); b.innerHTML = svg; return b; };
   const CLOSE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+  const FULL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>';
   const BACK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg>';
 
   const clock = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -11208,7 +11213,9 @@ $('agent-stop')?.addEventListener('click', () => {
 
   function head(title, left) {
     const close = iconBtn(CLOSE, T('tasks.close'), () => closePanel(true), 'icon-btn task-close');
-    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), close);
+
+    const full = left ? null : iconBtn(FULL, T('mission.openFull'), () => { closePanel(false); api.openFull?.(); }, 'icon-btn task-full');
+    return h('div', { className: 'chat-list-head task-head' }, left || null, h('h2', { textContent: title }), full, close);
   }
 
   function renderList() {

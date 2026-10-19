@@ -119,6 +119,10 @@ function create(deps) {
       templates: routines.TEMPLATES, connected: connectedIds(),
     };
   }
+  // lumen://tasks (features/mission-control.js): every task's summary, with its run history.
+  function overview() {
+    return state().tasks.map((x) => ({ ...x, runs: find(x.id)?.runs || [] }));
+  }
   function broadcast() {
     if (broadcastTimer) return;
     broadcastTimer = setTimeout(() => {
@@ -918,7 +922,7 @@ function create(deps) {
   }
 
   return {
-    init, shutdown, register, propose, menuItems, state, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
+    init, shutdown, register, propose, menuItems, state, overview, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
     // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
     routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },

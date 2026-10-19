@@ -20,6 +20,7 @@ const PAGES = {
   'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
+  'mission-control': { title: 'AI activity', file: 'docs/mission-control.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },
   'ai-document-tool': { title: 'The AI and Google Docs', file: 'docs/ai-document-tool.md' },
   'ai-content-guard': { title: 'The AI and your content', file: 'docs/ai-content-guard.md' },
