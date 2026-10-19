@@ -161,6 +161,12 @@ const J = (v) => JSON.stringify(v);
         const st3 = {}; const t3 = Date.now();
         const r3 = await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 300 }) }], { tmpRoot, spawn: hang, timeoutMs: 700, stats: st3 });
         check('win32: a process that hangs is killed at the time limit and the picture falls back', r3.size === 0 && Date.now() - t3 < 5000, J([st3, Date.now() - t3]));
+        // a slow PowerShell start (nothing logged yet) has its own allowance, longer than the limit that applies once the script runs
+        const slow = (ms) => (file, args, o) => require('../src/ai/cli-utils').spawn(process.execPath, ['-e', 'setTimeout(() => { require("fs").appendFileSync(process.argv[1], "start"); setTimeout(() => process.exit(0), 200); }, ' + ms + ')', args[args.length - 1]], o);
+        const st6 = {}; await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 320 }) }], { tmpRoot, spawn: slow(1500), timeoutMs: 700, startMs: 6000, stats: st6 });
+        check('a start slower than the running limit is waited for (startup allowance), and then it ends on its own', st6.timedOut === undefined && st6.exit === 0 && /start/.test(st6.log), J(st6));
+        const st7 = {}; await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 330 }) }], { tmpRoot, spawn: slow(5000), timeoutMs: 700, startMs: 800, stats: st7 });
+        check('a start that takes longer than the startup allowance is cut off as a start timeout', st7.timedOut === 'start', J(st7));
         const r4 = await G.convertMetafiles([{ id: 'plus', bytes: F.emfPlus({ w: 310 }) }], { tmpRoot, powershell: pathx.join(tmpRoot, 'no-such-powershell.exe') });
         check('win32: no PowerShell at all: the picture falls back, no throw', r4.size === 0, '');
         await new Promise((r) => setTimeout(r, 300));
