@@ -191,7 +191,8 @@ const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).
 const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings > Tabs > Page unloading: When you return to one)
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
-const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL) || url.startsWith(SAFE_BROWSING_URL);
+const FOCUS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'focus-block.html')).href; // the page a blocked site shows (features/focus.js)
+const isErrorPage = (url) => url.startsWith(ERROR_URL) || url.startsWith(CERT_URL) || url.startsWith(SAFE_BROWSING_URL) || url.startsWith(FOCUS_URL);
 // The browser UI's own document and its privileged preload (see the IPC gate and hardenUiView below).
 const UI_HTML = path.join(__dirname, 'renderer', 'index.html');
 const UI_URL = pathToFileURL(UI_HTML).href;
@@ -271,6 +272,7 @@ const UI_ONLY_IPC = new Set([
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
+  'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
@@ -884,6 +886,75 @@ const safeBrowsing = createSafeBrowsing({
 });
 if (TEST) global.__safeBrowsing = safeBrowsing;
 
+// Focus mode (features/focus.js): sites on the user's list are blocked while a session is on. The main-frame gate asks it first, then Safe
+// Browsing. The module loads only once focus is used (a started session, a schedule, the toolbar button's menu): nothing at start-up.
+let focusCtl = null;
+function focusFeature() {
+  return focusCtl ||= require('./features/focus').create({
+    dir: app.getPath('userData'),
+    readSettings,
+    pageUrl: FOCUS_URL,
+    isTab: (wc) => Boolean(tabByContents(wc)) || privateWindows.ownsTab(wc), // (a private window's tabs too)
+    tabContents: () => tabs.filter((tab) => alive(tab) && !tab.settings).map((tab) => tab.view.webContents),
+    broadcast: (state) => { for (const wc of new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents)])) if (wc && !wc.isDestroyed()) wc.send('focus:changed', state); },
+  });
+}
+const FOCUS_IDLE = { active: false, source: null, start: 0, until: 0, remainingMs: 0, allows: [], next: null };
+const focusIsOn = () => Boolean(focusCtl) && focusCtl.state().active;
+// Start-up: a started session that is still running, or a schedule, needs the gate from the first page on.
+function startFocus() {
+  try {
+    const s = readSettings();
+    if ((Array.isArray(s.focusSchedules) && s.focusSchedules.some((x) => x && x.on !== false)) || fs.existsSync(path.join(app.getPath('userData'), 'focus-session.json'))) focusFeature();
+  } catch { /* focus mode is not worth a failed start */ }
+}
+// Settings: a schedule or the site list changed.
+function onFocusSettings() {
+  const s = readSettings();
+  if (focusCtl || (Array.isArray(s.focusSchedules) && s.focusSchedules.some((x) => x && x.on !== false))) focusFeature().settingsChanged();
+}
+// session.webRequest.onBeforeRequest for pages: Focus mode first, then Safe Browsing.
+function mainFrameGate(details, callback) {
+  if (focusCtl && focusCtl.gate(details, callback)) return;
+  safeBrowsing.gate(details, callback);
+}
+// The toolbar button's menu (renderer/focus.js): durations to start, or the time left and how to end it.
+ipcMain.handle('focus:state', () => (focusCtl ? focusCtl.state() : FOCUS_IDLE));
+ipcMain.handle('focus:start', (_e, minutes) => focusFeature().start(minutes));
+ipcMain.on('focus:menu', (_e, point) => {
+  const ctl = focusFeature();
+  const at = { x: Math.round(Number(point?.x) || 0), y: Math.round(Number(point?.y) || 0) };
+  Menu.buildFromTemplate(ctl.menuTemplate({ t, openStatus: () => openTab(ctl.statusUrl()), openSettings: () => openSettingsPage('focus') })).popup({ window: win, ...at });
+});
+// The block page (renderer/focus-block.html; its bridge is preload/error-preload.js): only a tab's own top frame showing that page may ask,
+// and the site is the one in the page's own address.
+const focusPageOf = (event) => (event.senderFrame === event.sender.mainFrame && String(event.senderFrame?.url).startsWith(FOCUS_URL)
+  && (Boolean(tabByContents(event.sender)) || privateWindows.ownsTab(event.sender)) ? event.senderFrame.url : '');
+ipcMain.handle('focus-page:state', (event) => (focusPageOf(event) ? (focusCtl ? focusCtl.state() : FOCUS_IDLE) : null));
+ipcMain.handle('focus-page:allow', (event) => {
+  const page = focusPageOf(event);
+  if (!page || !focusCtl) return { ok: false };
+  let target = '';
+  try { target = new URL(page).searchParams.get('url') || ''; } catch { /* no address */ }
+  return focusCtl.allow(target);
+});
+ipcMain.handle('focus-page:hold', (event, on) => {
+  if (!focusPageOf(event) || !focusCtl) return null;
+  if (on) return focusCtl.endBegin();
+  focusCtl.endCancel();
+  return null;
+});
+ipcMain.handle('focus-page:end', (event) => (focusPageOf(event) && focusCtl ? focusCtl.endConfirm() : { ok: false }));
+ipcMain.on('focus-page:settings', (event) => { if (focusPageOf(event)) openSettingsPage('focus'); });
+// Settings → General → Focus mode.
+ipcMain.handle('settings:focus', () => {
+  const ctl = focusFeature();
+  return { state: ctl.state(), log: ctl.log().slice(-30).reverse() };
+});
+ipcMain.handle('settings:focus-start', (_e, minutes) => focusFeature().start(minutes));
+ipcMain.handle('settings:focus-phrase', (_e, text) => require('./features/focus').parseSchedulePhrase(text));
+if (TEST) global.__focus = { ctl: () => focusFeature(), idle: () => !focusCtl };
+
 // HTTP Basic/Digest auth: a styled sign-in sheet instead of the native prompt.
 app.on('login', (event, webContents, details, authInfo, callback) => {
   event.preventDefault();
@@ -1280,7 +1351,7 @@ const adblock = createAdblock({
   activeContents: () => activeTab()?.webContents,
   realUrl: (wc) => realUrl(wc),
   onResponseHeaders: (details) => settingsBackend.noteResponseHeaders(details),
-  mainFrameGate: (details, callback) => safeBrowsing.gate(details, callback), // pages, before they load
+  mainFrameGate: (details, callback) => mainFrameGate(details, callback), // pages, before they load (Focus mode, then Safe Browsing)
 });
 
 // ---------- private windows (features/private-window.js) ----------
@@ -1300,7 +1371,7 @@ const privateWindows = createPrivateWindows({
   // sends pages to the same gate), the ad blocker's filters, readable dropdowns, and the profile's proxy,
   // Do Not Track / Global Privacy Control, languages and Chrome hints.
   prepareSession: (ses) => {
-    ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
+    ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
     pdfViewer.attachSession(ses, pdfHandler);
     ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
     ses.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') });
@@ -2163,7 +2234,7 @@ function researchSession() {
   ses.setPermissionCheckHandler(() => false);
   ses.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
   pdfViewer.attachSession(ses, pdfHandler);
-  ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback)); // Safe Browsing (the ad blocker sends pages to the same gate)
+  ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback)); // Focus mode and Safe Browsing (the ad blocker sends pages to the same gate)
   // Lumen's own alert/confirm dialogs and readable dropdowns, as in normal tabs.
   ses.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
   ses.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
@@ -5077,6 +5148,8 @@ function tabFailPage(wc) {
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     if (failedUrl.startsWith(ERROR_URL)) return; // the error page itself failed: an error page for it would fail the same way, over and over
+    const focusBlock = focusCtl?.blockPage(wc, failedUrl, code); // [focus] a site on the focus list
+    if (focusBlock) { wc.loadURL(focusBlock).catch(() => {}); return; }
     const unsafe = safeBrowsing.warningUrl(wc, failedUrl, code); // a page Google lists as unsafe
     if (unsafe) { wc.loadURL(unsafe).catch(() => {}); return; }
     if (settingsBackend.onFailLoad(wc, failedUrl)) return; // [settings] HTTPS-only: no secure version
@@ -9316,6 +9389,8 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  onFocusChange: () => onFocusSettings(), // [focus] a schedule or the site list changed
+  focusLocked: () => focusIsOn(), // [focus] ...and while a session is on they can't be edited
   onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
@@ -11692,8 +11767,9 @@ app.whenReady().then(async () => {
   loadHistory();
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
-  session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => safeBrowsing.gate(details, callback));
+  session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
   safeBrowsing.refresh().catch(() => {});
+  startFocus(); // [focus] a session still running, or a schedule: the gate is up before the first page loads
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would
   // otherwise load unfiltered, and without the document-start scriptlets). The first run's download
   // doesn't hold up the window. They load while the extensions start (the two don't depend on each other).
