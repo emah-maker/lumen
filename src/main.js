@@ -8359,6 +8359,27 @@ const bgTasks = require('./features/background-runner').create({
 bgTasks.register(ipcMain);
 app.on('will-quit', () => bgTasks.shutdown());
 if (TEST) global.__bg = bgTasks;
+// [telegram] Phone (Telegram): requests from the user's own Telegram bot run as background tasks (features/telegram.js).
+// Off by default (telegramChannel); the bot token is encrypted like the API keys (keys.telegram) and never leaves this
+// process except to api.telegram.org. Tests never reach Telegram: only a stand-in (global.__telegramFetch).
+const telegram = require('./features/telegram').create({
+  fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
+  readSettings, writeSettings, t,
+  getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !safeStorage.isEncryptionAvailable()) return null; try { return decryptKey(enc); } catch { return null; } },
+  setToken: (token) => {
+    const settings = readSettings();
+    const keys = { ...(settings.keys || {}) };
+    if (token) keys.telegram = safeStorage.encryptString(String(token)).toString('base64');
+    else delete keys.telegram;
+    writeSettings({ ...settings, keys });
+  },
+  canEncrypt: () => safeStorage.isEncryptionAvailable(),
+  isOnline: () => net.isOnline(),
+  tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
+});
+telegram.register(ipcMain);
+app.on('will-quit', () => telegram.shutdown());
+if (TEST) global.__telegram = telegram;
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -9008,6 +9029,7 @@ const settingsBackend = settingsPage.create({
   isSettingsSender,
   onSearchEngineReset: () => ui()?.send('search-engine', engineFor(DEFAULT_ENGINE)),
   onSafeBrowsingChange: () => { safeBrowsing.refresh().catch(() => {}); },
+  onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
@@ -11302,6 +11324,7 @@ app.whenReady().then(async () => {
   downloads.load(); // the list from last time (downloads.json)
   usage.load(); // [usage] the log from earlier sessions (usage.json)
   bgTasks.init(); // background tasks: restore them and start the scheduler
+  telegram.refresh(); // [telegram] listen to the user's bot, when Phone (Telegram) is on and a token is saved
   downloads.setup();
   siteActivity.watch(session.defaultSession);
   loadChat();

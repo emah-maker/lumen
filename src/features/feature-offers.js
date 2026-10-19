@@ -15,6 +15,8 @@
 const OFFERS = [
   // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   { key: 'aiDeviceAccess', value: true, title: 'settings.ai.deviceAccess', detail: 'settings.ai.deviceAccessDesc', where: 'Settings > AI' },
+  // [telegram] features/telegram.js: requests from the user's own Telegram bot (it still needs a token and pairing in Settings)
+  { key: 'telegramChannel', value: true, title: 'settings.telegram.channel', detail: 'settings.telegram.channelDesc', where: 'Settings > AI and agents > Phone (Telegram)' },
   // [memory] ai/memory.js: the sidebar AI keeps short notes about you between chats
   { key: 'aiMemory', value: true, title: 'settings.ai.memory', detail: 'settings.ai.memoryDesc', where: 'Settings > AI and agents > Memory' },
 ];
