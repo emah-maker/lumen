@@ -31,7 +31,7 @@ const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
 const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
-const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.src.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css', 'eml.html': 'tokens.css' };
+const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.src.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'readinglist.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css', 'eml.html': 'tokens.css' };
 const SCALE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24]); // tiny hairline radii, the scale, and the two large ones for tiles
 // A line that only defines a custom property, or draws one of the decorative palettes.
 const DECORATIVE = /^\s*(\.(bg|wi|ic|accent|swatch)[\w-]*[\s,{.:]|\.effect-options)/;
