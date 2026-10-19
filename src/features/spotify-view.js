@@ -146,6 +146,20 @@ function scopeError(status, text) {
   return /scope/i.test(errorCode(text).message) || /insufficient/i.test(String(text || '').slice(0, 400));
 }
 
+// Why a call for a list's songs failed, as the card words it: 'scope' (the account never agreed to the permission, or Spotify refused the sign-in), 'forbidden' (any other 403:
+// since February 2026 Spotify gives apps the songs of a playlist only when the account owns it or collaborates on it, and answers 403 for the rest), 'missing' (404), 'rate' (429),
+// 'big' (the answer was cut), 'offline' (no answer at all), else 'page' (Spotify answered something the card cannot use).
+function failureWhy(res) {
+  if (!res || res.ok) return '';
+  if (scopeError(res.status, res.body) || res.status === 401) return 'scope';
+  if (res.error && res.error.why === 'big') return 'big';
+  if (res.status === 403) return 'forbidden';
+  if (res.status === 404) return 'missing';
+  if (res.status === 429 || (res.error && res.error.waitMs > 0)) return 'rate';
+  if (!res.status) return 'offline';
+  return 'page';
+}
+
 // ---- the picture ----
 // Only Spotify's own image hosts (i.scdn.co, mosaic.scdn.co, image-cdn-*.spotifycdn.com), over https.
 function isImageUrl(u) {
@@ -426,7 +440,9 @@ function normalizeTrackPage(kind, text, offset = 0, cover = null) {
     const it = listItem(kind === 'album' && o ? { ...o, album: { name: '', images: cover || [] } } : o, 'track');
     if (it) items.push({ ...it, pos: offset + i });
   });
-  return { total: Number.isInteger(b?.total) ? b.total : offset + entries.length, raw: entries.length, items };
+  // `bad`: the answer is not a list of songs (not JSON, or no `items` list: Spotify leaves it out of a playlist it will not share), or it says there are songs but sends none at the start.
+  const bad = !b || !Array.isArray(b.items) || (offset === 0 && !entries.length && Number.isInteger(b.total) && b.total > 0);
+  return { total: Number.isInteger(b?.total) ? b.total : offset + entries.length, raw: entries.length, items, bad };
 }
 // GET /artists/{id}/albums -> the albums and singles
 const normalizeArtistAlbums = (text) => (Array.isArray(parse(text)?.items) ? parse(text).items : []).map((o) => listItem(o, 'album')).filter(Boolean).slice(0, 50);
@@ -532,7 +548,8 @@ const PLAYER = {
   // A playlist's or album's songs (the card's playlist tabs). Playlist: /items (the Feb 2026 name; `tracks` is gone for apps in development mode).
   listing: (kind, id) => (kind === 'album' ? ['GET', `/albums/${id}?market=from_token`] : kind === 'playlist' ? ['GET', `/playlists/${id}/items?limit=${MAX_LIST}&market=from_token&additional_types=track`] : null),
   // Start a playlist or album (from its `pos`th entry when given).
-  playContext: (kind, id, pos) => ['PUT', '/me/player/play', { context_uri: `spotify:${kind}:${id}`, ...(Number.isInteger(pos) && pos >= 0 && pos < 10000 ? { offset: { position: pos } } : {}) }],
+  // `song`: a song id, to start at that song instead of a place (for a list read from the player's page, whose places may not be Spotify's)
+  playContext: (kind, id, pos, song) => ['PUT', '/me/player/play', { context_uri: `spotify:${kind}:${id}`, ...(typeof song === 'string' && SAFE_ID.test(song) ? { offset: { uri: `spotify:track:${song}` } } : Number.isInteger(pos) && pos >= 0 && pos < 10000 ? { offset: { position: pos } } : {}) }],
   shuffle: (on) => ['PUT', `/me/player/shuffle?state=${on ? 'true' : 'false'}`],
   repeat: (mode) => ['PUT', `/me/player/repeat?state=${mode === 'all' ? 'context' : mode === 'one' ? 'track' : 'off'}`],
   volume: (percent) => ['PUT', `/me/player/volume?volume_percent=${Math.max(0, Math.min(100, Math.round(percent)))}`],
@@ -553,7 +570,7 @@ function parseSaved(text) {
 
 module.exports = {
   REDIRECT_PORT, REDIRECT_URI, SCOPES, BASE_SCOPES, LIBRARY_SCOPES,
-  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS, normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId,
+  normalizeRecTracks, normalizeRelated, normalizeArtistTopTracks, normalizeArtistReleases, normalizeSearchSongs, normalizeSearchArtists, parseSavedMany, scopeError, failureWhy, switches, thumbUrls, tileUrls, listItem, HOME_MAX, normalizeRecentTiles, normalizeRecentAlbums, recentContexts, normalizeTopArtists, normalizeTopTracks, normalizeNewReleases, tilePlaylists, tileAlbums, tileFollowing, madeForYou, MADE_RE, normalizeQueue, normalizePlaylists, normalizeAlbums, normalizeFollowing, nextPath, normalizeLiked, normalizeRecent, normalizeDevices, normalizeSearch, normalizeContext, normalizeListing, cleanPins, applyPin, MAX_PINS, PIN_KINDS, PLAYER, PLAYABLE_KINDS, parseSaved, SAFE_ID, DEVICE_ID_RE, MAX_ART_BYTES, ACTIONS, normalizeTrackPage, normalizeArtistAlbums, normalizeArtistTop, totalOf, normalizeMeId,
   BUILTIN_SPOTIFY_CLIENT_ID, cleanClientId, pickClientId, effectiveClientId, clientIdSource, cleanConfig, pkce, authorizeUrl, tokenForm, parseToken, tokenError, playerError,
   isAllowlistError, ALLOWLIST_MESSAGE, isImageUrl, imageUrls, dataUrl, normalizePlayback, progressNow, actionRequest, noActiveDevice, pickDevice, deviceRequest,
 };
