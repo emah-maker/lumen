@@ -4548,7 +4548,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
 
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -4658,6 +4658,7 @@ const TOOL_LABELS = {
   propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
+  parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
 };
 
@@ -4909,6 +4910,9 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'helper_card':
+      showHelperCard(event);
+      break;
     case 'plan': {
       settleThinking();
       finishReply(turn.text, turn.textSource);
@@ -4921,8 +4925,8 @@ window.assistant.onEvent((event) => {
     }
     case 'approval':
       chatHost.needSidebar?.();
-      announce(event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel });
+      announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -5414,7 +5418,60 @@ const approvals = new Map();
 
 
 
-function showApproval(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
+function showApproval(approvalId, host, opts = {}) {
+  showApprovalCard(approvalId, host, opts);
+  if (opts.helper) markHelperApproval(approvalId, opts.helper);
+}
+
+
+function markHelperApproval(approvalId, n) {
+  const card = approvals.get(approvalId)?.card;
+  const title = card?.querySelector('.approval-title');
+  if (!title) return;
+  const tag = t('approval.helper', { n });
+  title.textContent = `${tag} ${title.textContent}`;
+  card.setAttribute('aria-label', `${tag} ${card.getAttribute('aria-label') || title.textContent}`);
+  card.dataset.helper = String(n);
+}
+
+
+
+
+const helperCards = new Map();
+function showHelperCard(e) {
+  let card = helperCards.get(e.key);
+  if (!card || !card.isConnected) {
+    card = Object.assign(document.createElement('div'), { className: 'helper-card' });
+    card.setAttribute('role', 'group');
+    const head = Object.assign(document.createElement('div'), { className: 'helper-card-head' });
+    const name = Object.assign(document.createElement('span'), { className: 'helper-card-name', textContent: t('helper.name', { n: e.n }) });
+    const state = Object.assign(document.createElement('span'), { className: 'helper-card-state' });
+    head.append(name, state);
+    const task = Object.assign(document.createElement('p'), { className: 'helper-card-task', textContent: e.task || '' });
+    const step = Object.assign(document.createElement('p'), { className: 'helper-card-step' });
+    const actions = Object.assign(document.createElement('div'), { className: 'helper-card-actions' });
+    const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'helper-card-tab', textContent: t('helper.tab'), hidden: true });
+    chip.title = t('helper.tabTitle');
+    chip.onclick = () => { const id = Number(card.dataset.tab); if (Number.isInteger(id)) window.browser?.switchTab?.(id); };
+    if (!window.browser?.switchTab) chip.disabled = true;
+    const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'btn helper-card-stop', textContent: t('helper.stop') });
+    stop.onclick = () => { stop.disabled = true; window.assistant.stopHelper?.(e.key); };
+    actions.append(chip, stop);
+    card.append(head, task, step, actions);
+    appendToTurn(card);
+    helperCards.set(e.key, card);
+  }
+  const ended = ['done', 'timeout', 'failed', 'stopped'].includes(e.status);
+  const label = t(`helper.status.${ended ? e.status : 'working'}`);
+  card.querySelector('.helper-card-state').textContent = label;
+  card.querySelector('.helper-card-step').textContent = ended ? '' : e.step || '';
+  card.setAttribute('aria-label', `${t('helper.name', { n: e.n })}: ${label}`);
+  card.classList.toggle('ended', ended);
+  if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.querySelector('.helper-card-tab').hidden = false; }
+  if (ended) card.querySelector('.helper-card-stop').hidden = true;
+}
+
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields });
