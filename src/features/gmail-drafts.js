@@ -1,8 +1,8 @@
 // [connectors] Gmail drafts: the email the AI's Gmail connector puts in the user's Drafts (create_draft), built here as an
 // RFC 5322 message for Gmail's drafts.create. Pure: no network and no Electron. Loaded only when a draft is made.
 //
-// Lumen makes drafts and never sends. Google's gmail.compose permission would allow sending, so the one request that
-// leaves Lumen with it is checked by composePath(): only POST /users/me/drafts, and never a path with a "send" part.
+// Drafts never send. Google's gmail.compose permission would allow sending, so the draft request is checked by composePath():
+// only POST /users/me/drafts, and never a path with a "send" part. Sending is a separate, opt-in feature (gmail-send.js).
 //
 //   parseAddresses(text)        "a@x.org, Ada <b@y.org>" -> [{ name, address }] (throws a message for a bad one)
 //   encodeWords(text)           a header value: plain ASCII as it is, anything else as RFC 2047 encoded words
@@ -91,15 +91,17 @@ function bodyLines(text) {
   return b.toString('base64').replace(/.{76}(?=.)/g, '$&\r\n');
 }
 
-function buildMessage({ to, cc = '', subject, body, inReplyTo = '', references = '' }) {
+function buildMessage({ to, cc = '', bcc = '', subject, body, inReplyTo = '', references = '' }) {
   const toList = parseAddresses(to, 'To');
   if (!toList.length) refuse('A draft needs at least one address in To.');
   const ccList = parseAddresses(cc, 'Cc');
+  const bccList = parseAddresses(bcc, 'Bcc');
   const subj = oneLine(subject, 'The subject').trim();
   if (subj.length > 250) refuse('The subject is too long.');
   if (typeof body !== 'string') refuse('The draft has no text.');
   const headers = [`To: ${addressHeader(toList)}`];
   if (ccList.length) headers.push(`Cc: ${addressHeader(ccList)}`);
+  if (bccList.length) headers.push(`Bcc: ${addressHeader(bccList)}`); // (only a send passes one; Gmail takes it off the delivered copy)
   headers.push(`Subject: ${encodeWords(subj)}`);
   if (inReplyTo) {
     const r = replyHeaders(inReplyTo, references);
