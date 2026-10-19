@@ -544,8 +544,51 @@
   }
 
   function render(source) {
-    const { text, maths } = liftMath(String(source ?? ''));
+    const { text, maths } = liftMath(liftRawSvg(String(source ?? '')));
     return dropMath(renderText(text, maths), maths);
+  }
+
+
+
+
+  const svgScan = (line, depth) => {
+    const tok = /<svg\s+[\w:-]+\s*=|<\/svg\s*>/gi;
+    let open = -1;
+    let close = -1;
+    let m;
+    while ((m = tok.exec(line))) {
+      if (m[0][1] === '/') { if (depth > 0 && --depth === 0) { close = m.index + m[0].length; break; } continue; }
+      if (depth > 0) { depth++; continue; }
+      const before = line.slice(0, m.index);
+      if ((before.split('`').length - 1) % 2 === 0 && (!before.trim() || /<\/svg\s*>/i.test(line.slice(m.index)))) { depth = 1; open = m.index; }
+    }
+    return { depth, open, close };
+  };
+  function liftRawSvg(source) {
+    if (!/<svg\s/i.test(source)) return source;
+    const out = [];
+    let fenced = false;
+    let depth = 0;
+    for (const line of source.split('\n')) {
+      if (depth === 0 && /^```/.test(line)) { fenced = !fenced; out.push(line); continue; }
+      if (fenced) { out.push(line); continue; }
+      let rest = line;
+      for (;;) {
+        const r = svgScan(rest, depth);
+        if (depth === 0) {
+          if (r.open === -1) { out.push(rest); break; }
+          const before = rest.slice(0, r.open);
+          if (before.trim()) out.push(before);
+          out.push('```svg', r.close === -1 ? rest.slice(r.open) : rest.slice(r.open, r.close));
+        } else out.push(r.close === -1 ? rest : rest.slice(0, r.close));
+        depth = r.depth;
+        if (r.close === -1) break;
+        out.push('```');
+        rest = rest.slice(r.close);
+        if (!rest.trim()) break;
+      }
+    }
+    return out.join('\n');
   }
 
   const HR = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
@@ -732,23 +775,25 @@
     let dollars = st ? st.dollars : 0;
     let brackets = st ? st.brackets : 0;
     let envs = st ? st.envs : 0;
+    let svg = st ? st.svg || 0 : 0;
     let stable = st ? st.stable : 0;
     let pos = st ? st.pos : 0;
     while (pos < source.length) {
       const end = source.indexOf('\n', pos);
       if (end === -1) break;
       const line = source.slice(pos, end);
-      if (/^```/.test(line)) fenced = !fenced;
+      if (svg === 0 && /^```/.test(line)) fenced = !fenced;
       else if (!fenced) {
+        if (/<\/?svg/i.test(line)) for (let rest = line; ;) { const r = svgScan(rest, svg); svg = r.depth; if (r.close === -1) break; rest = rest.slice(r.close); }
         const plain = line.replace(/`[^`]*`/g, '').replace(/\\\$/g, '');
         if (/^\s*\$\$|\$\$\s*$/.test(plain)) dollars += (plain.match(/\$\$/g) || []).length;
         if (/^\s*\\\[|\\\]\s*$/.test(plain)) brackets += (plain.match(/\\\[/g) || []).length - (plain.match(/\\\]/g) || []).length;
         envs += (plain.match(/\\begin\{/g) || []).length - (plain.match(/\\end\{/g) || []).length;
-        if (line.trim() === '' && pos > 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
+        if (line.trim() === '' && pos > 0 && svg === 0 && dollars % 2 === 0 && brackets <= 0 && envs <= 0) stable = end + 1;
       }
       pos = end + 1;
     }
-    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, stable, head: source.slice(0, 64) });
+    if (memo) Object.assign(memo, { pos, fenced, dollars, brackets, envs, svg, stable, head: source.slice(0, 64) });
     return stable;
   }
 
@@ -760,7 +805,7 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();
 ;
 // ---- usage-bars.js
@@ -1971,6 +2016,8 @@ explain describe list find give compare difference summarize summary write rewri
 
 
 
+
+
 (() => {
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
   const MAX_SOURCE = 20000;
@@ -2085,6 +2132,31 @@ explain describe list find give compare difference summarize summary write rewri
   }
 
 
+  const SVG_BLOCK = /^\s*(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype[^>]*>\s*)?<svg[\s>]/i;
+  let svgLoading = null;
+  function loadSvgView() {
+    if (window.svgView) return Promise.resolve(window.svgView);
+    if (svgLoading) return svgLoading;
+    svgLoading = new Promise((resolve, reject) => {
+      if (typeof document === 'undefined' || !here) { reject(new Error('no page')); return; }
+      const js = Object.assign(document.createElement('script'), { src: new URL('svg-view.js', here).href, async: true });
+      js.onload = () => (window.svgView ? resolve(window.svgView) : reject(new Error('svg-view missing')));
+      js.onerror = () => reject(new Error('svg-view did not load'));
+      document.head.append(js);
+    }).catch((e) => { svgLoading = null; throw e; });
+    return svgLoading;
+  }
+
+  function svgPicture(box, pre) {
+    const lang = pre.dataset.lang || '';
+    const text = pre.querySelector('code')?.textContent ?? '';
+    if (lang !== 'svg' && !(['', 'xml', 'html'].includes(lang) && SVG_BLOCK.test(text))) return;
+    if (!/<\/svg\s*>\s*$/i.test(text) || text.length > 200 * 1024) return;
+    if (window.svgView) { window.svgView.decorate(box, pre); return; }
+    loadSvgView().then((v) => { if (box.isConnected) v.decorate(box, pre); }).catch(() => {});
+  }
+
+
   const wrapped = () => { try { return localStorage.getItem(WRAP_KEY) === '1'; } catch { return false; } };
   const remember = (on) => { try { localStorage.setItem(WRAP_KEY, on ? '1' : '0'); } catch {  } };
   function wrapButton(box, head) {
@@ -2107,6 +2179,7 @@ explain describe list find give compare difference summarize summary write rewri
     const head = box.querySelector('.code-head');
     if (head && pre.dataset.lang !== 'mermaid') wrapButton(box, head);
     if (pre.dataset.lang === 'mermaid' && finished) diagram(box, pre, pre.querySelector('code')?.textContent ?? '');
+    else svgPicture(box, pre);
   }
 
 
@@ -2352,7 +2425,7 @@ explain describe list find give compare difference summarize summary write rewri
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable };
+  window.genImages = { figure, decorate, load, zoomable, enlarge };
 })();
 ;
 // ---- chat-canvas.js
