@@ -233,8 +233,7 @@ module.exports = async function appleMusicStatusUnits(check) {
     check('apple status: the card asks the engine whether to include the desktop app (default yes)', fake.last && fake.last.app === true, JSON.stringify(fake.last));
     await sleep(400);
     const reads = fake.reads;
-    w.engineChanged();
-    await sleep(20);
+    await w.engineChanged(); // (resolves once the card has looked again: no wall-clock wait to lose under load)
     check('apple status: when the app changes, the status card is fetched again at once', fake.reads > reads, `${reads} -> ${fake.reads}`);
     await w.save({ type: 'applemusic', art: false }, id);
     await w.refresh(w.list()[0], { force: true });
