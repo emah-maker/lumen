@@ -283,6 +283,7 @@ const UI_ONLY_IPC = new Set([
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
   'tab:switch-strip', // the strip drew a tab active: the switch-timing recorder's mark (id and time are checked in the handler)
@@ -6318,6 +6319,34 @@ ipcMain.on('tabs:hide-ai-menu', (event, at) => {
   Menu.buildFromTemplate(hideAiMenuTemplate()).popup({ window: owner, ...pos });
 });
 if (TEST) global.__hideAiMenuPops = () => hideAiMenuPops.slice();
+// [side tabs] Tab layout: Top (tabs across the window) or Side (a list down its left). Right-click on the empty part of the strip, or on the
+// side list, switches it and turns icons-only on or off; the list's own width and fold are saved from the list (tabs:side). The setting
+// reaches every window through prefs:ui (renderer/side-tabs.js lays the list out; the page area simply follows where the list ends).
+function stripMenuTemplate() {
+  const p = readSettings();
+  const side = p.tabLayout === 'side';
+  const set = (key, value) => { settingsBackend.set(key, value).catch(() => {}); };
+  return [
+    { label: t('tabs.layout.menu.side'), type: 'checkbox', checked: side, click: (item) => set('tabLayout', item.checked ? 'side' : 'top') },
+    ...(side ? [{ label: t('tabs.layout.menu.icons'), type: 'checkbox', checked: p.sideTabsCollapsed === true, click: (item) => set('sideTabsCollapsed', item.checked) }] : []),
+  ];
+}
+const stripMenuPops = []; // (tests: the menu is not opened natively in the test build)
+ipcMain.on('tabs:strip-menu', (event, at) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  if (!owner || owner.isDestroyed()) return;
+  const pos = Number.isFinite(at?.x) && Number.isFinite(at?.y) ? { x: Math.round(at.x), y: Math.round(at.y) } : {};
+  if (TEST) { stripMenuPops.push(pos); return; }
+  Menu.buildFromTemplate(stripMenuTemplate()).popup({ window: owner, ...pos });
+});
+ipcMain.handle('tabs:side', async (_e, o) => {
+  if (Number.isFinite(o?.width)) await settingsBackend.set('sideTabsWidth', o.width);
+  if (typeof o?.collapsed === 'boolean') await settingsBackend.set('sideTabsCollapsed', o.collapsed);
+  const p = readSettings();
+  return { width: p.sideTabsWidth, collapsed: p.sideTabsCollapsed === true };
+});
+if (TEST) global.__contentBounds = () => ({ ...contentBounds, view: tabs.find((x) => x.id === activeId && alive(x))?.view.getBounds() || null }); // (test/side-tabs.js: where the page area is, and where the front tab's view really is)
+if (TEST) global.__stripMenu = () => ({ pops: stripMenuPops.slice(), items: stripMenuTemplate().map((i) => ({ label: i.label || '', checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) })) });
 if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
 ipcMain.handle('tabs:undo-ai-close', (_e, token) => aiTabsReopen(Number(token)));
@@ -7048,7 +7077,7 @@ async function stripGeometry(rec) {
     const el = document.getElementById('tabs');
     const slotEl = document.querySelector('#tabs .tab-drop-slot');
     const s = slotEl && slotEl.getBoundingClientRect();
-    return { hidden: document.visibilityState === 'hidden', bottom: strip.bottom, left: strip.left, right: strip.right, overflows: el.scrollWidth > el.clientWidth + 1, tabs, slot: s ? { x: s.left, y: s.top, h: s.height } : null };
+    return { hidden: document.visibilityState === 'hidden' || document.body.classList.contains('side-layout'), bottom: strip.bottom, left: strip.left, right: strip.right, overflows: el.scrollWidth > el.clientWidth + 1, tabs, slot: s ? { x: s.left, y: s.top, h: s.height } : null };
   })()`).catch(() => null);
   // Chromium marks a window 'hidden' when other windows (any app's) cover it completely: not a target.
   return info && !info.hidden && { rec, bottom: info.bottom, left: info.left, right: info.right, overflows: info.overflows, tabs: info.tabs, slot: info.slot };

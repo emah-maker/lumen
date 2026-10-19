@@ -71,6 +71,8 @@ module.exports = [
   { files: ['src/renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', resumeLive: 'readonly', shownChatId: 'writable' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },
+  // side-tabs.js (Tab layout: Side) is loaded after app.js and works on its tab list: the same globals, and it sets two of them.
+  { files: ['src/renderer/side-tabs.js'], languageOptions: { globals: { $: 'readonly', t: 'readonly', drag: 'readonly', lastTabState: 'readonly', selectedTabs: 'readonly', hideHoverCard: 'readonly', stripOrder: 'readonly', handOffTabDrag: 'readonly', indexBefore: 'readonly', expectMove: 'readonly', renderTabsNow: 'readonly', setSidebarWidth: 'readonly', sidebarWish: 'readonly', tabsRendered: 'writable', lastLayoutSig: 'writable' } } },
   // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
   { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
   { files: ['src/renderer/command-bar.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly', lastTabState: 'readonly' } } }, // (app.js's, loaded on first use)
