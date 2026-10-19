@@ -682,7 +682,8 @@ function server(opts) {
   check('a narrow window stacks the cards in one column (in reading order) and hides editing', nar.cols === 1 && nar.stacked && nar.btn && new Set(nar.x).size === 1 && nar.cards.slice().sort((a, b) => a[1] - b[1]).map((c) => c[0]).join() === (await W('list')).map((x) => x.id).join(), JSON.stringify(nar));
   check('…without touching the saved places', (await layoutOf()) === savedBefore, `${savedBefore} / ${await layoutOf()}`);
   await app.evaluate(() => { global.__wtab.webContents.disableDeviceEmulation(); });
-  await sleep(900);
+  for (let i = 0; i < 60 && (await page('window.__t.info().cols')) !== 12; i++) await sleep(150); // (the page relayouts on its next frame, which the hidden test window draws late)
+  await settled();
   check('growing the window again puts every card back where it was saved', (await page('window.__t.info().cols')) === 12 && !(await page("document.body.classList.contains('w-stacked')")), '');
 
   // ---- colours ----
