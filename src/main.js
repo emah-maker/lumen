@@ -8446,6 +8446,9 @@ const connectorsGoogleReal = {
     return { oauth: auth.oauth, oneClick: auth.oneClick, session: signedIn, email };
   },
   api: (p) => widgets.gmailApi(p),
+  drafts: () => widgets.gmailAuthState().compose, // the shared Google sign-in has gmail.compose (the user pressed Allow drafts)
+  allowDrafts: () => widgets.gmailAllowDrafts(), // Settings' Allow drafts button only
+  compose: (body) => widgets.gmailCompose(body), // POST /users/me/drafts and nothing else (never send)
   feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
   connect: () => widgets.gmailConnect({}),
   disconnect: () => widgets.gmailDisconnect(),
@@ -8495,6 +8498,7 @@ ipcMain.handle('connectors:list', () => connectorsSvc().list());
 ipcMain.handle('connectors:detect', (_e, id) => connectorsSvc().detect(String(id)));
 ipcMain.handle('connectors:connect', (_e, id, input) => connectorsSvc().connect(String(id), input && typeof input === 'object' ? input : {}));
 ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(String(id)));
+ipcMain.handle('connectors:allow-drafts', (_e, id) => connectorsSvc().allowDrafts(String(id))); // Gmail: ask Google for gmail.compose (an explicit click in Settings)
 ipcMain.handle('connectors:sign-in', (_e, id) => {
   const url = connectorsSvc().signInUrl(String(id));
   if (url) connectorsOpen(url);

@@ -2204,8 +2204,11 @@ function createWidgets(deps) {
   const staleGmail = () => { sessions.get('gmail')?.invalidate(); for (const w of list()) if (w.type === 'gmail') cache.delete(w.id); deps.onUpdate?.(); };
   // input: { clientId, clientSecret } from Settings' Advanced fields; both empty means Lumen's built-in
   // client ("Sign in with Google"). An own Client ID always wins over the built-in one.
-  async function gmailConnect(input) {
-    const { clientId, clientSecret } = gmailClient(input, OA.decodeCreds(deps.getSecret('gmail')), googleClient());
+  // compose: the connector's "Allow drafts" (gmailAllowDrafts): the same sign-in, asking Google to add gmail.compose.
+  async function gmailConnect(input, { compose = false } = {}) {
+    const before = OA.decodeCreds(deps.getSecret('gmail'));
+    const { clientId, clientSecret } = gmailClient(input, before, googleClient());
+    const ask = GV.signInParams({ compose, email: before?.refresh ? before.email : '' });
     if (!deps.openExternal) throw new Error('Lumen can’t open your browser here.');
     // Checked before the consent page opens: finding out after the user has already said yes loses the sign-in.
     if (deps.canKeepSecrets && !deps.canKeepSecrets()) throw new Error('This computer has no secure place for Lumen to keep the sign-in (the system keyring is off), so Gmail can’t be connected.');
@@ -2214,7 +2217,7 @@ function createWidgets(deps) {
     if (signIn) signIn.userCancelled = true; // (replaced: no need to come back for it)
     signIn?.cancel(); // one sign-in at a time
     const flow = await OA.beginSignIn({
-      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: GV.SCOPE, extra: GV.AUTH_EXTRA, post: formPost, now, timeoutMs: deps.signInMs,
+      authorizeBase: authBase, tokenUrl: tokenUrl(), clientId, clientSecret, scope: ask.scope, extra: ask.extra, post: formPost, now, timeoutMs: deps.signInMs,
       openExternal: (url) => { if (!url.startsWith(`${authBase}?`)) throw new Error('Refusing to open that address.'); return deps.openExternal(url); },
       messages: { title: 'Lumen', done: tt('gmail.signin.done', 'You can close this tab and go back to Lumen, which finishes connecting Gmail.'), denied: tt('gmail.signin.denied', 'Gmail was not connected. You can close this tab.') },
     });
@@ -2237,11 +2240,13 @@ function createWidgets(deps) {
         const res = await deps.fetch(`${deps.endpoints?.().gmail || ENDPOINTS.gmail}/users/me/profile`, { headers: { Authorization: `Bearer ${t.access}` } });
         if (res.ok) email = String((await res.json())?.emailAddress || '').slice(0, 320);
       } catch { /* shown as "a Google account" */ }
-      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email }));
+      deps.setSecret('gmail', OA.encodeCreds({ clientId, clientSecret, refresh: t.refresh, email, scope: t.scope })); // (scope: what Google says the token has)
       // Signed in again as someone else (or with another client): the grant it replaces is given back to Google. The
       // same account and client share one grant, so revoking its old token would end the new sign-in too.
       if (old?.refresh && old.refresh !== t.refresh && (old.clientId !== clientId || (old.email && email && old.email.toLowerCase() !== email.toLowerCase()))) revokeGoogle(old);
       staleGmail();
+      // Google's consent page lets the user untick a permission: then the sign-in worked, but drafts still can't be made.
+      if (compose && !GV.hasScope(t.scope, GV.COMPOSE_SCOPE)) throw new Error('Google didn’t give Lumen permission to make drafts. Press Allow drafts again and leave the box for making drafts ticked.');
       return { message: email ? `Gmail is connected as ${email}.` : 'Gmail is connected.' };
     } finally {
       if (signIn === flow) signIn = null;
@@ -2335,7 +2340,7 @@ function createWidgets(deps) {
   async function gmailDisconnect() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
     signIn?.cancel();
-    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '', email: '' }));
+    if (creds?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...creds, refresh: '', email: '', scope: '' }));
     staleGmail();
     lastRevoke = await revokeGoogle(creds);
     return true;
@@ -3014,12 +3019,47 @@ function createWidgets(deps) {
   const flush = () => { epoch++; cache.clear(); memoCache.clear(); lastGood.clear(); };
   // [connectors] What the AI's Gmail connector (features/connectors/providers/gmail.js) takes from the widget's Google sign-in: whether it is
   // connected (and as whom, and whether one click can start it), and one read-only Gmail API request with its token. Nothing else leaves here.
+  // compose: the token has Google's gmail.compose permission (the user pressed Allow drafts), so the connector may make a draft.
   function gmailAuthState() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
-    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick };
+    return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick, compose: Boolean(creds?.refresh) && GV.hasScope(creds.scope, GV.COMPOSE_SCOPE) };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
+  // "Allow drafts" (Settings → You and AI → Connectors → Gmail): the signed-in account's sign-in again, with the same client,
+  // asking Google to add gmail.compose to what it already allows. Only ever started by that button.
+  async function gmailAllowDrafts() {
+    const creds = OA.decodeCreds(deps.getSecret('gmail'));
+    if (!creds?.refresh) throw new Error('Sign in to Gmail with Google first (Connect on the Gmail card).');
+    return gmailConnect({ clientId: creds.clientId }, { compose: true });
+  }
+  // One draft: POST /users/me/drafts with { message: { raw, threadId? } }, with the token, and nothing else. The path is checked by
+  // features/gmail-drafts.js composePath (no send, ever). A token without gmail.compose is told "Allow drafts first" (kind 'scope').
+  async function gmailCompose(body) {
+    const GD = require('./gmail-drafts');
+    const path = GD.composePath(GD.DRAFTS_PATH);
+    if (!gmailAuthState().compose) throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
+    const x = helpers('gmail');
+    const session = sessionFor('gmail');
+    for (let attempt = 0; ; attempt++) {
+      const access = await session.access({ force: attempt > 0 });
+      const res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search' }); // (one the user allowed: the search budget, not the cards' polling one)
+      if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
+      if (res.ok) {
+        try { return JSON.parse(res.body); } catch { throw new Error('Gmail sent something unexpected.'); }
+      }
+      let reason = '';
+      try { const b = JSON.parse(res.body); reason = String(b?.error?.errors?.[0]?.reason || b?.error?.details?.[0]?.reason || b?.error?.status || ''); } catch { /* not JSON */ }
+      if (res.status === 403 && /insufficient|scope/i.test(reason)) { // the permission was taken back at Google: Settings offers Allow drafts again
+        const c = OA.decodeCreds(deps.getSecret('gmail'));
+        if (c?.refresh) deps.setSecret('gmail', OA.encodeCreds({ ...c, scope: String(c.scope || '').split(/\s+/).filter((sc) => sc !== GV.COMPOSE_SCOPE).join(' ') }));
+        throw new OA.OAuthError('Allow drafts first.', { kind: 'scope' });
+      }
+      if (res.status === 400) throw new Error(`Gmail didn’t accept the draft (${str(reason, 60) || 'bad request'}).`);
+      const e = GV.apiError(res.status, res.body);
+      throw new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' });
+    }
+  }
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailAllowDrafts, gmailCompose, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

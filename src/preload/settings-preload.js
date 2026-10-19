@@ -267,6 +267,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         detect: call('connectors:detect'),
         connect: call('connectors:connect'),
         disconnect: call('connectors:disconnect'),
+        allowDrafts: call('connectors:allow-drafts'),
         signIn: call('connectors:sign-in'),
       },
       setAutomation: call('automation:set'),

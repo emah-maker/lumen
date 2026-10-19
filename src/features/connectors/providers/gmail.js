@@ -1,13 +1,17 @@
-// Gmail, read-only, through the same two paths the Gmail widget uses (features/gmail-view.js, gmail-atom.js):
+// Gmail through the same two paths the Gmail widget uses (features/gmail-view.js, gmail-atom.js):
 //  - 'oauth': the Google sign-in the widget's "Sign in with Google" made (scope gmail.readonly). Search and read a message.
 //  - 'session': the Google sign-in already in Lumen, through Gmail's own unread feed. The unread list only.
-// Nothing is ever sent, marked read or deleted. The service hands in ctx.google (main.js decides how it reaches Google).
+// The one write is create_draft: an email put in the user's Drafts, after a click on its card, and only once the user pressed
+// Allow drafts (Google's gmail.compose permission, added to the same sign-in). Nothing is ever sent, marked read or deleted:
+// the draft goes through ctx.google.compose, which reaches the drafts list and nothing else (features/gmail-drafts.js).
+// The service hands in ctx.google (main.js decides how it reaches Google).
 'use strict';
 const GV = require('../../gmail-view');
 const GA = require('../../gmail-atom');
 const { flat, clip, htmlToText, when, ConnectorError } = require('../util');
 
 const NEEDS_FULL = 'This needs the full Google sign-in. Tell the user to connect Gmail again in Settings → You and AI → Connectors and finish the Google sign-in. Meanwhile unread mail can still be listed.';
+const ALLOW_DRAFTS = 'Allow drafts first: Lumen needs Google’s permission to make Gmail drafts. Tell the user to open Settings → You and AI → Connectors and press Allow drafts on the Gmail card (Google asks them once), then ask again. Nothing was made.';
 
 const line = (m) => `${m.id}  ${when(m.at ? new Date(m.at).toISOString() : '')}  ${flat(m.from, 60)}: ${flat(m.subject, 160)}${m.snippet ? ` | ${flat(m.snippet, 160)}` : ''}${m.unread ? ' [unread]' : ''}`;
 
@@ -49,6 +53,23 @@ function bodyOf(payload) {
   return found.plain || htmlToText(found.html);
 }
 
+// What the AI is told when a draft can't be made yet: no full sign-in, or no Allow drafts. Before the card (so nobody is asked for
+// nothing) and again before the request.
+function draftsReady(ctx) {
+  if (ctx.config.mode !== 'oauth') throw new ConnectorError(`${NEEDS_FULL} Making drafts also needs Allow drafts on the Gmail card.`, 'args');
+  if (!ctx.google.drafts?.()) throw new ConnectorError(ALLOW_DRAFTS, 'auth');
+}
+
+// The message a reply answers: its thread, Message-ID, References, subject and sender (a read-only request).
+async function original(ctx, id) {
+  if (!GV.isMessageId(id)) throw new ConnectorError('reply_to_message_id is a message id from search or unread.', 'args');
+  const q = ['Message-ID', 'References', 'Subject', 'From'].map((h) => `metadataHeaders=${encodeURIComponent(h)}`).join('&');
+  const m = await api(ctx, `/users/me/messages/${encodeURIComponent(id)}?format=metadata&${q}`);
+  const header = (n) => (m?.payload?.headers || []).find((h) => String(h?.name).toLowerCase() === n)?.value || '';
+  const head = GV.normalizeMessage(m);
+  return { threadId: /^[0-9a-f]{6,32}$/i.test(String(m?.threadId || '')) ? String(m.threadId) : '', messageId: header('message-id'), references: header('references'), subject: head?.subject || '', from: head?.from || '' };
+}
+
 const actions = {
   async unread(ctx, { max = 10 } = {}) {
     if (ctx.config.mode === 'oauth') {
@@ -76,6 +97,58 @@ const actions = {
     const header = (n) => flat(GV.decodeWords(flat((m.payload?.headers || []).find((h) => String(h?.name).toLowerCase() === n)?.value, 600)), 300);
     return `From: ${header('from')}\nTo: ${header('to')}\nDate: ${header('date')}\nSubject: ${head?.subject || header('subject')}\n\n${clip(bodyOf(m.payload) || m.snippet || '(no text)', 6000)}`;
   },
+
+  // A draft in the user's Drafts. Never sent: the user opens it in Gmail and sends it, or not.
+  async create_draft(ctx, { to, cc, subject, body, reply_to_message_id: replyTo }) {
+    draftsReady(ctx);
+    const GD = require('../../gmail-drafts');
+    const orig = replyTo ? await original(ctx, replyTo) : null;
+    if (orig && (!orig.threadId || !GD.replyHeaders(orig.messageId, ''))) throw new ConnectorError('Gmail didn’t give that message’s conversation or Message-ID, so the reply wasn’t made. A new draft (without reply_to_message_id) can still be made.', 'other');
+    let raw;
+    try {
+      raw = GD.toRaw(GD.buildMessage({ to, cc, subject, body, inReplyTo: orig?.messageId || '', references: orig?.references || '' }));
+    } catch (err) {
+      if (err instanceof GD.DraftError) throw new ConnectorError(`${err.message} Nothing was made.`, 'args');
+      throw err;
+    }
+    let made;
+    try {
+      made = await ctx.google.compose({ message: { raw, ...(orig ? { threadId: orig.threadId } : {}) } });
+    } catch (err) {
+      if (err?.kind === 'scope') throw new ConnectorError(ALLOW_DRAFTS, 'auth');
+      if (err?.reconnect) throw ctx.authError();
+      throw new ConnectorError(`${flat(String(err?.message || err), 200)} Nothing was made.`, 'other');
+    }
+    const msgId = /^[0-9a-f]{6,32}$/i.test(String(made?.message?.id || '')) ? String(made.message.id) : '';
+    const what = `${orig ? 'Reply' : 'Draft'} to ${flat(to, 200)}: “${flat(subject, 120)}”`;
+    return {
+      text: `Draft made, not sent. ${what}. It is in the user’s Gmail Drafts; they review it and send it themselves from Gmail.`,
+      link: msgId ? `https://mail.google.com/mail/u/0/#drafts?compose=${msgId}` : 'https://mail.google.com/mail/u/0/#drafts',
+      done: `Draft made: “${flat(subject, 60)}”`,
+    };
+  },
 };
 
-module.exports = { verify, actions };
+// The card: before it shows, a draft that can't be made says so (no card for nothing); for a reply, the message it answers.
+async function beforeCard(ctx, action) {
+  if (action === 'create_draft') draftsReady(ctx);
+}
+async function cardNames(ctx, action, args) {
+  if (action !== 'create_draft' || !args.reply_to_message_id) return {};
+  const o = await original(ctx, args.reply_to_message_id);
+  return { replySubject: o.subject, replyFrom: o.from };
+}
+const NOTHING_SENT = 'This only makes a draft. Nothing is sent.';
+function describeWhere(action, args, names = {}) {
+  if (action !== 'create_draft') return '';
+  const where = args.reply_to_message_id
+    ? `A reply in your Gmail Drafts, in the conversation ${names.replySubject ? `“${flat(names.replySubject, 120)}”${names.replyFrom ? ` from ${flat(names.replyFrom, 60)}` : ''}` : `of message ${args.reply_to_message_id}`}.`
+    : 'A new email in your Gmail Drafts.';
+  return `${where}\n${NOTHING_SENT}`;
+}
+function describeWrite(action, args, names = {}) {
+  if (action !== 'create_draft') return '';
+  return `${describeWhere(action, args, names)}\n\nTo: ${args.to}${args.cc ? `\nCc: ${args.cc}` : ''}\nSubject: ${args.subject}\n\n${args.body}`;
+}
+
+module.exports = { verify, actions, beforeCard, cardNames, describeWrite, describeWhere };
