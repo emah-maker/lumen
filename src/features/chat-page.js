@@ -69,7 +69,7 @@ const CHAT_IPC = new Set([
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
-  'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', // the "/" menu (features/skills.js)
+  'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', 'skills:offer-save', 'skills:offer-update', // the "/" menu and the save / update cards (features/skills.js)
   'chat:routine-preview', 'chat:routine-create', // "Schedule this" on the page: read a schedule phrase, save a routine (registerRoutines below)
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (main.js; ai/dictation.js)
 ]);

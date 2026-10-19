@@ -22,6 +22,7 @@ const PAGES = {
   routines: { title: 'Routines', file: 'docs/routines.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },
+  skills: { title: 'Skills', file: 'docs/skills.md' },
   'ai-document-tool': { title: 'The AI and Google Docs', file: 'docs/ai-document-tool.md' },
   'ai-content-guard': { title: 'The AI and your content', file: 'docs/ai-content-guard.md' },
   'mac-signing': { title: 'macOS signing', file: 'docs/mac-signing.md' },

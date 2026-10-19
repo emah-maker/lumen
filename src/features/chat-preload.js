@@ -125,6 +125,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     context: (options) => ipcRenderer.invoke('skills:context', options),
     prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
     draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+    offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token),
+    offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
     onChanged: on('skills:changed'),
   });
   contextBridge.exposeInMainWorld('lumenExtras', {

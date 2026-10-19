@@ -317,6 +317,8 @@ contextBridge.exposeInMainWorld('skillsApi', {
   context: (options) => ipcRenderer.invoke('skills:context', options),
   prepare: (request) => ipcRenderer.invoke('skills:prepare', request),
   draftFromChat: () => ipcRenderer.invoke('skills:draft-from-chat'),
+  offerSave: (token) => ipcRenderer.invoke('skills:offer-save', token), // the cards under a reply (Settings → Skills → "Offer to save and improve skills")
+  offerUpdate: (token) => ipcRenderer.invoke('skills:offer-update', token),
   onChanged: on('skills:changed'),
   onRun: on('skill:run'), // "Run skill" on selected text in a page's right-click menu
 });

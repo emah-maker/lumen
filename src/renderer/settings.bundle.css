@@ -838,6 +838,14 @@ details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+
+.skills-switches { margin-bottom: 8px; }
+.skills-cc { margin-top: 12px; }
+.skills-ignored { font-size: 12px; }
+.skills-diff { max-height: 50vh; overflow: auto; white-space: pre-wrap; }
+.skills-diff .diff-line { padding: 0 4px; }
+.skills-diff .diff-add { background: rgb(40 160 70 / 0.16); }
+.skills-diff .diff-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; }
 /* ---- settings-macros.css */
 .macros-section { padding: 4px 16px 12px; }
 .macros-toolbar { flex-wrap: wrap; padding: 10px 0 6px; }

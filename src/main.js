@@ -8260,7 +8260,7 @@ const agent = new Agent({
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
   },
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -8480,6 +8480,9 @@ async function completeSkillJsonOn(model, { system, user, schema }) {
   if (!apiKey) throw new Error(`Add your ${providers.PROVIDERS[provider].label} API key in Settings first.`);
   return providers.completeJSON({ provider, model: id, apiKey, system, user });
 }
+// [skills] The skills the AI may use on its own, as the system prompt lists them (fixed when a chat starts). '' before
+// skillsFeature exists (a chat begun during start-up) or when there are none.
+function skillsListNow() { try { return skillsFeature.promptBlock(); } catch { return ''; } }
 const skillsFeature = require('./features/skills').create({
   ipcMain,
   dialog: electronDialog,
@@ -8508,10 +8511,14 @@ const skillsFeature = require('./features/skills').create({
   broadcast: (channel, payload) => { for (const wc of skillSurfaces()) wc.send(channel, payload); },
   openSettings: (section) => openSettingsPage(section),
   emitDraft: (draft) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:draft', draft); },
+  emitUpdate: (update) => { for (const t of tabs) if (t.settings && alive(t)) t.view.webContents.send('skills:update', update); },
+  settings: () => readSettings(),
+  homeDir: () => app.getPath('home'),
   transcript: () => agent.transcript(),
   complete: (args) => (TEST && global.__skillsComplete ? global.__skillsComplete(args) : completeSkillJson(args)),
 });
 skillsFeature.register();
+agent.browser.skills = skillsFeature; // the use_skill tool (ai/agent.js)
 if (TEST) global.__skills = skillsFeature;
 
 // ---------- meeting helper (features/meeting.js): live prompting, agenda/resume, stealth, listener ----------
@@ -9944,6 +9951,14 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     out.push(msg);
     for (const ev of afterMsg) pushThumb(ev);
+    if (msg.type === 'tool' && msg.name === 'use_skill') { // [skills] the AI loaded a skill: a correction after this run can offer to update it
+      const used = skillsFeature.autoSkills().find((x) => x.name === String(msg.input?.name || '').trim().toLowerCase());
+      if (used) skillsFeature.learning.used(runChat, { id: used.id, name: used.name });
+    }
+    if (msg.type === 'done' && !run.deleted) { // [skills] Settings → Skills → "Offer to save and improve skills": a card under the reply, never a save
+      const offer = skillsFeature.learning.done(runChat, { enabled: readSettings().skillsSuggest === true, ok: !run.error && !run.stopped, toolNames: run.details.tools.filter((x) => x.id).map((x) => x.name), skillInfo: (id) => skillsFeature.findAny(id) });
+      if (offer) sendOut({ type: 'skill_offer', ...offer });
+    }
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
       tellUser(run, chatRunsLib.outcome(run));
@@ -9957,6 +9972,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     else if (msg.type === 'error' && msg.signInExpired) { cliLoginValid = false; client = null; modelsChanged(); }
   };
   const skillRun = skillsFeature.takeRun(askText);
+  skillsFeature.learning.ask(runChat, askText, skillRun ? { id: skillRun.id, name: skillRun.name } : null); // [skills] a "/" run, or a follow-up that may correct one
   const tabsPicked = tabsAsk.cleanIds(tabIds);
   const start = () => {
     if (run.deleted) { runSlots.release(runChat); return; }
