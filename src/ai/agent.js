@@ -551,6 +551,16 @@ const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot
 const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [research] research_board is the sidebar chat's own source list (settings.research), so, like delegate, it is not listed to MCP clients or the CLI engines.
 const BOARD_TOOL = { ...research.BOARD_TOOL, eager_input_streaming: true };
+// [skills] use_skill loads one of the user's skills that may be used on its own (features/skills.js useForAI). Offered only
+// when the chat's system prompt lists such skills (settings.skillsList, set when the chat starts), and, like the board,
+// to the sidebar's API chats only: MCP clients and the CLI engines have their own skills.
+const SKILL_TOOL = {
+  name: 'use_skill',
+  description: 'Load one of the user\'s saved skills (listed in <skills>) by name: its instructions for this kind of task.',
+  input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+  eager_input_streaming: true,
+};
+const skillsBlockOf = (settings) => (typeof settings?.skillsList === 'string' && settings.skillsList.startsWith('<skills>') ? settings.skillsList : '');
 const ALL_TOOLS = [...TOOLS, { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }];
 // Other providers get a client-side search tool (DuckDuckGo's HTML results, read without cookies).
 const SEARCH_TOOL = {
@@ -579,6 +589,7 @@ const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
+const OTHER_SKILL = slimTool(SKILL_TOOL); // [skills]
 // What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
@@ -932,8 +943,8 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     context_management: { edits: [{ type: 'clear_tool_uses_20250919', trigger: { type: 'input_tokens', value: 60000 }, keep: { type: 'tool_uses', value: 6 }, clear_at_least: { type: 'input_tokens', value: 15000 } }] },
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
-    system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL])),
+    system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], skillsBlockOf(settings) ? [SKILL_TOOL] : [])),
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -953,6 +964,7 @@ TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for no
 TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
 TOOL_SCHEMAS.desktop = DESKTOP_TOOL.input_schema;
 TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
+TOOL_SCHEMAS.use_skill = SKILL_TOOL.input_schema;
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -990,7 +1002,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -3684,12 +3696,12 @@ ${prompt}` : prompt), historyImages: [] };
       model,
       apiKey,
       effort: effortLib.clean(provider, this.browser.effort?.(provider)), // Settings → AI → AI providers (only models that take it: ai/effort.js)
-      system: systemFor(messages.settings) + (toolsOk ? '' : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
+      system: systemFor(messages.settings) + (toolsOk ? (skillsBlockOf(messages.settings) ? `\n\n${skillsBlockOf(messages.settings)}` : '') : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [skills]
       signal,
       emit,
       noTools,
@@ -4096,6 +4108,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'document') return { outline: 'Reading the document outline', select_section: `Selecting the section ${quote(String(input.heading || ''), 40)}`, move_section: `Moving the section ${quote(String(input.heading || ''), 40)}`, replace: `Replacing ${quote(String(input.find || ''), 40)}`, style: 'Applying a style', insert_markdown: 'Inserting formatted text', verify: 'Checking the document against before my edits', undo: 'Undoing my edits to the document', read: 'Reading the document' }[input.action] || 'Working on the document';
       if (name === 'run_macro') return input.list === true || !input.name ? 'Listing your macros' : `Running your macro ${quote(String(input.name), 40)}`;
+      if (name === 'use_skill') return `Using your skill ${quote(String(input.name || ''), 40)}`;
       if (name === 'read_tabs') return `Reading ${input.ids.length} open tab${input.ids.length === 1 ? '' : 's'}`;
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
@@ -6381,6 +6394,11 @@ ${same}
       case 'analyze_posts': return postAnalysis.run(input);
       case 'find_sources': return this.findSources(input); // [research]
       case 'research_board': return this.researchBoardTool(input); // [research]
+      case 'use_skill': { // [skills] the skill's text (features/skills.js useForAI); it only adds instructions, never permissions
+        if (!this.browser.skills) throw new Error('Skills are not available here.');
+        const r = this.browser.skills.useForAI(input);
+        return typeof r === 'string' ? r : r.text;
+      }
       case 'document': { // [document tool]
         const store = this.docStore();
         store.docInternal = true;

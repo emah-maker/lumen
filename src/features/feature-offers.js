@@ -15,6 +15,8 @@
 const OFFERS = [
   // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   { key: 'aiDeviceAccess', value: true, title: 'settings.ai.deviceAccess', detail: 'settings.ai.deviceAccessDesc', where: 'Settings > AI' },
+  // [skills] features/skills.js learning: "Save how I did this as a skill?" after a long run, "Update the skill?" after corrections
+  { key: 'skillsSuggest', value: true, title: 'skills.settings.suggest', detail: 'skills.settings.suggestDesc', where: 'Settings > AI > Skills' },
 ];
 
 // What to do at startup: { show: [offer], seen: [key] } (seen: what to record now, before anything is shown, so a

@@ -135,6 +135,12 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       importCommit: call('skills:import-commit'),
       takeDraft: call('skills:take-draft'),
       onDraft: (cb) => ipcRenderer.on('skills:draft', (_e, draft) => cb(draft)),
+      importMdPick: call('skills:import-md-pick'), // a SKILL.md folder (features/skill-md.js)
+      exportMd: call('skills:export-md'),
+      claudeCode: call('skills:claude-code'),
+      takeUpdate: call('skills:take-update'), // "Update the skill with what changed?": the diff to accept
+      applyUpdate: call('skills:apply-update'),
+      onUpdate: (cb) => ipcRenderer.on('skills:update', (_e, update) => cb(update)),
       onChanged: (cb) => ipcRenderer.on('skills:changed', (_e, list) => cb(list)),
     },
     // Macros (features/macros-runtime.js)

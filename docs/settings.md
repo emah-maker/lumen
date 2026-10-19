@@ -126,6 +126,16 @@ These are set from the sidebar rather than the settings page:
 | Meeting helper | `meetingHelper` | on | Enables the Meeting Helper panel in the sidebar (opened with Ctrl+Shift+E or the More menu) for live meeting prompting, agenda/resume context, stealth mode (hidden from screen share), live audio listening, and post-call summaries saved to chat history. |
 | Using: *page* | `pageContext` | on | Sends the current page to the sidebar AI with each message. |
 
+### Skills
+
+Settings → Skills (`lumen://settings/skills`): saved instructions you run with `/name`, import and export as JSON or as SKILL.md folders (the Agent Skills format Claude Code uses), and let the AI load on its own. Kept in `skills.json` in the profile folder. See [Skills](skills.md).
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Let the AI use skills on its own | `skillsAutoUse` | on | Skills marked **AI can use this on its own** (none by default) are listed by name and one line in each new chat's system prompt, and the AI loads one with `use_skill` when the request matches. Off: skills run only from `/`. Sidebar API chats only. |
+| Use my Claude Code skills | `skillsFromClaudeCode` | off | Also offers `~/.claude/skills/*/SKILL.md` as read-only `/` commands, and to the AI on its own. Only each SKILL.md is read; scripts beside it are never run. |
+| Offer to save and improve skills | `skillsSuggest` | off | After a run that ended well and took 8 or more tool steps, offers **Save how I did this as a skill?**. After you correct a skill's result, offers **Update the skill with what changed?** with a diff to accept. Never saves or changes a skill without your click. |
+
 ### Macros
 
 Settings → Macros (`lumen://settings/macros`): saved step lists you run from the ⋯ menu, a keyboard shortcut, `/macro name` in the sidebar, or the AI's `run_macro` tool. Record one, describe one, or add steps by hand; a macro never stores a password or card number. Kept in `macros.json` in the profile folder. See [Macros](macros.md).

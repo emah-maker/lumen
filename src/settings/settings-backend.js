@@ -188,6 +188,9 @@ const DEFAULTS = {
   aiInstructionsOn: true, // [ai] Settings > AI > Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
   aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
   aiInstructionsStyle: '', // [ai] "How should Lumen respond"
+  skillsAutoUse: true, // [skills] skills marked "AI can use this on its own" are listed in the system prompt and loaded with use_skill (features/skills.js)
+  skillsFromClaudeCode: false, // [skills] also list ~/.claude/skills/*/SKILL.md, read-only (features/skill-md.js)
+  skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
   aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)

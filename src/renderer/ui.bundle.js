@@ -4745,6 +4745,8 @@ window.assistant.onEvent((event) => {
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
 
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
+
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
 
 
@@ -12699,6 +12701,28 @@ $('agent-stop')?.addEventListener('click', () => {
     const r = await runSkill(skill, { input: '', extra: { selection }, ask: (text) => window.ask(text) });
     if (!r.ok) slash.notify(r.message);
   });
+
+
+
+  window.showSkillOffer = function showSkillOffer(append, offer) {
+    if (!offer?.token || typeof append !== 'function') return;
+    const update = offer.kind === 'update';
+    if (!update && offer.kind !== 'save') return;
+    const box = append(Object.assign(document.createElement('div'), { className: 'run-undo skill-offer', role: 'status' }));
+    const text = Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: update ? tr('skills.offer.update', 'Update the skill “{title}” with what changed?', { title: offer.skill?.title || offer.skill?.name || '' }) : tr('skills.offer.save', 'Save how I did this as a skill?') });
+    const yes = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: update ? tr('skills.offer.updateButton', 'Show the change') : tr('skills.offer.saveButton', 'Draft a skill') });
+    const no = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: tr('skills.offer.no', 'No thanks') });
+    yes.addEventListener('click', async () => {
+      yes.disabled = true;
+      no.disabled = true;
+      text.textContent = tr('skills.create.working', 'Asking the model for a skill…');
+      const call = update ? api.offerUpdate : api.offerSave;
+      const r = call ? await call(offer.token).catch((err) => ({ ok: false, error: String(err?.message || err) })) : null;
+      box.replaceChildren(Object.assign(document.createElement('span'), { className: 'ai-tabs-text', textContent: r?.ok ? (update ? tr('skills.offer.updateOpened', 'The change is open in Settings → Skills. Nothing changes until you accept it.') : tr('skills.create.opened', 'The editor is open in Settings. Review it and save.')) : (r?.error || tr('skills.failed', 'That skill could not run.')) }));
+    });
+    no.addEventListener('click', () => box.remove());
+    box.append(text, ' ', yes, ' ', no);
+  };
 
 
   const decode = (s) => s.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
