@@ -111,11 +111,15 @@ const actions = {
       if (err instanceof GD.DraftError) throw new ConnectorError(`${err.message} Nothing was made.`, 'args');
       throw err;
     }
+    let email = '';
+    try { email = (await ctx.google.status())?.email || ''; } catch { /* the link opens the first account */ }
     let made;
     try {
       made = await ctx.google.compose({ message: { raw, ...(orig ? { threadId: orig.threadId } : {}) } });
     } catch (err) {
       if (err?.kind === 'scope') throw new ConnectorError(ALLOW_DRAFTS, 'auth');
+      // Sent, but no answer came back: Lumen doesn't try again (that could make two). The user looks first.
+      if (err?.kind === 'maybe') throw new ConnectorError(`The draft may have been made; check Drafts before trying again: ${GD.draftsLink(email)} Don’t make it again unless the user says it isn’t there.`, 'other');
       if (err?.reconnect) throw ctx.authError();
       throw new ConnectorError(`${flat(String(err?.message || err), 200)} Nothing was made.`, 'other');
     }
@@ -123,7 +127,7 @@ const actions = {
     const what = `${orig ? 'Reply' : 'Draft'} to ${flat(to, 200)}: “${flat(subject, 120)}”`;
     return {
       text: `Draft made, not sent. ${what}. It is in the user’s Gmail Drafts; they review it and send it themselves from Gmail.`,
-      link: msgId ? `https://mail.google.com/mail/u/0/#drafts?compose=${msgId}` : 'https://mail.google.com/mail/u/0/#drafts',
+      link: GD.draftsLink(email, msgId),
       done: `Draft made: “${flat(subject, 60)}”`,
     };
   },

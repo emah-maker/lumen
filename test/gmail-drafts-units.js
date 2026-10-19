@@ -50,6 +50,7 @@ async function mime() {
   check('a line break in the text is fine (it is base64)', !/Bcc/.test(GD.buildMessage({ to: 'a@x.org', subject: 'x', body: 'one\r\nBcc: evil@x.org' }).split('\r\n\r\n')[0]), '');
   const bad = { addr: await fails(() => GD.buildMessage({ to: 'not-an-address', subject: 'x', body: 'x' })), empty: await fails(() => GD.buildMessage({ to: ' , ', subject: 'x', body: 'x' })), name: await fails(() => GD.buildMessage({ to: 'A"B <a@x.org>', subject: 'x', body: 'x' })), many: await fails(() => GD.buildMessage({ to: Array.from({ length: 51 }, (_, i) => `u${i}@x.org`).join(','), subject: 'x', body: 'x' })), big: await fails(() => GD.buildMessage({ to: 'a@x.org', subject: 'x', body: 'é'.repeat(150000) })) };
   check('addresses are checked (not one, none, a name with a quote, more than 50), and the text has a size cap', /isn’t an email address/.test(bad.addr) && /at least one/.test(bad.empty) && /can’t be used/.test(bad.name) && /at most 50/.test(bad.many) && /too long/.test(bad.big), JSON.stringify(bad));
+  check('the Drafts link names the account with authuser (URL-encoded), and falls back to the first account without one', GD.draftsLink('ada+lab@example.com', '18c0ffee0b') === 'https://mail.google.com/mail/?authuser=ada%2Blab%40example.com#drafts?compose=18c0ffee0b' && GD.draftsLink('ada@example.com') === 'https://mail.google.com/mail/?authuser=ada%40example.com#drafts' && GD.draftsLink('', 'abcdef12') === 'https://mail.google.com/mail/u/0/#drafts?compose=abcdef12' && GD.draftsLink('x#y', 'nope') === 'https://mail.google.com/mail/u/0/#drafts', GD.draftsLink('ada+lab@example.com', '18c0ffee0b'));
   const raw = GD.toRaw(msg);
   check('raw is base64url (no + / =) and decodes back to the message', !/[+/=]/.test(raw) && unRaw(raw) === msg, raw.slice(0, 80));
 }
@@ -85,7 +86,8 @@ async function signIn() {
   const secrets = {};
   const opened = [];
   const posts = [];
-  const google = { untick: false, draftStatus: 200, draftBody: '', refreshScope: '' };
+  const google = { untick: false, draftStatus: 200, draftBody: '', refreshScope: '', postFails: null };
+  const freshCalls = [];
   let asked = '';
   const json = (status, body) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
   const fetchFake = async (url2, opts = {}) => {
@@ -100,6 +102,7 @@ async function signIn() {
     if (u.host === 'gmail.googleapis.com' && u.pathname === '/gmail/v1/users/me/profile') return json(200, { emailAddress: 'ada@example.com' });
     if (u.host === 'gmail.googleapis.com' && (opts.method || 'GET') === 'POST') {
       posts.push({ path: u.pathname, auth: opts.headers?.Authorization, body: JSON.parse(opts.body) });
+      if (google.postFails) throw google.postFails;
       if (google.draftStatus !== 200) return json(google.draftStatus, google.draftBody);
       return json(200, { id: 'r-123', message: { id: '18c0ffee0a', threadId: '18c0ffee00' } });
     }
@@ -108,6 +111,7 @@ async function signIn() {
   const w = createWidgets({
     readSettings: () => ({ homeWidgets: [] }), writeSettings: () => {}, fetch: fetchFake,
     getSecret: (n) => secrets[n] || null, setSecret: (n, v) => { if (v) secrets[n] = v; else delete secrets[n]; },
+    freshFetch: async (u, init) => { freshCalls.push(`${init?.method || 'GET'} ${u}`); return fetchFake(u, init); }, // (the widgets' second try through a fresh session)
     onUpdate: () => {}, rateMax: () => 1000, signInMs: 3000, googleClient: () => ({ clientId: CLIENT, clientSecret: 'GOCSPX-built-in', verified: false }),
     openExternal: async (u) => { opened.push(u); const q = new URL(u).searchParams; asked = q.get('scope'); setTimeout(() => http.get(`${q.get('redirect_uri')}?code=CODE&state=${q.get('state')}`).on('error', () => {}), 5); },
   });
@@ -128,6 +132,19 @@ async function signIn() {
   check('…and the stored sign-in now has compose (from the token answer’s scope)', w.gmailAuthState().compose === true && GV.hasScope(OA.decodeCreds(secrets.gmail).scope, COMPOSE), OA.decodeCreds(secrets.gmail).scope);
   const made = await w.gmailCompose({ message: { raw: 'UmF3', threadId: '18c0ffee00' } });
   check('a draft is one POST to /gmail/v1/users/me/drafts with the token and the message', posts.length === 1 && posts[0].path === '/gmail/v1/users/me/drafts' && /^Bearer ACCESS-/.test(posts[0].auth) && posts[0].body.message.raw === 'UmF3' && made.message.id === '18c0ffee0a', JSON.stringify(posts));
+  console.log('--- a draft is never sent twice');
+  const failWith = async (err) => { google.postFails = err; const n = posts.length; const e = await w.gmailCompose({ message: { raw: 'x' } }).then(() => null, (x) => x); google.postFails = null; return { e, tries: posts.length - n }; };
+  const reset = await failWith(new TypeError('net::ERR_CONNECTION_RESET'));
+  check('a connection dropped after sending: one try only (no second try through a fresh session), and “the draft may have been made”', reset.tries === 1 && freshCalls.length === 0 && reset.e?.kind === 'maybe' && /may have been made; check Drafts before trying again/.test(reset.e.message), JSON.stringify({ tries: reset.tries, freshCalls, e: String(reset.e) }));
+  const slow = await failWith(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+  check('a timeout is ambiguous too: one try, “may have been made”', slow.tries === 1 && slow.e?.kind === 'maybe', String(slow.e));
+  const dns = await failWith(new TypeError('net::ERR_NAME_NOT_RESOLVED'));
+  const refused = await failWith(new TypeError('net::ERR_CONNECTION_REFUSED'));
+  check('a failure before anything reached Google (no such host, connection refused) says no draft was made, still with one try', dns.tries === 1 && dns.e?.kind === 'unreached' && /no draft was made/.test(dns.e.message) && refused.e?.kind === 'unreached' && freshCalls.length === 0, JSON.stringify([String(dns.e), String(refused.e)]));
+  const n401 = posts.length;
+  google.draftStatus = 401;
+  await w.gmailCompose({ message: { raw: 'x' } }).catch(() => {});
+  check('a 401 (Google refused the token, nothing made) is tried once more with a new token, and no more', posts.length - n401 === 2, String(posts.length - n401));
   google.draftStatus = 403;
   google.draftBody = { error: { code: 403, status: 'PERMISSION_DENIED', errors: [{ reason: 'insufficientPermissions' }] } };
   const taken = await w.gmailCompose({ message: { raw: 'x' } }).then(() => null, (e) => e);
@@ -182,9 +199,17 @@ async function connector() {
   const msg = unRaw(sent.message.raw);
   check('the draft goes in the original’s thread, with In-Reply-To and References from its Message-ID', sent.message.threadId === '18c0ffee00' && /\r\nIn-Reply-To: <abc@mail\.school\.edu>\r\n/.test(msg) && /\r\nReferences: <zero@mail\.school\.edu> <abc@mail\.school\.edu>\r\n/.test(msg) && /^To: lee@school\.edu,\r\n "Dean" <dean@school\.edu>/m.test(msg) && /^Cc: me@example\.com/m.test(msg) && bodyOf(msg) === 'Edited', msg);
   check('the reply’s original was read with a read-only path', g.reads.every((p) => /^\/users\/me\/messages\/18c0ffee01\?format=metadata/.test(p)), JSON.stringify(g.reads));
-  check('the result says nothing was sent and links the draft; the chat step has the link', /Draft made, not sent/.test(out) && /Link: https:\/\/mail\.google\.com\/mail\/u\/0\/#drafts\?compose=18c0ffee0b/.test(out) && step?.label === 'Gmail · Draft made: “Re: Grades”' && step.link === 'https://mail.google.com/mail/u/0/#drafts?compose=18c0ffee0b', JSON.stringify({ out, step }));
+  check('the result says nothing was sent and links the draft; the chat step has the link', /Draft made, not sent/.test(out) && out.includes('Link: https://mail.google.com/mail/?authuser=ada%40example.com#drafts?compose=18c0ffee0b') && step?.label === 'Gmail · Draft made: “Re: Grades”' && step.link === 'https://mail.google.com/mail/?authuser=ada%40example.com#drafts?compose=18c0ffee0b', JSON.stringify({ out, step }));
   const fresh = await svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 'Héllo', body: 'Hi' } });
   check('a new draft has no thread and no reply headers', !g.made[1].message.threadId && !/In-Reply-To|References/.test(unRaw(g.made[1].message.raw)) && /Draft made/.test(fresh), unRaw(g.made[1].message.raw));
+  const tries = g.made.length;
+  g.composeError = Object.assign(new Error('The draft may have been made; check Drafts before trying again.'), { kind: 'maybe' });
+  let calls = 0;
+  const realCompose = google.compose;
+  google.compose = async (b) => { calls++; return realCompose(b); };
+  const maybe = await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }));
+  google.compose = realCompose;
+  check('an ambiguous failure tells the AI the draft may have been made, with the Drafts link for the account, and makes no second try', /may have been made; check Drafts before trying again: https:\/\/mail\.google\.com\/mail\/\?authuser=ada%40example\.com#drafts /.test(maybe) && calls === 1 && g.made.length === tries, maybe);
   g.composeError = Object.assign(new Error('Allow drafts first.'), { kind: 'scope' });
   check('a 403 for a missing permission says “Allow drafts first”', /Allow drafts first/.test(await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }))), '');
   g.composeError = Object.assign(new Error('Google signed Lumen out.'), { reconnect: true });

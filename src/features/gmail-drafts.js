@@ -10,6 +10,7 @@
 //   toRaw(text)                 base64url, what Gmail's `raw` field takes
 //   replyHeaders(original)      a message's Message-ID and References -> { inReplyTo, references } for a reply
 //   composePath(path)           the drafts path, or throws for anything else
+//   draftsLink(email, id?)      the draft (or the Drafts folder) in Gmail, for the signed-in account
 'use strict';
 
 const MAX_RECIPIENTS = 50;
@@ -119,4 +120,11 @@ function composePath(path) {
   return p;
 }
 
-module.exports = { ADDRESS, MAX_RECIPIENTS, DRAFTS_PATH, DraftError, parseAddresses, encodeWords, buildMessage, toRaw, replyHeaders, composePath };
+// Gmail on the web for the account the draft is in: authuser picks it among several signed-in accounts (/u/0 would be the first one).
+function draftsLink(email, id = '') {
+  const msg = /^[0-9a-f]{6,32}$/i.test(String(id)) ? `?compose=${id}` : '';
+  const who = typeof email === 'string' && ADDRESS.test(email.trim()) ? `?authuser=${encodeURIComponent(email.trim())}` : '';
+  return who ? `https://mail.google.com/mail/${who}#drafts${msg}` : `https://mail.google.com/mail/u/0/#drafts${msg}`;
+}
+
+module.exports = { draftsLink, ADDRESS, MAX_RECIPIENTS, DRAFTS_PATH, DraftError, parseAddresses, encodeWords, buildMessage, toRaw, replyHeaders, composePath };

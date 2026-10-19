@@ -216,6 +216,9 @@ function netError(err) {
   // (Not "check your internet": the connection is often fine and the trouble is on the way; the card keeps trying by itself.)
   return Object.assign(new Error('Couldn’t connect. Lumen keeps trying in the background.'), { transient: true, why: bits.slice(0, 80) });
 }
+// Network failures that happen before a request leaves the computer (the name didn't resolve, the connection was refused, no network):
+// a POST that failed this way certainly never reached the server.
+const NOT_SENT_NET = /ERR_NAME_NOT_RESOLVED|ERR_NAME_RESOLUTION_FAILED|ERR_INTERNET_DISCONNECTED|ERR_CONNECTION_REFUSED|ERR_ADDRESS_UNREACHABLE|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH/;
 const RETRY_STEPS = [2e3, 10e3, 30e3]; // after a passing failure: ask again after these, then the card's normal schedule
 const FRESH_NET_MS = 5 * 60e3; // after the browser's session failed and a fresh one worked: the cards stay on the fresh one this long
 const FETCH_CAP_MS = 45e3; // a card's whole fetch (several requests) is given up on after this, so a press of Refresh always ends
@@ -1663,9 +1666,11 @@ function createWidgets(deps) {
     bucket.push(t);
   }
   let freshUntil = 0; // while now() < this, the cards' requests go through deps.freshFetch (see request())
-  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget } = {}) {
-    if (!/^https:\/\//.test(url)) throw new Error('Only https addresses are allowed.');
-    spend(budget);
+  // retry: false (a Gmail draft, which must never be made twice): no second try through a fresh session after a failed send.
+  // An error thrown before anything was sent (not https, over the rate budget) carries notSent: true.
+  async function request(url, { method = 'GET', headers = {}, max = 2e6, body, timeout = TIMEOUT, budget, retry = true } = {}) {
+    if (!/^https:\/\//.test(url)) throw Object.assign(new Error('Only https addresses are allowed.'), { notSent: true });
+    try { spend(budget); } catch (err) { err.notSent = true; throw err; }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     let res;
@@ -1679,7 +1684,7 @@ function createWidgets(deps) {
       res = await (viaFresh ? deps.freshFetch(url, init, { renew: false }) : deps.fetch(url, init));
     } catch (err) {
       const why = netError(err);
-      if (!deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
+      if (!retry || !deps.freshFetch || !why.transient || why.why === 'timeout' || controller.signal.aborted) { clearTimeout(timer); throw why; }
       try {
         res = await deps.freshFetch(url, init, { renew: viaFresh }); // already on it and it failed too: a new one
         freshUntil = now() + FRESH_NET_MS;
@@ -3042,7 +3047,17 @@ function createWidgets(deps) {
     const session = sessionFor('gmail');
     for (let attempt = 0; ; attempt++) {
       const access = await session.access({ force: attempt > 0 });
-      const res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search' }); // (one the user allowed: the search budget, not the cards' polling one)
+      let res;
+      try {
+        // Sent once: no retry through a fresh session (retry: false). Only a failure that certainly happened before the request reached
+        // Google (not sent at all, no such host, connection refused, offline) says nothing was made; any other (a timeout, a connection
+        // dropped after sending, an unreadable answer) may have made the draft, and says so (kind 'maybe').
+        res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search', retry: false }); // (one the user allowed: the search budget, not the cards' polling one)
+      } catch (err) {
+        if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw new OA.OAuthError(`Couldn’t reach Gmail, so no draft was made. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' });
+        throw new OA.OAuthError('The draft may have been made; check Drafts before trying again.', { kind: 'maybe' });
+      }
+      // (A 401 is Google's answer that the token was refused: nothing was made, so the one try with a new token is safe.)
       if (res.status === 401 && attempt === 0) { session.invalidate(); continue; }
       if (res.ok) {
         try { return JSON.parse(res.body); } catch { throw new Error('Gmail sent something unexpected.'); }
