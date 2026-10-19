@@ -11,6 +11,9 @@
 //  - Disconnecting forgets the entry and the sealed secret and drops cached answers.
 //  - Gmail's drafts need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, only when the
 //    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts).
+//  - Gmail sending is a second, separate switch (setSending, Settings → Gmail → Allow sending), off by default and only with drafts allowed:
+//    gmail.compose already covers it, so no new Google permission is ever asked for. The agent decides how each send is allowed
+//    (card or the user's typed permission, features/gmail-send.js); call() refuses a send nobody allowed, over 10 an hour, and logs each.
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
 //  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
 //    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
@@ -55,7 +58,14 @@ function create({
     fs.mkdirSync(userData, { recursive: true });
     fs.writeFileSync(file, JSON.stringify({ version: 1, connected }, null, 2), { mode: 0o600 });
   }
+  // Gmail sending: the switch is on, with the full sign-in and drafts still allowed (take the permission back at Google and it is off).
+  function sendingOn() {
+    try { return Boolean(connected.gmail?.config?.sending && connected.gmail.config.mode === 'oauth' && google?.drafts?.() && google?.send); } catch { return false; }
+  }
+  let sendLogStore = null;
+  const sendLog = () => (sendLogStore ||= require('../gmail-send').createLog({ file: path.join(userData, 'gmail-send-log.json'), now })); // (loaded on the first send)
   function changed() {
+    registry.setUnlocked(sendingOn() ? ['gmail.send'] : []);
     registry.setConnected(Object.keys(connected).filter((id) => registry.get(id).kind !== 'mcp'));
     try { onChange(); } catch { /* the page looks again next time */ }
   }
@@ -150,13 +160,14 @@ function create({
     // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
     let drafts = null;
     if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
+    const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
       status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
-      reads: def.reads, does: def.does, drafts,
-      actions: Object.entries(def.actions).map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
+      reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
+      actions: Object.entries(def.actions).filter(([, a]) => !a.gated || sending === 'on').map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
     };
   }
   const list = () => ({ categories: registry.CATEGORIES, connectors: registry.CONNECTORS.map(card) });
@@ -267,6 +278,18 @@ function create({
     return list();
   }
 
+  // Settings' Allow sending switch (Gmail card, under Allow drafts). Only the user's click turns it on; the AI can't.
+  function setSending(id, on) {
+    const entry = connected[id];
+    if (id !== 'gmail' || !entry) throw new Error('Connect Gmail first.');
+    if (on && (entry.config?.mode !== 'oauth' || !google?.drafts?.() || !google?.send)) throw new Error('Allow drafts first: sending is offered only once drafts are allowed.');
+    entry.config = { ...entry.config, sending: Boolean(on) };
+    persist();
+    cache.clear();
+    changed();
+    return list();
+  }
+
   async function disconnect(id) {
     const def = registry.get(id);
     const entry = connected[id];
@@ -329,6 +352,7 @@ function create({
     }
     let names = {};
     if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
+    if (input.action === 'send') { try { sendLog().room(); } catch (err) { const e = new Error(err.message); e.kind = 'other'; throw e; } } // (a send that can't go gets no card)
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);
     return {
@@ -336,6 +360,7 @@ function create({
       detail: text || JSON.stringify(args, null, 2),
       fixed: p.describeWhere?.(input.action, args, names) || '',
       fields,
+      names,
     };
   }
 
@@ -346,7 +371,7 @@ function create({
 
   // A write's provider answers { text, link?, done }: `done` and `link` go to onWritten (the chat's step: "Gmail · Draft created", with
   // the link), the text to the AI. readOnly (a background task or routine) refuses a write before anything is sent.
-  async function call(input, { signal, readOnly = false, onWritten = null } = {}) {
+  async function call(input, { signal, readOnly = false, onWritten = null, sendVia = '' } = {}) {
     const problem = validate(input);
     if (problem) throw new Error(problem);
     const def = registry.get(input.app);
@@ -357,11 +382,19 @@ function create({
     const key = `${def.id}:${input.action}:${JSON.stringify(args)}`;
     const write = def.actions[input.action].write === true;
     if (write && readOnly) throw new Error(`Background tasks and routines can only read from ${def.name}. Tell the user what you would have changed.`);
+    const sending = def.id === 'gmail' && input.action === 'send';
+    if (sending) { // allowed by a card click or the user's typed permission (agent.js passes how), the switch is on, under 10 an hour
+      if (!sendVia) throw new Error('A send needs the user’s approval first. Nothing was sent.');
+      if (!sendingOn()) throw new Error('Sending is off (Settings → You and AI → Connectors → Gmail → Allow sending). Nothing was sent.');
+      try { sendLog().room(); } catch (err) { throw new Error(err.message); }
+    }
     const hit = !write && cache.get(key);
     if (hit && now() - hit.at < CACHE_MS) return hit.text;
     let text;
     try {
-      text = await provider(def.id).actions[input.action](makeCtx(def, entry, signal), args);
+      const ctx = makeCtx(def, entry, signal);
+      if (sending) ctx.beforeSend = ({ to, subject }) => sendLog().record({ to, subject, via: sendVia }); // (written just before the request: a send with no answer still counts)
+      text = await provider(def.id).actions[input.action](ctx, args);
     } catch (err) {
       if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; }
       throw err;
@@ -383,7 +416,8 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
-  return { list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
+  return { setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

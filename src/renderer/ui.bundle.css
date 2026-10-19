@@ -1125,6 +1125,7 @@ body.sidebar-moving .composer, body.resizing .composer { backdrop-filter: none; 
 .approval-problem[hidden] { display: none; }
 .approval-args { margin: -4px 0 12px; padding: 8px; max-height: 180px; overflow: auto; border-radius: var(--r-sm); background: var(--hover, rgba(127,127,127,.12)); font: 11px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
 
+.approval-warn { margin: 0 0 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; background: rgba(217, 48, 37, 0.12); color: var(--danger, red); }
 .approval-edit-label { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; font-size: 11px; color: var(--muted, inherit); }
 .approval-edit { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: var(--r-sm); background: var(--bg, transparent); color: var(--text, inherit); font: 12px/1.45 inherit; resize: vertical; }
 textarea.approval-edit { font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 260px; }
