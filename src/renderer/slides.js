@@ -273,23 +273,69 @@
   }
 
   // ---- shapes
+  // Path geometry (pptx-geom.js: presets such as braces and arrows, and custom shapes): s.paths are SVG paths in points, in the shape's own box.
+  // The fill (a color, a gradient or a picture) stays on the box, clipped to the filled paths; the outline and the lighter and darker faces
+  // of 3D shapes are an SVG laid over it (pathOverlay).
+  const PATH_D = /^[MLCQZ\d .,e-]+$/;
+  const pathsOf = (s) => (s.geom === 'path' && Array.isArray(s.paths) ? s.paths.filter((p) => p && typeof p.d === 'string' && PATH_D.test(p.d)).slice(0, 60) : []);
+  let clipCount = 0;
+  function pathClip(node, s) {
+    const w = pt(s.w); const h = pt(s.h);
+    const d = pathsOf(s).filter((p) => p.fill !== 'none').map((p) => p.d).join('');
+    if (!d || !(w > 0) || !(h > 0)) return;
+    const id = `geo${++clipCount}`;
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('width', '0'); svg.setAttribute('height', '0'); svg.style.position = 'absolute';
+    const clip = document.createElementNS(SVG, 'clipPath');
+    clip.setAttribute('id', id); clip.setAttribute('clipPathUnits', 'objectBoundingBox');
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', d); path.setAttribute('transform', `scale(${1 / w} ${1 / h})`);
+    clip.append(path); svg.append(clip); node.append(svg);
+    node.style.clipPath = `url(#${id})`;
+  }
+  const SHADE = { lighten: 'rgba(255, 255, 255, 0.4)', lightenLess: 'rgba(255, 255, 255, 0.2)', darken: 'rgba(0, 0, 0, 0.4)', darkenLess: 'rgba(0, 0, 0, 0.2)' };
+  function strokeAttrs(node, line, width) {
+    node.setAttribute('stroke', rgba(line.color, line.alpha ?? 1) || '#000');
+    node.setAttribute('stroke-width', String(width));
+    if (Array.isArray(line.dashArray) && line.dashArray.length) node.setAttribute('stroke-dasharray', line.dashArray.map((v) => Math.max(0.1, (Number(v) || 1) * Math.max(width, 0.75)).toFixed(2)).join(' '));
+    else if (line.dash) node.setAttribute('stroke-dasharray', '4 3');
+    if (line.cap) node.setAttribute('stroke-linecap', line.cap);
+    if (line.join) node.setAttribute('stroke-linejoin', line.join);
+    node.setAttribute('fill', 'none');
+  }
+  function pathOverlay(s) {
+    const w = Math.max(1, pt(s.w)); const h = Math.max(1, pt(s.h));
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('class', 'geo');
+    svg.setAttribute('width', String(w)); svg.setAttribute('height', String(h));
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const line = s.line && HEX.test(s.line.color || '') ? s.line : null;
+    for (const p of pathsOf(s)) {
+      const path = document.createElementNS(SVG, 'path');
+      path.setAttribute('d', p.d);
+      if (SHADE[p.fill]) { path.setAttribute('fill', SHADE[p.fill]); path.setAttribute('stroke', 'none'); svg.append(path); } else if (line && p.stroke) { strokeAttrs(path, line, Math.max(0.25, Number(line.width) || 0.75)); svg.append(path); }
+    }
+    return svg.childNodes.length ? svg : null;
+  }
   function shapeGeometry(node, s) {
     if (s.geom === 'ellipse') node.style.borderRadius = '50%';
     else if (s.geom === 'roundRect') node.style.borderRadius = `${Math.min(pt(s.w), pt(s.h)) * Math.max(0, Math.min(0.5, Number(s.radius) || 0.1667))}px`;
-    else if (s.geom === 'polygon' && /^[\d.% ,]+$/.test(s.points || '')) node.style.clipPath = `polygon(${s.points})`;
+    else if (s.geom === 'path') pathClip(node, s);
   }
   function drawShape(s) {
     const box = el('div', 'shape');
     placeBox(box, s);
     const bg = el('div', 'bg');
     applyFill(bg, s.fill);
-    if (s.line && HEX.test(s.line.color || '')) {
+    if (s.line && HEX.test(s.line.color || '') && s.geom !== 'path') {
       bg.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px ${s.line.dash ? 'dashed' : 'solid'} ${rgba(s.line.color, s.line.alpha ?? 1)}`;
     }
     shapeGeometry(bg, s);
     const flip = flipOf(s);
     if (flip) bg.style.transform = flip;
     box.append(bg);
+    const overlay = s.geom === 'path' ? pathOverlay(s) : null;
+    if (overlay) box.append(overlay);
     if (s.text) drawText(box, s.text);
     return box;
   }
@@ -312,10 +358,41 @@
     box.append(imageLayer(s, { alt: s.alt, flip: flipOf(s) }));
     // An EMF or WMF that will not draw (and has no SVG twin): a placeholder of the picture's size, not an empty box.
     if (isVector(s.image) && !imageUrl(s.svg)) displayUrl(s.image).then((u) => { if (!u) missing(`${kindName(s.image)} picture`); });
-    if (s.line && HEX.test(s.line.color || '')) box.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px solid ${rgba(s.line.color, s.line.alpha ?? 1)}`;
+    if (s.line && HEX.test(s.line.color || '') && s.geom !== 'path') box.style.border = `${Math.max(0.25, Number(s.line.width) || 0.75)}px solid ${rgba(s.line.color, s.line.alpha ?? 1)}`;
     return box;
   }
+  // A line or connector from path data (pptx-geom.js): straight, elbow or curved, with its arrowheads (s.ends). Flips and rotation are CSS.
+  function drawPathLine(s) {
+    const w = pt(s.w); const h = pt(s.h);
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('class', 'line');
+    svg.style.left = `${pt(s.x)}px`;
+    svg.style.top = `${pt(s.y)}px`;
+    svg.setAttribute('width', String(Math.max(1, w)));
+    svg.setAttribute('height', String(Math.max(1, h)));
+    svg.setAttribute('viewBox', `0 0 ${Math.max(1, w)} ${Math.max(1, h)}`);
+    const transform = [s.rot ? `rotate(${Number(s.rot) || 0}deg)` : '', flipOf(s)].filter(Boolean).join(' ');
+    if (transform) { svg.style.transform = transform; svg.style.transformOrigin = `${w / 2}px ${h / 2}px`; }
+    const width = Math.max(0.25, Number(s.width) || 0.75);
+    for (const p of s.paths) {
+      if (typeof p.d !== 'string' || !PATH_D.test(p.d)) continue;
+      const path = document.createElementNS(SVG, 'path');
+      path.setAttribute('d', p.d);
+      strokeAttrs(path, s, width);
+      svg.append(path);
+    }
+    const color = rgba(s.color, s.alpha ?? 1) || '#000';
+    for (const e of Array.isArray(s.ends) ? s.ends.slice(0, 2) : []) {
+      if (typeof e.d !== 'string' || !PATH_D.test(e.d)) continue;
+      const path = document.createElementNS(SVG, 'path');
+      path.setAttribute('d', e.d);
+      if (e.fill) { path.setAttribute('fill', color); path.setAttribute('stroke', 'none'); } else { path.setAttribute('fill', 'none'); path.setAttribute('stroke', color); path.setAttribute('stroke-width', String(width)); path.setAttribute('stroke-linejoin', 'round'); path.setAttribute('stroke-linecap', 'round'); }
+      svg.append(path);
+    }
+    return svg;
+  }
   function drawLine(s) {
+    if (Array.isArray(s.paths) && s.paths.length) return drawPathLine(s);
     const w = pt(s.w); const h = pt(s.h);
     const svg = document.createElementNS(SVG, 'svg');
     svg.setAttribute('class', 'line');
