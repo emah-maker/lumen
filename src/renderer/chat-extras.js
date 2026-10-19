@@ -44,7 +44,8 @@
   // One strip right above the textbox holds the plan meter and the context meter (built further down); it is hidden when both are.
   const strip = Object.assign(document.createElement('div'), { id: 'meter-strip', className: 'meter-strip', hidden: true });
   strip.append(meter);
-  if ($('prompt')) $('prompt').before(strip);
+  if ($('composer-status')) $('composer-status').prepend(strip); // the status line above the box, beside the Bypass badge
+  else if ($('prompt')) $('prompt').before(strip);
   else $('composer')?.prepend(strip);
   const syncStrip = () => { strip.hidden = [...strip.children].every((c) => c.hidden); };
   meter.setAttribute('aria-haspopup', 'dialog');

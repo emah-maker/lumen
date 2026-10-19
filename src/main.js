@@ -295,6 +295,7 @@ const UI_ONLY_IPC = new Set([
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
   'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
+  'mission:open', // lumen://tasks from the Tasks panel and the More menu (the page itself is checked in its handlers)
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
   'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
@@ -1701,6 +1702,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.toggleSidebar'), accelerator: 'CmdOrCtrl+J', click: toggleSidebarFromKeys }, // (a page that uses Ctrl+J gets it first: the menu still shows it)
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
+        { label: t('menu.missionControl'), accelerator: 'CmdOrCtrl+Shift+X', click: () => managers.open('tasks') }, // [mission control] lumen://tasks
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
       ], 'ai', t('menu.aiAndTasks'), 5),
     ],
@@ -5485,6 +5487,7 @@ function handleShortcut(event, input) {
   else if (mod && key === ',') openSettingsPage(); // [settings]
   else if (process.platform === 'darwin' && input.meta && key === '[') goBack(wc);
   else if (process.platform === 'darwin' && input.meta && key === ']') wc?.navigationHistory.goForward();
+  else if (mod && input.shift && !input.alt && key === 'x') managers.open('tasks'); // [mission control] lumen://tasks: everything the AI is doing
   else if (process.platform === 'darwin' && input.meta && key === 'y') openHistoryPage();
   else if (input.alt && key === 'arrowleft') goBack(wc);
   else if (input.alt && !mod && key === 'home' && activeTabIsChatPage()) chatPageRt.home(activeId); // Chrome's Home shortcut, on the full-page chat
@@ -5849,6 +5852,8 @@ function runView(run) {
 }
 // [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.
 let aiStatusSoon = () => {};
+// [mission control] An open lumen://tasks page looks again; set once the page's wiring exists (below, after the agents).
+let missionSoon = () => {};
 // The mark on each window's sidebar button, and the chat list's badges.
 function pushAttention() {
   const approvals = [...chatRuns.values()].reduce((n, r) => n + r.pending.size, 0);
@@ -5862,6 +5867,7 @@ function pushAttention() {
   chatPageRt?.broadcast('chats:changed', null, ui()); // and the chat pages' lists
   refreshTabMarks(); // [chat per tab]
   aiStatusSoon();
+  missionSoon();
 }
 const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRuns.keys()].map((id) => {
   const run = chatRuns.get(id);
@@ -8379,7 +8385,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat', tasks: 'AI activity' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -8796,7 +8802,7 @@ const bgTasks = require('./features/background-runner').create({
   file: path.join(app.getPath('userData'), 'background-tasks.json'),
   now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
   connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
-  routinesChanged: () => routinesSoon(),
+  routinesChanged: () => { routinesSoon(); missionSoon(); }, // (and an open lumen://tasks page)
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
@@ -8829,6 +8835,7 @@ const telegramNow = () => {
   if (TEST) global.__telegram = telegramRt;
   return telegramRt;
 };
+const missionFromPhone = new Set(); // [mission control] tasks Telegram started since Lumen started (lumen://tasks says so)
 const telegramDeps = () => ({
   fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
   readSettings, writeSettings, t,
@@ -8842,7 +8849,7 @@ const telegramDeps = () => ({
   },
   canEncrypt: () => safeStorage.isEncryptionAvailable(),
   isOnline: () => net.isOnline(),
-  tasks: { create: (spec) => bgTasks.create(spec), stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
+  tasks: { create: (spec) => { const task = bgTasks.create(spec); missionFromPhone.add(task.id); return task; }, stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
 });
 for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
   ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
@@ -10406,7 +10413,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
+  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
@@ -10486,6 +10493,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     if (msg.type === 'done') {
       if (!run.deleted) (isOpen() ? saveChat() : saveChatOf(runChat, run.messages));
+      if (!run.deleted && !temporaryChats.has(runChat)) missionFinished(run); // [mission control] the page's Recent list
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
@@ -11920,11 +11928,97 @@ const aiAgents = setupAiAgents({
   // [agent window] each outside MCP session's own window (features/agent-windows.js); its steps and approval cards go to the user's window.
   agentWindows: { windows: agentWindows, activeTabId: (rec) => activeIdOf(rec) },
   showAgentWindow: (rec) => { if (rec && rcAlive(rec) && rec.agent) { if (rec.win.isMinimized()) rec.win.restore(); rec.win.focus(); } }, // the toolbar badge, clicked by the user
+  approvalsChanged: () => missionSoon(), // [mission control] an outside agent's card came or went
   userUi: () => {
     const user = [focusedRec(), curRec].find((r) => r && rcAlive(r) && winRecs.has(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || null;
     return user ? user.win.webContents : ui();
   },
 });
+
+// ---------- [mission control] lumen://tasks: everything the AI is doing (features/mission-control.js, renderer/mission.html) ----------
+// The page reads what is going on and its buttons go through the actions that already exist: the sidebar's approve
+// (agent.resolveApproval), the Tasks panel's (bgTasks.approve), Stop (stopChat, bgTasks.stop, an outside agent's session Stop),
+// Go to, and a routine's on / off (bgTasks.setEnabled). Only cards that are waiting now can be answered.
+const missionLib = () => require('./features/mission-control'); // (loaded on first use, not at startup)
+let missionChatsDone = []; // sidebar runs finished since Lumen started, newest first (tasks keep their own history)
+const agentSince = new WeakMap(); // an outside agent's window -> when it was first seen working
+const chatTitleOf = (id, text) => { try { return chats().list().find((c) => c.id === id)?.title || chatRunsLib.firstLine(text, 80) || ''; } catch { return chatRunsLib.firstLine(text, 80) || ''; } };
+function missionFinished(run) {
+  missionChatsDone = missionLib().noteFinished(missionChatsDone, { chatId: run.chatId, title: chatTitleOf(run.chatId, run.text), startedAt: run.startedAt, endedAt: Date.now(), status: chatRunsLib.outcome(run), preview: run.error ? run.errorSummary || run.error : chatRunsLib.firstLine(run.reply, 200) });
+  missionGoto.set(run.chatId, { chatId: run.chatId, tabId: run.tabId, homeTab: run.homeTab, rec: run.rec });
+  if (missionGoto.size > missionLib().RECENT_MAX) missionGoto.delete(missionGoto.keys().next().value);
+}
+const missionGoto = new Map(); // a finished chat -> where it ran (Go to on the Recent list)
+// Outside agents working in a window of their own: the window, its session (the MCP connection) and its id for the page.
+function missionAgents() {
+  return agentWindows.windows().map((rec) => {
+    const session = agentWindows.keyOf(rec);
+    if (!agentSince.has(rec)) agentSince.set(rec, Date.now());
+    return { rec, session, id: String(rec.win.id), clientName: session?.clientName || rec.agent?.label || 'Agent', since: agentSince.get(rec), canStop: typeof session?.disconnect === 'function' };
+  });
+}
+function missionState() {
+  const agents = missionAgents();
+  const idOfRec = (rec) => agents.find((a) => a.rec === rec)?.id ?? null;
+  return missionLib().aggregate({
+    // A temporary chat is shown as one, without its words (mission-control.js hides them too). Private windows have no sidebar, so no chat of theirs is here.
+    chats: [...chatRuns.values()].filter((r) => !r.deleted).map((r) => (temporaryChats.has(r.chatId)
+      ? { chatId: r.chatId, temporary: true, running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt, approvals: [...r.pending.values()].map((a) => ({ approvalId: a.approvalId, action: a.action })) }
+      : {
+        chatId: r.chatId, title: chatTitleOf(r.chatId, r.text), running: !r.queued && agent.runningFor(r.messages), queued: Boolean(r.queued), startedAt: r.startedAt,
+        step: r.details?.tools[r.details.tools.length - 1]?.label || '', approvals: [...r.pending.values()],
+      })),
+    tasks: bgTasks.overview().map((x) => (missionFromPhone.has(x.id) ? { ...x, via: 'telegram' } : x)),
+    agents: agents.map(({ rec, session, ...a }) => a),
+    agentCards: aiAgents.agentCards().map((c) => ({ ...c, agentId: idOfRec(c.key) })),
+    chatsDone: missionChatsDone,
+  });
+}
+function missionAct(raw) {
+  const req = missionLib().cleanRequest(raw);
+  if (!req) return { ok: false };
+  if (req.op === 'answer') {
+    // The card as it waits now, and the answers the page offered for it (mission-control.js choicesFor): a card that needs its own
+    // (a file to choose, an app, a content-loss check, a connector's write, a memory note, details too long to show, a temporary chat) has none.
+    const card = req.kind === 'task' ? bgTasks.pendingCard(req.id, req.approvalId) : req.kind === 'chat' ? chatRuns.get(req.id)?.pending.get(req.approvalId) : aiAgents.agentCards().find((c) => c.approvalId === req.approvalId);
+    const temporary = req.kind === 'chat' && temporaryChats.has(req.id);
+    if (!card || !missionLib().choicesFor(req.kind, missionLib().cardText(card), { temporary }).includes(req.choice)) return { ok: false };
+    if (req.kind === 'task') return { ok: bgTasks.approve(req.id, req.approvalId, req.choice) }; // the Tasks panel's own path ('tasks:approve')
+    agent.resolveApproval(req.approvalId, req.choice === 'allow'); // the sidebar's own path ('agent:approve')
+    return { ok: true };
+  }
+  if (req.op === 'toggle') return { ok: Boolean(bgTasks.setEnabled(req.id, req.on)) };
+  const agentRec = req.kind === 'agent' ? missionAgents().find((a) => a.id === req.id) : null;
+  if (req.op === 'stop') {
+    if (req.kind === 'chat') return { ok: stopChat(req.id) };
+    if (req.kind === 'task') return { ok: bgTasks.stop(req.id) };
+    if (!agentRec?.canStop) return { ok: false };
+    agentRec.session.disconnect(); // the same as Stop for an outside app (features/external-apps.js): its connection ends
+    return { ok: true };
+  }
+  // Go to: the chat in its tab with the sidebar open, the task in the Tasks panel, the agent's own window.
+  if (req.kind === 'chat') {
+    const run = chatRuns.get(req.id) || missionGoto.get(req.id) || { chatId: req.id };
+    return { ok: openNotified({ run, kind: run.pending?.size ? 'approval' : 'done' }) };
+  }
+  if (req.kind === 'task') { ui()?.send('tasks:open', { id: req.id }); return { ok: true }; }
+  if (!agentRec) return { ok: false };
+  agentRec.rec.win.isMinimized() && agentRec.rec.win.restore();
+  agentRec.rec.win.focus();
+  return { ok: true };
+}
+ipcMain.handle('mission:state', (event) => (managers.fromPage(event, 'tasks') ? missionState() : null));
+ipcMain.handle('mission:act', (event, req) => (managers.fromPage(event, 'tasks') ? missionAct(req) : { ok: false }));
+ipcMain.on('mission:open', () => managers.open('tasks')); // (UI_ONLY_IPC: the browser UI only)
+let missionTimer = null;
+missionSoon = () => {
+  if (missionTimer) return;
+  missionTimer = setTimeout(() => {
+    missionTimer = null;
+    for (const x of allTabsEverywhere()) if (x.managerPage === 'tasks' && alive(x)) x.view.webContents.send('mission:changed');
+  }, 150);
+};
+if (TEST) global.__mission = { state: () => missionState(), act: (req) => missionAct(req) };
 
 // ---------- updates from GitHub Releases (features/updates.js) ----------
 

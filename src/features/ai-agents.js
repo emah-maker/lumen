@@ -95,7 +95,7 @@ function setupAiAgents(deps) {
   const quiet = require('./agents-quiet');
   const pendingApprovals = quiet.createPendingApprovals();
   const userWc = () => deps.userUi?.() || ui();
-  const sendPending = () => { try { userWc()?.send('agents:pending', { count: pendingApprovals.count() }); } catch {} };
+  const sendPending = () => { try { userWc()?.send('agents:pending', { count: pendingApprovals.count() }); } catch {} try { deps.approvalsChanged?.(); } catch {} }; // (and an open lumen://tasks page)
   const hasAgentWindows = () => Boolean(deps.agentWindows) && !(global.__mcpSharedWindow && require('../test-mode').isTest());
   const sendToWindow = (rec, event) => { try { const wc = rec?.win?.webContents; if (wc && !wc.isDestroyed()) wc.send('mcp:event', event); } catch {} };
   // rec: the agent's window when known (a call), else none (a connect notice: nobody to tell, the user's window least of all).
@@ -104,7 +104,7 @@ function setupAiAgents(deps) {
     if (route === 'user') userWc()?.send('mcp:event', event);
     else if (route === 'agent') sendToWindow(rec, event);
     else if (route === 'pending') {
-      if (event.type === 'approval') pendingApprovals.add(event.approvalId, { clientName: event.clientName, key: rec });
+      if (event.type === 'approval') pendingApprovals.add(event.approvalId, { clientName: event.clientName, key: rec, host: event.host, action: event.action, title: event.title, args: event.args, query: event.query, tainted: event.tainted, note: event.note, noBypass: event.noBypass, since: Date.now() }); // (the card's words: lumen://tasks lists it)
       else pendingApprovals.remove(event.approvalId);
       sendToWindow(rec, { ...event, quiet: false }); // (in its own window the card may open the sidebar)
       sendPending();
@@ -900,6 +900,8 @@ function setupAiAgents(deps) {
     // Is a local engine pick ('claudecode:…' / 'grokbuild:…') still being looked for?
     engineDetecting: (id) => detecting && /^(claudecode|grokbuild|antigravity|codex):/.test(String(id)),
     mcpServer: () => mcpServer,
+    // [mission control] The approval cards waiting in outside agents' windows, for lumen://tasks: [{ approvalId, clientName, key, host, action, title, args, since }].
+    agentCards: () => pendingApprovals.list(),
     // [warm per chat] A chat was deleted, or its last tab closed: its own warm Claude Code process (and MCP token) ends,
     // now or when its message in flight ends.
     chatGone: (chatId) => { if (chatId != null) { warmChats.drop(String(chatId)); try { codex?.keepWarm?.dropChat(chatId); } catch {} } },

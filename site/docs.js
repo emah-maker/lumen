@@ -24,6 +24,7 @@ const PAGES = {
   'custom-widgets': { title: 'Custom widgets', file: 'docs/custom-widgets.md' },
   focus: { title: 'Focus mode', file: 'docs/focus.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
+  'mission-control': { title: 'AI activity', file: 'docs/mission-control.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
   sync: { title: 'Sync through a folder', file: 'docs/sync.md' },
   notes: { title: 'Notes', file: 'docs/notes.md' },

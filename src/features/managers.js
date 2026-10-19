@@ -1,4 +1,5 @@
-// The Bookmarks, Reading list and Downloads pages (renderer/bookmarks.html, readinglist.html, downloads.html).
+// The Bookmarks, Reading list and Downloads pages (renderer/bookmarks.html, readinglist.html, downloads.html), and lumen://tasks
+// (renderer/mission.html, whose calls are main.js's: features/mission-control.js).
 // Like the History page, each is a local file in an ordinary tab. Only a tab opened as that page
 // gets managers-preload.js, the preload exposes its API only to that page's own document, and
 // every call below checks that it came from the top frame of such a tab showing that page. The AI
@@ -13,7 +14,8 @@ const chatPage = require('./chat-page'); // lumen://chat opens and is switched t
 const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'bookmarks.html')).href;
 const DOWNLOADS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'downloads.html')).href;
 const READINGLIST_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'readinglist.html')).href;
-const PAGES = { bookmarks: BOOKMARKS_URL, readinglist: READINGLIST_URL, downloads: DOWNLOADS_URL, chat: chatPage.CHAT_URL };
+const MISSION_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'mission.html')).href; // lumen://tasks: everything the AI is doing (features/mission-control.js)
+const PAGES = { bookmarks: BOOKMARKS_URL, readinglist: READINGLIST_URL, downloads: DOWNLOADS_URL, tasks: MISSION_URL, chat: chatPage.CHAT_URL };
 const PRELOAD = path.join(__dirname, 'managers-preload.js');
 const preloadFor = (page) => (page === 'chat' ? chatPage.PRELOAD : PRELOAD);
 
@@ -173,7 +175,7 @@ function createManagers(deps) {
     on('downloads:folder', 'downloads', () => { deps.openFolder(); return true; }, false);
   }
 
-  return { setup, open, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushReadingList, pushBookmarks, pickers, add, update, remove, restore, importHtml, exportHtml, list };
+  return { setup, open, fromPage, pageOf, PAGES, PRELOAD, preloadFor, pushDownloads, pushReadingList, pushBookmarks, pickers, add, update, remove, restore, importHtml, exportHtml, list };
 }
 
-module.exports = { createManagers, pageOf, BOOKMARKS_URL, READINGLIST_URL, DOWNLOADS_URL, PRELOAD, preloadFor };
+module.exports = { createManagers, pageOf, BOOKMARKS_URL, READINGLIST_URL, DOWNLOADS_URL, MISSION_URL, PRELOAD, preloadFor };
