@@ -623,6 +623,12 @@ contextBridge.exposeInMainWorld('assistant', {
     onContext: on('chats:context'), // [context] how full the open chat's context window is (features/chat-usage.js contextView)
     onChanged: on('chats:changed'), // a chat started or stopped running, needs an OK, or finished unseen
   },
+  // [memory] Saved memory (ai/memory.js): the chat's "Remembered" row (Undo / Forget) and /memory.
+  memory: {
+    list: () => ipcRenderer.invoke('memory:list'),
+    undo: (token) => ipcRenderer.invoke('memory:undo', token),
+    forget: (id) => ipcRenderer.invoke('memory:forget', id),
+  },
   // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
   research: {
     get: () => ipcRenderer.invoke('research:get'),
