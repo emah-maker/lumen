@@ -51,6 +51,11 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       preview: (id) => ipcRenderer.invoke('aifiles:preview', id),
       open: (id, how, opts) => ipcRenderer.invoke('aifiles:open', id, how, opts),
     },
+    memory: { // [memory] the chat's "Remembered" row (Undo / Forget) and /memory (ai/memory.js)
+      list: () => ipcRenderer.invoke('memory:list'),
+      undo: (token) => ipcRenderer.invoke('memory:undo', token),
+      forget: (id) => ipcRenderer.invoke('memory:forget', id),
+    },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),

@@ -4904,6 +4904,24 @@ window.assistant.onEvent((event) => {
       moveWorkingToEnd();
       syncWorking();
       break;
+    case 'memory': {
+      const key = { add: 'memory.remembered', update: 'memory.updated', forget: 'memory.forgot' }[event.action];
+      if (!key || !window.assistant.memory) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note', textContent: t(key, { text: event.text || '' }) }));
+      const action = (label, done, run) => {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: label });
+        button.onclick = async () => {
+          for (const b of note.querySelectorAll('button')) b.disabled = true;
+          const ok = await run().catch(() => false);
+          for (const b of note.querySelectorAll('button')) b.remove();
+          note.append(` ${ok ? done : t('memory.changedSince')}`);
+        };
+        note.append(' ', button);
+      };
+      if (event.token) action(t('memory.undo'), t('memory.undone'), () => window.assistant.memory.undo(event.token));
+      if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
 
@@ -13280,6 +13298,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
+
 (() => {
   const slash = window.slashCommands;
   const newChat = document.getElementById('new-chat');
@@ -13491,6 +13510,33 @@ $('agent-stop')?.addEventListener('click', () => {
     run() {
       if (!extras.openUsage) return { ok: false, message: tr('slash.usage.none', 'Usage is in Settings → Usage.') };
       extras.openUsage();
+      return { ok: true };
+    },
+  });
+  slash.register({
+    name: 'memory',
+    label: tr('slash.memory', 'Memory'),
+    description: tr('slash.memory.description', 'What the AI has saved about you between chats.'),
+    takesInput: false,
+    async run() {
+      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI and agents.') };
+      const view = await window.assistant.memory.list().catch(() => null);
+      const box = Object.assign(document.createElement('div'), { className: 'notice slash-help memory-list' });
+      const entries = view?.entries || [];
+      box.append(Object.assign(document.createElement('strong'), { textContent: tr('slash.memory.title', 'Memory') }), ' ');
+      if (!view?.on) box.append(tr('slash.memory.off', 'Memory is off: the AI doesn’t save or read anything between chats.'));
+      else if (!entries.length) box.append(tr('slash.memory.empty', 'Nothing saved yet. Tell the AI “remember that …”.'));
+      if (entries.length) {
+        const list = document.createElement('ul');
+        for (const e of entries.slice(0, 50)) list.append(Object.assign(document.createElement('li'), { textContent: e.text }));
+        box.append(list);
+        if (entries.length > 50) box.append(tr('slash.memory.more', '…and {n} more.', { n: entries.length - 50 }), ' ');
+        if (!view.on) box.append(tr('slash.memory.offKept', 'These are kept but not used while Memory is off.'), ' ');
+      }
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: tr('slash.memory.open', 'Manage memory') });
+      open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
+      box.append(' ', open);
+      note(box);
       return { ok: true };
     },
   });
