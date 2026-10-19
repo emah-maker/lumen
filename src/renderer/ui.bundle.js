@@ -2251,6 +2251,10 @@ explain describe list find give compare difference summarize summary write rewri
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
   }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
+  }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
@@ -2384,7 +2388,7 @@ explain describe list find give compare difference summarize summary write rewri
       open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
 
 
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
@@ -5236,6 +5240,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source);
 }
 
 
@@ -6211,6 +6216,7 @@ function startChat() {
     copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>',
     check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
     up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
+    note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
     down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
   };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -6334,6 +6340,24 @@ function startChat() {
       if (time) { time.classList.add('msg-hover'); strip.append(time); }
     }
     if (!strip.querySelector('.reply-thumbs') && bubble.querySelector('.reply-copy')) strip.append(thumbs(bubble, info.feedback));
+    const note = strip.querySelector('.reply-note');
+    if (note && note !== strip.lastElementChild) strip.append(note);
+  }
+
+
+  function noteButton(bubble, source) {
+    if (!bubble || !window.assistant?.notes || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-note')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+    const b = button('reply-thumb reply-note', t('notes.add'), ICONS.note, async () => {
+      const r = await window.assistant.notes.act('add', { text: String(source) }).catch(() => null);
+      b.title = t(r?.ok ? 'notes.added' : 'notes.addFailed');
+      b.setAttribute('aria-label', b.title);
+      b.classList.toggle('done', Boolean(r?.ok));
+      b.innerHTML = r?.ok ? ICONS.check : ICONS.note;
+      setTimeout(() => { b.title = t('notes.add'); b.setAttribute('aria-label', b.title); b.classList.remove('done'); b.innerHTML = ICONS.note; }, 2200);
+    });
+    strip.append(b);
   }
   function thumbs(bubble, current = null) {
     const box = el('span', { className: 'reply-thumbs' });
@@ -6406,7 +6430,7 @@ function startChat() {
     copy.click();
   });
 
-  window.chatActions = { userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+  window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();
 ;
 // ---- tabs-ask-core.js
@@ -7530,6 +7554,78 @@ function startChat() {
   window.addEventListener('pagehide', cancel);
 })();
 ;
+// ---- offer-card.js
+
+
+
+
+
+(() => {
+  const api = window.assistant?.offers;
+  const empty = document.getElementById('empty');
+  if (!api || !empty) return;
+  const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
+  let card = null;
+
+  const remove = () => { card?.remove(); card = null; };
+  const button = (text, cls, onclick) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text, onclick });
+  const act = (action, arg) => api.act(action, arg).catch(() => ({ ok: false }));
+
+  function row(item) {
+    const li = document.createElement('li');
+    li.className = 'offer-row';
+    li.dataset.offer = item.id;
+    const text = document.createElement('span');
+    text.className = 'offer-text';
+    const name = Object.assign(document.createElement('span'), { className: 'offer-name', textContent: tr(`offers.${item.id}`) });
+    const desc = Object.assign(document.createElement('span'), { className: 'offer-desc', textContent: tr(`offers.${item.id}.desc`) });
+    text.append(name, desc);
+    const setup = item.kind === 'setup';
+    const go = button(tr(setup ? 'offers.setUp' : 'offers.turnOn'), 'offer-go', async () => {
+      go.disabled = true;
+      const r = await act('act', item.id);
+      if (!r.ok) { go.disabled = false; return; }
+      if (r.section) window.lumenPrefs?.openSettingsPage(r.section);
+      li.remove();
+      if (!card?.querySelector('.offer-row')) remove();
+    });
+    go.setAttribute('aria-label', `${go.textContent}: ${name.textContent}`);
+    li.append(text, go);
+    return li;
+  }
+
+  async function show() {
+    if (card) return;
+    let list = null;
+    try { list = await api.get(); } catch {  }
+    if (!list?.items?.length || card || document.getElementById('welcome')?.hidden === false) return;
+    card = document.createElement('section');
+    card.className = 'offer-card';
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', tr('offers.title'));
+    const title = Object.assign(document.createElement('h3'), { className: 'offer-title', textContent: tr('offers.title') });
+    const ul = document.createElement('ul');
+    ul.className = 'offer-list';
+    for (const item of list.items) ul.append(row(item));
+    const foot = document.createElement('div');
+    foot.className = 'offer-foot';
+    foot.append(
+      button(tr('offers.notNow'), 'link-btn offer-later', async () => { remove(); await act('dismiss'); }),
+      button(tr('offers.never'), 'link-btn offer-never', async () => { remove(); await act('dismiss', 'never'); }));
+    card.append(title, ul, foot);
+    (empty.querySelector('.chips') || empty).before(card);
+
+    const ids = list.items.map((i) => i.id);
+    const seenOnce = () => { if (card && card.offsetParent !== null && !document.hidden) { io.disconnect(); act('shown', ids); } };
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) seenOnce(); });
+    io.observe(card);
+  }
+
+
+  setTimeout(show, 600);
+  window.addEventListener('focus', () => { if (!card) setTimeout(show, 100); });
+})();
+;
 // ---- snapshot-arrival.js
 
 
@@ -7625,6 +7721,79 @@ function startChat() {
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.tabSelection = api;
 })(typeof window !== 'undefined' ? window : globalThis);
+;
+// ---- split.js
+
+
+
+(() => {
+  const viewport = document.getElementById('viewport');
+  if (!viewport || !window.browser?.onSplit) return;
+  const tr = (key, fallback) => (typeof window.t === 'function' ? window.t(key) : fallback);
+  const bar = document.createElement('div');
+  bar.id = 'split-divider';
+  bar.className = 'split-divider';
+  bar.hidden = true;
+  bar.tabIndex = 0;
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.setAttribute('aria-label', tr('split.divider', 'Resize split view. Drag, or use the arrow keys.'));
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'split-close';
+  close.title = tr('split.close', 'Close split view');
+  close.setAttribute('aria-label', tr('split.close', 'Close split view'));
+  close.innerHTML = '<svg viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 1.5l5 5M6.5 1.5l-5 5"/></svg>';
+  bar.append(close);
+  viewport.append(bar);
+
+  let ratio = 0.5;
+  let gap = 12;
+  let pending = null;
+  const send = (r) => {
+    ratio = r;
+    pending = r;
+    if (pending !== null && !send.raf) send.raf = requestAnimationFrame(() => { send.raf = 0; window.browser.setSplitRatio(pending); pending = null; });
+  };
+  const fromPointer = (e) => {
+    const box = viewport.getBoundingClientRect();
+    return (e.clientX - box.left - gap / 2) / Math.max(1, box.width - gap);
+  };
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('.split-close')) return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('dragging');
+    document.body.classList.add('split-dragging');
+  });
+  bar.addEventListener('pointermove', (e) => { if (bar.hasPointerCapture(e.pointerId)) send(fromPointer(e)); });
+  const end = (e) => {
+    if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+    bar.classList.remove('dragging');
+    document.body.classList.remove('split-dragging');
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', end);
+  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('.split-close')) send(0.5); });
+  bar.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); send(ratio - step); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); send(ratio + step); }
+    else if (e.key === 'Home') { e.preventDefault(); send(0.5); }
+  });
+  close.addEventListener('click', () => window.browser.closeSplit());
+
+  window.browser.onSplit((msg) => {
+    bar.hidden = !msg;
+    document.body.classList.toggle('split-view', Boolean(msg));
+    if (!msg) return;
+    ratio = msg.ratio;
+    gap = msg.width;
+    bar.style.left = `${msg.x}px`;
+    bar.style.width = `${msg.width}px`;
+    bar.setAttribute('aria-valuenow', String(Math.round(msg.ratio * 100)));
+  });
+})();
 ;
 // ---- omnibox-draft.js
 
@@ -7810,6 +7979,7 @@ const PAGE_ICONS = {
   source: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5"/>',
   bookmarks: '<path d="M4.25 2.25h7.5v11.5L8 11l-3.75 2.75z"/>',
   downloads: '<path d="M8 2.25v8M4.75 7.25 8 10.5l3.25-3.25M3 13.25h10"/>',
+  readinglist: '<path d="M2.5 3.5h4.25A1.25 1.25 0 0 1 8 4.75v8a1.25 1.25 0 0 0-1.25-1.25H2.5ZM8 4.75A1.25 1.25 0 0 1 9.25 3.5h4.25v8H9.25A1.25 1.25 0 0 0 8 12.75"/>',
   chat: '<path d="M3.25 3.25h9.5a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H8L5 13.25v-2.5H3.25a1 1 0 0 1-1-1v-5.5a1 1 0 0 1 1-1Z"/>',
 
   'file-file': '<path d="M4 1.75h5.25L12.5 5v9.25H4Z"/><path d="M9.25 1.75V5h3.25"/>',
@@ -8960,11 +9130,13 @@ function updateTabEl(el, tab, group, activeId) {
 
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
-  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
+  el.classList.toggle('split-left', tab.split === 'left');
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -9492,7 +9664,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -11833,6 +12005,26 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   window.researchUi = { decorate, refresh };
   refresh();
+})();
+;
+// ---- notes-loader.js
+
+
+(() => {
+  const api = window.assistant?.notes;
+  const button = document.getElementById('notes-btn');
+  if (!api || !button) return;
+  let loading = null;
+  const load = () => loading || (loading = new Promise((resolve, reject) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'notes.css' });
+    document.head.appendChild(css);
+    const script = Object.assign(document.createElement('script'), { src: 'notes.js' });
+    script.onload = resolve;
+    script.onerror = () => { loading = null; script.remove(); css.remove(); reject(new Error('notes.js did not load')); };
+    document.body.appendChild(script);
+  }));
+
+  button.onclick = () => load().catch(() => {});
 })();
 ;
 // ---- meeting-loader.js
