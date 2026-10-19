@@ -15,6 +15,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
 
+// ---- 0. no Electron: the safety net's test, and every screenshot of a page goes through the page's queue
+{
+  const { layoutMismatch } = require('../src/features/tab-capture');
+  check('view-fill: a page laid out at the view size is fine', !layoutMismatch([1015, 566], { width: 1015, height: 566 }));
+  check('view-fill: an 800x500 box in a bigger view is a mismatch', layoutMismatch([800, 500], { width: 1015, height: 566 }));
+  check('view-fill: a zoomed page is compared in CSS px', !layoutMismatch([812, 453], { width: 1015, height: 566 }, 1.25) && layoutMismatch([1015, 566], { width: 1015, height: 566 }, 1.25));
+  check('view-fill: a view with no size yet is left alone', !layoutMismatch([800, 500], { width: 0, height: 0 }));
+  const readSrc = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
+  const cap = readSrc('src/features/tab-capture.js');
+  const count = (text, needle) => text.split(needle).length - 1;
+  const raw = count(cap, "sendCommand('Page.captureScreenshot'");
+  const queued = count(cap, "oneAtATime(wc, () => dbg.sendCommand('Page.captureScreenshot'");
+  check("every Page.captureScreenshot in tab-capture.js is in the page queue (the live card's poll directly, the others through viaDevTools / viaProtocol)", raw === 3 && queued === 1 && cap.includes('function viaDevTools(wc, rect) { return oneAtATime') && cap.includes('function viaProtocol(wc, opts) { return oneAtATime'), JSON.stringify({ raw, queued }));
+  check("a full-page screenshot and an outside client's screenshot use the same queue", readSrc('src/features/screenshot.js').includes('oneAtATime(ctx.wc') && readSrc('src/automation/cdp-inproc.js').includes('oneAtATime(s.wc, send)'));
+}
+
 (async () => {
   const server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'text/html');
@@ -132,6 +148,98 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     console.log('INFO  ~' + Math.round(perStep) + ' ms per step incl. the 350 ms wait');
     m = await marker(front);
     check('after the run the page shows beyond the top-left 520x330', m.magenta, JSON.stringify(m));
+
+    // 4. an AI task in a tab behind the user's tab, with the live card streaming at 15 fps (a view nobody sees draws no frames, so the card polls it with
+    // clipped screenshots) while the AI takes screenshots and reads the page in parallel; then the user switches to that tab. The page's innerWidth and
+    // innerHeight are sampled all along and must equal the tab area's, and the page must fill its view (a probe in the bottom-right corner).
+    for (let round = 1; round <= 3; round++) {
+      const userTab = await app.evaluate((_e, u) => global.__notifyClick.open(u), base + '/user' + round);
+      await sleep(1000);
+      const work = await behind(base + '/work' + round, userTab);
+      const stream = await app.evaluate(async ({ webContents }, tid) => {
+        const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+        global.__streams = global.__streams || {};
+        global.__streams[tid] = { frames: 0, handle: await global.__tabCapture.streamThumb(wc, { fps: 15, onFrame: () => { global.__streams[tid].frames++; } }) };
+        return true;
+      }, work);
+      const sizes = new Set();
+      const sample = async () => { const q = await probe(work); sizes.add(q.iw + 'x' + q.ih); };
+      for (let step = 0; step < 12; step++) {
+        await Promise.all([
+          app.evaluate(async ({ webContents }, tid) => { const wc = webContents.fromId(global.__notifyClick.contentsOf(tid)); await global.__tabCapture.captureTab(wc).catch(() => null); }, work),
+          app.evaluate(async ({ webContents }, tid) => { const wc = webContents.fromId(global.__notifyClick.contentsOf(tid)); await wc.executeJavaScript('document.body.innerText.length'); await global.__tabCapture.captureThumb(wc, {}); }, work),
+          sample(),
+        ]);
+        await sleep(120);
+        await sample();
+      }
+      const frames = await app.evaluate(async (_e, tid) => { const st = global.__streams[tid]; st.handle?.stop(); return st.frames; }, work);
+      check('round ' + round + ': the live card got frames while the AI worked behind the user tab', stream && frames > 0, String(frames));
+      check('round ' + round + ': the page behind the user tab kept the tab area size at every sample', sizes.size === 1 && sizes.has(area.iw + 'x' + area.ih), JSON.stringify([...sizes]) + ' vs ' + JSON.stringify(area));
+      await app.evaluate((_e, id) => global.__notifyClick.switchTab(id), work);
+      await sleep(1200);
+      p = await probe(work);
+      check('round ' + round + ': after switching to it the page is the size of the tab area', same(p), JSON.stringify([p, area]));
+      m = await marker(work);
+      check('round ' + round + ': after switching to it the page fills its view (bottom-right painted)', m.magenta, JSON.stringify(m));
+    }
+
+    // 5. the harshest mix on a tab behind the user's: the live card polling it, the AI's screenshot, an outside client's clipped screenshots taken at
+    // the same moment (a clip of 800x500 at scale 1 is what the card's poll takes, and what the user saw left behind), and a tab switch in the middle of it
+    for (let round = 1; round <= 3; round++) {
+      const userTab = await app.evaluate((_e, u) => global.__notifyClick.open(u), base + '/mix-user' + round);
+      await sleep(1000);
+      const work = await behind(base + '/mix-work' + round, userTab);
+      await app.evaluate(async ({ webContents }, tid) => {
+        const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+        global.__mix = { frames: 0, handle: await global.__tabCapture.streamThumb(wc, { fps: 15, firstMs: 0, onFrame: () => { global.__mix.frames++; } }) };
+      }, work);
+      const hammer = app.evaluate(async ({ webContents }, [tid, root]) => {
+        const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+        const d = wc.debugger; const had = d.isAttached(); if (!had) d.attach('1.3');
+        try {
+          for (let i = 0; i < 6; i++) {
+            await Promise.all([
+              global.__tabCapture.captureTab(wc).catch(() => null),
+              global.__tabCapture.captureThumb(wc, {}),
+              ...[0, 1, 2].map(() => d.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: 50, fromSurface: true, clip: { x: 0, y: 0, width: 800, height: 500, scale: 1 } }).catch(() => null)),
+            ]);
+          }
+        } finally { if (!had) d.detach(); }
+      }, [work, ROOT.split(path.sep).join('/')]);
+      await sleep(250);
+      await app.evaluate((_e, id) => global.__notifyClick.switchTab(id), work); // the user switches to it in the middle
+      await hammer;
+      await app.evaluate((_e, tid) => { global.__mix.handle?.stop(); }, work);
+      await sleep(1800); // (the safety net reads the page a moment after it is shown)
+      p = await probe(work);
+      check('mix ' + round + ': the page is the size of the tab area', same(p), JSON.stringify([p, area]));
+      m = await marker(work);
+      check('mix ' + round + ': the page fills its view (bottom-right painted)', m.magenta, JSON.stringify(m));
+    }
+
+    // 6. the safety net, with a page left laid out at 800x500 by a device-metrics override nobody cleared (what the user saw): showing the tab puts it right
+    {
+      const userTab = await app.evaluate((_e, u) => global.__notifyClick.open(u), base + '/net-user');
+      await sleep(1000);
+      const work = await behind(base + '/net-work', userTab);
+      await app.evaluate(async ({ webContents }, tid) => {
+        const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+        const d = wc.debugger; const had = d.isAttached(); if (!had) d.attach('1.3');
+        try { await d.sendCommand('Emulation.setDeviceMetricsOverride', { width: 800, height: 500, deviceScaleFactor: 0, mobile: false }); } finally { if (!had) d.detach(); }
+      }, work);
+      await sleep(300);
+      p = await probe(work);
+      check('the override is real here (the page is laid out at 800x500)', p.iw === 800 && p.ih === 500, JSON.stringify(p));
+      await app.evaluate((_e, id) => global.__notifyClick.switchTab(id), work);
+      await sleep(2000);
+      p = await probe(work);
+      check('showing the tab clears the override: the page is the size of the tab area again', same(p), JSON.stringify([p, area]));
+      m = await marker(work);
+      check('...and fills its view', m.magenta, JSON.stringify(m));
+      const fixes = await app.evaluate(() => global.__pageSizeFixes || []);
+      check('...and the fix is in the diagnostics', fixes.length >= 1 && fixes[fixes.length - 1].source === 'show' && fixes[fixes.length - 1].kind === 'layout', JSON.stringify(fixes));
+    }
   } finally {
     await app.close().catch(() => {});
     server.close();
