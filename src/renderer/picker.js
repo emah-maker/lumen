@@ -365,11 +365,24 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     const above = b.top - 12;
     const up = below < 260 && above > below;
     menu.style.width = `${width}px`;
-    menu.style.left = `${Math.max(left0, Math.min(b.left, right0 - width))}px`;
+    const wantLeft = Math.max(left0, Math.min(b.left, right0 - width));
+    menu.style.left = `${wantLeft}px`;
     menu.style.maxHeight = `${Math.max(180, Math.min(460, up ? above : below))}px`;
     menu.style.top = up ? '' : `${b.bottom + 6}px`;
     menu.style.bottom = up ? `${window.innerHeight - b.top + 6}px` : '';
     menu.classList.toggle('up', up);
+    // An ancestor with a backdrop-filter or a transform (the composer, where the picker now sits) becomes the containing block of a
+    // fixed menu: its offsets then count from that box, not the window. Measure where the menu really landed and move it back.
+    const at = menu.getBoundingClientRect();
+    const dx = at.left - wantLeft;
+    if (Math.abs(dx) > 0.5) menu.style.left = `${wantLeft - dx}px`;
+    if (up) {
+      const dy = at.bottom - b.top + 6;
+      if (Math.abs(dy) > 0.5) menu.style.bottom = `${window.innerHeight - b.top + 6 + dy}px`;
+    } else {
+      const dy = at.top - (b.bottom + 6);
+      if (Math.abs(dy) > 0.5) menu.style.top = `${b.bottom + 6 - dy}px`;
+    }
   }
   function close(refocus = true) {
     if (menu.hidden) return;

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The chat box is calmer and roomier.** The text box now has its own full-width row, two to three lines tall to start with, and it grows as you type (up to about 40% of the height, then it scrolls) and shrinks back afterwards. Under it is one tidy row: a **+** button (a menu with Screenshot of this tab, Attach files and Plan first), the model picker with its whole name, the microphone, and Send. A dot on **+** shows when the screenshot is on, and a small **Plan** tag shows when Plan first is on. **Run in the background** moved to the small arrow beside Send (or right-click Send). The usage line and the Bypass warning now share one quiet line above the box, with a short **Bypass** badge that still switches the mode when clicked. The same layout is used in the full-page chat. New suite: test/composer-bar.js.
+
 ## 0.5.56 (2026-10-19)
 
 - **Outside AI agents (MCP) no longer make Lumen stutter when several start together.** Opening an agent's window used to hold the browser up for about 12 ms in one go (making the window, showing it, loading its page and its blank first tab), and a full-size page capture meant for the sidebar's first open ran for every agent window as well. Each step now runs on its own and waits for a moment when no screenshot is landing, agent windows skip that capture, and the first web request no longer loads its machinery in the middle of the calls, so with six agents at once the longest pause is about 12 ms instead of 20 or more.

@@ -22,7 +22,9 @@
 
   const mic = Object.assign(document.createElement('button'), { type: 'button', className: 'mic-btn', id: 'mic-btn' });
   mic.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>';
-  attach.after(mic);
+  const barEnd = form.querySelector('.cb-end');
+  if (barEnd) barEnd.prepend(mic); // the toolbar's right side: mic, then send
+  else attach.after(mic);
   const bar = Object.assign(document.createElement('div'), { className: 'dictation-bar', hidden: true });
   bar.setAttribute('role', 'status');
   bar.innerHTML = '<span class="dictation-dot" aria-hidden="true"></span><span class="dictation-meter" aria-hidden="true"><i></i></span><span class="dictation-time"></span><span class="dictation-hint"></span>';

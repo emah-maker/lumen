@@ -23,23 +23,36 @@
   const byChat = new Map(); // chat id -> the chip's state there (this view only)
   const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
 
-  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
-  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
-  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
-  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+  // The toggle is a row of the composer's + menu; while it is on, a small "Plan" tag beside + keeps the state in sight (click it to turn off).
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-item plan-chip', id: 'plan-chip' });
+  chip.setAttribute('role', 'menuitemcheckbox');
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="cm-label plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip.label', 'Plan first');
+  const menu = composer.querySelector('#composer-menu');
+  if (menu) menu.append(chip);
+  else composer.insertBefore(chip, composer.querySelector('#attach, #send'));
+  const tag = document.getElementById('plan-tag');
+  if (tag) tag.querySelector('.plan-tag-text').textContent = tr('plan.chip', 'Plan');
 
   function render() {
     const cli = onCli();
     chip.disabled = cli;
     chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.setAttribute('aria-checked', String(on && !cli));
     chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
       : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
         : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
     chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
     composer.classList.toggle('planning', on && !cli);
+    if (tag) {
+      tag.hidden = !(on && !cli);
+      tag.title = chip.title;
+      tag.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    }
   }
   function setOn(value) { on = Boolean(value); remember(); render(); }
   chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  tag?.addEventListener('click', () => { setOn(false); promptEl.focus(); });
   modelSelect?.addEventListener('change', render);
   promptEl.addEventListener('focus', render); // (the model can change from another view)
 
