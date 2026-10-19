@@ -64,6 +64,7 @@ const manners = require('../features/ai-manners'); // [ai manners] hands-off mod
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
+const planMode = require('./plan-mode'); // [plan mode] read-only planning, then a plan card the user runs
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
 // [work folder] the folder the AI works in: a chat's own, else its project's. Loaded on first use, not at startup (test/perf-budget.js).
 let projectFoldersMod = null;
@@ -579,6 +580,7 @@ const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
+const OTHER_PLAN = slimTool(planMode.PLAN_TOOL); // [plan mode]
 // What a helper is shown (subagents.js HELPER_TOOLS): the reading tools only, signed out (no as_user), in the same shape on every provider.
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
@@ -918,7 +920,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false } = {}) { // delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app)
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false } = {}) { // delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -933,7 +935,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL])),
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], plan ? [planMode.PLAN_TOOL] : [])),
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -953,6 +955,7 @@ TOOL_SCHEMAS.web_search = SEARCH_TOOL.input_schema; // client-side search for no
 TOOL_SCHEMAS.delegate = DELEGATE_TOOL.input_schema;
 TOOL_SCHEMAS.desktop = DESKTOP_TOOL.input_schema;
 TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
+TOOL_SCHEMAS.propose_plan = planMode.PLAN_TOOL.input_schema; // [plan mode] offered only while planning (planning())
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -977,6 +980,7 @@ const READING_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', '
 // as ACTING_TOOLS).
 const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_search', 'find_sources']); // find_sources: the query goes to the public scholarly APIs (one card for all of them)
 const SEARCH_HOST = 'html.duckduckgo.com';
+const PLAN_CLI_NOTICE = 'Plan mode works with API models (Claude, OpenAI, Gemini, Grok, OpenRouter). Claude Code, Codex, Grok Build and Antigravity have their own tools, so turn off Plan first or pick another model.'; // [plan mode]
 const SCHOLAR_HOST = 'api.openalex.org'; // stands for find_sources' databases on the approval card
 // The card for a search that leaves the browser (web_search, find_sources): the words that will be sent. undefined for other tools.
 function searchCard(name, input, who) {
@@ -990,7 +994,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1543,15 +1547,19 @@ function transcriptFor(chatMessages, settings = chatMessages.settings, track = n
       const pictures = { ...(generated.length ? { generated } : {}), ...(outFiles.length ? { outFiles } : {}) };
       const name = authorName(producedBy.get(m));
       if (name) pictures.by = name;
+      const proposed = blocks.find((b) => b.type === 'tool_use' && b.name === 'propose_plan'); // [plan mode] the plan card, drawn again
+      const planned = proposed ? planMode.validatePlan(proposed.input).plan : null;
       if (text && final) {
         push({ role: 'assistant', text, images: [], ...pictures, steps, ...(acted ? { acted: true } : {}) }, m, mi);
         steps = 0;
         acted = false;
       } else if (text) {
-        push({ role: 'assistant', text, images: [], ...pictures }, m, mi);
+        push({ role: 'assistant', text, images: [], ...pictures, ...(planned ? { plan: planned } : {}) }, m, mi);
       } else if (generated.length || outFiles.length) {
         push({ role: 'assistant', text: '', images: [], ...pictures, ...(final ? { steps, ...(acted ? { acted: true } : {}) } : {}) }, m, mi);
         if (final) { steps = 0; acted = false; }
+      } else if (planned) {
+        push({ role: 'assistant', text: '', images: [], plan: planned }, m, mi);
       }
     }
   }
@@ -2221,6 +2229,8 @@ class Agent {
     const recentDownloads = aiDownloads.news(this.browser.downloadList?.(), messages); // [ai downloads] finished lately, told once
     const downloadsNote = recentDownloads.length ? `${recentDownloads.join('\n')}\n(list_files read:"<path>" reads one; never search the disk for it.)\n` : '';
     const fullPage = extra.fullPage === true;
+    const planning = extra.plan === true; // [plan mode] read only, then propose_plan (planCheck)
+    if (taskScope.getStore()) taskScope.getStore().planMode = planning;
     // [image routing] A request for a picture that the model must read something for ("look at the pdf and generate an image"): told to
     // use generate_image, in the browser_state block (never shown in the chat). pictureAsk also keeps open_tab from previewing a file.
     const pictureAsk = !aiOff && this.imageSetting() !== 'off' ? genImages.pictureIntent(userText) : null;
@@ -2238,7 +2248,7 @@ class Agent {
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe tab shows a file on this computer. Its name, address and contents are not shared unless the user allows it (asking about "this" or "here" with the file open shows them a card).\n</browser_state>\n\n`
       : tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${emlViewer.isViewerUrl(tab.webContents.getURL()) ? '(an email: its subject is in the content, not here)' : tab.webContents.getTitle()}\nURL: ${this.shownUrl(tab.webContents.getURL())}\n${tabOff ? `${manners.OFF_TAB_NOTE} You can read this tab, but tools that click, type, navigate or run scripts are refused there.\n` : ''}</browser_state>\n\n`
-      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}${fullPage ? FULL_PAGE_NOTE : ''}</browser_state>`);
+      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}${fullPage ? FULL_PAGE_NOTE : ''}${planning ? planMode.PLAN_NOTE : ''}</browser_state>`);
     let state = stateOf();
     const filesNote = uploadFiles.filesNote(extra.files); // [uploads] files attached in the composer: their names and refs (never their bytes)
     const attachedFiles = filesNote ? extra.files.length : 0;
@@ -2250,6 +2260,12 @@ class Agent {
     const viaGrokBuild = String(messages.settings.model).startsWith('grokbuild:') && Boolean(this.engines?.grokbuild);
     const viaAntigravity = String(messages.settings.model).startsWith('antigravity:') && Boolean(this.engines?.antigravity);
     const viaCodex = String(messages.settings.model).startsWith('codex:') && Boolean(this.engines?.codex);
+    // [plan mode] The command-line engines bring tools of their own that Lumen can't hold back, so plan mode is for the API models
+    // (the composer's chip is off on them). A message that still arrives in plan mode on one is answered with a note, never run.
+    if (planning && (viaClaudeCode || viaGrokBuild || viaAntigravity || viaCodex)) {
+      emit({ type: 'notice', text: PLAN_CLI_NOTICE });
+      return;
+    }
     // A Codex thread stays on the model it was started with (cxModel), like Grok Build's.
     if (viaCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) {
       delete messages.settings.cxSession;
@@ -2440,7 +2456,7 @@ class Agent {
   handoffRetry(messages, userText, watch) {
     try {
       const scope = taskScope.getStore();
-      if (watch.limited || scope?.wrapped || this.skillRun?.mode === 'no-tools') return null;
+      if (watch.limited || scope?.wrapped || scope?.planMode || this.skillRun?.mode === 'no-tools') return null; // [plan mode] a plan handed to the user is the answer
       const model = String(messages.settings?.model || '');
       if (!/^(claudecode|grokbuild|antigravity|codex):/.test(model)) {
         const pick = providers.splitModel(model);
@@ -3636,7 +3652,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages) });
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), plan: this.planning() });
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3689,7 +3705,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode]
       signal,
       emit,
       noTools,
@@ -4076,6 +4092,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
       if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
       if (name === 'run_script') return 'Running a script on the page';
+      if (name === 'propose_plan') return 'Proposing a plan'; // [plan mode]
       if (name === 'verify_changes') return 'Checking what the edits changed';
       if (name === 'wait_for') return input.text ? `Waiting for ${quote(input.text)}` : input.network_idle === true && !input.url && !input.gone ? 'Waiting for the page to finish loading' : 'Waiting for the page';
       if (name === 'get_console') return 'Reading the page console';
@@ -4161,6 +4178,7 @@ ${prompt}` : prompt), historyImages: [] };
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     this.offTabCheck(name, input); // [ai off-tab] ...nor a tab the user keeps the AI off
     this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
+    this.planCheck(name, input, run); // [plan mode] only reading while planning: no card for an act that is refused anyway
     const gate = { emit, signal, hosts, who, external, noAsk, run };
     if (this.isExternalTool(name)) return this.allowExternal(name, input, gate); // [mcp client]
     if (name === 'connector') return this.allowConnector(input, gate); // [connectors]
@@ -4294,6 +4312,27 @@ ${prompt}` : prompt), historyImages: [] };
       if (refusal) throw new Error(refusal);
     }
   }
+
+  // ---- [plan mode] (ai/plan-mode.js) A message sent in plan mode (the composer's "Plan first" chip or "/plan <task>": runTaskOnce
+  // sets scope.planMode) may only read; every other tool is refused here, in ensureAllowed, for the sidebar's API models and their
+  // batch steps and helpers alike. It ends with propose_plan, which shows the plan as a card in the chat (the 'plan' event).
+  planning() { return Boolean(taskScope.getStore()?.planMode); }
+
+  planCheck(name, input = {}, run = taskScope.getStore()) {
+    if (!run?.planMode || this.userRun()) return;
+    const refusal = planMode.planToolError(name, input);
+    if (refusal) throw new Error(refusal);
+  }
+
+  proposePlan(input) {
+    const scope = taskScope.getStore();
+    if (!scope?.planMode) throw new Error('propose_plan is only for plan mode, which is off for this message. Go on with the task.');
+    const checked = planMode.validatePlan(input);
+    if (checked.error) throw new Error(checked.error);
+    scope.gate?.emit?.({ type: 'plan', plan: checked.plan });
+    return 'The plan is on the user\'s screen as a card with Run plan, Edit and Keep planning. Stop here: at most one short sentence, and do not repeat the steps.';
+  }
+  // ---- [/plan mode]
 
   // The user is typing in the field the AI is about to type into (`elementId`; null: whichever field has the page's focus): the AI's
   // typing waits (their keys and ours would mix in one field). A different field in the same tab does not wait (the caret is put back
@@ -6381,6 +6420,7 @@ ${same}
       case 'analyze_posts': return postAnalysis.run(input);
       case 'find_sources': return this.findSources(input); // [research]
       case 'research_board': return this.researchBoardTool(input); // [research]
+      case 'propose_plan': return this.proposePlan(input); // [plan mode]
       case 'document': { // [document tool]
         const store = this.docStore();
         store.docInternal = true;

@@ -4282,7 +4282,7 @@ function sendQueued() {
     $('new-chat').click();
     for (const q of rest) { append(q.notice); queued.push(q); }
   }
-  ask(next.text, next.images, next.tabs, next.screen);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
 
@@ -4309,10 +4309,11 @@ async function askInNewChat(text, files = []) {
 }
 
 
-function ask(text, images = [], tabs = null, screen) {
+
+function ask(text, images = [], tabs = null, screen, opts = null) {
   if (running) {
     const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, notice, chatId: shownChatId };
+    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
     queued.push(entry);
     queueControls(entry);
     return entry;
@@ -4337,7 +4338,8 @@ function ask(text, images = [], tabs = null, screen) {
 
   runId = Math.max(runId + 1, Date.now());
   shownChatId = null;
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen);
+  const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined;
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
 }
 
 
@@ -4647,6 +4649,7 @@ const TOOL_LABELS = {
   handle_dialog: () => t('tool.handle_dialog'),
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
+  propose_plan: () => t('tool.propose_plan'),
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   helper: (i) => t(i.doing === 'read_urls' ? 'tool.helper.reading' : i.doing === 'web_search' ? 'tool.helper.searching' : 'tool.helper', { n: i.n ?? '', task: i.task ?? '' }),
@@ -4897,6 +4900,16 @@ window.assistant.onEvent((event) => {
     case 'tabs_attached':
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
+    case 'plan': {
+      settleThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null;
+      turn.textSource = '';
+      const card = window.planModeUI?.card(event.plan);
+      if (card) appendToTurn(card);
+      break;
+    }
     case 'approval':
       chatHost.needSidebar?.();
       announce(event.title || t('chat.approvalWaiting'));
@@ -5754,6 +5767,11 @@ function drawItems(items, userEntries, replyEntries) {
     }
   }
   for (const item of items) {
+    if (item.plan && window.planModeUI) {
+      if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
+      append(window.planModeUI.card(item.plan));
+      continue;
+    }
     if (narration.has(item)) continue;
     const bubble = document.createElement('div');
     if (item.role === 'user') {
@@ -5911,6 +5929,7 @@ function applySync(view) {
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) drafts?.rename(null, view.id);
   shownChatId = view?.id || null;
+  window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
@@ -6146,6 +6165,7 @@ function clearChatView({ keepBox = false } = {}) {
 $('new-chat').onclick = () => {
   window.assistant.reset();
   clearChatView();
+  window.planModeUI?.chatShown(null, false);
   window.chatList?.refreshUsage('');
   prompt.focus();
 };
@@ -13526,6 +13546,291 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 })();
 ;
+// ---- ../ai/plan-mode.js
+
+
+
+
+
+
+
+{
+
+
+
+
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
+  const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
+  const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
+
+
+  function planToolError(name, input = {}) {
+    if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
+    return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
+  }
+
+
+  function planSite(raw) {
+    const text = String(raw ?? '').trim().toLowerCase();
+    if (!text || text.length > 255 || /\s/.test(text)) return '';
+    let url;
+    try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`); } catch { return ''; }
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return '';
+    const host = url.host.replace(/\.(?=:|$)/, '');
+    if (!host || host.includes('*')) return '';
+    if (!/^(localhost|\[[0-9a-f:]+\]|[a-z0-9-]+(\.[a-z0-9-]+)+)(:\d+)?$/.test(host)) return '';
+    return host;
+  }
+
+  const stepText = (s) => (typeof s === 'string' ? s : s && typeof s === 'object' && typeof s.text === 'string' ? s.text : '');
+
+
+
+  function validatePlan(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'The plan must be an object with title, steps, sites and risky_steps.' };
+    const title = String(input.title ?? '').replace(/\s+/g, ' ').trim().slice(0, LIMITS.title) || 'Plan';
+    if (!Array.isArray(input.steps)) return { error: 'steps must be a list of short sentences, one per step.' };
+    const steps = input.steps.map((s) => stepText(s).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (!steps.length) return { error: 'The plan needs at least one step.' };
+    if (steps.length > LIMITS.steps) return { error: `A plan has at most ${LIMITS.steps} steps; group the small ones.` };
+    const sites = [];
+    for (const [i, raw] of (Array.isArray(input.sites) ? input.sites : []).entries()) {
+      const host = planSite(raw);
+      if (!host) return { error: `sites[${i}] ("${String(raw).slice(0, 80)}") is not a site name. Use host names such as "www.example.com".` };
+      if (!sites.includes(host)) sites.push(host);
+    }
+    if (sites.length > LIMITS.sites) return { error: `A plan names at most ${LIMITS.sites} sites.` };
+    const risky = [];
+    for (const raw of Array.isArray(input.risky_steps) ? input.risky_steps : []) {
+      const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+      if (!Number.isInteger(n) || n < 1 || n > steps.length) return { error: `risky_steps holds step numbers from 1 to ${steps.length}; ${JSON.stringify(raw)} is not one.` };
+      if (!risky.includes(n)) risky.push(n);
+    }
+    risky.sort((a, b) => a - b);
+    return { plan: { title, steps: steps.map((s) => s.slice(0, LIMITS.step)), sites, risky_steps: risky } };
+  }
+
+
+  function approvedHosts(plan) {
+    const checked = validatePlan(plan);
+    return checked.plan ? checked.plan.sites : [];
+  }
+
+
+  function approvedText(plan, words = {}) {
+    const w = { head: 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.', sites: 'Sites:', risky: 'Ask me before these steps as usual:', ...words };
+    const lines = [w.head, '', plan.title, ...plan.steps.map((s, i) => `${i + 1}. ${s}${plan.risky_steps.includes(i + 1) ? ' (risky)' : ''}`)];
+    if (plan.sites.length) lines.push('', `${w.sites} ${plan.sites.join(', ')}`);
+    if (plan.risky_steps.length) lines.push(`${w.risky} ${plan.risky_steps.join(', ')}`);
+    return lines.join('\n');
+  }
+
+
+  function planCommand(text) {
+    const m = /^\/plan(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+    return m ? { task: (m[1] || '').trim() } : null;
+  }
+
+
+  const PLAN_NOTE = 'Plan mode is on for this message. Do not act yet: only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search) to learn what the task needs. Tools that click, type, navigate, open tabs, upload or run scripts are refused. Then call propose_plan once: a short title, numbered steps in plain words, every site the plan will act on (host names), and the numbers of risky steps (anything that buys, pays, sends, posts, submits, deletes or signs up). After propose_plan, stop: reply with one short sentence at most. The user runs, edits or rejects the plan.\n';
+
+  const PLAN_TOOL = {
+    name: 'propose_plan',
+    description: 'Plan mode only: show the user your plan for the task as a card they can run, edit or send back. Call it once, after reading what you need, then stop.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What the plan does, in a few words.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'The steps in order, one short sentence each (at most 20).' },
+        sites: { type: 'array', items: { type: 'string' }, description: 'Host names of every site the plan will click, type or navigate on, e.g. "www.example.com" (at most 10). Running the plan allows exactly these.' },
+        risky_steps: { type: 'array', items: { type: 'integer' }, description: 'Numbers (from 1) of steps that buy, pay, send, post, submit, delete or sign up.' },
+      },
+      required: ['title', 'steps', 'sites'],
+    },
+  };
+
+  const planApi = { PLAN_TOOLS, PLAN_REFUSAL, PLAN_NOTE, PLAN_TOOL, LIMITS, planToolError, planSite, validatePlan, approvedHosts, approvedText, planCommand };
+  if (typeof module !== 'undefined' && module.exports) module.exports = planApi;
+  else globalThis.planMode = planApi;
+}
+;
+// ---- plan-mode.js
+
+
+
+
+
+
+
+
+(() => {
+  const rules = window.planMode;
+  const composer = document.getElementById('composer');
+  const promptEl = document.getElementById('prompt');
+  if (!rules || !composer || !promptEl) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+  const CLI = /^(claudecode|grokbuild|antigravity|codex):/;
+  const modelSelect = document.getElementById('model');
+  const onCli = () => CLI.test(String(modelSelect?.value || ''));
+
+  let on = false;
+  const byChat = new Map();
+  const remember = () => { if (shownChatId) byChat.set(shownChatId, on); };
+
+  const chip = Object.assign(document.createElement('button'), { type: 'button', className: 'plan-chip', id: 'plan-chip' });
+  chip.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4h7M6 8h7M6 12h7"/><path d="M2.6 4h.8M2.6 8h.8M2.6 12h.8"/></svg><span class="plan-chip-text"></span>';
+  chip.querySelector('.plan-chip-text').textContent = tr('plan.chip', 'Plan');
+  composer.insertBefore(chip, composer.querySelector('#screen-btn, #attach, #send'));
+
+  function render() {
+    const cli = onCli();
+    chip.disabled = cli;
+    chip.setAttribute('aria-pressed', String(on && !cli));
+    chip.title = cli ? tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.')
+      : on ? tr('plan.chip.on', 'Plan first is on: the AI only reads, then shows you a plan to run, edit or send back. Click to turn off.')
+        : tr('plan.chip.off', 'Plan first: the AI only reads, then shows you a plan before it acts.');
+    chip.setAttribute('aria-label', `${tr('plan.chip.label', 'Plan first')}: ${chip.title}`);
+    composer.classList.toggle('planning', on && !cli);
+  }
+  function setOn(value) { on = Boolean(value); remember(); render(); }
+  chip.addEventListener('click', () => { setOn(!on); promptEl.focus(); });
+  modelSelect?.addEventListener('change', render);
+  promptEl.addEventListener('focus', render);
+
+
+  function chatShown(view, sameChat) {
+    if (sameChat) { remember(); return; }
+    const id = view?.id || null;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    render();
+  }
+
+
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), className ? { className } : {}, text !== undefined ? { textContent: text } : {});
+
+  function card(plan) {
+    const checked = rules.validatePlan(plan);
+    if (!checked.plan) return null;
+    const p = checked.plan;
+    const box = el('div', 'msg assistant plan-card');
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', tr('plan.card.label', 'Proposed plan: {title}', { title: p.title }));
+    const head = el('div', 'plan-head');
+    head.append(el('span', 'plan-kicker', tr('plan.card.kicker', 'Plan')), el('span', 'plan-title', p.title));
+    const list = el('ol', 'plan-steps');
+    p.steps.forEach((text, i) => {
+      const li = el('li');
+      if (p.risky_steps.includes(i + 1)) li.dataset.risky = '1';
+      const span = el('span', 'plan-step-text', text);
+      li.append(span);
+      if (li.dataset.risky) li.append(el('span', 'plan-risky', tr('plan.card.risky', 'Risky')));
+      list.append(li);
+    });
+    const sites = el('div', 'plan-sites');
+    const siteList = el('span', 'plan-site-list');
+    const drawSites = (hosts) => {
+      siteList.replaceChildren();
+      for (const host of hosts) {
+        const chipEl = el('span', 'plan-site');
+        chipEl.dataset.host = host;
+        chipEl.append(el('span', '', host));
+        const x = el('button', 'plan-site-x', '×');
+        x.type = 'button';
+        x.title = tr('plan.card.removeSite', 'Leave {site} out', { site: host });
+        x.setAttribute('aria-label', x.title);
+        x.onclick = () => { chipEl.remove(); if (!siteList.children.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none'))); };
+        chipEl.append(x);
+        siteList.append(chipEl);
+      }
+      if (!hosts.length) siteList.append(el('span', 'plan-none', tr('plan.card.noSites', 'none')));
+    };
+    drawSites(p.sites);
+    sites.append(el('span', 'plan-label', tr('plan.card.sites', 'Sites it will act on:')), ' ', siteList);
+    const note = el('div', 'plan-note', tr('plan.card.note', 'Run plan allows these sites for this chat. Anything that buys, sends, posts or submits still asks you first.'));
+    const problem = el('div', 'plan-problem');
+    problem.setAttribute('role', 'alert');
+    problem.hidden = true;
+    const actions = el('div', 'plan-actions');
+    const run = el('button', 'btn primary plan-run', tr('plan.card.run', 'Run plan'));
+    const edit = el('button', 'btn plan-edit', tr('plan.card.edit', 'Edit'));
+    const keep = el('button', 'btn plan-keep', tr('plan.card.keep', 'Keep planning'));
+    for (const b of [run, edit, keep]) b.type = 'button';
+    actions.append(run, edit, keep);
+    box.append(head, list, sites, note, problem, actions);
+
+    let editing = false;
+    edit.onclick = () => {
+      editing = !editing;
+      box.classList.toggle('editing', editing);
+      for (const span of list.querySelectorAll('.plan-step-text')) {
+        if (editing) { span.contentEditable = 'plaintext-only'; span.setAttribute('role', 'textbox'); span.setAttribute('aria-label', tr('plan.card.stepLabel', 'Step')); } else { span.removeAttribute('contenteditable'); span.removeAttribute('role'); }
+      }
+      edit.textContent = editing ? tr('plan.card.doneEditing', 'Done editing') : tr('plan.card.edit', 'Edit');
+      if (editing) list.querySelector('.plan-step-text')?.focus();
+    };
+
+    const current = () => {
+      const steps = [];
+      const risky = [];
+      for (const li of list.children) {
+        const text = li.querySelector('.plan-step-text')?.textContent.replace(/\s+/g, ' ').trim();
+        if (!text) continue;
+        steps.push(text);
+        if (li.dataset.risky) risky.push(steps.length);
+      }
+      return { title: p.title, steps, sites: [...siteList.querySelectorAll('.plan-site')].map((s) => s.dataset.host), risky_steps: risky };
+    };
+    run.onclick = () => {
+      const got = rules.validatePlan(current());
+      if (!got.plan) { problem.textContent = got.error; problem.hidden = false; return; }
+      problem.hidden = true;
+      setOn(false);
+      box.classList.add('used');
+      for (const b of [run, edit, keep]) b.disabled = true;
+      for (const span of list.querySelectorAll('[contenteditable]')) span.removeAttribute('contenteditable');
+      for (const x of box.querySelectorAll('.plan-site-x')) x.remove();
+      const text = rules.approvedText(got.plan, { head: tr('plan.approved.head', 'Run this plan. I approved it as written; still stop and ask me before anything that buys, pays, sends, posts, submits or deletes.'), sites: tr('plan.approved.sites', 'Sites:'), risky: tr('plan.approved.risky', 'Ask me before these steps as usual:') });
+      window.ask(text, [], null, undefined, { approvedPlan: got.plan });
+    };
+    keep.onclick = () => {
+      setOn(true);
+      promptEl.focus();
+    };
+    return box;
+  }
+
+
+  window.slashCommands?.register({
+    name: 'plan',
+    label: tr('slash.plan', 'Plan first'),
+    description: tr('slash.plan.description', 'The AI only reads, then shows a plan you can run, edit or send back: /plan book a table for two on Friday'),
+    hint: tr('slash.plan.hint', 'The task to plan, then press Enter'),
+    takesInput: true,
+    run({ input }) {
+      if (onCli()) return { ok: false, message: tr('plan.chip.cli', 'Plan first works with API models. Claude Code, Codex, Grok Build and Antigravity have their own tools, so pick another model to plan first.') };
+      if (!input) { setOn(true); return { ok: true }; }
+      window.ask(input, [], null, undefined, { plan: true });
+      return { ok: true };
+    },
+  });
+
+  window.planModeUI = {
+    forSend: () => on && !onCli(),
+    card,
+    chatShown,
+    setOn,
+    isOn: () => on,
+  };
+
+  window.addEventListener('lumen:plan-default', () => { if (!shownChatId && !document.querySelector('#messages .msg')) { on = window.lumenPlanModeDefault === true; render(); } });
+  on = window.lumenPlanModeDefault === true;
+  render();
+})();
+;
 // ---- ui-prefs.js
 
 {
@@ -13559,6 +13864,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode }));
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false }));
+    if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };
