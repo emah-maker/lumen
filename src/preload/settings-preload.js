@@ -90,6 +90,16 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       removeAll: call('settings:memory-delete-all'),
       startOver: call('settings:memory-start-over'),
     },
+    // [sync] Settings → General → Sync (features/sync-folder.js). The passphrase goes in once and never comes back out.
+    sync: {
+      state: call('settings:sync-state'),
+      pick: call('settings:sync-pick'),
+      enable: call('settings:sync-enable'),
+      set: call('settings:sync-set'),
+      now: call('settings:sync-now'),
+      off: call('settings:sync-off'),
+      onChanged: (cb) => ipcRenderer.on('settings:sync-changed', () => cb()),
+    },
     sitePermissions: call('prefs:site-permissions'),
     revokePermission: call('prefs:revoke-permission'),
     deviceGrants: call('prefs:device-grants'),
@@ -174,12 +184,14 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       onChanged: (cb) => ipcRenderer.on('macros:changed', (_e, list) => cb(list)),
       onProgress: (cb) => ipcRenderer.on('macros:progress', (_e, e) => cb(e)),
     },
+    focus: { get: call('settings:focus'), start: call('settings:focus-start'), phrase: call('settings:focus-phrase') }, // [focus] Settings > General > Focus mode (features/focus.js)
     // "You and AI" reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
       onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
       setKey: call('settings:set-key'),
       setProviderKey: call('settings:set-provider-key'),
+      local: { get: call('settings:local-get'), save: call('settings:local-save'), detect: call('settings:local-detect') }, // Ollama / LM Studio on this computer
       safeBrowsing: call('settings:safe-browsing'),
       setSafeBrowsingKey: call('settings:set-safe-browsing-key'),
       // [telegram] Phone (Telegram): the token goes in, never comes back

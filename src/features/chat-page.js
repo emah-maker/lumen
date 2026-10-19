@@ -65,6 +65,7 @@ const CHAT_IPC = new Set([
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
+  'notes:act', // (notes) "Add to notes" under a reply (main.js; features/notes-hub.js)
   'memory:list', 'memory:undo', 'memory:forget', // (memory) the "Remembered" row in the chat and /memory
   'settings:get', 'settings:set-model', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
@@ -72,6 +73,7 @@ const CHAT_IPC = new Set([
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', 'skills:offer-save', 'skills:offer-update', // the "/" menu and the save / update cards (features/skills.js)
   'chat:routine-preview', 'chat:routine-create', // "Schedule this" on the page: read a schedule phrase, save a routine (registerRoutines below)
   'dictation:status', 'dictation:transcribe', // (dictation) voice input in the chat box (main.js; ai/dictation.js)
+  'offers:get', 'offers:act', // the "New in Lumen" card (main.js; features/feature-offers.js)
 ]);
 
 // The tab an AI run started from the chat page works in: the one the user looked at most recently

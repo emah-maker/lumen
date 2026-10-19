@@ -203,7 +203,7 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 // Categories in the sidebar, each made of slots (filled by the builders below) that show as grouped lists.
 // [id, group title]: a builder appends to its slot and calls card.group('Title') to start another list.
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['import', 'Import'], ['behavior', 'Behavior']] },
+  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
   { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
   { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
   { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
@@ -231,14 +231,14 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
   // Natural names people (and other pages) might use; additive, no id above changes.
   permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
   cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map(); // id -> { ...def, pane, link }
@@ -782,7 +782,6 @@ async function buildAi(card) {
 function buildImport(card) {
   // Import
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(withKeywords(row(tr('settings.sync.label', 'Sync across devices'), tr('settings.sync.desc', 'Lumen doesn’t sync. Your bookmarks, history and passwords stay on this computer, and nothing is stored in an account. To move bookmarks to another computer, use Export on the Bookmarks page, then import the file there; “Import bookmarks and history” below brings them in from another browser.')), 'sync syncing account devices phone cloud backup transfer move export'));
   card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
@@ -847,7 +846,11 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
-  card.at('tabs-strip').append(toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'));
+  card.at('tabs-strip').append(
+    select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+  );
   // Expert: Chromium's forced dark mode for pages.
   card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
 }
@@ -2738,7 +2741,7 @@ async function buildDownloads(card) {
 // ---------- [usage] Usage: the plan's limits and Lumen's share (features/usage.js) ----------
 const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n || 0));
 const dollars = (n) => (n >= 1 ? `$${n.toFixed(2)}` : n > 0 ? `$${n.toFixed(3)}` : '$0');
-const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter' };
+const ENGINE_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', codex: 'Codex CLI', antigravity: 'Antigravity', anthropic: 'Claude (API key)', openai: 'OpenAI', xai: 'Grok (API key)', gemini: 'Gemini', openrouter: 'OpenRouter', local: 'Local (Ollama / LM Studio)' };
 function meterRow(label, percent, note) {
   const p = Math.max(0, Math.min(100, Number(percent) || 0));
   const fill = h('i');
@@ -3457,7 +3460,7 @@ async function init() {
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
+    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -3465,7 +3468,7 @@ async function init() {
   // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
   // once when a link, the sidebar or a search needs it). FOOT says which categories a builder puts rows in; SUBS are whole sub-pages.
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
+    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
     search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
   };

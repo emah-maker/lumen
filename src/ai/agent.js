@@ -580,6 +580,15 @@ const skillsBlockOf = (settings) => (typeof settings?.skillsList === 'string' &&
 // [memory] memory is the sidebar chat's saved memory (Settings → AI and agents → Memory): offered to its API chats only while the setting is on and
 // the chat is not temporary (memoryOffered). Not listed to MCP clients or the CLI engines; they still get the saved entries in their system prompt.
 const MEMORY_TOOL = { ...memoryLib.TOOL, eager_input_streaming: true };
+// [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
+// out of startup; the text is short on purpose (every request pays for it). Sidebar API chats only, like the board: not listed to MCP clients or the CLI engines.
+const NOTES_INTENT = /\bnotepad\b|\b(?:my|the|these|those|saved|quick|your) notes\b|\bnotes? (?:app|about|on|from)\b|\b(?:add|put|save|write|jot|append|keep|store)\b[^.\n]{0,40}\b(?:to|in|into|on) (?:my |the |a )?notes?\b/i;
+const NOTES_TOOL = {
+  name: 'notes',
+  description: 'The user notepad. list/search: titles and ids. read id. append text to a note (no id: the open one, or a new note); create text. Only adds; never edits or deletes.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'append', 'create'] }, id: { type: 'string' }, text: { type: 'string' }, query: { type: 'string' } }, required: ['action'] },
+  eager_input_streaming: true,
+};
 // [reading list] reading_list saves a page to the user's reading list (Save for later) and reads the list back. For the sidebar's API chats only (MCP clients and the CLI
 // engines see a tool listing that is already at its budget: test/acceptance/chat-prompt-budget.js), and only once the conversation talks about it (readingOffered),
 // so the default request keeps its size (test/units.js tool budget). The text stays short on purpose.
@@ -616,6 +625,7 @@ function slimTool(tool) {
 }
 const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
+const OTHER_NOTES = slimTool(NOTES_TOOL); // [notes]
 const OTHER_READING = slimTool(READING_LIST_TOOL); // [reading list]
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
@@ -995,7 +1005,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, acting = false } = {}) { // acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false } = {}) { // acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -1010,7 +1020,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1035,6 +1045,7 @@ TOOL_SCHEMAS.reading_list = READING_LIST_TOOL.input_schema; // [reading list]
 TOOL_SCHEMAS.use_skill = SKILL_TOOL.input_schema;
 TOOL_SCHEMAS.propose_plan = planMode.PLAN_TOOL.input_schema; // [plan mode] offered only while planning (planning())
 TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
+TOOL_SCHEMAS.notes = NOTES_TOOL.input_schema; // [notes]
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -1073,7 +1084,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'parallel_tasks']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -3734,7 +3745,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3768,7 +3779,7 @@ ${prompt}` : prompt), historyImages: [] };
     const toolsOk = providers.canUseTools(provider, model);
     if (!toolsOk && messages.chatOnlyNoted !== model) {
       messages.chatOnlyNoted = model;
-      emit({ type: 'notice', text: `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
+      emit({ type: 'notice', text: provider === 'local' ? `${model} can't use tools, so it answers as plain chat: it can read the page you're on but can't click or type in your tabs. Browser actions need a tool-capable local model (Settings → AI → Local shows which ones are).` : `${model} is chat only: it can read the page you're on but can't click or type in your tabs. Pick a model without "(chat only)" for that.` });
     }
     // A model known to be text-only gets the chat without its images: said once, not dropped silently.
     const blind = fallback.capsOf(messages.settings.model, this.fallbackOptionsList()).vision === false;
@@ -3787,12 +3798,12 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
     });
-    this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit);
+    if (provider !== 'local') this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit); // (a model on this computer has no limits or cost to count)
     return turn;
   }
 
@@ -4155,6 +4166,30 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/memory]
 
+  // The tool is listed only when the conversation is about the notepad (the tool list is paid for in every request): the user's latest words mention
+  // their notes, or the chat has already used it (a call in the history keeps its tool).
+  notesOffered(messages) {
+    try {
+      for (let i = messages.length - 1, seen = 0; i >= 0 && i >= messages.length - 40; i--) {
+        const m = messages[i];
+        if (m?.role === 'assistant' && Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && b.name === 'notes')) return true;
+        if (m?.role !== 'user' || seen >= 4) continue;
+        seen++;
+        const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
+        if (text.length < 4000 && NOTES_INTENT.test(text)) return true;
+      }
+    } catch { /* not offered */ }
+    return false;
+  }
+  // ---- [notes] The notepad (ai/notes.js). Reads and adds only, in the sidebar's own chats; a page the AI read can't make it edit what the user wrote.
+  async notesTool(input) {
+    const scope = taskScope.getStore();
+    const n = this.browser.notes;
+    if (!n || !scope?.chat || scope.gate?.external) throw new Error('Unknown tool: notes');
+    return require('./notes').runTool(input, { store: n.store(), changed: () => n.changed?.() });
+  }
+  // ---- [/notes]
+
   async delegate(input) {
     const scope = taskScope.getStore();
     const gate = scope?.gate;
@@ -4350,6 +4385,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
       if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
+      if (name === 'notes') return require('./notes').stepLabel(input); // [notes]
       if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'document') return { outline: 'Reading the document outline', select_section: `Selecting the section ${quote(String(input.heading || ''), 40)}`, move_section: `Moving the section ${quote(String(input.heading || ''), 40)}`, replace: `Replacing ${quote(String(input.find || ''), 40)}`, style: 'Applying a style', insert_markdown: 'Inserting formatted text', verify: 'Checking the document against before my edits', undo: 'Undoing my edits to the document', read: 'Reading the document' }[input.action] || 'Working on the document';
@@ -6707,6 +6743,7 @@ ${same}
       }
       case 'propose_plan': return this.proposePlan(input); // [plan mode]
       case 'memory': return this.memoryTool(input); // [memory]
+      case 'notes': return this.notesTool(input); // [notes]
       case 'document': { // [document tool]
         const store = this.docStore();
         store.docInternal = true;
@@ -6932,4 +6969,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { NOTES_TOOL, setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };

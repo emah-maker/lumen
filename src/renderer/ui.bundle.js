@@ -2251,6 +2251,10 @@ explain describe list find give compare difference summarize summary write rewri
     if (r?.ok) say(host, tr('genimg.saved'));
     else if (r?.reason !== 'canceled') say(host, tr('genimg.saveFailed'));
   }
+  async function doNote(pic, host) {
+    const r = await Promise.resolve().then(() => window.assistant.notes.act('add-image', { id: pic.id, alt: pic.alt })).catch(() => null);
+    say(host, tr(r?.ok ? 'notes.added' : 'notes.addFailed'));
+  }
   async function doCopy(pic, host) {
     const ok = await Promise.resolve().then(() => api().copy(pic.id)).catch(() => false);
     say(host, ok ? tr('genimg.copied') : tr('genimg.copyFailed'));
@@ -2384,7 +2388,7 @@ explain describe list find give compare difference summarize summary write rewri
       open.dataset.hint = tr('imgview.hint');
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
-      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)));
+      const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
 
 
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
@@ -5240,6 +5244,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
     }
   };
   bubble.append(button);
+  window.chatActions?.noteButton(bubble, source);
 }
 
 
@@ -6153,6 +6158,13 @@ sendNowBtn.onclick = () => { sendComposer({ now: true }); prompt.focus(); };
 async function sendComposer({ now = false } = {}) {
   const typed = prompt.value.trim();
   if (!typed && attachments.length === 0 && pastes.length === 0) return;
+  if (typed && attachments.length === 0 && pastes.length === 0 && window.focusPhrase?.parseStart(typed) && window.focusUi) {
+    prompt.value = '';
+    renderAttachments();
+    autosize();
+    await window.focusUi.tryStart(typed);
+    return;
+  }
   const text = window.chatDrafts.withPastes(typed, pastes);
   const hadPastes = pastes.length > 0;
   const images = attachments;
@@ -6268,6 +6280,7 @@ function startChat() {
     copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5h-.5a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v.5"/></svg>',
     check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
     up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
+    note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
     down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
   };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -6391,6 +6404,24 @@ function startChat() {
       if (time) { time.classList.add('msg-hover'); strip.append(time); }
     }
     if (!strip.querySelector('.reply-thumbs') && bubble.querySelector('.reply-copy')) strip.append(thumbs(bubble, info.feedback));
+    const note = strip.querySelector('.reply-note');
+    if (note && note !== strip.lastElementChild) strip.append(note);
+  }
+
+
+  function noteButton(bubble, source) {
+    if (!bubble || !window.assistant?.notes || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-note')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+    const b = button('reply-thumb reply-note', t('notes.add'), ICONS.note, async () => {
+      const r = await window.assistant.notes.act('add', { text: String(source) }).catch(() => null);
+      b.title = t(r?.ok ? 'notes.added' : 'notes.addFailed');
+      b.setAttribute('aria-label', b.title);
+      b.classList.toggle('done', Boolean(r?.ok));
+      b.innerHTML = r?.ok ? ICONS.check : ICONS.note;
+      setTimeout(() => { b.title = t('notes.add'); b.setAttribute('aria-label', b.title); b.classList.remove('done'); b.innerHTML = ICONS.note; }, 2200);
+    });
+    strip.append(b);
   }
   function thumbs(bubble, current = null) {
     const box = el('span', { className: 'reply-thumbs' });
@@ -6463,7 +6494,7 @@ function startChat() {
     copy.click();
   });
 
-  window.chatActions = { userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+  window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();
 ;
 // ---- tabs-ask-core.js
@@ -7587,6 +7618,78 @@ function startChat() {
   window.addEventListener('pagehide', cancel);
 })();
 ;
+// ---- offer-card.js
+
+
+
+
+
+(() => {
+  const api = window.assistant?.offers;
+  const empty = document.getElementById('empty');
+  if (!api || !empty) return;
+  const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
+  let card = null;
+
+  const remove = () => { card?.remove(); card = null; };
+  const button = (text, cls, onclick) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text, onclick });
+  const act = (action, arg) => api.act(action, arg).catch(() => ({ ok: false }));
+
+  function row(item) {
+    const li = document.createElement('li');
+    li.className = 'offer-row';
+    li.dataset.offer = item.id;
+    const text = document.createElement('span');
+    text.className = 'offer-text';
+    const name = Object.assign(document.createElement('span'), { className: 'offer-name', textContent: tr(`offers.${item.id}`) });
+    const desc = Object.assign(document.createElement('span'), { className: 'offer-desc', textContent: tr(`offers.${item.id}.desc`) });
+    text.append(name, desc);
+    const setup = item.kind === 'setup';
+    const go = button(tr(setup ? 'offers.setUp' : 'offers.turnOn'), 'offer-go', async () => {
+      go.disabled = true;
+      const r = await act('act', item.id);
+      if (!r.ok) { go.disabled = false; return; }
+      if (r.section) window.lumenPrefs?.openSettingsPage(r.section);
+      li.remove();
+      if (!card?.querySelector('.offer-row')) remove();
+    });
+    go.setAttribute('aria-label', `${go.textContent}: ${name.textContent}`);
+    li.append(text, go);
+    return li;
+  }
+
+  async function show() {
+    if (card) return;
+    let list = null;
+    try { list = await api.get(); } catch {  }
+    if (!list?.items?.length || card || document.getElementById('welcome')?.hidden === false) return;
+    card = document.createElement('section');
+    card.className = 'offer-card';
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', tr('offers.title'));
+    const title = Object.assign(document.createElement('h3'), { className: 'offer-title', textContent: tr('offers.title') });
+    const ul = document.createElement('ul');
+    ul.className = 'offer-list';
+    for (const item of list.items) ul.append(row(item));
+    const foot = document.createElement('div');
+    foot.className = 'offer-foot';
+    foot.append(
+      button(tr('offers.notNow'), 'link-btn offer-later', async () => { remove(); await act('dismiss'); }),
+      button(tr('offers.never'), 'link-btn offer-never', async () => { remove(); await act('dismiss', 'never'); }));
+    card.append(title, ul, foot);
+    (empty.querySelector('.chips') || empty).before(card);
+
+    const ids = list.items.map((i) => i.id);
+    const seenOnce = () => { if (card && card.offsetParent !== null && !document.hidden) { io.disconnect(); act('shown', ids); } };
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) seenOnce(); });
+    io.observe(card);
+  }
+
+
+  setTimeout(show, 600);
+  window.addEventListener('focus', () => { if (!card) setTimeout(show, 100); });
+})();
+;
 // ---- snapshot-arrival.js
 
 
@@ -7682,6 +7785,79 @@ function startChat() {
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.tabSelection = api;
 })(typeof window !== 'undefined' ? window : globalThis);
+;
+// ---- split.js
+
+
+
+(() => {
+  const viewport = document.getElementById('viewport');
+  if (!viewport || !window.browser?.onSplit) return;
+  const tr = (key, fallback) => (typeof window.t === 'function' ? window.t(key) : fallback);
+  const bar = document.createElement('div');
+  bar.id = 'split-divider';
+  bar.className = 'split-divider';
+  bar.hidden = true;
+  bar.tabIndex = 0;
+  bar.setAttribute('role', 'separator');
+  bar.setAttribute('aria-orientation', 'vertical');
+  bar.setAttribute('aria-label', tr('split.divider', 'Resize split view. Drag, or use the arrow keys.'));
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'split-close';
+  close.title = tr('split.close', 'Close split view');
+  close.setAttribute('aria-label', tr('split.close', 'Close split view'));
+  close.innerHTML = '<svg viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 1.5l5 5M6.5 1.5l-5 5"/></svg>';
+  bar.append(close);
+  viewport.append(bar);
+
+  let ratio = 0.5;
+  let gap = 12;
+  let pending = null;
+  const send = (r) => {
+    ratio = r;
+    pending = r;
+    if (pending !== null && !send.raf) send.raf = requestAnimationFrame(() => { send.raf = 0; window.browser.setSplitRatio(pending); pending = null; });
+  };
+  const fromPointer = (e) => {
+    const box = viewport.getBoundingClientRect();
+    return (e.clientX - box.left - gap / 2) / Math.max(1, box.width - gap);
+  };
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || e.target.closest('.split-close')) return;
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('dragging');
+    document.body.classList.add('split-dragging');
+  });
+  bar.addEventListener('pointermove', (e) => { if (bar.hasPointerCapture(e.pointerId)) send(fromPointer(e)); });
+  const end = (e) => {
+    if (bar.hasPointerCapture(e.pointerId)) bar.releasePointerCapture(e.pointerId);
+    bar.classList.remove('dragging');
+    document.body.classList.remove('split-dragging');
+  };
+  bar.addEventListener('pointerup', end);
+  bar.addEventListener('pointercancel', end);
+  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('.split-close')) send(0.5); });
+  bar.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); send(ratio - step); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); send(ratio + step); }
+    else if (e.key === 'Home') { e.preventDefault(); send(0.5); }
+  });
+  close.addEventListener('click', () => window.browser.closeSplit());
+
+  window.browser.onSplit((msg) => {
+    bar.hidden = !msg;
+    document.body.classList.toggle('split-view', Boolean(msg));
+    if (!msg) return;
+    ratio = msg.ratio;
+    gap = msg.width;
+    bar.style.left = `${msg.x}px`;
+    bar.style.width = `${msg.width}px`;
+    bar.setAttribute('aria-valuenow', String(Math.round(msg.ratio * 100)));
+  });
+})();
 ;
 // ---- omnibox-draft.js
 
@@ -7983,12 +8159,14 @@ let selectedTabs = new Set();
 
 
 
+
+const sideTabsOn = () => document.body.classList.contains('side-layout');
 const settleStripNow = () => { for (const a of $('tabs').getAnimations({ subtree: true })) { try { a.finish(); } catch {  } } };
 function startTabDrag(e, el, id) {
   if (e.button !== 0 || e.target.closest('.tab-close, .tab-audio')) return;
   settleStripNow();
   const tabs = [...$('tabs').querySelectorAll('.tab')];
-  drag = { el, id, startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
+  drag = { el, id, side: sideTabsOn(), startX: e.clientX, startY: e.clientY, into: e.clientX - el.getBoundingClientRect().left, dx: 0, moved: false, ids: tabs.map((t) => Number(t.dataset.id)), rects: tabs.map((t) => t.getBoundingClientRect()), from: tabs.indexOf(el) };
   drag.to = drag.from;
   el.setPointerCapture(e.pointerId);
 
@@ -8011,6 +8189,7 @@ function startGroupDrag(e, label, groupId) {
   const lead = members.includes(lastTabState.activeId) ? lastTabState.activeId : members[0];
   const first = $('tabs').querySelector('.tab, .group-label');
   drag = { el: label, id: lead, startX: e.clientX, startY: e.clientY, into: e.clientX - label.getBoundingClientRect().left, labelInset: parseFloat(getComputedStyle(label).marginLeft) || 0, dx: 0, moved: false, ids: [], rects: [first.getBoundingClientRect()], from: 0, to: 0, groupId, members, labelRect: label.getBoundingClientRect() };
+  drag.side = sideTabsOn();
   label.setPointerCapture(e.pointerId);
   label.addEventListener('lostpointercapture', () => { if (drag?.el === label) endTabDrag({ type: 'lostcapture' }); }, { once: true });
   window.addEventListener('pointerup', endTabDrag, true);
@@ -8584,13 +8763,15 @@ function handOffTabDrag(e) {
 
 
 
-  const layout = tearOffLayout(drag.el, drag.group);
-  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout.origin + layout.into, pressY: drag.startY, ids: drag.group, layout });
+
+  const layout = drag.side ? null : tearOffLayout(drag.el, drag.group);
+  window.browser.dragTabStart?.(drag.id, { x: e.clientX, y: e.clientY, stripX: layout ? layout.origin + layout.into : drag.into + 12, pressY: layout ? drag.startY : window.sideTabs.tearY(drag.el), ids: drag.group, layout });
 }
 
 function moveTabDrag(e) {
   if (drag?.handed) { window.browser.dragTabMove?.(); return; }
   if (!drag) return;
+  if (drag.side) { window.sideTabs.move(e); return; }
   if (drag.groupId != null) { moveGroupDrag(e); return; }
   drag.dx = e.clientX - drag.startX;
   const dy = e.clientY - drag.startY;
@@ -8721,6 +8902,7 @@ function endTabDrag(e) {
   const { moved, from, id, handed, group, groupId, el: dragEl, gathered, along, slotBefore, slotShown, members, single, slotKey, homeKey, alongHome } = drag;
 
   const escaped = e?.type === 'keydown' || e?.type === 'pointercancel' || e?.type === 'lostcapture';
+  if (drag.side) window.sideTabs.end(drag, escaped);
   const fromIndex = (lastTabState?.tabs || []).findIndex((t) => t.id === id);
   const toIndex = slotShown ? indexBefore(slotBefore ?? null, id) : from;
 
@@ -8855,8 +9037,10 @@ function animateTabs(before, container, landed = new Set()) {
     if (landed.has(el)) {
       el.animate([{ opacity: 0.4, transform: 'translateY(-4px) scale(0.94)' }, { opacity: 1, transform: 'none' }], { duration: 360, easing: SPRING_SNAPPY });
     } else if (prev) {
-      const dx = prev.rect.left - el.getBoundingClientRect().left;
-      if (Math.abs(dx) > 0.5) el.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
+      const now = el.getBoundingClientRect();
+      const dx = prev.rect.left - now.left;
+      const dy = sideTabsOn() ? prev.rect.top - now.top : 0;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 420, easing: SPRING_SMOOTH });
     } else if (el.classList.contains('group-label')) {
 
 
@@ -9010,11 +9194,13 @@ function updateTabEl(el, tab, group, activeId) {
 
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
-  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
+  el.classList.toggle('split-left', tab.split === 'left');
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -9200,7 +9386,8 @@ $('tabs').addEventListener('keydown', (e) => {
   const i = items.indexOf(el);
   const isTab = el.classList.contains('tab');
   const id = Number(el.dataset.id);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') focusStripItem(items[(i + (e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length]);
+  const step = { ArrowRight: 1, ArrowLeft: -1, ...(sideTabsOn() ? { ArrowDown: 1, ArrowUp: -1 } : {}) }[e.key];
+  if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
   else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
@@ -9340,6 +9527,7 @@ function hideHoverCard() {
 }
 
 function hoverTab(el) {
+  if (sideTabsOn()) return;
   if (el === hoverCardTab || drag?.moved || renamingGroup !== null) return;
   if (el !== hoverCardPressed) hoverCardPressed = null;
   if (hoverCardPressed) return;
@@ -9402,6 +9590,7 @@ let widthsHeld = false;
 let widthsFrame = 0;
 
 function holdTabWidths() {
+  if (sideTabsOn()) return;
   for (const el of $('tabs').querySelectorAll('.tab:not(.pinned):not(.tab-ghost)')) el.style.flex = `0 0 ${getComputedStyle(el).width}`;
   widthsHeld = true;
 }
@@ -9539,7 +9728,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -9650,7 +9839,7 @@ function renderTabsNow(state) {
 
   const chipWidth = (g) => Math.min(84, Math.max(36, String(g.name || '').length * 6.6 + 18)) + 6;
   const chips = (state.groups || []).reduce((n, g) => n + chipWidth(g), 0);
-  const crowded = state.tabs.length <= 12 ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
+  const crowded = state.tabs.length <= 12 || sideTabsOn() ? '' : container.clientWidth > 0 && chips > container.clientWidth * 0.8 ? 'dot' : 'crowded';
   let currentGroup = null;
 
 
@@ -10461,7 +10650,7 @@ const SIDEBAR_MIN = 300, SIDEBAR_MAX = 560, SIDEBAR_DEFAULT = 360;
 let sidebarWish = null;
 function setSidebarWidth(width) {
   sidebarWish = width;
-  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420));
+  const max = Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, window.innerWidth - 420 - (sideTabsOn() ? $('side-tabs').offsetWidth : 0)));
   const w = Math.round(Math.min(max, Math.max(SIDEBAR_MIN, width)));
   document.documentElement.style.setProperty('--sidebar-width', `${w}px`);
   reportBounds();
@@ -10647,6 +10836,25 @@ window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && windo
 setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
 
 
+
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
+
+
 window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
   showSidebar(true);
   try {
@@ -10717,6 +10925,7 @@ window.browser.onDownloads?.((list) => {
     : latest.state === 'completed' ? t('downloads.done') : ['cancelled', 'interrupted'].includes(latest.state) ? t(`downloads.${latest.state}`) : latest.state;
   downloadsBtn.title = `${latest.name} — ${status}`;
 });
+for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
@@ -11880,6 +12089,26 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   window.researchUi = { decorate, refresh };
   refresh();
+})();
+;
+// ---- notes-loader.js
+
+
+(() => {
+  const api = window.assistant?.notes;
+  const button = document.getElementById('notes-btn');
+  if (!api || !button) return;
+  let loading = null;
+  const load = () => loading || (loading = new Promise((resolve, reject) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'notes.css' });
+    document.head.appendChild(css);
+    const script = Object.assign(document.createElement('script'), { src: 'notes.js' });
+    script.onload = resolve;
+    script.onerror = () => { loading = null; script.remove(); css.remove(); reject(new Error('notes.js did not load')); };
+    document.body.appendChild(script);
+  }));
+
+  button.onclick = () => load().catch(() => {});
 })();
 ;
 // ---- meeting-loader.js
@@ -13279,6 +13508,128 @@ $('agent-stop')?.addEventListener('click', () => {
   else root.routinePhrase = api;
 })(this);
 ;
+// ---- focus-phrase.js
+
+
+
+(function (root) {
+  const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, 'half an': 0.5, half: 0.5 };
+  const AMOUNT = '(\\d+(?:[.,]\\d+)?|half an|half|an|a|one|two|three|four|five|six)';
+  const UNIT = '(hours?|hrs?|h|minutes?|mins?|m)';
+  const LENGTH = new RegExp(`^${AMOUNT}\\s*${UNIT}\\b\\.?$`, 'i');
+  const START = new RegExp(`^(?:please\\s+)?(?:(?:start|begin|turn\\s+on|enable|enter|activate|set)\\s+)?(?:a\\s+|an\\s+|my\\s+)?focus(?:\\s+(?:mode|session|time))?(?:\\s+on)?(?:\\s+for)?\\s+(.+?)[.!]?(?:\\s+please)?$`, 'i');
+
+
+  function parseLength(text) {
+    const m = LENGTH.exec(String(text || '').trim().replace(/\s+/g, ' '));
+    if (!m) return null;
+    const raw = m[1].toLowerCase();
+    const n = raw in WORDS ? WORDS[raw] : Number(raw.replace(',', '.'));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    const minutes = Math.round(/^h/i.test(m[2]) ? n * 60 : n);
+    return minutes >= 1 && minutes <= 720 ? minutes : null;
+  }
+
+  function parseStart(text) {
+    const s = String(text || '').trim();
+    if (s.length < 7 || s.length > 80) return null;
+    const m = START.exec(s);
+    return m ? parseLength(m[1]) : null;
+  }
+
+  const api = { parseLength, parseStart };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.focusPhrase = api;
+})(this);
+;
+// ---- focus.js
+
+
+(() => {
+  const api = window.assistant?.focus;
+  const button = document.getElementById('focus-btn');
+  const label = document.getElementById('focus-time');
+  if (!api || !button) return;
+  const tr = (key, fallback, vars) => {
+    const text = window.t ? window.t(key, vars) : key;
+    return text && text !== key ? text : (vars ? fallback.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : fallback);
+  };
+
+  let state = null;
+  let ticker = 0;
+  const clock = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${m}:${String(s % 60).padStart(2, '0')}`;
+  };
+  function draw() {
+    const on = Boolean(state?.active);
+    const left = on ? Math.max(0, state.until - Date.now()) : 0;
+    button.classList.toggle('on', on);
+    label.hidden = !on;
+    label.textContent = on ? clock(left) : '';
+    const name = on ? tr('focus.button.on', 'Focus mode: {time} left', { time: clock(left) }) : tr('focus.button', 'Focus mode');
+    button.title = name;
+    button.setAttribute('aria-label', name);
+    if (on && left === 0) api.state().then(apply).catch(() => {});
+  }
+  function apply(next) {
+    state = next;
+    if (state?.active && !ticker) ticker = setInterval(draw, 1000);
+    else if (!state?.active && ticker) { clearInterval(ticker); ticker = 0; }
+    draw();
+  }
+  button.addEventListener('click', () => {
+    const r = button.getBoundingClientRect();
+    api.menu({ x: Math.round(r.left), y: Math.round(r.bottom + 4) });
+  });
+  api.onState(apply);
+  api.state().then(apply).catch(() => {});
+
+  const notice = (text) => {
+    if (typeof window.append !== 'function') return;
+    window.append(Object.assign(document.createElement('div'), { className: 'notice', textContent: text }));
+  };
+  const endsAt = (until) => new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  async function start(minutes) {
+    try {
+      const s = await api.start(minutes);
+      apply(s);
+      return { ok: true, state: s };
+    } catch (err) {
+      return { ok: false, message: String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') };
+    }
+  }
+
+
+  window.slashCommands?.register({
+    name: 'focus',
+    label: tr('focus.slash', 'Start focus mode'),
+    description: tr('focus.slash.description', 'Block distracting sites for a while. Tab: say how long.'),
+    hint: tr('focus.slash.hint', 'How long, like 90 minutes or 2 hours (Enter alone: 45 minutes)'),
+    takesInput: false,
+    async run({ input }) {
+      const minutes = String(input || '').trim() ? window.focusPhrase?.parseLength(input) : 45;
+      if (!minutes) return { ok: false, message: tr('focus.slash.bad', 'Say how long, like 90 minutes or 2 hours.') };
+      const r = await start(minutes);
+      if (r.ok) notice(tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }));
+      return r;
+    },
+  });
+
+
+  window.focusUi = {
+    async tryStart(text) {
+      const minutes = window.focusPhrase?.parseStart(text);
+      if (!minutes) return false;
+      const r = await start(minutes);
+      notice(r.ok ? tr('focus.started', 'Focus mode is on until {time}. Distracting sites are blocked.', { time: endsAt(r.state.until) }) : r.message);
+      return true;
+    },
+  };
+})();
+;
 // ---- routines.js
 
 
@@ -14285,6 +14636,326 @@ $('agent-stop')?.addEventListener('click', () => {
   render();
 })();
 ;
+// ---- side-tabs-core.js
+
+
+(function (root) {
+  const MIN = 160;
+  const MAX = 420;
+  const DEFAULT = 240;
+  const COLLAPSED = 52;
+
+  const clampWidth = (w) => {
+    const n = Math.round(Number(w));
+    return Number.isFinite(n) ? Math.min(MAX, Math.max(MIN, n)) : DEFAULT;
+  };
+
+
+  const fromPrefs = (p) => ({ on: p?.tabLayout === 'side', width: clampWidth(p?.sideTabsWidth ?? DEFAULT), collapsed: p?.sideTabsCollapsed === true });
+
+
+
+
+  function dropBefore(items, x, y, listWidth) {
+    for (const it of items) {
+      const r = it.r;
+      if (y < r.top) return it;
+      if (y > r.bottom) continue;
+      const wide = r.right - r.left > listWidth / 2;
+      if (wide ? y < (r.top + r.bottom) / 2 : x < (r.left + r.right) / 2) return it;
+    }
+    return null;
+  }
+
+
+  const joinGroup = (hit, tabs) => (hit && !hit.outside ? tabs.find((t) => t.id === hit.id)?.groupId || null : null);
+
+
+
+  function homeBefore(items, moving) {
+    const skip = new Set(moving);
+    const last = items.map((it) => skip.has(it.id)).lastIndexOf(true);
+    return items.slice(last + 1).find((it) => !skip.has(it.id)) || null;
+  }
+
+  const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.sideTabsCore = api;
+})(this);
+;
+// ---- side-tabs.js
+
+
+
+
+
+{
+  const core = window.sideTabsCore;
+  const panel = $('side-tabs');
+  const list = $('side-tabs-list');
+  const head = $('side-head');
+  const tabsEl = $('tabs');
+  const strip = $('tabstrip');
+  const newTab = $('new-tab');
+  const collapseBtn = $('side-collapse');
+  const grip = $('side-resize');
+  const TEAR_PX = 48;
+  let cfg = core.fromPrefs(null);
+  let peekTimer = 0;
+  let leaveTimer = 0;
+  let saveTimer = 0;
+
+  const save = (o) => { try { Promise.resolve(window.browser.sideTabs?.(o)).catch(() => {}); } catch {  } };
+
+
+  function place() {
+    document.body.classList.toggle('side-layout', cfg.on);
+    panel.hidden = !cfg.on;
+    tabsEl.classList.toggle('side', cfg.on);
+    tabsEl.setAttribute('aria-orientation', cfg.on ? 'vertical' : 'horizontal');
+    if (cfg.on) {
+      list.append(tabsEl);
+      head.prepend(newTab);
+    } else {
+      strip.insertBefore(tabsEl, strip.firstChild);
+      strip.insertBefore(newTab, tabsEl.nextSibling);
+    }
+    hideHoverCard();
+
+    tabsRendered = false;
+    lastLayoutSig = null;
+    if (lastTabState) renderTabsNow(lastTabState);
+  }
+  function paint() {
+    panel.style.setProperty('--side-w', `${cfg.width}px`);
+    panel.classList.toggle('collapsed', cfg.collapsed);
+    if (!cfg.collapsed) panel.classList.remove('peek');
+    const label = t(cfg.collapsed ? 'tabs.side.expand' : 'tabs.side.collapse');
+    collapseBtn.title = label;
+    collapseBtn.setAttribute('aria-label', label);
+    collapseBtn.setAttribute('aria-pressed', String(cfg.collapsed));
+  }
+  function apply(p) {
+    const was = cfg.on;
+    cfg = core.fromPrefs(p);
+    paint();
+    if (cfg.on !== was) place();
+    if (cfg.on && typeof sidebarWish === 'number') setSidebarWidth(sidebarWish);
+  }
+  const fromPrefs = () => { const p = window.lumenSideTabs; if (p) apply(p); };
+  document.addEventListener('lumen:side-tabs', fromPrefs);
+  fromPrefs();
+
+  collapseBtn.addEventListener('click', () => save({ collapsed: !cfg.collapsed }));
+
+
+  panel.addEventListener('pointerenter', (e) => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(leaveTimer);
+    if (!cfg.collapsed || panel.classList.contains('peek')) return;
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => panel.classList.add('peek'), 180);
+  });
+  panel.addEventListener('pointerleave', () => {
+    clearTimeout(peekTimer);
+    if (drag || !panel.classList.contains('peek')) return;
+    clearTimeout(leaveTimer);
+    leaveTimer = setTimeout(() => { if (!drag && !panel.matches(':focus-within')) panel.classList.remove('peek'); }, 250);
+  });
+  panel.addEventListener('focusin', (e) => { if (cfg.collapsed && e.target.matches?.(':focus-visible')) { clearTimeout(leaveTimer); panel.classList.add('peek'); } });
+  panel.addEventListener('focusout', (e) => { if (!panel.contains(e.relatedTarget) && !panel.matches(':hover')) panel.classList.remove('peek'); });
+
+
+  const setWidth = (w) => { cfg.width = core.clampWidth(w); panel.style.setProperty('--side-w', `${cfg.width}px`); };
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const w0 = cfg.width;
+    document.body.classList.add('side-resizing');
+    const move = (ev) => setWidth(w0 + ev.clientX - x0);
+    const up = () => {
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      grip.removeEventListener('pointercancel', up);
+      document.body.classList.remove('side-resizing');
+      save({ width: cfg.width });
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+    grip.addEventListener('pointercancel', up);
+  });
+  grip.addEventListener('dblclick', () => { setWidth(core.DEFAULT); save({ width: cfg.width }); });
+  grip.addEventListener('keydown', (e) => {
+    const to = { ArrowLeft: cfg.width - 16, ArrowRight: cfg.width + 16, Home: core.MIN, End: core.MAX }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    setWidth(to);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => save({ width: cfg.width }), 300);
+  });
+
+
+  const menuAt = (e) => {
+    if (e.defaultPrevented || e.target.closest?.('.tab, .group-label')) return;
+    e.preventDefault();
+    window.browser.stripMenu?.({ x: e.clientX, y: e.clientY });
+  };
+  for (const el of [panel, tabsEl, newTab]) el.addEventListener('contextmenu', menuAt);
+
+
+  const inWindow = (e) => e.clientX >= -TEAR_PX / 2 && e.clientY >= -TEAR_PX / 2 && e.clientX <= window.innerWidth + TEAR_PX / 2 && e.clientY <= window.innerHeight + TEAR_PX / 2;
+  const out = (e) => e.clientX > panel.getBoundingClientRect().right + TEAR_PX || !inWindow(e);
+  const near = (e) => e.clientX > panel.getBoundingClientRect().right + 8 || e.clientX < 8 || e.clientY > window.innerHeight - 8;
+
+
+
+  function candidates(d) {
+    const skip = new Set(d.moving);
+    const now = lastTabState?.tabs || [];
+    const groups = lastTabState?.groups || [];
+    const found = [];
+    for (const el of tabsEl.querySelectorAll('.tab:not(.tab-ghost), .group-label')) {
+      if (el.matches('.handed, .held, .gathered')) continue;
+      let id;
+      let outside = false;
+      if (el.classList.contains('group-label')) {
+        const g = Number(el.dataset.group);
+        if (d.pinnedDrag || g === d.groupId) continue;
+        id = now.find((x) => x.groupId === g && !skip.has(x.id))?.id;
+        outside = true;
+      } else {
+        id = Number(el.dataset.id);
+        if (el.classList.contains('pinned') !== d.pinnedDrag) continue;
+        const g = now.find((x) => x.id === id)?.groupId;
+        if (g && groups.find((x) => x.id === g)?.collapsed) continue;
+      }
+      if (id != null) found.push({ id, outside, r: el.getBoundingClientRect() });
+    }
+    return found;
+  }
+
+  function showLine(d, items, hit) {
+    const line = d.line || (d.line = Object.assign(document.createElement('div'), { className: 'side-drop-line' }));
+    if (!line.isConnected) document.body.append(line);
+    const lr = list.getBoundingClientRect();
+    const ref = hit || items[items.length - 1];
+    if (!ref) { line.hidden = true; return; }
+    line.hidden = false;
+    const r = ref.r;
+    const tile = d.pinnedDrag && r.right - r.left < lr.width / 2;
+    const after = !hit;
+    const box = tile
+      ? { left: (after ? r.right + 1 : r.left - 1) - 1, top: r.top, width: 2, height: r.bottom - r.top }
+      : { left: lr.left + 6, top: (after ? r.bottom + 1 : r.top - 1) - 1, width: lr.width - 12, height: 2 };
+    Object.assign(line.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
+    const join = d.groupId == null && !d.pinnedDrag ? core.joinGroup(hit, lastTabState?.tabs || []) : null;
+    const color = join && (lastTabState?.groups || []).find((x) => x.id === join)?.color;
+    line.style.background = color ? `var(--g-${String(color).replace(/[^a-z]/g, '')})` : '';
+  }
+
+  function follow(d) {
+    d.el.style.transform = `translate(${d.lastX - d.startX}px, ${d.lastY - d.startY + (list.scrollTop - d.scroll0)}px)`;
+    const all = candidates(d);
+    const skip = new Set(d.moving);
+    const items = all.filter((it) => !skip.has(it.id));
+    let hit = core.dropBefore(items, d.lastX, d.lastY, list.clientWidth);
+    if (d.groupId != null) {
+      const tabsNow = lastTabState?.tabs || [];
+      const inside = (it) => it && !it.outside && tabsNow.find((x) => x.id === it.id)?.groupId;
+      const g = inside(hit);
+      if (g) hit = items.slice(items.indexOf(hit) + 1).find((it) => inside(it) !== g) || null;
+    }
+    d.hit = hit;
+    d.targeted = true;
+    showLine(d, items, hit);
+  }
+
+  function stopEdge(d) { d.edge = 0; if (d.edgeTimer) { cancelAnimationFrame(d.edgeTimer); d.edgeTimer = 0; } }
+
+
+  function handOff(e) {
+    const d = drag;
+    stopEdge(d);
+    d.line?.remove();
+    if (d.groupId == null) { handOffTabDrag(e); return; }
+    d.handed = true;
+    d.group = d.members;
+    d.single = (lastTabState?.tabs.length || 0) - d.members.length < 1;
+    d.el.style.transform = '';
+    d.el.classList.remove('tearing');
+    if (d.single) {
+      d.el.classList.remove('dragging');
+      tabsEl.classList.remove('reordering');
+    } else {
+      d.el.classList.add('handed');
+      for (const el of tabsEl.querySelectorAll('.tab')) if (d.members.includes(Number(el.dataset.id))) el.classList.add('handed');
+    }
+    window.browser.dragTabStart(d.id, { x: e.clientX, y: e.clientY, stripX: d.into + 12, pressY: api.tearY(d.el), ids: d.members, group: d.groupId, layout: null });
+  }
+
+  const api = {
+
+    move(e) {
+      const d = drag;
+      if (!d.moved && Math.abs(e.clientX - d.startX) < 5 && Math.abs(e.clientY - d.startY) < 5) return;
+      if (!d.moved) {
+        d.moved = true;
+        hideHoverCard();
+        d.el.classList.add('dragging');
+        tabsEl.classList.add('reordering');
+        d.scroll0 = list.scrollTop;
+        const label = d.groupId != null;
+        d.moving = label ? d.members : selectedTabs.size > 1 && selectedTabs.has(d.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [d.id];
+        d.pinnedDrag = !label && d.el.classList.contains('pinned');
+
+        if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - d.moving.length < 1) { handOff(e); return; }
+      }
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      if (!d.prepped && window.browser.dragTabPrep && near(e)) { d.prepped = true; window.browser.dragTabPrep(d.id); }
+      if (window.browser.dragTabStart && out(e)) { handOff(e); return; }
+      follow(d);
+
+      const lr = list.getBoundingClientRect();
+      d.edge = list.scrollHeight > list.clientHeight + 1 ? (e.clientY < lr.top + 28 ? -1 : e.clientY > lr.bottom - 28 ? 1 : 0) : 0;
+      if (d.edge && !d.edgeTimer) {
+        const tick = () => {
+          if (drag !== d || !d.edge || d.handed) { d.edgeTimer = 0; return; }
+          list.scrollTop += 9 * d.edge;
+          follow(d);
+          d.edgeTimer = requestAnimationFrame(tick);
+        };
+        d.edgeTimer = requestAnimationFrame(tick);
+      }
+    },
+
+    end(d, escaped) {
+      stopEdge(d);
+      d.line?.remove();
+      if (d.handed) return;
+      d.el.style.transform = '';
+      d.el.classList.remove('dragging', 'tearing');
+      tabsEl.classList.remove('reordering');
+      if (!d.moved || escaped || !d.targeted) return;
+      const hit = d.hit;
+      const home = core.homeBefore(candidates(d), d.moving);
+      if ((hit?.id ?? null) === (home?.id ?? null)) return;
+      const tabsNow = lastTabState?.tabs || [];
+      const live = $('tab-live');
+      expectMove();
+      if (d.groupId != null) window.browser.moveTabs?.(d.members, hit?.id ?? null, d.groupId);
+      else if (d.pinnedDrag) window.browser.moveTab?.(d.id, indexBefore(hit?.id ?? null, d.id), true);
+      else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, core.joinGroup(hit, tabsNow));
+      if (live) live.textContent = d.moving.length > 1 ? t('tabs.movedMany', { n: d.moving.length }) : t('tabs.moved', { title: tabsNow.find((x) => x.id === d.id)?.title || '' });
+    },
+
+    tearY(el) { return Math.round(list.getBoundingClientRect().top + 6 + (el.offsetHeight || 30) / 2); },
+  };
+  window.sideTabs = api;
+}
+;
 // ---- ui-prefs.js
 
 {
@@ -14301,6 +14972,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (!p) return;
     const root = document.documentElement;
     root.classList.toggle('pref-compact-tabs', Boolean(p.compactTabs));
+    if ('tabLayout' in p) { window.lumenSideTabs = { tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed }; document.dispatchEvent(new Event('lumen:side-tabs')); }
     root.classList.toggle('pref-no-bookmark-button', p.showBookmarkButton === false);
     root.classList.toggle('pref-no-ai-off-button', p.showAiOffButton === false);
     root.classList.toggle('pref-reduce-motion', Boolean(p.reduceMotion || p.lite));

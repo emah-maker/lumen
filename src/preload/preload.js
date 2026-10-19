@@ -55,6 +55,8 @@ contextBridge.exposeInMainWorld('browser', {
   setTabSelection: (ids) => ipcRenderer.send('tab:selection', ids), // the strip's multi-selection: drags and the tab menu act on all of it
   hideAiTabs: (on) => ipcRenderer.invoke('tabs:hide-ai', on), // [ai manners] no argument: just read it
   hideAiTabsMenu: (at) => ipcRenderer.send('tabs:hide-ai-menu', at), // right-click on the toggle: hide or close the AI's tabs
+  stripMenu: (at) => ipcRenderer.send('tabs:strip-menu', at), // right-click on the empty strip or the side list: tab layout
+  sideTabs: (o) => ipcRenderer.invoke('tabs:side', o), // the side list's saved width and fold: { width?, collapsed? }
   tabMenu: (id, point) => ipcRenderer.send('tab:context-menu', id, point),
   navMenu: (direction, point) => ipcRenderer.send('nav:history-menu', direction, point), // right-click on Back / Forward: the pages behind / ahead
   addressMenu: (point, hasSelection) => ipcRenderer.send('address:menu', point, hasSelection), // right-click in the address bar: Cut / Copy / Paste, Paste and Go
@@ -78,6 +80,7 @@ contextBridge.exposeInMainWorld('browser', {
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
+  warmDownloads: () => ipcRenderer.send('downloads:warm'), // the pointer or the keyboard reached the button: the panel's page loads ahead of the click
   go: (text) => ipcRenderer.send('nav:go', text),
   back: () => ipcRenderer.send('nav:back'),
   forward: () => ipcRenderer.send('nav:forward'),
@@ -87,6 +90,9 @@ contextBridge.exposeInMainWorld('browser', {
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
+  onSplit: on('split:layout'), // [split view] where the divider between two pages goes (null: none)
+  setSplitRatio: (ratio) => ipcRenderer.send('split:ratio', ratio),
+  closeSplit: () => ipcRenderer.send('split:close'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onNewSidebarChat: on('new-sidebar-chat'),
@@ -114,6 +120,9 @@ contextBridge.exposeInMainWorld('browser', {
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
   onOpenFilesPicker: on('files:picker'),
+  onOpenCommandBar: on('cmdbar:open'), // Ctrl+K (renderer/command-bar.js, features/command-bar.js)
+  commandData: () => ipcRenderer.invoke('cmdbar:data'),
+  commandRun: (id) => ipcRenderer.invoke('cmdbar:run', id),
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).
@@ -205,6 +214,11 @@ contextBridge.exposeInMainWorld('assistant', {
     undo: (token) => ipcRenderer.invoke('memory:undo', token),
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
+  // Quick notes (renderer/notes.js; features/notes-hub.js): one call for everything the panel and the "Add to notes" buttons do.
+  notes: {
+    act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
+    onChanged: on('notes:changed'),
+  },
   // The Research board (renderer/research.js; ai/research-board.js): the open chat's sources, notes and pinned quotes.
   research: {
     get: () => ipcRenderer.invoke('research:get'),
@@ -218,6 +232,7 @@ contextBridge.exposeInMainWorld('assistant', {
     open: (url) => ipcRenderer.invoke('research:open', url), // a URL the board holds, in a new tab
     onChanged: on('research:changed'),
   },
+  offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
   dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) }, // [dictation] voice input (renderer/dictation.js): which provider, and the recording's text
   // Meeting helper (renderer/meeting.js; features/meeting.js): live prompting, context, stealth overlay, live listener.
   meeting: {
@@ -269,6 +284,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopMcp: () => ipcRenderer.send('mcp:stop'),
   // Other apps using Lumen (external-apps.js): pills and prompt; mcp:external-<state|answer> / -<stop|takeover|resume>
   externalApps: { on: on('external:state'), state: () => ipcRenderer.invoke('mcp:external-state'), answer: (id, d) => ipcRenderer.invoke('mcp:external-answer', id, d), send: (m, id) => ipcRenderer.send(`mcp:external-${m}`, id) },
+  focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') }, // Focus mode (features/focus.js): the toolbar button
   onHistory: on('agent:history'),
   // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
   openFullPage: () => ipcRenderer.send('chat:open-page'),
