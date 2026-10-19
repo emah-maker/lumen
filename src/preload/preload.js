@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld('browser', {
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
+  onSplit: on('split:layout'), // [split view] where the divider between two pages goes (null: none)
+  setSplitRatio: (ratio) => ipcRenderer.send('split:ratio', ratio),
+  closeSplit: () => ipcRenderer.send('split:close'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onNewSidebarChat: on('new-sidebar-chat'),
@@ -114,6 +117,9 @@ contextBridge.exposeInMainWorld('browser', {
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),
   onOpenTabSearch: on('tabsearch:open'),
   onOpenFilesPicker: on('files:picker'),
+  onOpenCommandBar: on('cmdbar:open'), // Ctrl+K (renderer/command-bar.js, features/command-bar.js)
+  commandData: () => ipcRenderer.invoke('cmdbar:data'),
+  commandRun: (id) => ipcRenderer.invoke('cmdbar:run', id),
 });
 
 // [settings] lumen://settings: open it, and the UI preferences it controls (compact tabs, …).

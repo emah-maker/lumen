@@ -117,6 +117,10 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 ⋯ → Tab groups → Group automatically **Off / By site / By topic**. By topic finds related tabs (recipes, one trip, a library's docs) on your computer from titles and addresses. Turn on **Use AI to name and group topics** in Settings to send tab titles and site names (hostnames only) to the cheapest model of your chat's provider instead. **Organize Tabs by Topic** (tab menu or ⋯ → Tab Groups) regroups on demand, with **Undo Organize**. Groups you made and tabs you moved by hand are left alone.
 
+## Two tabs side by side
+
+Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are not kept across restarts.
+
 ## A real browser underneath
 
 ![Lumen's settings page](docs/media/settings.png)
@@ -150,6 +154,7 @@ If [Claude Code](https://claude.com/claude-code) is installed, the model menu st
 
 | Action | How |
 |---|---|
+| Command bar: search open tabs, bookmarks, history, Settings sections and commands (new tab, pin tab, mute tab, switch theme, clear data...), or ask the AI | `Ctrl+K` (a site that uses `Ctrl+K` itself keeps it; the ⋯ menu has Command bar…). Up and Down pick, Enter runs, `Ctrl+Enter` opens a page in a new tab, Esc closes. With nothing typed it lists the commands you ran lately, then your open tabs. The last row, **Ask AI: …**, sends what you typed to the sidebar. `Ctrl+E` is still the address bar's search |
 | Open or close the AI sidebar | `Ctrl+J` or the toolbar's AI button |
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
 | On the full-page chat: fold or open the chat list / new chat | `Ctrl+Shift+S` / `Ctrl+Shift+O` |

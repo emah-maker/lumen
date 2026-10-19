@@ -1252,11 +1252,13 @@ function updateTabEl(el, tab, group, activeId) {
   // No title tooltip: the hover card (below) shows the title, as in Chrome, and the two would overlap.
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
-  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
+  const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
   el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
+  el.classList.toggle('split-left', tab.split === 'left'); // [split view] a pair is drawn as joined tabs
+  el.classList.toggle('split-right', tab.split === 'right');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -1781,7 +1783,7 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
@@ -2887,6 +2889,25 @@ function loadFilesPicker() {
 }
 window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
 setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
+
+// The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
+// "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
+let commandBarLoad = null;
+function loadCommandBar() {
+  commandBarLoad ||= new Promise((resolve) => {
+    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
+    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
+    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
+  });
+  return commandBarLoad;
+}
+window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
+document.addEventListener('cmdbar:ask', (e) => {
+  const text = String(e.detail || '').trim();
+  if (!text) return;
+  showSidebar(true);
+  ask(text);
+});
 
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.
 window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
