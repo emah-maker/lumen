@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld('browser', {
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
+  onSplit: on('split:layout'), // [split view] where the divider between two pages goes (null: none)
+  setSplitRatio: (ratio) => ipcRenderer.send('split:ratio', ratio),
+  closeSplit: () => ipcRenderer.send('split:close'),
   onFocusAddress: on('focus-address'),
   onToggleSidebar: on('toggle-sidebar'),
   onNewSidebarChat: on('new-sidebar-chat'),
