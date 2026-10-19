@@ -138,6 +138,7 @@ const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
 const HISTORY_URL = pathToFileURL(path.join(__dirname, 'renderer', 'history.html')).href;
 const settingsPage = require('./settings/settings-backend'); // [settings] lumen://settings
 const permissionModes = require('./features/permission-mode'); // [bypass permissions] ask | auto | bypass
+const planModeLib = require('./ai/plan-mode'); // [plan mode] an approved plan's sites
 const chatPage = require('./features/chat-page'); // lumen://chat: the sidebar's conversation as a full page
 let chatPageRt = null; // its runtime (created below, with the agent)
 const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.pptx) shown in a tab (renderer/slides.html)
@@ -9850,7 +9851,7 @@ function stampRun(run, done = null) {
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null, askOpts = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   let shownPick = null; // what every picker shows right now (the open chat's model, or the saved pick while it has none), before the sender's own chat is brought up
   try { shownPick = shownModel().pick || null; } catch { /* not set up yet */ }
@@ -9967,6 +9968,12 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (leftOut) emit({ type: 'notice', text: leftOut });
     // tabIds: the tabs the user picked with "@" (features/tabs-ask.js); a skill run (features/skills.js) carries its mode and model
     const askExtra = { tabs: tabsPicked, tabId, messages, hosts, files: attachedFiles, screen: !fromChatPage && (screenMode === 'on' || screenMode === 'off') ? screenMode : undefined, fullPage: fromChatPage, fromPage: fromChatPage, meta: { rec: run.rec, chatId: runChat, runId } };
+    // [plan mode] askOpts.plan: this message only reads and proposes a plan (agent.js planCheck). askOpts.approvedPlan: the user pressed
+    // Run plan, so the plan's sites join this chat's approved sites for clicking and typing only ("interact:<host>", ai/plan-mode.js
+    // approvedKeys): opening or sending to one after reading a page, and scripts there, still ask.
+    const planOpts = askOpts && typeof askOpts === 'object' ? askOpts : {};
+    if (planOpts.approvedPlan) for (const key of planModeLib.approvedKeys(planOpts.approvedPlan)) hosts.add(key);
+    else if (planOpts.plan === true) askExtra.plan = true;
     // [working-on chip] A chat-page run takes a tab at once only when the request is about the page the user is looking at; any other
     // request (a downloaded file, a search) takes one when its tools first need it (agentActiveTab).
     if (fromChatPage && agent.aboutCurrentPage(askText, askExtra)) { const cand = chatPageRt.pick(); if (cand != null) chatPageRt.retarget(cand); }
