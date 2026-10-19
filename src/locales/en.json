@@ -3653,7 +3653,7 @@
   "settings.telegram.state.offline": "Offline. Lumen will listen again when the connection is back.",
   "settings.telegram.state.retrying": "Couldn't reach Telegram. Trying again soon.",
   "settings.telegram.state.conflict": "Another program is reading this bot's messages (a webhook or another app). Lumen keeps trying.",
-  "settings.telegram.state.bad-token": "Telegram didn't accept the bot token. Paste a new one."
+  "settings.telegram.state.bad-token": "Telegram didn't accept the bot token. Paste a new one.",
   "dictation.start": "Voice input: click to start and stop, or hold to talk ({key})",
   "dictation.starting": "Starting the microphone…",
   "dictation.stop": "Stop and turn into text",
