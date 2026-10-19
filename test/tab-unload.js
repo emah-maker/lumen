@@ -118,7 +118,7 @@ const { openSettingsTab } = require('./settings-tab');
     const list = (id) => q(`[...document.querySelectorAll(${JSON.stringify(`#${id} .item .grow`)})].map((e) => e.textContent)`);
     const addSite = async (inputId, text) => { await q(`(() => { const i = document.getElementById(${JSON.stringify(inputId)}); i.value = ${JSON.stringify(text)}; document.getElementById(${JSON.stringify(`${inputId}-add`)}).click(); })()`); };
     await addSite('unload-never-add', 'Example.com');
-    check('Always keep loaded: a site is added (as a bare host)', await persisted('tabSleepNever', ['example.com']) && (await list('unload-never')).join() === 'example.com', JSON.stringify(await list('unload-never')));
+    check('Always keep loaded: a site is added (as a bare host)', await persisted('tabSleepNever', ['example.com']) && (await list('unload-never')).join() === 'example.com', JSON.stringify([await list('unload-never'), await q("[document.hidden, document.visibilityState, Boolean(document.getElementById('unload-status')?.offsetParent)]")]));
     await addSite('unload-never-add', '*.news.org');
     check('...a wildcard works', await persisted('tabSleepNever', ['example.com', '*.news.org']), JSON.stringify(saved().tabSleepNever));
     await addSite('unload-never-add', 'not a site!');

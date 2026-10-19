@@ -111,6 +111,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'adblock'; s.dispatchEvent(new Event('input')); }");
   const adblock = await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent)");
   check('search “adblock” finds the blocker and not the Widgets page', adblock.includes('Block ads and trackers') && !adblock.includes('Widgets'), JSON.stringify(adblock));
+  // (A search looks through every row, so a page that is still building the rest answers a moment later: wait until every section is built.)
+  await waitFor(() => inTab(sid, 'document.body.dataset.ready === "1"'));
   // Searches that used to find nothing or rank the wrong row first (Round 2 of the Settings audit).
   const searchRows = (q) => inTab(sid, `(() => { const s = document.getElementById('search'); s.value = ${JSON.stringify(q)}; s.dispatchEvent(new Event('input'));
     const rows = []; for (const p of document.querySelectorAll('#sections > .pane')) { if (p.hidden) continue; for (const r of p.querySelectorAll('.row')) if (!r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')) rows.push({ pane: p.style.order, order: Number(p.style.order || 0), label: r.querySelector('.label')?.textContent.trim() }); }
@@ -119,7 +121,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('search “clear history” finds Clear browsing data and not Widget cards', clearHist[0] === 'Clear browsing data' && !clearHist.includes('Widget cards'), JSON.stringify(clearHist));
   for (const q of ['camera', 'microphone']) { const r = await searchRows(q); check(`search “${q}” lists the permission defaults before the page-unloading call exception`, r.indexOf('Default for new sites') === 0 && r.includes('Tabs in a call or sharing their screen'), JSON.stringify(r)); }
   check('search “incognito” finds the Private windows row', (await searchRows('incognito'))[0] === 'Private windows (incognito)');
-  check('search “sync” says Lumen doesn’t sync', (await searchRows('sync'))[0] === 'Sync across devices' && /doesn’t sync/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
+  check('search “sync” finds Sync through a folder first, and says it uses your own cloud folder', (await searchRows('sync'))[0] === 'Sync through a folder' && /cloud drive/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
   check('search “print” finds Printing and Ctrl+P', (await searchRows('print'))[0] === 'Printing' && /ctrl\+p/i.test(await inTab(sid, "[...document.querySelectorAll('.row')].find((r) => r.querySelector('.label')?.textContent === 'Printing')?.dataset.search || ''")));
   await searchRows('zzqxv');
   check('a search with no match offers suggestions that search when clicked', (await inTab(sid, "document.querySelectorAll('#no-results-suggest button').length")) >= 3 && (await inTab(sid, "(() => { document.querySelector('#no-results-suggest button').click(); return document.getElementById('no-results').hidden && document.getElementById('search').value.length > 0; })()")) === true);

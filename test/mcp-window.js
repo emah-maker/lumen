@@ -205,7 +205,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.click('#address'); // the user types in the address bar while the agent keeps calling
   const typingAddress = ui.keyboard.type('address bar text', { delay: 45 });
   r = await A.call('switch_tab', { tab_id: userTabId });
-  check('switch_tab to a user tab id is refused', r.result.isError === true && /No tab with id/.test(A.text(r)), A.text(r));
+  check('switch_tab to a user tab id is refused', r.result.isError === true && /user's own tabs/.test(A.text(r)), A.text(r));
   r = await A.call('close_tab', { tab_id: userTabId });
   check('close_tab of a user tab id is refused', r.result.isError === true, A.text(r));
   check('...and the user\'s tab is still there', (await snapshot()) === before, await snapshot());
@@ -226,6 +226,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const addressNow = await ui.evaluate(() => ({ active: document.activeElement?.id, value: document.getElementById('address').value }));
   check('typing in the address bar was not interrupted (focus and text intact)', addressNow.active === 'address' && addressNow.value === 'address bar text', JSON.stringify(addressNow));
   await ui.evaluate(() => { const a = document.getElementById('address'); a.value = ''; a.blur(); });
+  // (web_search opens a research tab on the user's search engine and fetches DuckDuckGo: no real network in tests, so every request outside this machine is cancelled in the two sessions they use)
+  await app.evaluate(({ session }) => { const local = (u) => { try { const x = new URL(u); return ['file:', 'devtools:', 'data:', 'blob:', 'chrome:', 'chrome-extension:'].includes(x.protocol) || x.hostname === '127.0.0.1' || x.hostname === 'localhost'; } catch { return true; } }; for (const p of ['lumen-research', 'claude-reader']) session.fromPartition(p).webRequest.onBeforeRequest((d, cb) => cb({ cancel: !local(d.url) })); });
   await A.call('web_search', { query: 'lumen test' }).catch(() => null);
   check('the user\'s window gained no tab from the agent\'s calls', (await snapshot()) === before, await snapshot());
 
@@ -250,9 +252,11 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const windowCount = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   const countBefore = await windowCount();
   r = await A.call('navigate', { url: `${base}/dialogs` });
-  check('a page that alerts, confirms and prompts does not hold the agent up', !r.result.isError && /Dialogs|confirm=|PAGE-DIALOGS/.test(A.text(r)), A.text(r));
-  r = await A.call('list_tabs');
-  check('...its confirm was answered no and its prompt cancelled, by themselves', /confirm=false prompt=null/.test(A.text(r)), A.text(r));
+  check('a page that alerts, confirms and prompts does not hold the agent up: the alert is taken by itself and the call comes back', !r.result.isError && /Dialogs|PAGE-DIALOGS|Dialog (open|accepted)/.test(A.text(r)), A.text(r));
+  // A confirm or prompt is never answered by itself (a yes can be a real action): it is held until the agent answers with handle_dialog.
+  let listing = '';
+  for (let i = 0; i < 10 && !/confirm=false prompt=null/.test(listing); i++) { await A.call('handle_dialog', { accept: false }).catch(() => null); await sleep(300); listing = A.text(await A.call('list_tabs')); }
+  check('...its confirm waited for handle_dialog and was answered no, its prompt cancelled', /confirm=false prompt=null/.test(listing), listing);
   await sleep(400);
   check("a popup from the agent's page opened no window", (await windowCount()) === countBefore, `${countBefore} -> ${await windowCount()}`);
   const muted = await app.evaluate(({ webContents }) => webContents.getAllWebContents().filter((w) => /127\.0\.0\.1/.test(w.getURL())).map((w) => [w.getURL().replace(/.*\//, ''), w.isAudioMuted()]));

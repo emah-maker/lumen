@@ -317,6 +317,9 @@ let gmailWatchOn = false;
 let slackWatch = null; // the open Slack editor's redraw when a sign-in finishes by itself (see slackFields)
 let slackWatchOn = false;
 async function buildAi(card) {
+  const mcpAsked = S.ai.mcpInfo(); // (asked now with the model list, not one round trip after another: the page waits for the slowest, not the sum)
+  const autoAsked = S.ai.automationInfo();
+  mcpAsked.catch(() => {}); autoAsked.catch(() => {}); // (an error shows where they are awaited)
   let ai = await S.ai.get();
   // Rebuilt whenever the connected models change (a key added or removed, a sign-in), not just once.
   const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
@@ -659,7 +662,7 @@ async function buildAi(card) {
   later(() => S.ai.cliStatus()).then(renderCli).catch(() => {});
 
   // AI agents over MCP, and automation tools over CDP
-  const mcp = await S.ai.mcpInfo();
+  const mcp = await mcpAsked;
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
   agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
@@ -738,7 +741,7 @@ async function buildAi(card) {
   buildAntigravity(agents, refreshModels);
   buildTelegram(agents);
 
-  const auto = await S.ai.automationInfo();
+  const auto = await autoAsked;
   const autoToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-automation', role: 'switch', 'aria-label': 'Allow automation tools', checked: auto.enabled });
   const port = h('input', { type: 'number', id: 'ai-automation-port', min: '1024', max: '65535', placeholder: '9222', 'aria-label': 'Automation port', value: String(auto.port) });
   const autoNote = status('ai-automation-status');
@@ -2284,6 +2287,8 @@ function buildStartup(card) {
 }
 
 async function buildPrivacy(card) {
+  const passwordsAsked = S.passwords.state(); // (asked before the rows above it are made: its answer is waited for further down)
+  passwordsAsked.catch(() => {});
   // Clear browsing data
   const range = h('select', { id: 'clear-range', 'aria-label': 'Time range' },
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
@@ -2325,7 +2330,7 @@ async function buildPrivacy(card) {
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
-  await buildPasswords(card);
+  await buildPasswords(card, passwordsAsked);
   buildPasskeys(card);
 
   // Safe Browsing (features/safe-browsing.js)
@@ -2449,9 +2454,9 @@ function buildPasskeys(card) {
   card.group(tr('settings.passkeys.group', 'Passkeys')).append(r);
 }
 
-async function buildPasswords(card) {
+async function buildPasswords(card, asked) {
   const P = S.passwords;
-  let pw = await P.state();
+  let pw = await (asked || P.state());
   const WHY = {
     unavailable: 'Your system’s secure storage (the Keychain on macOS, data protection on Windows) isn’t available, so Lumen can’t keep passwords safely. Saving passwords stays off.',
     'basic-text': 'No system keyring (GNOME Keyring or KWallet) was found, so Lumen can’t keep passwords safely. Saving passwords stays off.',
@@ -3344,14 +3349,14 @@ function guessView() {
   const sub = slots.get(id);
   if (sub?.isSub) return { cat: sub.cat, sub: id };
   if (categories.has(id)) return { cat: id, sub: null };
-  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus };
   return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
 }
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
   const r = resolveRoute();
-  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  const need = neededBuilds(view, r.focus).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -3477,10 +3482,13 @@ async function init() {
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-  neededBuilds = (v) => {
+  // Focus mode and Sync are rows far below the first screen of General that each wait for an answer from the browser (about 25 ms): they are built
+  // while the page is idle, not before it is shown, unless a link names them (`want` is the slot the link scrolls to).
+  const LATE = new Set(['focus', 'sync']);
+  neededBuilds = (v, want) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
-    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat) && (!LATE.has(sid) || want === sid));
   };
   // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
   // address bar") is said once: a one-row list loses the heading, a longer one keeps it and the row's label is read by screen readers only.
@@ -3538,7 +3546,7 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, wanted.focus).map(buildOne));
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
