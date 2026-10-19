@@ -9040,6 +9040,7 @@ const settingsBackend = settingsPage.create({
   onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
+  onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
   onTabReadyChange: () => { for (const rec of [...winRecs]) scheduleReadySync(rec); },

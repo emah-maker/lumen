@@ -307,6 +307,15 @@ Kept in one `bgTasks` object (Tasks panel > Settings, in the sidebar). Every tas
 | Also notify me when a task finishes fine | `bgTasks.notifyDone` | on | Off: only failures, questions, watch alerts and interruptions notify. |
 | Refuse an unanswered question after | `bgTasks.approvalWaitMin` | 60 | 15, 60 or 240 minutes. A card nobody answered is refused (never approved) so the task can finish and free its place. |
 
+### Routine web links
+
+In Settings → AI and agents → Routines. See [Routines](routines.md#triggers).
+
+| Setting | Key | Default | What it does |
+|---|---|---|---|
+| Routine web links | `routineWebhooks` | off | Listens on 127.0.0.1 (this computer only) so a program can start a routine whose trigger is **From a web link**: `POST /routines/<id>/run` with `Authorization: Bearer <key>`, the routine's own key (shown once in its editor). An optional `{"text": "..."}` body (up to 4 KB) goes to the AI as untrusted input. The request's Host header must be `127.0.0.1:<port>` or `localhost:<port>` (a tunnel must rewrite it). At most one started run a minute per routine (refused calls don't count); approvals apply as for any routine run. |
+| Port | `routineWebhookPort` | 47821 | The local port the web links use (1024 to 65535). If another program has it, Settings says so and nothing listens. |
+
 ## Extensions
 
 Lists the Chrome Web Store extensions you installed, with **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch.

@@ -349,7 +349,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [The AI using other apps](docs/desktop-apps.md): Word, File Explorer and more on your PC (Windows): per-app approval, what is never available, the banner and Stop
 - [Skills](docs/skills.md): saved instructions you run with `/`, SKILL.md folders shared with Claude Code and other agents, skills the AI uses on its own, and the opt-in offers to save and improve them
 - [Memory](docs/memory.md): what the AI remembers about you between chats, how it decides, Search past chats, and where to see and delete it
-- [Routines](docs/routines.md): requests the AI repeats on a schedule, when they run, and what they may do (all of them, with templates and quiet hours, in Settings → AI and agents → Routines)
+- [Routines](docs/routines.md): requests the AI repeats on a schedule, from a local web link or when new email arrives, when they run, and what they may do (all of them, with templates, quiet hours and web links, in Settings → AI and agents → Routines)
 - [Phone (Telegram)](docs/telegram.md): send requests to Lumen from your own Telegram bot, pair your chat, answer the AI's questions with Allow and Deny
 - [Feature gaps](docs/feature-gaps.md): how the browser underneath compares with Chrome, Arc, Safari, Brave and Edge, and what's next
 

@@ -169,6 +169,8 @@ const DEFAULTS = {
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
+  routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
+  routineWebhookPort: 47821, // [routines] the port it listens on (1024-65535)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
   filesRemember: true, // [files] Settings > General > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
@@ -261,6 +263,7 @@ function validate(key, value) {
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
+    case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
@@ -862,6 +865,7 @@ function create(deps) {
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
       case 'languages': for (const target of [ses(), ...mirrored]) applyAcceptLanguage(target); break;
       case 'proxy': return applyProxy();
+      case 'routineWebhooks': case 'routineWebhookPort': return deps.onRoutineWebhooksChange?.(); // [routines] the web links' listener starts, stops or moves
       // The blocker reads these on every request, so the change applies to whatever loads next.
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
       case 'adblock': case 'adblockAllow': break;
