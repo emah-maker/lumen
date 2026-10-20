@@ -33,9 +33,12 @@ const J = (v) => JSON.stringify(v);
   check('close: never the tab a chat lives in', ids(M.closeSelection(tabs, { runId: 7, boundIds: [1] })) === '4');
   check('close: never a tab a run is working in right now', ids(M.closeSelection(tabs, { runId: 7, busyIds: [4] })) === '1');
   check('close: an automatic close leaves the tab the user is looking at', ids(M.closeSelection(tabs, { runId: 7, activeId: 4, auto: true })) === '1' && ids(M.closeSelection(tabs, { runId: 7, activeId: 4 })) === '1,4');
+  check('close: an automatic close leaves a tab the AI said to keep; the user\'s own Close still takes it', (() => { const k = M.markOpened({ id: 20 }, { chatId: 'c1', runId: 7, keep: true }); return ids(M.closeSelection([k], { runId: 7, auto: true })) === '' && ids(M.closeSelection([k], { runId: 7 })) === '20'; })());
+  check('close: keepAfterRun marks a tab of the AI\'s (not the user\'s own), and the mark survives a restart', (() => { const t = M.markOpened({ id: 21 }, { chatId: 'c1', runId: 7 }); const mine = { id: 22 }; const kept = M.keepAfterRun(t); const back = M.restoreMark({ id: 23 }, M.savedMark(t)); return kept === true && M.keepAfterRun(mine) === false && !mine.openedBy && ids(M.closeSelection([t], { auto: true })) === '' && M.savedMark(t).keep === true && back.openedBy.keep === true && M.savedMark(mk(24)).keep === undefined; })());
+  check('close: an automatic close leaves a tab playing sound; a click does not', ids(M.closeSelection(tabs, { runId: 7, audibleIds: [1], auto: true })) === '4' && ids(M.closeSelection(tabs, { runId: 7, audibleIds: [1] })) === '1,4');
   check('close: the user clicking in a tab (handOver) takes it out of the selection', (() => { const t = mk(8); M.handOver(t); return ids(M.closeSelection([t])) === ''; })());
   check('close: a tab the user pinned after the AI opened it is not closed even if handOver was missed', ids(M.closeSelection([mk(9, { pinned: true })])) === '');
-  check('close setting: only off / ask / always, anything else is off', J(['off', 'ask', 'always', 'x', null, 1].map(M.cleanCloseSetting)) === '["off","ask","always","off","off","off"]');
+  check('close setting: only off / ask / always, anything else is always (the default)', J(['off', 'ask', 'always', 'x', null, 1].map(M.cleanCloseSetting)) === '["off","ask","always","always","always","always"]');
   check('after a run: nothing opened, nothing to offer', M.closeAfterRun({ setting: 'always', n: 0 }) === 'none');
   check('after a run: Never (off) still puts the Close button under the reply; Ask asks; Always closes', M.closeAfterRun({ setting: 'off', n: 2 }) === 'offer' && M.closeAfterRun({ setting: 'ask', n: 2 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 2 }) === 'close');
 }
@@ -282,7 +285,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
     check('focus: agent.js never focuses a window or a page view', !/\.focus\(\)/.test(src.replace(/\/\/.*$/gm, '').replace(/el\.focus\([^)]*\)/g, '')) && !/win\.focus|BrowserWindow/.test(src));
     const open = /case 'open_tab': \{[\s\S]*?case 'switch_tab'/.exec(src)?.[0] || '';
-    check('open_tab: opens the tab as the AI\'s (marked) and in the background unless show:true', /openTab\((?:(?:webUrl|navUrl)\(input\.url\)|this\.ownFileUrl\(input\.url\) \|\| navUrl\(input\.url\)), \{ ai: true, show: input\.show === true \}\)/.test(open));
+    check('open_tab: opens the tab as the AI\'s (marked) and in the background unless show:true', /openTab\((?:(?:webUrl|navUrl)\(input\.url\)|this\.ownFileUrl\(input\.url\) \|\| navUrl\(input\.url\)), \{ ai: true, show: input\.show === true, keep: input\.keep === true \}\)/.test(open));
     check('switch_tab: stays behind unless show:true', /switchTab\(input\.tab_id, \{ show: input\.show === true \}\)/.test(src));
     const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
     const agentTab = /const agentOpenTab = [\s\S]*?const noTabReason/.exec(main)?.[0] || '';

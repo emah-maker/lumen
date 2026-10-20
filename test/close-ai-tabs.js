@@ -2,7 +2,8 @@
 // Claude client whose tool calls go through the real open_tab tool path: no network, no key. Checks that the tabs are marked, that the
 // reply shows "Close 5 tabs this chat opened", that the button closes exactly those 5 (not the user's tabs, not a pinned AI tab),
 // that Undo brings them back, that the tab menu's "all chats" item works across two chats, that a run still using a tab keeps it
-// (and says so), and that the mark survives a quit and restore.
+// (and says so), that the mark survives a quit and restore, and that Close (the default) closes a run's tabs when it ends but keeps the
+// one it opened with keep:true.
 // Run with LUMEN_TEST_BACKGROUND=1 so the windows stay invisible and never take focus.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
@@ -20,9 +21,11 @@ const launch = (profile) => electron.launch({
 
 // The model: a message that names "chat-X" is chat X. global.__plans[X] tabs are opened one per turn with open_tab (the real tool),
 // then it answers "X done". global.__hold[X] (a promise) keeps the last answer from finishing, so a run can be caught mid-flight.
+// global.__keep[X]: the turns whose open_tab asks keep:true.
 const fakeModel = (app, base) => app.evaluate((_e, b) => {
   global.__plans = {};
   global.__hold = {};
+  global.__keep = {};
   global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
     const who = /chat-(\w+)/.exec(JSON.stringify(params.messages[0]))?.[1] || '?';
     const done = params.messages.filter((m) => m.role === 'user' && Array.isArray(m.content) && m.content.some((x) => x.type === 'tool_result')).length;
@@ -31,7 +34,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
       const text = `${who} opening ${done + 1}`;
       return {
         async *[Symbol.asyncIterator]() { yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }; },
-        finalMessage: async () => ({ role: 'assistant', model: 'claude-opus-5', stop_reason: 'tool_use', content: [{ type: 'text', text }, { type: 'tool_use', id: `tu-${who}-${done}`, name: 'open_tab', input: { url: `${b}/${who}-${done}` } }], usage }),
+        finalMessage: async () => ({ role: 'assistant', model: 'claude-opus-5', stop_reason: 'tool_use', content: [{ type: 'text', text }, { type: 'tool_use', id: `tu-${who}-${done}`, name: 'open_tab', input: { url: `${b}/${who}-${done}`, ...((global.__keep[who] || []).includes(done) ? { keep: true } : {}) } }], usage }),
       };
     }
     const text = `${who} done`;
@@ -55,7 +58,9 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   const shots = process.env.CLOSE_AI_TABS_SHOTS || '';
   if (shots) fs.mkdirSync(shots, { recursive: true });
   let app = await launch(profile);
+  check('(set up) When the AI finishes is Close by default', (await app.evaluate(() => global.__settings.backend.prefs().closeAiTabs)) === 'always');
   await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'off')); // steps 1-7 are about the Close button under the reply (Leave open); step 8 is the default
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   const errors = [];
@@ -206,6 +211,23 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   check('a restored tab can be closed with the all-chats close', closed.closed === wantUrls.length, JSON.stringify(closed));
   const m2 = await waitFor(async () => { const m = await menu(); return !m[2]?.enabled && m; });
   check('...and with none left, the menu\'s Close is greyed out', Boolean(m2) && /No tabs the AI opened/.test(m2[2].label), JSON.stringify(m2));
+
+  // ---- 8. Close (the default): a run's tabs close as soon as it ends, except the one it opened with keep:true.
+  await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'always'));
+  await ui.evaluate(() => { if (document.getElementById('sidebar')?.offsetParent === null) document.getElementById('toggle-sidebar').click(); });
+  await ui.waitForSelector('#sidebar', { state: 'visible' });
+  await newChat();
+  await app.evaluate(() => { global.__keep.K = [1]; });
+  await plan('K', 3);
+  await send('chat-K: open three, keep the second');
+  await waitFor(async () => /K done/.test(await bodyText()));
+  const kLeft = await waitFor(async () => { const u = (await urlsNow()).filter((x) => /\/K-\d$/.test(x)); return u.length === 1 && u; }, 15000);
+  check('Close: the run\'s tabs closed when it ended, all but the keep:true one', Boolean(kLeft) && kLeft[0].endsWith('/K-1'), JSON.stringify(await urlsNow()));
+  const kMark = (await marks()).find((y) => y.url.endsWith('/K-1'));
+  check('...which is still the AI\'s, marked keep (the user\'s own Close still reaches it)', Boolean(kMark?.mark?.keep), JSON.stringify(kMark));
+  const kRow = await waitFor(async () => /Closed 2 tabs/.test(await rowText()) && rowText());
+  check('...and the reply says what closed, with Undo', Boolean(kRow), await rowText());
+  check('...the user\'s own tabs are still open', (await hasUrl('/user')) && (await hasUrl('/mine')), JSON.stringify(await urlsNow()));
 
   check('no script errors in the UI', errors.length === 0, errors.join(' | '));
   await app.close();

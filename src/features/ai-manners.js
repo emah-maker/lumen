@@ -17,11 +17,20 @@
 // opened can be closed again in one step. With hands-off mode on it also leaves the user's own tabs alone.
 
 // ---- tabs the AI opened
-// `by`: { chatId, runId } of the run that opened it (null ids: an outside agent, or Lumen opening a tab for a chat).
+// `by`: { chatId, runId } of the run that opened it (null ids: an outside agent, or Lumen opening a tab for a chat), and `keep`:
+// the AI said the user needs it open after the task (open_tab / switch_tab keep:true), so the close when a run ends leaves it.
 function markOpened(tab, by = {}, now = Date.now()) {
   if (!tab) return tab;
-  tab.openedBy = { chatId: by.chatId ?? null, runId: by.runId ?? null, at: now };
+  tab.openedBy = { chatId: by.chatId ?? null, runId: by.runId ?? null, at: now, ...(by.keep === true ? { keep: true } : {}) };
   return tab;
+}
+// The AI says this tab of its own is needed after the task (the page the user asked to see, a sign-in or checkout left for them to
+// finish): the automatic close leaves it. It stays the AI's otherwise (marked in the strip, closed by the user's own Close).
+// False for a tab that is not the AI's.
+function keepAfterRun(tab) {
+  if (!tab || !tab.openedBy) return false;
+  tab.openedBy.keep = true;
+  return true;
 }
 // The tab is the user's from now on. True when it had been the AI's.
 function handOver(tab) {
@@ -32,12 +41,12 @@ function handOver(tab) {
 const isAiTab = (tab) => Boolean(tab && tab.openedBy);
 // The mark as the saved session keeps it: { chatId, at } or null. A run id means nothing after a restart (ids start again), so it
 // is not kept: a restored tab belongs to its chat, and "close this chat's tabs", the tab menu and the setting still reach it.
-const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0 } : null);
+const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0, ...(tab.openedBy.keep ? { keep: true } : {}) } : null);
 // Puts a saved mark back on a restored tab (not on one that is pinned or was placed by hand: that tab is the user's).
 function restoreMark(tab, saved) {
   if (!tab || !saved || typeof saved !== 'object' || tab.pinned || tab.userMoved) return tab;
   const chatId = typeof saved.chatId === 'string' && saved.chatId ? saved.chatId : null;
-  return markOpened(tab, { chatId, runId: null }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
+  return markOpened(tab, { chatId, runId: null, keep: saved.keep === true }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
 }
 // Has the user taken this tab over without handOver having been called (pinned, dragged to a place by hand)?
 // A group the AI or Lumen's own automatic grouping put it in does not count: only a move or a pin of the user's.
@@ -48,18 +57,20 @@ const takenOver = (tab) => Boolean(tab?.openedBy && (tab.pinned || tab.userMoved
 //   boundIds         tabs a chat lives in: never closed
 //   busyIds          tabs a run is working in right now: never closed
 //   activeId         with `auto`, the tab the user is looking at stays
-//   auto             an automatic close (the setting) rather than the user's own click
+//   auto             an automatic close (the setting) rather than the user's own click: it also leaves a tab the AI said to keep
+//                    (keepAfterRun) and the tabs in `audibleIds` (playing sound: the user is listening to it)
 // A pinned tab, one the user took over, and one that is closing already are never in it.
-function closeSelection(tabs, { runId = null, chatId = null, boundIds = [], busyIds = [], activeId = null, auto = false } = {}) {
+function closeSelection(tabs, { runId = null, chatId = null, boundIds = [], busyIds = [], audibleIds = [], activeId = null, auto = false } = {}) {
   const bound = new Set(boundIds);
   const busy = new Set(busyIds);
+  const audible = new Set(audibleIds);
   return (tabs || []).filter((tab) => {
     if (!tab || !tab.openedBy || tab.closing) return false;
     if (runId != null && tab.openedBy.runId !== runId) return false;
     if (chatId != null && tab.openedBy.chatId !== chatId) return false;
     if (tab.pinned || takenOver(tab)) return false;
     if (bound.has(tab.id) || busy.has(tab.id)) return false;
-    if (auto && tab.id === activeId) return false;
+    if (auto && (tab.id === activeId || tab.openedBy.keep || audible.has(tab.id))) return false;
     return true;
   });
 }
@@ -74,14 +85,14 @@ function busyKept(tabs, opts = {}) {
 }
 
 const CLOSE_SETTINGS = ['off', 'ask', 'always'];
-const cleanCloseSetting = (value) => (CLOSE_SETTINGS.includes(value) ? value : 'off');
+const cleanCloseSetting = (value) => (CLOSE_SETTINGS.includes(value) ? value : 'always'); // (the default: settings-backend.js)
 // What happens when a run that opened `n` closeable tabs ends: 'none' (it opened none), 'offer' (a quiet
-// "Close N tabs this chat opened" button under the reply: the setting's Never, the default), 'ask' (the same, as a question),
-// 'close' (closes them, with Undo).
-function closeAfterRun({ setting = 'off', n = 0 } = {}) {
+// "Close N tabs this chat opened" button under the reply: the setting's Leave open), 'ask' (the same, as a question),
+// 'close' (closes them, with Undo: Close, the default).
+function closeAfterRun({ setting, n = 0 } = {}) {
   if (!n) return 'none';
   const s = cleanCloseSetting(setting);
-  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'offer'; // Never closes nothing by itself, but the button is always under a reply that opened tabs
+  return s === 'always' ? 'close' : s === 'ask' ? 'ask' : 'offer'; // Leave open closes nothing by itself, but the button is always under a reply that opened tabs
 }
 
 // ---- hands-off mode
@@ -236,7 +247,7 @@ const userInput = {
 
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
-  markOpened, handOver, isAiTab, takenOver, closeSelection, busyKept, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
+  markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
