@@ -12,7 +12,6 @@ const { htmlToMarkdown } = require('./page-markdown');
 const { outlineDom, formatOutline } = require('./page-outline');
 const { PAGE_TEXT } = require('./page-scripts');
 
-const TABLES_CHARS = 20000; // the tables put back after an article that lost them
 const READER_WORLD = 1002; // the isolated world Readability runs in (features/page-tools.js); 1001 is the AI's page scripts
 const vendor = (name) => fs.readFileSync(path.join(__dirname, '..', 'vendor', 'readability', name), 'utf8');
 let readabilitySrc = null;
@@ -111,8 +110,14 @@ function backgroundReadScript() {
     } catch {}
     // Data tables (3+ rows, not nested): Readability often drops them from its article, so they are sent along to be put back as markdown.
     let tablesHtml = '';
-    try { tablesHtml = [...document.querySelectorAll('table')].filter((t) => t.rows && t.rows.length >= 3 && !t.querySelector('table')).slice(0, 8).map((t) => t.outerHTML.slice(0, 60000)).join(''); } catch {}
-    return { url: location.href, title: document.title, text: text.slice(0, 400000), textLen: text.length, article, tablesHtml: tablesHtml.slice(0, 300000), probe: ${probeScript(true)} };
+    let tablesCut = false;
+    try {
+      const all = [...document.querySelectorAll('table')].filter((t) => t.rows && t.rows.length >= 3 && !t.querySelector('table'));
+      tablesHtml = all.slice(0, 12).map((t) => { const h = t.outerHTML; if (h.length > 200000) tablesCut = true; return h.slice(0, 200000); }).join('');
+      if (all.length > 12 || tablesHtml.length > 600000) tablesCut = true;
+      tablesHtml = tablesHtml.slice(0, 600000);
+    } catch {}
+    return { url: location.href, title: document.title, text: text.slice(0, 400000), textLen: text.length, article, tablesHtml, tablesCut, probe: ${probeScript(true)} };
   })()`;
 }
 
@@ -145,7 +150,8 @@ function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
       // The article lost its tables (a steam table, a price list): they are put back, rows and columns kept, after the text.
       if (raw.tablesHtml && !md.includes('| --- |')) {
         const tables = htmlToMarkdown(raw.tablesHtml, { baseUrl: raw.url });
-        if (tables.includes('| --- |')) body += `\n\nTables on the page (rows and columns kept):\n\n${tables.slice(0, TABLES_CHARS)}`;
+        // (all of them: read_urls offset pages through the length; a limit hit while reading is said, with the way round it)
+        if (tables.includes('| --- |')) body += `\n\nTables on the page (rows and columns kept):\n\n${tables}${raw.tablesCut ? '\n\n[Some tables were left out (too many or too long). open_tab the page, then read_page extract:"tables" table:N reads each whole.]' : ''}`;
       }
     }
   }
