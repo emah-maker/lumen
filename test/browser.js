@@ -56,9 +56,12 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   const tabState = async () => {
     const id = await app.evaluate(() => global.__agent.browser.activeTab().id);
     return ui.evaluate((activeId) => new Promise((resolve) => {
-      window.browser.onTabs((s) => resolve(s));
-      window.browser.switchTab(activeId); // re-selecting the active tab makes main re-send state
-      setTimeout(() => resolve(null), 1500);
+      // Main sends the strip state only when it changed, so an unchanged state never arrives again: keep the newest one.
+      if (!window.__lastTabs) { window.__lastTabs = { state: null }; window.browser.onTabs((s) => { window.__lastTabs.state = s; }); }
+      window.browser.switchTab(activeId); // re-selecting the active tab makes main re-send the state if it changed
+      const end = Date.now() + 1500;
+      const poll = () => { if (window.__lastTabs.state && Date.now() > end - 1300) resolve(window.__lastTabs.state); else if (Date.now() > end) resolve(null); else setTimeout(poll, 50); };
+      poll();
     }), id);
   };
   const tabCount = async () => JSON.parse(await run('list_tabs', {})).length;

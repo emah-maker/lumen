@@ -11,6 +11,7 @@ function h(tag, props = {}, ...children) {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'class') el.className = v;
     else if (k === 'text') el.textContent = v;
+    else if (k === 'style' && typeof v === 'string') el.style.cssText = v; // setAttribute('style') breaks the page's CSP
     else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
     else if (k in el && typeof v !== 'string') el[k] = v;
     else el.setAttribute(k, v === true ? '' : v);
