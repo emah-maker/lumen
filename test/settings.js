@@ -22,6 +22,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       hints.push(req.headers['sec-ch-prefers-color-scheme'] || '');
       return res.end('<title>hint2</title>');
     }
+    if (req.url === '/server-dark') { // a site that renders dark on the server from the hint (as Google's results page does)
+      res.setHeader('Accept-CH', 'Sec-CH-Prefers-Color-Scheme');
+      const dark = req.headers['sec-ch-prefers-color-scheme'] === '"dark"';
+      return res.end(`<!doctype html><title>server-dark</title><body style="background:${dark ? '#111' : '#fff'};color:${dark ? '#eee' : '#111'}">results</body>`);
+    }
     if (req.url === '/headers') {
       return res.end(`<title>headers</title><pre id="h">${JSON.stringify(req.headers)}</pre>`);
     }
@@ -111,6 +116,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'adblock'; s.dispatchEvent(new Event('input')); }");
   const adblock = await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent)");
   check('search “adblock” finds the blocker and not the Widgets page', adblock.includes('Block ads and trackers') && !adblock.includes('Widgets'), JSON.stringify(adblock));
+  // (A search looks through every row, so a page that is still building the rest answers a moment later: wait until every section is built.)
+  await waitFor(() => inTab(sid, 'document.body.dataset.ready === "1"'));
   // Searches that used to find nothing or rank the wrong row first (Round 2 of the Settings audit).
   const searchRows = (q) => inTab(sid, `(() => { const s = document.getElementById('search'); s.value = ${JSON.stringify(q)}; s.dispatchEvent(new Event('input'));
     const rows = []; for (const p of document.querySelectorAll('#sections > .pane')) { if (p.hidden) continue; for (const r of p.querySelectorAll('.row')) if (!r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')) rows.push({ pane: p.style.order, order: Number(p.style.order || 0), label: r.querySelector('.label')?.textContent.trim() }); }
@@ -119,7 +126,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('search “clear history” finds Clear browsing data and not Widget cards', clearHist[0] === 'Clear browsing data' && !clearHist.includes('Widget cards'), JSON.stringify(clearHist));
   for (const q of ['camera', 'microphone']) { const r = await searchRows(q); check(`search “${q}” lists the permission defaults before the page-unloading call exception`, r.indexOf('Default for new sites') === 0 && r.includes('Tabs in a call or sharing their screen'), JSON.stringify(r)); }
   check('search “incognito” finds the Private windows row', (await searchRows('incognito'))[0] === 'Private windows (incognito)');
-  check('search “sync” says Lumen doesn’t sync', (await searchRows('sync'))[0] === 'Sync across devices' && /doesn’t sync/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
+  check('search “sync” finds Sync through a folder first, and says it uses your own cloud folder', (await searchRows('sync'))[0] === 'Sync through a folder' && /cloud drive/.test(await inTab(sid, "document.querySelector('.row:not(.filtered):not([hidden])')?.dataset.search || ''")));
   check('search “print” finds Printing and Ctrl+P', (await searchRows('print'))[0] === 'Printing' && /ctrl\+p/i.test(await inTab(sid, "[...document.querySelectorAll('.row')].find((r) => r.querySelector('.label')?.textContent === 'Printing')?.dataset.search || ''")));
   await searchRows('zzqxv');
   check('a search with no match offers suggestions that search when clicked', (await inTab(sid, "document.querySelectorAll('#no-results-suggest button').length")) >= 3 && (await inTab(sid, "(() => { document.querySelector('#no-results-suggest button').click(); return document.getElementById('no-results').hidden && document.getElementById('search').value.length > 0; })()")) === true);
@@ -135,9 +142,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('turning the switch off stores aiHandsOff = true', await waitFor(async () => (await hands()) === true), String(await hands()));
   await inTab(sid, "document.getElementById('pref-aiHandsOff').click()");
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'steps'; s.dispatchEvent(new Event('input')); }");
-  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "document.querySelector('#cat-ai details.adv-rows')?.open === true"));
+  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#cat-ai details.adv-rows')].filter((x) => x.querySelector('.row:not(.filtered)')); return d.length > 0 && d.every((x) => x.open); })()"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");
-  check('the folded list closes again when the search is cleared', await inTab(sid, "document.querySelector('#cat-ai details.adv-rows')?.open === false"));
+  check('the folded list closes again when the search is cleared', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#cat-ai details.adv-rows')]; return d.length > 0 && d.every((x) => !x.open); })()"));
   const stops = await inTab(sid, "[...document.querySelectorAll('#nav a')].filter((a) => a.tabIndex === 0).length");
   check('the category list is a single Tab stop', stops === 1, stops);
   await inTab(sid, "location.hash = '#downloads'");
@@ -212,21 +219,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (blockerReady) check('…and the hint follows: "light"', hints.at(-1) === '"light"', JSON.stringify(hints));
   await closeTab(web);
 
-  // Real check: Google's results page renders dark on the server from the hint.
+  // A page rendered dark on the server from the hint (a local stand-in for Google's results page: tests never visit real sites).
   await setSelect('pref-theme', 'dark');
-  try {
-    web = await openWeb('https://www.google.com/search?q=test');
-    await sleep(1500);
-    const g = await inTab(web, `(() => { const c = getComputedStyle(document.body).color.match(/\\d+(\\.\\d+)?/g).map(Number); return { url: location.href, title: document.title, lum: (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 }; })()`);
-    if (/\/sorry\/|consent\.google/.test(g.url)) skip('Google results are dark in Dark mode', `Google served a CAPTCHA/consent page: ${g.url.slice(0, 60)}`);
-    // A live third-party page: when Google answers with a normal light page (a different results layout, no hint honoured for this
-    // visitor), that is Google's doing, not Lumen's, so it is reported as skipped instead of failing the offline-safe suite.
-    else if (g.lum <= 0.6 && /Google Search$/.test(g.title)) skip('Google results are dark in Dark mode', `Google served its light results page to this profile (text luminance ${g.lum.toFixed(2)}): ${g.url.slice(0, 60)}`);
-    else check('Google results are dark in Dark mode (light text)', g.lum > 0.6, JSON.stringify(g));
-    await closeTab(web);
-  } catch (err) {
-    skip('Google results are dark in Dark mode', `no network: ${err.message}`);
-  }
+  web = await openWeb(`${base}/server-dark`);
+  const g = await inTab(web, `(() => { const c = getComputedStyle(document.body).color.match(/\\d+(\\.\\d+)?/g).map(Number); return { lum: (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 }; })()`);
+  if (blockerReady) check('a site that renders from the hint comes out dark in Dark mode (light text)', g.lum > 0.6, JSON.stringify(g));
+  else skip('a site that renders from the hint comes out dark', 'ad blocker (and its header listener) not ready');
+  await closeTab(web);
   await setSelect('pref-theme', 'system');
 
   // ---- default zoom ----

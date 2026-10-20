@@ -15,6 +15,7 @@
     header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--hairline); }
     #name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
     #pager { display: flex; align-items: center; gap: 4px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #slideCount { min-width: 5ch; } /* room for "/ 1234" before the count is known, so it arriving does not move the toolbar */
     #slideNumber { width: 4ch; box-sizing: content-box; padding: 3px 6px; font: inherit; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); background: var(--field); border: 0; border-radius: var(--r-sm); }
     #slideNumber:focus-visible { outline: none; box-shadow: var(--focus-ring); }
     #slideNumber:disabled { opacity: 0.4; }

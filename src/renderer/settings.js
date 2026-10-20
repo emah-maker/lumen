@@ -2288,7 +2288,7 @@ function alertLine(host, text) {
 }
 
 async function buildSearch(card) {
-  const ai = await S.ai.get();
+  const ai = await S.ai.searchEngines();
   const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
   card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));
@@ -2328,6 +2328,8 @@ function buildStartup(card) {
 }
 
 async function buildPrivacy(card) {
+  const passwordsAsked = S.passwords.state(); // (asked before the rows above it are made: its answer is waited for further down)
+  passwordsAsked.catch(() => {});
   // Clear browsing data
   const range = h('select', { id: 'clear-range', 'aria-label': 'Time range' },
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
@@ -2369,7 +2371,7 @@ async function buildPrivacy(card) {
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
-  await buildPasswords(card);
+  await buildPasswords(card, passwordsAsked);
   buildPasskeys(card);
 
   // Safe Browsing (features/safe-browsing.js)
@@ -2493,9 +2495,9 @@ function buildPasskeys(card) {
   card.group(tr('settings.passkeys.group', 'Passkeys')).append(r);
 }
 
-async function buildPasswords(card) {
+async function buildPasswords(card, asked) {
   const P = S.passwords;
-  let pw = await P.state();
+  let pw = await (asked || P.state());
   const WHY = {
     unavailable: 'Your system’s secure storage (the Keychain on macOS, data protection on Windows) isn’t available, so Lumen can’t keep passwords safely. Saving passwords stays off.',
     'basic-text': 'No system keyring (GNOME Keyring or KWallet) was found, so Lumen can’t keep passwords safely. Saving passwords stays off.',
@@ -3388,14 +3390,14 @@ function guessView() {
   const sub = slots.get(id);
   if (sub?.isSub) return { cat: sub.cat, sub: id };
   if (categories.has(id)) return { cat: id, sub: null };
-  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus };
   return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
 }
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
   const r = resolveRoute();
-  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  const need = neededBuilds(view, r.focus).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -3521,10 +3523,13 @@ async function init() {
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-  neededBuilds = (v) => {
+  // Focus mode and Sync are rows far below the first screen of General that each wait for an answer from the browser (about 25 ms): they are built
+  // while the page is idle, not before it is shown, unless a link names them (`want` is the slot the link scrolls to).
+  const LATE = new Set(['focus', 'sync']);
+  neededBuilds = (v, want) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
-    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat) && (!LATE.has(sid) || want === sid));
   };
   // A heading that only repeats its first row ("On startup" over "On startup", "Search engine" over "Search engine used in the
   // address bar") is said once: a one-row list loses the heading, a longer one keeps it and the row's label is read by screen readers only.
@@ -3582,7 +3587,7 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub; // (a sub-page some builder makes: all of them run, as before)
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, wanted.focus).map(buildOne));
   performance.mark('settings:ai-built'); // (its sub-pages and rows in other categories are needed to resolve any link)
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
