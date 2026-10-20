@@ -8213,7 +8213,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     else {
       const items = agent.transcript();
       if (ui()) shownChat.set(ui(), chatId);
-      if (items.length) ui()?.send('agent:history', { items });
+      // (with the chat's id: the sidebar must know which chat it shows, or its draft and what it keeps per chat go under no chat)
+      if (items.length) ui()?.send('agent:history', { items, chatId });
+      else if (ui()) pushChatView(ui());
     }
     uiReady = true;
     perf.mark('uiReady');

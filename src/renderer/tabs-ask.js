@@ -262,6 +262,14 @@
     confirmEl.replaceChildren();
   }
 
-  window.tabsAsk = { take, askAll, describeSent, reset, chips: () => chips.map((c) => ({ ...c })), open: () => update() };
+  // The chips as they stand, to put away with a chat and give back when it is shown again (null: none).
+  const snapshot = () => (chips.length || confirmedAll ? { chips: chips.map((c) => ({ ...c })), confirmedAll } : null);
+  function restore(saved) {
+    chips = Array.isArray(saved?.chips) ? saved.chips.map((c) => ({ ...c })) : [];
+    confirmedAll = Boolean(saved?.confirmedAll);
+    renderChips();
+  }
+
+  window.tabsAsk = { take, askAll, describeSent, reset, snapshot, restore, chips: () => chips.map((c) => ({ ...c })), open: () => update() };
   renderChips();
 })();

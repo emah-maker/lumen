@@ -504,6 +504,79 @@ const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: promp
 prompt.addEventListener('blur', () => saveDraft());
 window.addEventListener('pagehide', () => saveDraft());
 window.addEventListener('beforeunload', () => saveDraft());
+// ---------- what else a chat keeps while another is shown (this window, in memory) ----------
+// Besides the unsent text: the pictures and files waiting in the box, the "@" tab chips, how far the conversation was scrolled and which step
+// cards and rows were open. They are put away when another chat takes the view and given back when this one is shown again, so a tab switch
+// (or a chat opened from the list) leaves each chat as it was and one chat's pictures never go along into another. Not kept across a restart.
+const viewStash = new Map(); // chat id ('new': not named yet) -> { attachments, chips, fromBottom, open }
+const STASH_MAX = 60;
+let pendingView = null; // { fromBottom, open } of the chat just shown, applied as soon as it is drawn
+const stashKey = (id) => (id ? String(id) : 'new');
+const foldables = () => [...messages.querySelectorAll('details, .step[data-more]')].reverse(); // (counted from the end: older parts drawn later don't shift them)
+function stashView(id) {
+  const kept = { attachments: attachments.slice(), chips: window.tabsAsk?.snapshot?.() || null };
+  if (!lazyItems && !pendingView && messages.clientHeight > 0 && messages.querySelector('.msg')) { // (a chat not drawn yet, or the view hidden, has no position to keep)
+    const fromBottom = Math.round(messages.scrollHeight - messages.scrollTop - messages.clientHeight);
+    if (fromBottom > 48) kept.fromBottom = fromBottom;
+    const open = [];
+    foldables().forEach((el, i) => { if (el.tagName === 'DETAILS' ? el.open : el.getAttribute('aria-expanded') === 'true') open.push(i); });
+    if (open.length) kept.open = open;
+  }
+  if (!kept.attachments.length && !kept.chips && kept.fromBottom === undefined && !kept.open) return;
+  const key = stashKey(id);
+  viewStash.delete(key);
+  viewStash.set(key, kept);
+  while (viewStash.size > STASH_MAX) viewStash.delete(viewStash.keys().next().value);
+}
+function stashRename(from, to) {
+  const k = stashKey(from);
+  const v = viewStash.get(k);
+  if (!v || !to) return;
+  viewStash.delete(k);
+  if (!viewStash.has(stashKey(to))) viewStash.set(stashKey(to), v);
+}
+// Gives the chat now shown what it had: pictures and chips at once, the scroll and open cards once it is drawn (applyView).
+function takeStash() {
+  const key = stashKey(shownChatId);
+  const kept = viewStash.get(key);
+  if (!kept) return;
+  viewStash.delete(key);
+  if (kept.attachments?.length) attachments = [...kept.attachments, ...attachments].slice(0, MAX_ATTACH);
+  if (kept.chips) window.tabsAsk?.restore?.(kept.chips);
+  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, open: kept.open || null };
+}
+// True when nothing is left to do. A position deeper than what is drawn yet waits for the older parts (drawEarlier calls this after each).
+// The cards of a chat still running are built as its events replay, a moment after the chat is shown: each is opened when it appears.
+let pendingOpen = null; // { idx: [counted from the end], until }
+function reopenCards() {
+  const p = pendingOpen;
+  if (!p) return;
+  if (Date.now() > p.until || !p.idx.length) { pendingOpen = null; return; }
+  const all = foldables();
+  p.idx = p.idx.filter((i) => {
+    const el = all[i];
+    if (!el) return true;
+    if (el.tagName === 'DETAILS') el.open = true;
+    else if (el.getAttribute('aria-expanded') !== 'true') el.click();
+    return false;
+  });
+}
+new MutationObserver(() => { if (pendingOpen) reopenCards(); }).observe(messages, { childList: true, subtree: true });
+function applyView() {
+  const p = pendingView;
+  if (!p) return true;
+  if (viewHidden() || !messages.clientHeight) return false; // (shown later: the composer's resize asks again)
+  if (p.open) { pendingOpen = { idx: p.open, until: Date.now() + 4000 }; p.open = null; reopenCards(); }
+  if (p.fromBottom > 0) {
+    const want = messages.scrollHeight - messages.clientHeight - p.fromBottom;
+    if (want < 0) { messages.scrollTop = 0; return false; }
+    stuck = false;
+    messages.scrollTop = want;
+    jump.hidden = false;
+  }
+  pendingView = null;
+  return true;
+}
 function restoreDraft() {
   draftHold = false;
   const d = drafts?.get(shownChatId);
@@ -512,14 +585,17 @@ function restoreDraft() {
     prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
     pastes = d.pastes.slice();
   }
+  takeStash();
   autosize();
   renderAttachments();
   renderScreenBtn();
+  if (pendingView && !lazyItems) applyView();
 }
 // The chat just started here got its id: a draft typed meanwhile moves to it.
 function nameChat(id) {
   if (!id || shownChatId) return;
   drafts?.rename(null, id);
+  stashRename(null, id);
   shownChatId = id;
   // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
   if (!prompt.value && !pastes.length) restoreDraft();
@@ -551,6 +627,7 @@ jump.addEventListener('click', () => {
   jump.hidden = true;
 });
 messages.after(jump);
+for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true }); // (the reader took over: the position kept is no longer wanted)
 messages.addEventListener('scroll', () => {
   if (Date.now() - jumping < 700) { stuck = true; return; } // (a smooth jump's own scrolling)
   stuck = atBottom();
@@ -2573,6 +2650,7 @@ function showHistory(items, loaded = false) {
   restoring = true;
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom(); // (the "jump to latest" button follows where the view ended)
+  if (pendingView) applyView(); // (the chat comes back where it was left)
 }
 // A long chat is drawn newest first: the last few exchanges at once (about a screenful), the older ones a slice at a time after it, above them,
 // so opening or switching to a long chat never holds the window up for the whole chat (one slice is a few milliseconds of work).
@@ -2619,9 +2697,10 @@ function drawEarlier(older, newest) {
     messages.insertBefore(fragment, first || null);
     const atTop = top <= 1; // (held at the very top, as with Home: it stays there and the next slice follows at once, down to the first message)
     messages.scrollTop = atTop ? 0 : top + (messages.scrollHeight - before);
+    const waiting = pendingView ? !applyView() : false; // (a position further up than was drawn: the older parts come at once)
     if (replyEntries.length) below = replyEntries[0];
     end = start;
-    if (end > 0) { if (atTop) { cancel(); handle = setTimeout(step, 0); } else later(); }
+    if (end > 0) { if (atTop || waiting) { cancel(); handle = setTimeout(step, 0); } else later(); }
   };
   // Older slices wait for idle time (a tab switch, a key or a scroll comes first); a quick scroll to the top asks for the next slice at once.
   const later = () => { cancel(); handle = typeof requestIdleCallback === 'function' ? requestIdleCallback(() => step(true), { timeout: 400 }) : setTimeout(() => step(true), 50); };
@@ -2771,7 +2850,7 @@ function decorateEntries(userEntries, replyEntries) {
     markEditable(bubble, { at: item.at, versions });
   }
 }
-window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
+window.assistant.onHistory?.(({ items, chatId } = {}) => { showHistory(items); if (chatId && !shownChatId) nameChat(chatId); }); // (start-up: the chat this window comes back to is named, so its draft and view are kept under it)
 
 // A turn that started in the other view (the sidebar or the chat page) shows here too: the same
 // events follow, tagged with its run id.
@@ -2791,25 +2870,26 @@ window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } 
 const viewHidden = () => document.body.classList.contains('sidebar-hidden') && !document.body.classList.contains('chat-full');
 new MutationObserver(() => { if (!viewHidden()) flushLazyHistory(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] }); // (the sidebar opens, or the chat goes full-page: the chat held back is drawn)
 function flushLazyHistory() {
-  if (!lazyItems) return;
+  if (!lazyItems) { if (pendingView) applyView(); return; }
   const items = lazyItems;
   lazyItems = null;
   showHistory(items);
 }
 function applySync(view) {
   runStateSeq++;
+  const wasChat = shownChatId;
   // The chat this view already shows (or the one not started yet, which main has given an id): the box, its attachments and its pasted blocks are
   // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   clearChatView({ keepBox: sameChat });
-  if (sameChat && unnamed) drafts?.rename(null, view.id);
+  if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
-  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) drafts?.rename(emptyOwner, view.id);
+  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
   if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined; // (taken, or the box already has its own)
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
     // Kept for now: drawn after the next paint when the view is on screen (the tab strip and the page area come first), or when it is shown.
@@ -2820,6 +2900,7 @@ function applySync(view) {
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
+  if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
   window.chatFolders?.refresh(view?.workFolder); // [work folder] the composer's folder chip follows the chat
   followChatEffort(view?.effort); // the chat's own reasoning effort follows the chat
   chatHost.chatChanged?.();
@@ -3015,6 +3096,10 @@ function clearChatView({ keepBox = false } = {}) {
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId; // (kept while other chats are shown in between)
     saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+    stashView(shownChatId); // (and so do its pictures, chips, scroll position and open cards)
+    pendingView = null;
+    pendingOpen = null;
+    attachments = [];
     draftHold = true;
     prompt.value = '';
     pastes = [];
