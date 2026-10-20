@@ -22,6 +22,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       hints.push(req.headers['sec-ch-prefers-color-scheme'] || '');
       return res.end('<title>hint2</title>');
     }
+    if (req.url === '/server-dark') { // a site that renders dark on the server from the hint (as Google's results page does)
+      res.setHeader('Accept-CH', 'Sec-CH-Prefers-Color-Scheme');
+      const dark = req.headers['sec-ch-prefers-color-scheme'] === '"dark"';
+      return res.end(`<!doctype html><title>server-dark</title><body style="background:${dark ? '#111' : '#fff'};color:${dark ? '#eee' : '#111'}">results</body>`);
+    }
     if (req.url === '/headers') {
       return res.end(`<title>headers</title><pre id="h">${JSON.stringify(req.headers)}</pre>`);
     }
@@ -214,21 +219,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (blockerReady) check('…and the hint follows: "light"', hints.at(-1) === '"light"', JSON.stringify(hints));
   await closeTab(web);
 
-  // Real check: Google's results page renders dark on the server from the hint.
+  // A page rendered dark on the server from the hint (a local stand-in for Google's results page: tests never visit real sites).
   await setSelect('pref-theme', 'dark');
-  try {
-    web = await openWeb('https://www.google.com/search?q=test');
-    await sleep(1500);
-    const g = await inTab(web, `(() => { const c = getComputedStyle(document.body).color.match(/\\d+(\\.\\d+)?/g).map(Number); return { url: location.href, title: document.title, lum: (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 }; })()`);
-    if (/\/sorry\/|consent\.google/.test(g.url)) skip('Google results are dark in Dark mode', `Google served a CAPTCHA/consent page: ${g.url.slice(0, 60)}`);
-    // A live third-party page: when Google answers with a normal light page (a different results layout, no hint honoured for this
-    // visitor), that is Google's doing, not Lumen's, so it is reported as skipped instead of failing the offline-safe suite.
-    else if (g.lum <= 0.6 && /Google Search$/.test(g.title)) skip('Google results are dark in Dark mode', `Google served its light results page to this profile (text luminance ${g.lum.toFixed(2)}): ${g.url.slice(0, 60)}`);
-    else check('Google results are dark in Dark mode (light text)', g.lum > 0.6, JSON.stringify(g));
-    await closeTab(web);
-  } catch (err) {
-    skip('Google results are dark in Dark mode', `no network: ${err.message}`);
-  }
+  web = await openWeb(`${base}/server-dark`);
+  const g = await inTab(web, `(() => { const c = getComputedStyle(document.body).color.match(/\\d+(\\.\\d+)?/g).map(Number); return { lum: (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 }; })()`);
+  if (blockerReady) check('a site that renders from the hint comes out dark in Dark mode (light text)', g.lum > 0.6, JSON.stringify(g));
+  else skip('a site that renders from the hint comes out dark', 'ad blocker (and its header listener) not ready');
+  await closeTab(web);
   await setSelect('pref-theme', 'system');
 
   // ---- default zoom ----
