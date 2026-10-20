@@ -23,6 +23,18 @@
 @media (prefers-reduced-motion: reduce) { .picker-menu { animation: none; } }
 :root.pref-reduce-motion .picker-menu { animation: none; }
 
+.picker-effort-tag { flex: 0 0 auto; color: var(--muted); font-weight: 400; font-size: 0.92em; white-space: nowrap; } /* "· High": the chat's effort, quiet */
+.picker-effort-tag[hidden] { display: none; }
+/* The effort row at the foot of the menu: a label, a small segmented control (Auto and the levels the model takes) and one line on what it trades. */
+.picker-effort { flex: none; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 10px; padding: 8px 10px 9px; border-top: 1px solid var(--border); }
+.picker-effort[hidden] { display: none; }
+.picker-effort-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.picker-effort-seg { display: flex; min-width: 0; padding: 2px; gap: 2px; border-radius: var(--r-md); background: var(--field, rgb(127 127 127 / 0.12)); }
+.picker-effort-opt { flex: 1 1 0; min-width: 0; font: inherit; font-size: 12px; line-height: 1; padding: 6px 2px; border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer; white-space: nowrap; transition: background var(--t-fast), color var(--t-fast); }
+.picker-effort-opt:hover { color: var(--text); }
+.picker-effort-opt.on { background: var(--surface-raised, var(--surface)); color: var(--text); font-weight: 600; box-shadow: 0 0 0 0.5px var(--border), 0 1px 2px rgb(0 0 0 / 0.12); }
+.picker-effort-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.picker-effort-hint { grid-column: 1 / -1; font-size: 12px; color: color-mix(in srgb, var(--text) 68%, transparent); }
 .picker-search {
   flex: none; margin: 8px 8px 4px; height: 30px; padding: 0 10px; border: none; border-radius: var(--r-md);
   background: var(--field, rgb(127 127 127 / 0.12)); color: var(--text); font: inherit; outline: none; box-sizing: border-box;

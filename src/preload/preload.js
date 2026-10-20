@@ -313,6 +313,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers] a helper card's Stop
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+  setEffort: (level) => ipcRenderer.invoke('settings:set-effort', level), // the open chat's own reasoning effort ('' = Auto)
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'), // the setup card
   useCodex: () => ipcRenderer.invoke('settings:use-codex'), // the setup card (Codex, once found)
   useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'), // the setup card (Antigravity replaces Gemini CLI)

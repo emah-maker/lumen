@@ -1679,6 +1679,7 @@ class Agent {
     this.runs = new Map(); // a chat's messages array -> its live run { controller, promise, hosts } (a chat left mid-run keeps going: detach())
     this.engineRuns = 0; // [parallel CLI chats] CLI engine messages in flight (each on its own leased engine: engineFor)
     this.nextModel = null;
+    this.nextEffort = null; // the chat's effort pick made mid-reply (setEffort)
     this.pageContexts = new WeakMap(); // [chat per tab] a chat's messages array -> the page text it was last sent (chats run side by side)
     this.scopes = new Set(); // live task scopes (see taskScope), for usingTab()
     this.actionLogs = new Map(); // [ai controls] run id -> what that sidebar run changed (Undo)
@@ -1989,6 +1990,23 @@ class Agent {
     return false;
   }
 
+  // The reasoning effort for one request: the chat's own level (the composer's model menu; messages.settings.effort), else the Settings
+  // choice for that AI. A chat on Auto has no single model, so only Settings counts there. '' sends nothing (ai/effort.js).
+  effortFor(key, settings) {
+    const own = settings && !settings.autoFrom && !autoModel.isAuto(settings.model) ? settings.effort : '';
+    return effortLib.pick(key, own, this.browser.effort?.(key));
+  }
+  // The open chat's own level ('' = Auto). Mid-reply it waits for the next message, like a model pick. `model`: what the picker shows, for a chat with no message yet.
+  setEffort(level, model) {
+    const v = effortLib.cleanChat(level);
+    if (this.running) { this.nextEffort = v; return true; }
+    this.nextEffort = null;
+    if (!this.messages.settings) this.messages.settings = { adhdMode: true, ...this.getOptions(), model };
+    if (v) this.messages.settings.effort = v; else delete this.messages.settings.effort;
+    return false;
+  }
+  openEffort() { return this.nextEffort != null ? this.nextEffort : this.messages?.settings?.effort || ''; }
+
   // [work folder] The folder the open chat works in ('' clears it: the chat's project, if any, decides again). Takes effect with the next
   // message. A chat with no message yet has no settings: they start here, as setModel does (`model`: what the picker shows).
   setWorkFolder(folder, model) {
@@ -2013,6 +2031,7 @@ class Agent {
     this.messages = [];
     this.approvedHosts = new Set();
     this.nextModel = null;
+    this.nextEffort = null;
     this.onEngineReset?.('reset'); // an idle kept Claude Code process ends; one mid-reply goes on
   }
 
@@ -2081,6 +2100,7 @@ class Agent {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
       if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
+      if (this.nextEffort != null && messages === this.messages) { if (this.nextEffort) messages.settings.effort = this.nextEffort; else delete messages.settings.effort; this.nextEffort = null; }
       if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.forgetAuto(messages.settings); this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
       // first: whether it is still cooling down is decided again below, so the chat returns on its own when it isn't.
@@ -2914,7 +2934,7 @@ class Agent {
     // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
     // which would leave a stale name in a prompt that is fixed at spawn. A model the user picked is still named.
     const autoChosen = routed.auto || Boolean(settings.autoFrom);
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, workDir: projectFolders.workFolderOf(settings), userSettings: this.browser.ccUserSettings?.() === true, effort: effortLib.clean('claudecode', this.browser.effort?.('claudecode')), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, workDir: projectFolders.workFolderOf(settings), userSettings: this.browser.ccUserSettings?.() === true, effort: this.effortFor('claudecode', settings), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -3068,7 +3088,7 @@ class Agent {
     if (!settings || !String(settings.model).startsWith('grokbuild:') || this.running) return null;
     const session = settings.gbSession && (settings.gbModel || 'grokbuild:default') === settings.model ? settings.gbSession : null;
     const fullAccess = this.browser.grokBuildFullAccess?.() === true;
-    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, fullAccess), model: engineModel(settings.model), fullAccess, effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')) };
+    return { sessionId: session, systemPrompt: this.grokBuildSystem(settings, fullAccess), model: engineModel(settings.model), fullAccess, effort: this.effortFor('grokbuild', settings) };
   }
 
   // [keep connected] What the open chat's next Codex message will need from its kept process (features/codex-warm.js prewarm):
@@ -3123,7 +3143,7 @@ class Agent {
       systemPrompt: this.grokBuildSystem(settings, fullAccess),
       fullAccess,
       workFolder: projectFolders.workFolderOf(settings), // [work folder]
-      effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
+      effort: this.effortFor('grokbuild', settings), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
       signal,
       emit,
@@ -3196,7 +3216,7 @@ class Agent {
       systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
       workDir: projectFolders.workFolderOf(settings), // [work folder]
-      effort: effortLib.clean('antigravity', this.browser.effort?.('antigravity')), // Settings → AI → AI providers
+      effort: this.effortFor('antigravity', settings), // Settings → AI → AI providers
       signal,
       emit,
     });
@@ -3272,7 +3292,7 @@ ${prompt}` : prompt), historyImages: [] };
       systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
       workDir: projectFolders.workFolderOf(settings), // [work folder]
-      effort: effortLib.clean('codex', this.browser.effort?.('codex')), // Settings → AI → AI providers: -c model_reasoning_effort
+      effort: this.effortFor('codex', settings), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
       emit,
     });
@@ -3749,7 +3769,7 @@ ${prompt}` : prompt), historyImages: [] };
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
     const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
-    const userEffort = effortLib.anthropicEffort(this.browser.effort?.('anthropic'), Boolean(MODELS[params.model]?.effort));
+    const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
     const extra = await this.externalToolDefs(emit); // [mcp client]
     if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
@@ -3794,7 +3814,7 @@ ${prompt}` : prompt), historyImages: [] };
       provider,
       model,
       apiKey,
-      effort: effortLib.clean(provider, this.browser.effort?.(provider)), // Settings → AI → AI providers (only models that take it: ai/effort.js)
+      effort: this.effortFor(provider, messages.settings), // Settings → AI → AI providers (only models that take it: ai/effort.js)
       system: systemFor(messages.settings) + (toolsOk ? (skillsBlockOf(messages.settings) ? `\n\n${skillsBlockOf(messages.settings)}` : '') : '\n\nYou have no tools in this chat. If the user asks you to act in the browser, explain that this model is chat only and they can pick another model to let you act.'),
       // Old tool results are shrunk once, in providers.js (toChatMessages), so earlier turns stay
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
