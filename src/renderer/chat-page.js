@@ -435,7 +435,11 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
   chatHost.identity = () => {};
   applyRail();
   startChat();
-  window.assistant.state().then(({ view: now, target, name, draft, send, images }) => {
+  window.assistant.state().then(async (first) => {
+    if (!first?.fresh || !first.view?.items?.length) return first;
+    $('new-chat').click(); // [ask ai new chat] Ask AI with nothing typed: the page opens on a new chat (a reply still running in the old one goes on, in History)
+    return (await window.assistant.state().catch(() => null)) || first;
+  }).then(({ view: now, target, name, draft, send, images }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;

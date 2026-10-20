@@ -84,6 +84,18 @@ function busyKept(tabs, opts = {}) {
   return closeSelection(tabs, { ...opts, busyIds: [] }).filter((tab) => busy.has(tab.id) && !bound.has(tab.id));
 }
 
+// The tab to show when the AI closes the tab in front: first a tab a run is still working in (`preferId`: the one the closing chat's own run
+// works in, then the one looked at most recently), or null for the normal rule (the other side of a split, then the neighbour). A tab the user
+// closes never comes here.
+function focusAfterAiClose({ tabs = [], closing, workingIds = [], preferId = null } = {}) {
+  const working = new Set(workingIds);
+  const ok = (tab) => tab && tab !== closing && !tab.closing && working.has(tab.id);
+  const first = tabs.find((tab) => tab.id === preferId);
+  if (ok(first)) return first;
+  const seen = (tab) => Math.max(tab.viewedAt || 0, tab.lastActiveAt || 0);
+  return tabs.filter(ok).sort((a, b) => seen(b) - seen(a))[0] || null;
+}
+
 const CLOSE_SETTINGS = ['off', 'ask', 'always'];
 const cleanCloseSetting = (value) => (CLOSE_SETTINGS.includes(value) ? value : 'always'); // (the default: settings-backend.js)
 // What happens when a run that opened `n` closeable tabs ends: 'none' (it opened none), 'offer' (a quiet
@@ -247,7 +259,7 @@ const userInput = {
 
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
-  markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
+  markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, focusAfterAiClose, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
   isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,

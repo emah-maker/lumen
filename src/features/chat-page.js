@@ -249,6 +249,7 @@ function create(deps) {
     const text = String(draft || '').slice(0, 20000);
     const pictures = Array.isArray(images) ? images.slice(0, 10) : []; // (main already checked them: newtab-ai:ask cleans what the page sent)
     if (id != null && (text.trim() || pictures.length)) drafts.set(id, { text, send: Boolean(send), images: pictures });
+    else if (id != null) drafts.set(id, { text: '', send: false, images: [], fresh: true }); // plain Ask AI: the page opens on a new chat, not the last one (an empty open chat is reused)
     deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
     return id;
   }
@@ -288,7 +289,7 @@ function create(deps) {
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
       const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), fresh: Boolean(carried?.fresh), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });
