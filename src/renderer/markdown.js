@@ -68,7 +68,8 @@
       try {
         const env = /^\s*\\begin\{/.test(tex);
         const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, ''));
-        const src = display === 'inline' && !env ? `\\displaystyle ${clean}` : clean;
+        const lone = display === false && new RegExp('^\\s*-?\\\\frac\\{[^{}]*\\}\\{[^{}]*\\}\\s*$').test(tex); // a lone \frac{3}{4} is drawn full size, like the converted plain 3/4
+        const src = (display === 'inline' || lone) && !env ? `\\displaystyle ${clean}` : clean;
         const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
         if (display === true) return `<div class="math-block">${html}</div>`;
         // A long formula in a line (or a display one written inside a sentence) gets its own sideways scroll: MathML
@@ -522,8 +523,43 @@
     return `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
 
-  function render(source) {
-    const { text, maths } = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
+  // ---------- prefer fractions ----------
+  // [prefer fractions] Settings > AI > Prefer fractions: a plain "3/4" the model still wrote is drawn as a stacked fraction (the same
+  // MathML \frac the model's own $\frac{3}{4}$ gets). Whole numbers only. Left alone: code (fenced and `inline`), links and web addresses,
+  // existing math, dates (10/19, 10/19/2026), paths, units (km/h), "24/7"-style phrases, and counts after "page", "step", "question"...
+  const FRAC_PROTECT = /(`+[^`\n]*`+|\[[^\]\n]*\]\([^)\n]*\)|<[^>\n]+>|(?:https?:\/\/|www\.)\S+|\d+)/;
+  const FRAC = /(^|[^\w./\\:@#$%&*+=~<>-])([-−]?)(\d{1,4})\/(\d{1,4})(?![\w/\\@%]|-\w|[.,:]\d)/g;
+  const FRAC_NOT = new Set(['24/7', '24/365', '9/11', '3/11', '1/1']);
+  const FRAC_LABEL = /\b(?:page|pages|pp?|slide|slides|step|steps|question|q|chapter|ch|section|sec|part|item|figure|fig|table|problem|vol|volume|no|number|episode|ep|lesson|unit|week|day|round|game|set|rank|score)\.?\s*#?\s*$/i;
+  function fractionize(text, maths) {
+    let fence = '';
+    return String(text).split('\n').map((line) => {
+      const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) { if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = ''; return line; }
+      if (f) { fence = f[1]; return line; }
+      return line.split(FRAC_PROTECT).map((part, k) => {
+        if (k % 2) return part;
+        return part.replace(FRAC, (all, lead, sign, n, d, at) => {
+          const num = Number(n);
+          const den = Number(d);
+          const before = part.slice(0, at + lead.length);
+          if (!den || !num || num === den || FRAC_NOT.has(`${n}/${d}`) || /^[-−]/.test(lead)) return all;
+          if (sign && !/(^|[\s([{,;:])$/.test(before)) return all; // "a -3/4" is a sign, "x-3/4" is a subtraction
+          if (num >= 1 && num <= 12 && den >= 13 && den <= 31 && den !== 16) return all; // 10/19: a date
+          if (FRAC_LABEL.test(before)) return all;
+          maths.push({ tex: `${sign ? '-' : ''}\\frac{${n}}{${d}}`, display: 'inline' });
+          return `${lead}${maths.length - 1}`;
+        });
+      }).join('');
+    }).join('\n');
+  }
+
+  // opts.fractions: stack plain a/b (default: the Prefer fractions setting, window.lumenPreferFractions, kept by ui-prefs.js).
+  function render(source, opts) {
+    const lifted = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
+    const { maths } = lifted;
+    const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
+    const text = stack ? fractionize(lifted.text, maths) : lifted.text;
     return dropMath(renderText(text, maths), maths);
   }
 
@@ -784,5 +820,5 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, fractionize, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();

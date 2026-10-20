@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 - **Math in a reply no longer shows up as raw `$$` text, and a skill's hidden markup no longer leaks into the chat.** A display formula now renders whether its closing `$$` is on the same line, on a later line, or after trailing spacing such as `\;` or `\\`, and a reply that was interrupted inside a formula shows what was written instead of the raw dollars. Prices like "$5 and $10" are still plain text. Running a skill (such as Research) no longer leaves `<skill_request ...>` in a step's subtitle, a chat title, the chat list or search: they read "Research skill: what you typed".
 
 ## 0.5.60 (2026-10-20)
