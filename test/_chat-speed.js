@@ -85,7 +85,7 @@ async function newChatTab(profileSrc, opts) {
       await s.ready();
       const t0b = Date.now();
       await s.app.evaluate((_e, [id, c]) => global.__chatPage.contents(id).executeJavaScript(`(() => { const b = document.getElementById('mode-ask'); const click = () => b.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: ${c} })); click(); if (!${c}) click(); })()`), [home, ctrl]);
-      return (await whenReady(s.app, { t0: t0b, exclude: before, messages: 1 })).ms;
+      return (await whenReady(s.app, { t0: t0b, exclude: before, messages: 0 })).ms; // (the Chat button opens a new, empty chat: no messages to wait for)
     };
     out.button = await clickChat(false);
     out.buttonNewTab = await clickChat(true);
@@ -127,7 +127,7 @@ async function restoreChatTabs(profileSrc, { tabs = 3, bigId, spare = false } = 
     for (let i = 0; i < tabs; i++) {
       const before = await chatTabIds(first);
       await first.evaluate(() => global.__chatPage.fromHome(null, { inNewTab: true }));
-      await whenReady(first, { t0: Date.now(), exclude: before, messages: 1 });
+      await whenReady(first, { t0: Date.now(), exclude: before, messages: 0 }); // (a new, empty chat)
       await sleep(400);
     }
     if (bigId) {
@@ -170,7 +170,7 @@ async function openSeveral(profileSrc, { n = 5, spare = false, wait = 0 } = {}) 
       await s.ready();
       const t0 = Date.now();
       await s.app.evaluate(() => global.__chatPage.fromHome(null, { inNewTab: true }));
-      times.push((await whenReady(s.app, { t0, exclude: before, messages: 1 })).ms);
+      times.push((await whenReady(s.app, { t0, exclude: before, messages: 0 })).ms); // (a new, empty chat)
       await sleep(wait);
     }
   } finally { await s.done(); }

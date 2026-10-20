@@ -96,7 +96,7 @@ const best = (xs) => { const s = xs.filter((x) => x >= 0); return s.length ? Mat
     check('and it shows no chat yet', noChats === true, noChats);
 
     const spareId = await app.evaluate(() => global.__spareChat.contents().id);
-    const opened = await app.evaluate(() => global.__chatPage.fromHome(null, { inNewTab: true }));
+    const opened = await app.evaluate(() => global.__chatPage.open()); // (the shortcut's path: a chat tab on the last chat; the Chat button opens a new, empty chat)
     const taken = await app.evaluate((_e, id) => global.__chatPage.contents(id).id, opened);
     check('a chat tab takes the spare page', taken === spareId, `${taken} vs ${spareId}`);
     const ready = await app.evaluate(async (_e, id) => {
