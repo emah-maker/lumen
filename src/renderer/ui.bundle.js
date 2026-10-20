@@ -10463,35 +10463,6 @@ $('app-menu').onclick = () => {
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
 
-
-{
-  const list = $('extension-actions');
-  const more = $('actions-overflow');
-  const hiddenActions = () => {
-    const lr = list.getBoundingClientRect();
-    return [...(list.shadowRoot?.querySelectorAll('.action') || [])].filter((n) => n.getBoundingClientRect().right > lr.right + 1);
-  };
-  let frame = 0;
-  const refresh = () => {
-    if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; more.hidden = !hiddenActions().length; });
-  };
-  new ResizeObserver(refresh).observe(list);
-  customElements.whenDefined('browser-action-list').then(() => {
-
-    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true });
-    refresh();
-  });
-  more.onclick = () => {
-    const r = more.getBoundingClientRect();
-    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || '' })));
-  };
-  window.browser.onActionsOverflowPick?.((id) => {
-    const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);
-    const r = more.getBoundingClientRect();
-    window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
-  });
-}
 $('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 
 
@@ -14614,7 +14585,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
-  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
   const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
   const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
   const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
@@ -14780,7 +14751,7 @@ $('agent-stop')?.addEventListener('click', () => {
   function chatShown(view, sameChat) {
     if (sameChat) { remember(); return; }
     const id = view?.id || null;
-    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && (window.lumenPlanModeDefault === true || view?.project?.plan === true);
     render();
   }
 
@@ -15353,6 +15324,238 @@ $('agent-stop')?.addEventListener('click', () => {
   for (const id of ['hands-off', 'hands-off-strip']) document.getElementById(id)?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('hands-off'));
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
+}
+;
+// ---- ext-pins-core.js
+
+
+
+
+(function (root) {
+  const MODES = ['pinned', 'all', 'none'];
+  const DEFAULT_MODE = 'pinned';
+  const AUTO_PIN = 3;
+  const MAX = 200;
+  const ID = /^[a-p]{32}$/;
+
+  const ids = (list) => [...new Set((Array.isArray(list) ? list : []).filter((id) => typeof id === 'string' && ID.test(id)))].slice(0, MAX);
+  const cleanMode = (m) => (MODES.includes(m) ? m : DEFAULT_MODE);
+
+
+  function clean(state) {
+    const order = ids(state?.order);
+    return { order, seen: [...new Set([...ids(state?.seen), ...order])].slice(-MAX), migrated: state?.migrated === true };
+  }
+
+
+
+
+
+  function reconcile(state, installed, done) {
+    const s = clean(state);
+    const order = [...s.order];
+    const seen = new Set(s.seen);
+    for (const id of ids(installed)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (!s.migrated || order.length < AUTO_PIN) order.push(id);
+    }
+    return clean({ order, seen: [...seen], migrated: s.migrated || done === true });
+  }
+
+
+  function setPinned(state, id, on) {
+    const s = clean(state);
+    if (!ID.test(String(id))) return s;
+    const order = s.order.filter((x) => x !== id);
+    if (on) order.push(id);
+    return clean({ order, seen: [...s.seen, id], migrated: s.migrated });
+  }
+
+
+  function move(state, id, beforeId) {
+    const s = clean(state);
+    if (!s.order.includes(id)) return s;
+    const order = s.order.filter((x) => x !== id);
+    const at = order.indexOf(beforeId);
+    order.splice(at < 0 ? order.length : at, 0, id);
+    return { ...s, order };
+  }
+
+
+  function nudge(state, id, step) {
+    const s = clean(state);
+    const i = s.order.indexOf(id);
+    const j = i + (step < 0 ? -1 : 1);
+    if (i < 0 || j < 0 || j >= s.order.length) return s;
+    const order = [...s.order];
+    [order[i], order[j]] = [order[j], order[i]];
+    return { ...s, order };
+  }
+
+
+
+
+  function layout(state, mode, installed) {
+    const have = ids(installed);
+    const s = clean(state);
+    const pinned = s.order.filter((id) => have.includes(id));
+    const rest = have.filter((id) => !pinned.includes(id));
+    const m = cleanMode(mode);
+    if (!have.length || m === 'none') return { toolbar: [], menu: have, puzzle: 'never', mode: m };
+    if (m === 'all') return { toolbar: [...pinned, ...rest], menu: [], puzzle: 'overflow', mode: m };
+    return { toolbar: pinned, menu: rest, puzzle: 'always', mode: m };
+  }
+
+
+  const needsAttention = (lay, badged) => lay.puzzle !== 'never' && lay.menu.some((id) => badged.includes(id));
+
+  const api = { MODES, DEFAULT_MODE, AUTO_PIN, ID, clean, cleanMode, reconcile, setPinned, move, nudge, layout, needsAttention };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.extPinsCore = api;
+})(this);
+;
+// ---- extensions-bar.js
+
+
+
+
+
+
+{
+  const core = window.extPinsCore;
+  const list = document.getElementById('extension-actions');
+  const puzzle = document.getElementById('actions-overflow');
+  if (core && list && puzzle) {
+    let mode = core.DEFAULT_MODE;
+    let pins = core.clean(null);
+    let lay = core.layout(pins, mode, []);
+    let shown = false;
+    const nodes = () => [...(list.shadowRoot?.querySelectorAll('.action') || [])];
+    const byId = (id) => nodes().find((n) => n.id === id);
+    const label = puzzle.getAttribute('aria-label') || '';
+
+    const clipped = () => {
+      const lr = list.getBoundingClientRect();
+      return nodes().some((n) => !n.hidden && n.getBoundingClientRect().right > lr.right + 1);
+    };
+    const set = (n, prop, v) => { if (n[prop] !== v) n[prop] = v; };
+
+    let styled = false;
+    const style = () => {
+      if (styled || !list.shadowRoot) return;
+      styled = true;
+      const s = document.createElement('style');
+      s.textContent = '.action:focus-visible { box-shadow: var(--focus-ring); } .action.dragging { opacity: 0.4; } .action.drop-before { box-shadow: -2px 0 0 var(--accent); } .action.drop-after { box-shadow: 2px 0 0 var(--accent); }';
+      list.shadowRoot.appendChild(s);
+    };
+
+    let syncedFor = '';
+    function apply() {
+      style();
+      const all = nodes();
+      const ids = all.map((n) => n.id);
+      const eff = core.reconcile(pins, ids);
+      lay = core.layout(eff, mode, ids);
+      const inBar = new Set(shown ? lay.toolbar : []);
+      for (const n of all) {
+        const at = lay.toolbar.indexOf(n.id);
+        set(n, 'hidden', !inBar.has(n.id));
+        if (at >= 0) set(n.style, 'order', String(at));
+        set(n, 'draggable', mode !== 'none' && eff.order.includes(n.id));
+      }
+      document.documentElement.classList.toggle('pref-no-extensions', shown && mode === 'none');
+      const badged = all.filter((n) => n.querySelector('.badge')).map((n) => n.id);
+      const attention = shown && core.needsAttention(lay, badged);
+      puzzle.classList.toggle('has-attention', attention);
+      const text = attention ? window.t('toolbar.extensionsAttention') : label;
+      if (puzzle.getAttribute('aria-label') !== text) { puzzle.setAttribute('aria-label', text); puzzle.title = text; }
+      puzzle.hidden = !shown || lay.puzzle === 'never' || (lay.puzzle === 'overflow' && !clipped());
+
+      const key = ids.join(',');
+      if (shown && ids.some((id) => !pins.seen.includes(id)) && key !== syncedFor) { syncedFor = key; window.lumenPrefs?.syncExtensionPins?.(); }
+    }
+    let frame = 0;
+    const refresh = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; apply(); }); };
+
+    new ResizeObserver(refresh).observe(list);
+    customElements.whenDefined('browser-action-list').then(() => {
+
+      if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title'] });
+      refresh();
+    });
+    const onPrefs = (p) => {
+      if (!p || !('extensionsToolbar' in p)) return;
+      mode = core.cleanMode(p.extensionsToolbar);
+      pins = core.clean(p.extensionPins);
+      shown = true;
+      refresh();
+    };
+    window.lumenPrefs?.get().then(onPrefs).catch(() => {});
+    window.lumenPrefs?.onChange(onPrefs);
+
+
+    puzzle.onclick = () => {
+      const r = puzzle.getBoundingClientRect();
+      const items = [...lay.toolbar, ...lay.menu].map((id) => ({ id, title: byId(id)?.title || '' }));
+      window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, items);
+    };
+    window.browser.onActionsOverflowPick?.((id) => {
+      const r = puzzle.getBoundingClientRect();
+      window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: byId(id)?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+    });
+
+
+    const save = (next) => {
+      pins = next;
+      apply();
+      window.lumenPrefs?.setExtensionOrder?.(next.order);
+    };
+    const target = (e) => e.composedPath().find((n) => n instanceof Element && n.classList?.contains('action'));
+    let dragging = null;
+    const pinned = () => nodes().filter((n) => !n.hidden && n.draggable).sort((a, b) => Number(a.style.order) - Number(b.style.order));
+    const clear = () => nodes().forEach((n) => n.classList.remove('dragging', 'drop-before', 'drop-after'));
+    const dropAt = (x) => {
+      const row = pinned().filter((n) => n.id !== dragging);
+      const before = row.find((n) => { const r = n.getBoundingClientRect(); return x < r.left + r.width / 2; });
+      return { before: before || null, last: row[row.length - 1] || null };
+    };
+    list.addEventListener('dragstart', (e) => {
+      const n = target(e);
+      if (!n?.draggable) return;
+      dragging = n.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', n.title || n.id);
+      n.classList.add('dragging');
+    });
+    list.addEventListener('dragover', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const { before, last } = dropAt(e.clientX);
+      for (const n of nodes()) n.classList.remove('drop-before', 'drop-after');
+      if (before) before.classList.add('drop-before'); else last?.classList.add('drop-after');
+    });
+    list.addEventListener('drop', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      const id = dragging;
+      const { before } = dropAt(e.clientX);
+      dragging = null;
+      clear();
+      save(core.move(core.reconcile(pins, nodes().map((n) => n.id)), id, before?.id ?? null));
+    });
+    list.addEventListener('dragend', () => { dragging = null; clear(); });
+    list.addEventListener('keydown', (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      const n = target(e);
+      if (!n?.draggable) return;
+      e.preventDefault();
+      const eff = core.reconcile(pins, nodes().map((x) => x.id));
+      const next = core.nudge(eff, n.id, e.key === 'ArrowLeft' ? -1 : 1);
+      if (next.order.join() !== eff.order.join()) save(next);
+    });
+  }
 }
 ;
 // ---- tab-search-match.js

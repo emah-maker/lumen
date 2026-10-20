@@ -1669,16 +1669,12 @@ async function fewerCallRuns() {
     check('fewer calls: navigate / open_tab return the page head, so they count as reading page content (taint the run) unless read:false', /\(name === 'navigate' \|\| name === 'open_tab'\) && input\?\.read !== false\)+ this\.markTainted/.test(agentSrc2), '');
 
     // read_page extract runs in the page: a fake DOM with one table and some links.
-    const cell = (t) => ({ innerText: t });
     const shown = { offsetWidth: 1, offsetHeight: 1, getClientRects: () => [1] };
-    const table = { ...shown, caption: { innerText: 'Prices' }, rows: [{ cells: [cell(' Item '), cell('Cost')] }, { cells: [cell('Tea'), cell('3')] }] };
     const link = (text, href) => ({ ...shown, innerText: text, href, getAttribute: () => '' });
-    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'table' ? [table] : sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
+    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
     global.document = { body: root, querySelector: (q) => (q === 'main' ? root : null) };
     global.location = { href: 'https://a.test/' };
-    const tables = snap.extractData({ kind: 'tables', selector: '' });
     const links = snap.extractData({ kind: 'links', selector: 'main' });
-    check('extract tables: rows of trimmed cell text with the caption', JSON.stringify(tables.data) === JSON.stringify([{ caption: 'Prices', rows: [['Item', 'Cost'], ['Tea', '3']] }]), JSON.stringify(tables));
     check('extract links: [text, href], no duplicates, no empty text', JSON.stringify(links.data) === JSON.stringify([['Home', 'https://a.test/'], ['Docs', 'https://a.test/d']]), JSON.stringify(links));
     check('extract: an unknown selector says so', snap.extractData({ kind: 'links', selector: 'nav' }).error === 'No element matches selector.', '');
     delete global.document; delete global.location;

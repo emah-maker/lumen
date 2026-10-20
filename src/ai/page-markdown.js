@@ -134,13 +134,13 @@ function table(node, ctx) {
     }
   };
   walk(node);
-  const kept = rows.filter((r) => r.some(Boolean)).slice(0, 80);
+  const kept = rows.filter((r) => r.some(Boolean)).slice(0, 5000); // a long table stays whole: read_urls pages the text with offset
   const width = Math.max(0, ...kept.map((r) => r.length));
   if (!kept.length || !width) return '';
   const line = (r) => `| ${Array.from({ length: width }, (_, i) => r[i] || '').join(' | ')} |`;
   const body = kept.map(line);
   body.splice(1, 0, `| ${Array(width).fill('---').join(' | ')} |`);
-  return body.join('\n') + (rows.length > kept.length ? `\n(+${rows.length - kept.length} more rows)` : '');
+  return body.join('\n') + (rows.length > kept.length ? `\n(+${rows.length - kept.length} more rows; open_tab the page, then read_page extract:"tables" for them)` : '');
 }
 
 function list(node, ctx) {

@@ -83,6 +83,8 @@ const DEFAULTS = {
   fontSize: 16,
   showBookmarkButton: true,
   showAiOffButton: true, // the shield in the address bar that keeps the AI from acting on a tab
+  extensionsToolbar: 'pinned', // [extensions] pinned (only the extensions I pin; the others are in the puzzle button's menu) | all | none (no extension buttons: they still run)
+  extensionPins: { order: [], seen: [], migrated: false }, // [extensions] the pinned extensions' ids, left to right, and every id that has had its first choice (renderer/ext-pins-core.js); changed through prefs:extension-pin and ext:pins-*
   compactTabs: false,
   tabLayout: 'top', // [tabs] top | side: the tabs across the top of the window or in a list down its left side (renderer/side-tabs.js)
   sideTabsWidth: 240, // [tabs] the side list's width in px (160 to 420); dragging its edge saves it
@@ -246,6 +248,14 @@ const SLACK = require('../features/slack-view'); // [widgets] the prefilled "cre
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const TS = require('../features/tab-sleep'); // [tabs] the sleep settings' choices
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
+// [extensions] The saved pins, checked here without loading renderer/ext-pins-core.js (which holds the rules and loads when a pin changes).
+const EXT_ID = /^[a-p]{32}$/;
+const extIds = (list) => [...new Set((Array.isArray(list) ? list : []).filter((id) => typeof id === 'string' && EXT_ID.test(id)))].slice(0, 200);
+const cleanPins = (v) => {
+  if (!v || typeof v !== 'object') return null;
+  const order = extIds(v.order);
+  return { order, seen: [...new Set([...extIds(v.seen), ...order])].slice(-200), migrated: v.migrated === true };
+};
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 
@@ -285,6 +295,8 @@ function validate(key, value) {
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'tabLayout': return pick(value, ['top', 'side'], null);
+    case 'extensionsToolbar': return pick(value, ['pinned', 'all', 'none'], null);
+    case 'extensionPins': return cleanPins(value);
     case 'sideTabsWidth': return Number.isFinite(Number(value)) ? Math.min(420, Math.max(160, Math.round(Number(value)))) : null;
     case 'tabSleepMode': return pick(value, TS.MODES, null);
     case 'tabSleepHow': return pick(value, TS.HOWS, null);
@@ -496,7 +508,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, extensionsToolbar: p.extensionsToolbar, extensionPins: p.extensionPins, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -899,7 +911,7 @@ function create(deps) {
     }
     const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
     if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
-    if (wallpaperAccent || ['compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'showBookmarkButton', 'showAiOffButton', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'planModeDefault' || key === 'aiPreferFractions' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (wallpaperAccent || ['compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'showBookmarkButton', 'showAiOffButton', 'extensionsToolbar', 'extensionPins', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'planModeDefault' || key === 'aiPreferFractions' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
@@ -916,6 +928,7 @@ function create(deps) {
     if ((key === 'focusSites' || key === 'focusSchedules') && deps.focusLocked?.()) throw new Error('Focus mode is on: its sites and schedules can be changed when it ends.'); // [focus] (editing the list is not a way out of a session)
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
     if (['homeWidgetSizes', 'weatherPlaces', 'weatherHere', 'weatherLocation'].includes(key)) throw new Error('That is changed through the widget calls'); // [widgets]
+    if (key === 'extensionPins') throw new Error('Pins are changed with prefs:extension-pin'); // [extensions]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'featureCardNever') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
@@ -1089,16 +1102,55 @@ function create(deps) {
   }
 
   // ---- extensions ----
+  const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
+  // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
+  const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
   function listExtensions() {
-    return ses().extensions.getAllExtensions()
-      .filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'))
-      .map((ext) => ({
-        id: ext.id,
-        name: ext.name,
-        version: ext.version,
-        description: ext.manifest.description || '',
-        options: ext.manifest.options_ui?.page || ext.manifest.options_page || '',
-      }));
+    const pinned = prefs().extensionPins.order;
+    return installedExtensions().map((ext) => ({
+      id: ext.id,
+      name: ext.name,
+      version: ext.version,
+      description: ext.manifest.description || '',
+      options: ext.manifest.options_ui?.page || ext.manifest.options_page || '',
+      button: hasAction(ext), // false: no toolbar button, so nothing to pin
+      pinned: hasAction(ext) && pinned.includes(ext.id),
+    }));
+  }
+  // [extensions] Pins: renderer/ext-pins-core.js has the rules (a new extension starts pinned while fewer than three are).
+  const pinsCore = () => require('../renderer/ext-pins-core');
+  async function savePins(next) {
+    if (JSON.stringify(next) === JSON.stringify(prefs().extensionPins)) return false;
+    writeSettings({ ...readSettings(), extensionPins: next });
+    await apply('extensionPins');
+    return true;
+  }
+  // Until the extensions installed before pins existed have loaded (extensionsLoaded, from main.js), nothing is decided: they would be taken for new ones.
+  let extensionsReady = false;
+  const syncExtensionPins = async () => {
+    const cur = prefs().extensionPins;
+    if (!cur.migrated && !extensionsReady) return cur;
+    const ids = installedExtensions().filter(hasAction).map((e) => e.id);
+    const seen = Array.isArray(cur.seen) ? cur.seen : [];
+    if (ids.every((id) => seen.includes(id))) { // nothing new: the rules file stays unloaded (startup module budget)
+      if (cur.migrated || !extensionsReady) return cur;
+      await savePins({ order: cur.order, seen, migrated: true });
+      return prefs().extensionPins;
+    }
+    await savePins(pinsCore().reconcile(cur, ids, extensionsReady));
+    return prefs().extensionPins;
+  };
+  const extensionsLoaded = () => { extensionsReady = true; return syncExtensionPins(); }; // [extensions] migration: every extension installed before this version starts pinned, in its current order
+  async function pinExtension(id, on) {
+    if (!installedExtensions().some((e) => e.id === id && hasAction(e))) return;
+    await syncExtensionPins();
+    await savePins(pinsCore().setPinned(prefs().extensionPins, id, on === true));
+  }
+  // The pinned buttons in the order the toolbar now shows them (a drag, or Alt+Arrow on a focused button).
+  async function orderExtensionPins(order) {
+    const cur = pinsCore().clean(prefs().extensionPins);
+    const want = extIds(order).filter((id) => cur.order.includes(id));
+    await savePins({ order: [...want, ...cur.order.filter((id) => !want.includes(id))], seen: cur.seen });
   }
 
   // ---- reset ----
@@ -1260,7 +1312,8 @@ function create(deps) {
       } finally { unwatch(); }
       return { ...(await packs()), cancelled };
     });
-    handle('prefs:extensions', listExtensions);
+    handle('prefs:extensions', async () => { await syncExtensionPins(); return listExtensions(); });
+    handle('prefs:extension-pin', async (id, on) => { await pinExtension(String(id), on === true); return listExtensions(); }); // [extensions] Settings → Extensions: Show in toolbar
     handle('prefs:remove-extension', async (id) => {
       await deps.uninstallExtension(id, { session: ses() }).catch(() => {});
       return listExtensions();
@@ -1287,6 +1340,8 @@ function create(deps) {
     handle('prefs:usage-budget', (budget) => deps.usage?.setBudget(budget, budget && typeof budget.engine === 'string' ? budget.engine : 'grokbuild') ?? null); // [usage] a provider's budget (Grok's when no engine is named)
     handle('prefs:cli-info', () => (deps.cliInfo ? deps.cliInfo() : [])); // [ai] version, path, sign-in and menu state of each CLI
     ipcMain.handle('prefs:ui', () => uiPrefs()); // the browser UI's own classes (compact tabs, …)
+    ipcMain.handle('ext:pins-sync', syncExtensionPins); // [extensions] the toolbar saw its buttons change: new extensions get their first pin choice
+    ipcMain.handle('ext:pins-order', (_e, order) => orderExtensionPins(order)); // [extensions] a drag in the toolbar
   }
 
   // Once the app is ready.
@@ -1299,7 +1354,7 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook,
   };

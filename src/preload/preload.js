@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
   get: () => ipcRenderer.invoke('prefs:ui'),
   onChange: on('prefs:ui'),
+  syncExtensionPins: () => ipcRenderer.invoke('ext:pins-sync'), // [extensions] new extension buttons get their first pin choice (renderer/extensions-bar.js)
+  setExtensionOrder: (ids) => ipcRenderer.invoke('ext:pins-order', ids), // ...and a drag in the toolbar is saved
 });
 
 // The toolbar's update prompt (renderer/updates.js, features/updates.js).
