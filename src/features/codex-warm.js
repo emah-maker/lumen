@@ -336,6 +336,9 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     let usage = null;
     let sum = {};
     let calls = 0;
+    let lastCall = null; // [context] thread/tokenUsage/updated's newest { last, total, window }: the context in use is its last call, not the summed ones
+    let compacted = false;
+    const startedAt = Date.now() - 1000;
     let turnId = null;
     let status = null; // turn/completed's: completed | failed | interrupted
     let failedMsg = null;
@@ -382,12 +385,21 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         const item = params.item || {};
         const bad = offItemOf(item, { fullAccess: p.full });
         if (bad) { offItem = bad; kill(); finish('off'); return; }
+        if (method === 'item/completed' && /compaction|compacted/i.test(String(item.type || ''))) { compacted = true; emit({ type: 'codex_compacted' }); }
         if (item.type === 'agentMessage' && method === 'item/completed' && typeof item.text === 'string') { shownText.set(String(item.id), item.text); say(String(item.id), item.text); }
         else if (item.type === 'reasoning' && method === 'item/completed') { const t = reasoningText(item); if (t) emit({ type: 'thinking', text: t }); }
         else if (method === 'item/completed') for (const f of cx.itemImagePaths(item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
         return;
       }
-      if (method === 'thread/tokenUsage/updated') { sum = addUsage(sum, params.tokenUsage?.last); calls++; return; }
+      if (method === 'thread/tokenUsage/updated') {
+        sum = addUsage(sum, params.tokenUsage?.last); calls++;
+        const tu = params.tokenUsage || {};
+        const last = codexUsage.fromAppServerUsage(tu.last);
+        lastCall = { last, total: codexUsage.fromAppServerUsage(tu.total), window: Number(tu.modelContextWindow) > 0 ? Number(tu.modelContextWindow) : 0 };
+        const tokens = codexUsage.contextFill(last);
+        if (tokens > 0) emit({ type: 'codex_context', tokens, window: lastCall.window, slug: null, estimated: false, total: lastCall.total, compacted });
+        return;
+      }
       if (method === 'error') { const m = String(params.error?.message || '').replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, 400); if (m) lastError = m; return; }
       if (method === 'turn/completed') {
         status = String(params.turn?.status || 'completed');
@@ -441,6 +453,14 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     cx.returnAuth({ userHome: engine.userHome(), home: p.home }).catch(() => {}); // a token Codex refreshed during the turn
 
     if (calls) usage = codexUsage.tokensOf(sum);
+    // [context] The thread's own figures: the app-server's last call and window, the model's slug and any compaction from the log.
+    let thread = null;
+    try {
+      const file = threadId ? codexUsage.findRollout(p.home, threadId) : null;
+      const fromLog = file ? codexUsage.contextOf(codexUsage.threadStats(file), { startedAt }) : null;
+      const tokens = lastCall ? codexUsage.contextFill(lastCall.last) : 0;
+      thread = tokens > 0 && !(fromLog?.estimated) ? { tokens, window: lastCall.window || fromLog?.window || 0, slug: fromLog?.slug || null, estimated: false, total: lastCall.total || fromLog?.total || null, compacted: compacted || Boolean(fromLog?.compacted) } : fromLog ? { ...fromLog, compacted: compacted || fromLog.compacted } : null;
+    } catch { /* agent.js estimates */ }
     let rateLimit = null;
     try { rateLimit = codexUsage.scanSessions({ home: p.home, days: 1, maxFiles: 2 }).limits || null; } catch { /* no log */ }
     const served = model !== 'default' && validModel(model) ? model : null;
@@ -448,22 +468,22 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
 
     if (offItem) {
       emit({ type: 'error', text: `Lumen stopped Codex: it used something that isn't one of Lumen's browser tools (${offItem}). Codex should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
-      return { text, sessionId: null, failed: true, usage, rateLimit, keep: false };
+      return { text, sessionId: null, failed: true, usage, rateLimit, thread, keep: false };
     }
-    if (signal.aborted) return { text, sessionId: threadId, stopped: true, usage, rateLimit, model: served, imagePaths, keep: !p.exited && (status !== null || !started) };
+    if (signal.aborted) return { text, sessionId: threadId, stopped: true, usage, rateLimit, thread, model: served, imagePaths, keep: !p.exited && (status !== null || !started) };
     if (stalled) {
       emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
-      return { text, sessionId: threadId, failed: true, usage, rateLimit, keep: false };
+      return { text, sessionId: threadId, failed: true, usage, rateLimit, thread, keep: false };
     }
     if (status === 'completed' && !failedMsg) {
       engine.signedOut = false;
-      return { text, sessionId: threadId, usage, rateLimit, model: served, imagePaths, keep: true };
+      return { text, sessionId: threadId, usage, rateLimit, thread, model: served, imagePaths, keep: true };
     }
     const failText = failedMsg || lastError || p.stderr || '';
     const failure = cx.describeFailure(failText, p.exited ? p.exitCode : null, { fullAccess: p.full });
     if (/not signed in/.test(failure.text)) { engine.signedOut = true; engine.statusCache = null; }
     emit({ type: 'error', ...failure });
-    return { text, sessionId: threadId, failed: true, usage, rateLimit, planLimit: codexUsage.limitMessage(failText), model: served, keep: false };
+    return { text, sessionId: threadId, failed: true, usage, rateLimit, thread, planLimit: codexUsage.limitMessage(failText), model: served, keep: false };
   }
 
   // Start the chat's process ahead of its message. spec: { chatId, sessionId (null: a new chat) }.
