@@ -1,6 +1,6 @@
 // The AI sidebar is open or closed tab by tab (features/sidebar-tabs.js, main.js "[sidebar per tab]", app.js showSidebar):
 // opening it in one tab leaves the others as they were, switching restores each tab's own state (toolbar button, aria-pressed,
-// the page area), tabs that share a chat share the state, a new tab starts closed, a moved or torn-off tab takes its state
+// the page area), tabs showing the same chat still keep their own state, toggling fast and opening tabs never leaves it out of step, a new tab starts closed, a moved or torn-off tab takes its state
 // along, a closed tab is forgotten, and the saved session brings the open tabs back open. Run with LUMEN_TEST_BACKGROUND=1.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
@@ -125,27 +125,62 @@ const launch = (profile) => electron.launch({
   await waitState(false);
   check('A: aria-pressed is false', (await pressed()) === false, await sidebarState());
 
-  // ---- 5. Tabs that share a chat share the state.
+  // ---- 5. Tabs that show the same chat still keep their own state: a toggle in one never flips the other.
   const tabC = await openTab(`${base}/gamma`);
   await waitFor(() => ui.evaluate((i) => document.querySelector('#tabs .tab.active')?.dataset.id === String(i), tabC));
   await waitState(false);
   const chatOfB = await app.evaluate((_e, id) => { const c = global.__tabChats.bindings.chatOf(id); return c; }, tabB);
-  check('B has a chat of its own to share', Boolean(chatOfB), chatOfB);
+  check('B has a chat of its own', Boolean(chatOfB), chatOfB);
   await app.evaluate((_e, [t, c]) => global.__tabChats.bindings.bind(t, c), [tabC, chatOfB]); // "also show in this tab"
   await showTab(tabA);
   await showTab(tabC);
-  check('a tab that joins a chat shows the state that chat has (B is open)', await waitState(true), await sidebarState());
-  await toggle(); // close in C
+  check('a tab that joins a chat keeps its own (closed) sidebar, though the chat is open in B', await waitState(false), await sidebarState());
+  await toggle(); // open in C
+  check('opening in C', await waitState(true), await sidebarState());
+  await toggle(); // and close it again in C
   check('closing in C', await waitState(false), await sidebarState());
-  check('...closes it in B too', (await model(tabB)) === false, await model(tabB));
+  check('...leaves B open', (await model(tabB)) === true, await model(tabB));
   await showTab(tabB);
-  check('B shows it closed', await waitState(false), await sidebarState());
-  await toggle(); // open in B
+  check('B still shows it open', await waitState(true), await sidebarState());
+  await toggle(); // close in B
+  await waitState(false);
+  await toggle(); // open in B again
   await waitState(true);
-  check('opening in B opens it in C', (await model(tabC)) === true, await model(tabC));
+  check('toggling in B leaves C closed', (await model(tabC)) === false, await model(tabC));
   await showTab(tabA);
-  check('...and leaves A, which shares nothing, closed', await waitState(false), await sidebarState());
+  check('...and A closed', await waitState(false), await sidebarState());
   await app.evaluate((_e, t) => global.__tabChats.bindings.unbindTab(t), tabC);
+
+  // ---- 5b. Toggling fast and opening new tabs never leaves the sidebar out of step: the button, main's answer for the tab in front,
+  // the laid-out sidebar and the page width all agree once it settles, and each tab keeps its own state.
+  const consistent = async () => {
+    const id = await active();
+    if (!(await waitFor(() => settled(), 4000))) return `still moving on ${id}`;
+    await sleep(120);
+    const m = await model(id); const sh = await shown(); const pr = await pressed();
+    const w = (await app.evaluate((_e, i) => global.__tabChats.viewBounds(i), id))?.width;
+    const wantW = m ? openWidth : closedWidth;
+    return m === sh && sh === pr && Math.abs((w || 0) - wantW) <= 2 ? '' : `tab ${id}: main ${m}, shown ${sh}, pressed ${pr}, width ${w} (want ${wantW})`;
+  };
+  await showTab(tabA);
+  await waitState(false);
+  for (let i = 0; i < 5; i++) await toggle(); // five clicks, no waiting: ends open
+  const fastA = await consistent();
+  check('five fast clicks on the button end in one settled state that everything agrees on', fastA === '' && (await model(tabA)) === true, fastA || String(await model(tabA)));
+  await ui.evaluate(() => document.getElementById('new-tab').click()); // the user's new tab, right away
+  await waitFor(async () => (await active()) !== tabA);
+  const tabD = await active();
+  const newD = await consistent();
+  check('a new tab opened mid-toggle starts closed, and everything agrees', newD === '' && (await model(tabD)) === false, newD || String(await model(tabD)));
+  check('...and the tab before keeps its open sidebar', (await model(tabA)) === true, String(await model(tabA)));
+  await toggle(); await showTab(tabA); // open in the new tab, then straight back to A while it slides
+  const backA = await consistent();
+  check('switching tabs while the sidebar slides ends with the tab\'s own state', backA === '' && (await model(tabD)) === true, backA || String(await model(tabD)));
+  for (let i = 0; i < 6; i++) { await toggle(); await showTab(i % 2 ? tabA : tabD); } // toggle + switch, over and over
+  const churn = await consistent();
+  check('toggling and switching over and over leaves the tab in front consistent', churn === '', churn);
+  for (const id of [tabA, tabD]) { await showTab(id); const c = await consistent(); if (c) { check('every tab is consistent after the churn', false, c); break; } }
+  await app.evaluate((_e, i) => global.__notifyClick ? global.__notifyClick.closeTab(i) : null, tabD);
 
   // ---- 6. A tab that is moved to a new window takes its state along; the other window is not touched.
   await showTab(tabB);
@@ -156,7 +191,7 @@ const launch = (profile) => electron.launch({
   const ui2 = await waitFor(() => app.windows().find((p) => p !== ui && p.url().includes('index.html')));
   await ui2.waitForSelector('.tab');
   check('the torn-off tab opens its new window with the sidebar open', await waitState(true, ui2), await sidebarState(ui2));
-  const leftFront = await active();
+  const leftFront = await app.evaluate((_e, w) => global.__windows.list().find((x) => x.windowId === w)?.activeId, win1); // (the window it left: the new one is current now)
   check('the window it left shows its own front tab\'s state, not the moved tab\'s', await waitState(await model(leftFront)), `${leftFront} ${await sidebarState()} ${await model(leftFront)}`);
   await toggle(ui2);
   check('closing it in the new window', await waitState(false, ui2), await sidebarState(ui2));
@@ -165,17 +200,17 @@ const launch = (profile) => electron.launch({
   await showTab(tabB);
   check('moved back, the tab brings its closed state', await waitState(false), await sidebarState());
 
-  // ---- 7. Which tab is open before the restart: A.
-  await showTab(tabA);
+  // ---- 7. Which tab is open before the restart: C (a web page, so the session keeps it; A is a new-tab page, which it does not).
+  await showTab(tabC);
   await waitState(false);
   await toggle();
   await waitState(true);
-  check('open on A before the restart', (await model(tabA)) === true, await model(tabA));
+  check('open on C before the restart', (await model(tabC)) === true, await model(tabC));
   await showTab(tabB);
   await waitState(false);
 
   // ---- 8. Restart: the saved session brings each tab back with its own state.
-  await showTab(tabA);
+  await showTab(tabC);
   await waitState(true);
   await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
   await app.close();

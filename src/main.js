@@ -6042,7 +6042,7 @@ function openNotified({ run, kind, approvalTab }) {
 // A tab the AI worked in has no chat of its own (it carried the open one): it shows the chat the notification is about, opened.
 function showChatInTab({ rec, t: tab }, chatIdWanted) {
   try {
-    if (chatBind.chatOf(tab.id) !== chatIdWanted) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatIdWanted, { share: true }); withWindow(rec, () => followTabChat(tab)); }
+    if (chatBind.chatOf(tab.id) !== chatIdWanted) { chatBind.bind(tab.id, chatIdWanted, { share: true }); withWindow(rec, () => followTabChat(tab)); }
     setTabSidebar(tab.id, true);
   } catch { /* the sidebar's own open-chat still follows */ }
 }
@@ -6083,16 +6083,15 @@ const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antig
 onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
-// Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
-// agent feature opening the sidebar for the tab in front) and applies the front tab's answer from every tabs state.
+// Each tab keeps its own answer, whatever chat it shows or shares: opening or closing the sidebar in one tab never opens or
+// closes it in another (tabs showing the same chat used to share it, so a toggle in one flipped the others). The renderer asks
+// for it (sidebar:set, from the toolbar button, Ctrl+J, or an agent feature opening the sidebar for the tab in front) and
+// applies the front tab's answer from every tabs state.
 const sidebarTabs = sidebarTabsLib.create();
-// A tab that only carries the chat you were in (no chat of its own: followTabChat) keeps its own sidebar state: it neither takes
-// nor gives the open/closed answer of the tabs showing the same chat, so each tab's sidebar stays as the user left it.
-const carriedTabs = new Set();
 const sidebarSharers = (tabId) => {
-  const c = chatBind.chatOf(tabId);
-  const mate = tabs.find((t) => t.id === tabId)?.split ? splitPartner(tabs.find((t) => t.id === tabId)) : null; // [split view] the two sides of a pair open and close the sidebar together (the page area must not jump when the other side is clicked)
-  return [...(c && !carriedTabs.has(tabId) ? chatBind.tabsOf(c).filter((t) => t !== tabId && !carriedTabs.has(t)) : []), ...(mate ? [mate.id] : [])];
+  const tab = tabs.find((t) => t.id === tabId);
+  const mate = tab?.split ? splitPartner(tab) : null; // [split view] the two sides of a pair open and close the sidebar together (the page area must not jump when the other side is clicked)
+  return mate ? [mate.id] : [];
 };
 const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
 function setTabSidebar(tabId, open) {
@@ -6170,7 +6169,7 @@ function pushChatView(wc) {
 // `push`: tell the sidebar (false when the sender already shows it).
 function followTabChat(tab, { push = true } = {}) {
   if (!tab || tab.isolated || tab.settings || tab.rec?.agent) return; // Settings keeps whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
-  if (tab.managerPage === 'chat' && !chatBind.chatOf(tab.id)) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatId, { share: true }); } // the chat page keeps the chat it was left on, like any tab; one with none yet takes the open chat and keeps it from then on
+  if (tab.managerPage === 'chat' && !chatBind.chatOf(tab.id)) { chatBind.bind(tab.id, chatId, { share: true }); } // the chat page keeps the chat it was left on, like any tab; one with none yet takes the open chat and keeps it from then on
   const own = chatBind.chatOf(tab.id) || (tab.managerPage === 'chat' ? null : pinnedChat(tab.id));
   const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId), carry: readSettings().oneChatPerTab !== true });
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
@@ -6179,7 +6178,6 @@ function followTabChat(tab, { push = true } = {}) {
     if (chatBind.chatOf(tab.id) !== plan.chat) chatBind.bind(tab.id, plan.chat); // (a tab already showing it stays as it is: coming to the front must not make it the home)
     const keep = unseen(plan.chat);
     if (plan.chat !== chatId && !switchChat(plan.chat, { ensure: true, quiet: true })) { // its saved file can't be read (gone, or locked): the tab lets go of it and starts over, never an empty chat under its id
-      carriedTabs.delete(tab.id);
       chatBind.unbindTab(tab.id);
       followTabChat(tab, { push });
       const page = tab.managerPage === 'chat' ? tab.view?.webContents : null;
@@ -6189,7 +6187,6 @@ function followTabChat(tab, { push = true } = {}) {
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.carry) {
-    carriedTabs.add(tab.id);
     chatBind.bind(tab.id, plan.carry, { share: true }); // the chat carries on in this tab; its home moves here when a message is sent from it (agent:ask)
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
@@ -6291,14 +6288,12 @@ function refreshSidebars() {
 function bindOpenChatHere(sender) {
   const page = pageTabOf(sender);
   if (page) { // a chat page opened it: that page shows it from now on (no tab loses it, no run moves onto the page's tab)
-    carriedTabs.delete(page.id);
     chatBind.bind(page.id, chatId, { share: true });
     shownChat.set(sender, chatId);
     pushAttention();
     refreshSidebars();
     return;
   }
-  carriedTabs.delete(activeId);
   const run = chatRuns.get(chatId);
   chatBind.move(chatId, activeId);
   if (run && !run.deleted) {
@@ -6337,7 +6332,6 @@ function chatTabGone(id, goneRec = null) {
   warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
   grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
-  carriedTabs.delete(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
@@ -10861,7 +10855,6 @@ function startNewChat(event, { temporary = false } = {}) {
   switchChat(null);
   if (temporary) temporaryChats.add(chatId);
   const forTab = pageTabOf(event.sender)?.id ?? activeId; // (a chat page's New chat is its own tab's)
-  carriedTabs.delete(forTab);
   chatBind.bind(forTab, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
   if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
   pushAttention();
@@ -11081,7 +11074,6 @@ ipcMain.handle('chats:share', async (event, id) => {
   const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
-    carriedTabs.delete(forTab);
     chatBind.bind(forTab, chatId, { share: true });
     if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
     pushAttention();

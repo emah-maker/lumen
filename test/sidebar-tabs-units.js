@@ -7,7 +7,7 @@ const { createBindings } = require('../src/features/tab-chats');
 let failures = 0;
 const test = (name, fn) => { try { fn(); console.log(`PASS  ${name}`); } catch (e) { failures++; console.log(`FAIL  ${name}\n      ${e.message}`); } };
 
-// The sharers of a tab, as main.js asks it of the chat bindings.
+// A sharer list built from chat bindings, to exercise the library (main.js itself now passes only a split view's other side).
 const world = () => {
   const bind = createBindings();
   const st = create();
