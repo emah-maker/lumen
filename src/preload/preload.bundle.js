@@ -724,6 +724,7 @@ contextBridge.exposeInMainWorld('assistant', {
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+  setEffort: (level) => ipcRenderer.invoke('settings:set-effort', level),
   useGrokBuild: () => ipcRenderer.invoke('settings:use-grok-build'),
   useCodex: () => ipcRenderer.invoke('settings:use-codex'),
   useAntigravity: () => ipcRenderer.invoke('settings:use-antigravity'),

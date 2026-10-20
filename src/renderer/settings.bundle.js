@@ -761,7 +761,9 @@ else {
 
 
 
-window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false } = {}) => {
+
+
+window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false, effort = null } = {}) => {
   const uid = `pk${Math.random().toString(36).slice(2, 8)}`;
 
 
@@ -784,7 +786,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const where = Object.assign(document.createElement('span'), { className: 'picker-provider' });
   const text = Object.assign(document.createElement('span'), { className: 'picker-text' });
   const last = Object.assign(document.createElement('span'), { className: 'picker-last', hidden: true });
-  button.append(where, text, last);
+  const level = Object.assign(document.createElement('span'), { className: 'picker-effort-tag', hidden: true });
+  button.append(where, text, level, last);
   if (anchor) button.hidden = true;
   const menu = Object.assign(document.createElement('div'), { className: 'picker-menu', hidden: true });
   const search = Object.assign(document.createElement('input'), { type: 'search', className: 'picker-search', autocomplete: 'off', spellcheck: false });
@@ -829,7 +832,54 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     chips.append(chip);
   }
   const passes = (o) => o.dataset.more || filters.every((f) => !on.has(f.key) || f.test(o));
-  menu.append(head, search, chips, list, live);
+
+  const EFFORT_SHORT = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'XHigh', max: 'Max' };
+  const EFFORT_FULL = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Maximum' };
+  const EFFORT_HINT = { '': 'Uses your default for this AI', minimal: 'Fastest, barely thinks', low: 'Faster, lighter thinking', medium: 'Balanced', high: 'Thinks longer on hard tasks', xhigh: 'Thinks much longer', max: 'Thinks longest, slowest' };
+  const effRow = Object.assign(document.createElement('div'), { className: 'picker-effort', hidden: true });
+  const effHead = Object.assign(document.createElement('span'), { className: 'picker-effort-label', id: `${uid}-effort` });
+  const seg = Object.assign(document.createElement('div'), { className: 'picker-effort-seg' });
+  seg.setAttribute('role', 'radiogroup');
+  seg.setAttribute('aria-labelledby', effHead.id);
+  const effHint = Object.assign(document.createElement('span'), { className: 'picker-effort-hint' });
+  effRow.append(effHead, seg, effHint);
+  const levelName = (l) => tr(`picker.effort.full.${l || 'auto'}`, l ? EFFORT_FULL[l] || l : 'Auto');
+  let segKey = '';
+  function renderEffort() {
+    const levels = effort ? effort.levels() : [];
+    effRow.hidden = !levels.length;
+    if (!levels.length) { segKey = ''; return; }
+    const cur = levels.includes(effort.value()) ? effort.value() : '';
+    effHead.textContent = tr('picker.effort', 'Effort');
+    effHint.textContent = tr(`picker.effort.hint.${cur || 'auto'}`, EFFORT_HINT[cur] || '');
+    const key = levels.join();
+    if (key !== segKey) {
+      segKey = key;
+      seg.replaceChildren(...['', ...levels].map((l) => {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: 'picker-effort-opt', textContent: l ? tr(`picker.effort.${l}`, EFFORT_SHORT[l] || l) : tr('picker.effort.auto', 'Auto') });
+        b.dataset.level = l;
+        b.setAttribute('role', 'radio');
+        b.title = levelName(l);
+        b.setAttribute('aria-label', levelName(l));
+        return b;
+      }));
+    }
+    for (const b of seg.children) { const on = b.dataset.level === cur; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
+  }
+  const effChoose = (l) => { effort.set(l); renderEffort(); sync(); };
+  seg.addEventListener('pointerdown', (e) => { if (e.target.closest('.picker-effort-opt')) e.preventDefault(); });
+  seg.addEventListener('click', (e) => { const b = e.target.closest('.picker-effort-opt'); if (b) effChoose(b.dataset.level); });
+  seg.addEventListener('keydown', (e) => {
+    const opts = [...seg.children];
+    const at = opts.indexOf(document.activeElement);
+    const to = e.key === 'ArrowRight' ? (at + 1) % opts.length : e.key === 'ArrowLeft' ? (at - 1 + opts.length) % opts.length : e.key === 'Home' ? 0 : e.key === 'End' ? opts.length - 1 : -1;
+    if (to === -1 || at === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    opts[to].focus();
+    effChoose(opts[to].dataset.level);
+  });
+  menu.append(head, search, chips, list, live, effRow);
   let loading = false;
   let slow = false;
   let slowTimer = 0;
@@ -848,9 +898,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else { where.textContent = tag && !name.toLowerCase().startsWith(tag.toLowerCase()) ? tag : ''; text.textContent = name; }
     last.textContent = option ? lastOf(option) : '';
     last.hidden = !last.textContent;
+    const lv = effort && option && effort.levels().length ? effort.value() : '';
+    level.textContent = lv && effort.levels().includes(lv) ? `· ${tr(`picker.effort.${lv}`, EFFORT_SHORT[lv] || lv)}` : '';
+    level.hidden = !level.textContent;
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
     button.title = option ? [groupOf(option), name, option.value.toLowerCase() === name.toLowerCase() ? '' : option.value].filter(Boolean).join(' · ') : '';
-    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': '));
+    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': ') + (level.hidden ? '' : `, ${tr('picker.effort.aria', '{level} effort', { level: levelName(effort.value()) })}`));
     requestAnimationFrame(fitTag);
   };
 
@@ -866,9 +919,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
 
     const full = nameOf(select.selectedOptions[0] || { dataset: {}, textContent: '' });
     text.textContent = full;
-    if (text.scrollWidth + 30 > room) text.textContent = shortName(full);
+    if (text.scrollWidth + (level.hidden ? 0 : level.scrollWidth + 6) + 30 > room) text.textContent = shortName(full);
     button.classList.remove('picker-narrow');
-    const need = where.scrollWidth + text.scrollWidth + (last.hidden ? 0 : last.scrollWidth + 6) + 30;
+    const need = where.scrollWidth + text.scrollWidth + (level.hidden ? 0 : level.scrollWidth + 6) + (last.hidden ? 0 : last.scrollWidth + 6) + 30;
     button.classList.toggle('picker-narrow', need > Math.min(room, 320));
   }
   if (typeof ResizeObserver === 'function') new ResizeObserver(fitTag).observe(button.parentElement?.parentElement || button);
@@ -1173,6 +1226,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     place();
     { const d = document.scrollingElement; docAt = d ? { top: d.scrollTop, left: d.scrollLeft } : null; }
     centreNext = true;
+    renderEffort();
     render();
     document.addEventListener('pointerdown', outside, true);
     window.addEventListener('resize', onResize);
@@ -1196,7 +1250,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   });
   const page = () => Math.max(1, Math.floor(list.clientHeight / 44));
   function onKey(e) {
-    const onControl = e.target.closest?.('.picker-chip, .picker-back');
+    const onControl = e.target.closest?.('.picker-chip, .picker-back, .picker-effort-opt');
     if (onControl && (e.key === 'Enter' || e.key === ' ')) return;
     if (onControl && /^(Arrow(Up|Down)|Page(Up|Down)|Home|End)$/.test(e.key)) owner().focus();
     if (e.key === 'ArrowDown') setActive(active + 1);
@@ -1206,6 +1260,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else if ((e.key === 'Home' || e.key === 'End') && (e.target !== search || !search.value)) setActive(e.key === 'Home' ? 0 : rows.length - 1);
     else if (e.key === 'Enter') { rows[active]?.el.click(); }
     else if (e.key === 'Escape') { if (search.value) { search.value = ''; render(); } else if (onBack) { close(false); onBack(); } else close(); }
+    else if (e.key === 'Tab' && !head.querySelector('.picker-back') && !filters.length && !effRow.hidden) {
+
+      const stops = [owner(), seg.querySelector('[tabindex="0"]')];
+      const next = stops.indexOf(document.activeElement) + (e.shiftKey ? -1 : 1);
+      if (next < 0 || next >= stops.length) { close(false); return; }
+      stops[next].focus();
+    }
     else if (e.key === 'Tab' && (head.querySelector('.picker-back') || filters.length)) {
 
       const stops = [head.querySelector('.picker-back'), owner(), ...chips.children].filter((x) => x && !x.hidden);
@@ -4351,6 +4412,7 @@ async function buildAi(card) {
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
     toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')),
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
+    toggle('aiWordControl', tr('settings.ai.wordControl', 'Let the AI use Microsoft Word'), tr('settings.ai.wordControlDesc', 'The AI can read and write Word documents directly (Windows, with Word installed; a .docx file can be read and added to without Word). It asks before it changes a document and shows the file before it saves. Nothing starts until you ask it to work with a document.')),
   );
 
   const advancedRows = [
