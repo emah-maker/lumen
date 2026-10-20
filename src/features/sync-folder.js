@@ -100,6 +100,7 @@ function createSyncService(deps) {
   // ---- providers ----
   function providers() {
     const list = KINDS.filter((k) => kinds[k]).map((k) => deps.makeProvider(k));
+    if (kinds.chats) list.push(deps.makeProvider('projects'), deps.makeProvider('project-files')); // [project workspace] chats travel with their projects
     if (withPasswords) list.push(deps.makeProvider('passwords'));
     return list.filter(Boolean);
   }

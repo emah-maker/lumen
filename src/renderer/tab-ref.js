@@ -25,7 +25,7 @@
     const title = (live && live.title) || snap?.t || '';
     const url = (live && live.url) || snap?.u || '';
     const reopen = live ? live.reopen : /^https?:\/\//i.test(snap?.u || '');
-    return { state, title, url, reopen, favicon: live?.favicon || null };
+    return { state, title, url, reopen, favicon: live?.favicon || snap?.f || null };
   }
   function paint(el) {
     const v = view(el);
@@ -42,7 +42,7 @@
     if (closed) tip.push(tr(v.reopen ? 'tabref.closed.reopen' : 'tabref.closed.gone'));
     el.title = tip.join('\n');
     const icon = el.querySelector('.tab-ref-icon');
-    const src = !closed && v.favicon ? v.favicon : '';
+    const src = v.favicon || ''; // (a closed tab keeps its icon, drawn dimmed)
     if (icon.dataset.src !== src) {
       icon.dataset.src = src;
       icon.textContent = '';
@@ -92,7 +92,7 @@
     el.className = 'tab-ref';
     if (key) el.dataset.key = key;
     el.innerHTML = '<span class="tab-ref-icon" aria-hidden="true"></span><span class="tab-ref-title"></span>';
-    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || '') }; if (key) snaps.set(key, el._snap); }
+    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || ''), f: String(snap.f || '') }; if (key) snaps.set(key, el._snap); }
     el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); click(el); });
     paint(el);
     if (key) { let set = chips.get(key); if (!set) chips.set(key, (set = new Set())); set.add(el); sync(); }

@@ -1049,6 +1049,13 @@ async function askInNewChat(text, files = []) {
   ask(text, images);
 }
 
+// [ask ai new chat] A question that comes with its own context ("Ask AI about this", the command bar): it starts a new chat, unless the open one is
+// still empty. A reply running in the open chat is not stopped: it goes on there, in History.
+function askInFreshChat(text) {
+  if (!$('empty').hidden) $('new-chat').click();
+  return ask(text);
+}
+
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
 // `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
 function ask(text, images = [], tabs = null, screen, opts = null) {
