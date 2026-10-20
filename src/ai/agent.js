@@ -462,19 +462,19 @@ const TOOLS = [
   },
   {
     name: 'open_tab',
-    description: 'Open a URL or local .pdf path (or a page, SVG or picture you wrote) in a background tab; show:true fronts it.',
+    description: 'Open a URL or local .pdf path (or a file you wrote) in a background tab; show:true fronts it; keep:true if the user needs it after.',
     input_schema: {
       type: 'object',
-      properties: { url: { type: 'string' }, show: { type: 'boolean' } },
+      properties: { url: { type: 'string' }, show: { type: 'boolean' }, keep: { type: 'boolean' } },
       required: ['url'],
     },
   },
   {
     name: 'switch_tab',
-    description: 'Work in another tab; show:true fronts it.',
+    description: 'Work in another tab; show/keep as open_tab.',
     input_schema: {
       type: 'object',
-      properties: { tab_id: { type: 'integer' }, show: { type: 'boolean' } },
+      properties: { tab_id: { type: 'integer' }, show: { type: 'boolean' }, keep: { type: 'boolean' } },
       required: ['tab_id'],
     },
   },
@@ -6781,7 +6781,7 @@ ${same}
       }
       case 'open_tab': {
         if (taskScope.getStore()?.chat?.pictureAsk && /\.(?:svg|html?|png|jpe?g|gif|webp)(?:[?#].*)?$/i.test(String(input.url || ''))) throw new Error('Pictures show in the chat: do not open a file in a tab to preview it. Use generate_image (svg for exact graphs and math).');
-        const tab = this.browser.openTab(this.ownFileUrl(input.url) || navUrl(input.url), { ai: true, show: input.show === true }); // [ai manners] opens behind the user's tab, marked as the AI's
+        const tab = this.browser.openTab(this.ownFileUrl(input.url) || navUrl(input.url), { ai: true, show: input.show === true, keep: input.keep === true }); // [ai manners] opens behind the user's tab, marked as the AI's (keep: not closed when the run ends)
         this.pinTab(tab.id); // the task carries on there, in front or not
         const redirects = this.guardRedirects(tab.webContents, { clientSide: true });
         try {
@@ -6798,6 +6798,7 @@ ${same}
         const listed = agentTabList(this.browser.listTabs()).find((t) => t.id === input.tab_id);
         if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);
         if (!listed || !this.browser.switchTab(input.tab_id, { show: input.show === true })) throw new Error(`No tab with id ${input.tab_id}.`);
+        if (input.keep === true) this.browser.keepAiTab?.(input.tab_id); // [ai manners] a tab of its own the user needs after the run
         this.pinTab(input.tab_id);
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
