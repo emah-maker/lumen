@@ -1748,6 +1748,9 @@ body.split-dragging { user-select: none; cursor: col-resize; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+.pref-no-extensions browser-action-list, .pref-no-extensions #actions-overflow { display: none !important; }
+#actions-overflow { position: relative; }
+#actions-overflow.has-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
 /* ---- tab-search.css */
 .tab-search-btn { flex: none; width: 28px; height: 28px; margin-left: 2px; }
 .tab-search-btn svg { width: 14px; height: 14px; }
