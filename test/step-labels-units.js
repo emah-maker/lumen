@@ -154,6 +154,16 @@ eq('empty', L.taskName(''), '');
 // ---- saved input is bounded
 check('compactInput keeps the naming fields and bounds them', (() => { const c = sl.compactInput('Bash', { command: 'x'.repeat(5000), description: 'd', timeout: 5, other: { deep: 1 } }); return c.command.length <= 600 && c.description === 'd' && !('other' in c) && !('timeout' in c); })(), '');
 
+// ---- a tool with no line of its own: its name in plain words and its main argument, never "Using a tool"
+eq('ToolSearch with its query', L.generic('ToolSearch', { query: 'calendar' }), 'Looking up a tool: calendar');
+eq('a Lumen tool with no special line', L.generic('mcp__lumen__list_files', { folder: 'downloads' }), 'Looking at files: downloads');
+eq('an unknown name is humanized', L.generic('SomethingNew', {}), 'Using something new');
+eq('an unknown snake_case name with a path argument', L.generic('mcp__x__do_the_thing', { path: 'C:\\a\\b\\notes.txt' }), 'Using do the thing: notes.txt');
+eq('no name at all is the last resort', L.generic('', {}), 'Using a tool');
+const cc = require('../src/ai/claude-code');
+check('Claude Code: an early row for a tool with no early label is not generic', cc.earlyLabel('list_tabs') === 'Listing the open tabs' && cc.earlyLabel('document') === 'Working on the document', cc.earlyLabel('list_tabs'));
+check('Claude Code: its own tools get plain labels', cc.builtinLabel('ToolSearch', { query: 'x' }) === 'Looking up a tool: x' && cc.builtinLabel('TaskStop', {}) === 'Stopping a task', cc.builtinLabel('TaskStop', {}));
+
 // ---- wiring
 const page = read('src/renderer/chat-page.html');
 const core = read('src/renderer/chat-core.js');

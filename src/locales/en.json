@@ -3813,6 +3813,58 @@
   "step.failed.push": "Couldn't push {what}",
   "step.failed.pull": "Couldn't pull {what}",
   "step.tool": "Using a tool",
+
+  "step.withArg": "{label}: {arg}",
+
+  "step.tool.toolSearch": "Looking up a tool",
+
+  "step.tool.bashOutput": "Checking a command's output",
+
+  "step.tool.killShell": "Stopping a command",
+
+  "step.tool.exitPlan": "Finishing the plan",
+
+  "step.tool.enterPlan": "Planning",
+
+  "step.tool.askUser": "Asking you a question",
+
+  "step.tool.monitor": "Watching a process",
+
+  "step.tool.taskStop": "Stopping a task",
+
+  "step.tool.taskOutput": "Reading a task's result",
+
+  "step.tool.wakeup": "Scheduling a check-in",
+
+  "step.tool.notebookRead": "Reading a notebook",
+
+  "step.tool.listFiles": "Looking at files",
+
+  "step.tool.clipboard": "Using the clipboard",
+
+  "step.tool.document": "Working on the document",
+
+  "step.tool.verify": "Checking the edits",
+
+  "step.tool.image": "Making a picture",
+
+  "step.tool.memory": "Using memory",
+
+  "step.tool.notes": "Using notes",
+
+  "step.tool.skill": "Using a skill",
+
+  "step.tool.macro": "Running a macro",
+
+  "step.tool.readingList": "Using the reading list",
+
+  "step.tool.connector": "Using a connector",
+
+  "step.tool.desktop": "Using another program",
+
+  "step.tool.readPdf": "Reading the PDF",
+
+  "step.tool.listTabs": "Listing the open tabs",
   "card.openPreview.title": "Switch to this tab, or open its page again if the tab was closed",
   "card.live": "{title}: {state}",
   "tabref.switch": "Switch to tab: {title}",

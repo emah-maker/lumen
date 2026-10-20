@@ -202,7 +202,7 @@
         summary.firstChild.textContent = label;
         const list = el('div', { className: 'step-items' });
         for (const tool of tools) {
-          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : t('step.tool')); // (an older chat keeps its rows; a command it still has is named plainly)
+          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : plainUnknown(tool)); // (an older chat keeps its rows; a command it still has is named plainly)
           const row = el('div', { className: tool.ok === false ? 'step failed restored' : 'step done restored', title: text });
           row.innerHTML = '<span class="step-detail"></span>';
           row.firstChild.textContent = text;
@@ -214,7 +214,8 @@
     }
     return out;
   }
-  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return t('step.tool'); } }
+  function plainUnknown(tool) { try { return window.stepLabels?.defaults?.generic(tool.name, tool.input || {}) || t('step.tool'); } catch { return t('step.tool'); } }
+  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return plainUnknown(tool); } }
 
   // ---- Ctrl+Shift+C: copy the latest reply
   document.addEventListener('keydown', (e) => {
