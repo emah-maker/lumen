@@ -6,33 +6,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// Folders the suites make that an interrupted run may leave in the real temp folder, by name. Lumen's own
-// temp folders (lumen-cc-*, lumen-cc1-*, lumen-usage-*, cb-ant-*, cb-import-*, the compile cache) are not matched: a Lumen
-// the user is running may hold them.
-const TEST_PROFILE = /^(claude-browser-test-|playwright-artifacts-|cb-(?!ant-[A-Za-z0-9]{6}$|import-)|lumen-(?!cc-|cc1-|usage-(?!test)|compile-cache|apple-music-art|release-|rel-|update-|e2e-lock))/;
-
 function removeDir(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 }); } catch (err) { console.error(`could not remove ${dir}: ${err.message}`); }
 }
 
-// Leftovers in the real temp folder created at or after `since` that look like a test's.
-function removeTestProfiles(since) {
-  const tmp = os.tmpdir();
-  let names = [];
-  try { names = fs.readdirSync(tmp); } catch { return; }
-  for (const name of names) {
-    if (!TEST_PROFILE.test(name)) continue;
-    const dir = path.join(tmp, name);
-    try { if (fs.statSync(dir).mtimeMs >= since) removeDir(dir); } catch { /* gone already */ }
-  }
-}
-
 // { env, done }: spread env into the suite's child env; call done() after it exits.
-// sweep: false when suites run side by side (test-units.js --jobs): sweeping the real temp folder could remove a neighbour's folders.
-function suiteTmp(name, { sweep = true } = {}) {
+// (Nothing is ever removed from the shared temp folder by name: another run, or the Lumen the user is running, may own what matches. A run removes only the folder it made.)
+function suiteTmp(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `lt-${name.replace(/[^a-z0-9]/gi, '').slice(0, 10)}-`));
-  const started = Date.now();
-  return { env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir }, done() { removeDir(dir); if (sweep) removeTestProfiles(started); } };
+  return { env: { ...process.env, TEMP: dir, TMP: dir, TMPDIR: dir }, done() { removeDir(dir); } };
 }
 
-module.exports = { suiteTmp, removeTestProfiles, TEST_PROFILE };
+module.exports = { suiteTmp };

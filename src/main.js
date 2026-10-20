@@ -1556,10 +1556,16 @@ async function setupExtensions() {
   });
   extensions.on('browser-action-popup-created', (popup) => {
     const place = popup.updatePosition.bind(popup);
+    const sizeIt = popup.setSize.bind(popup);
+    let wanted = null; // the size the page asked for, in DIPs
+    popup.setSize = (rect) => { sizeIt(rect); const v = popup.browserWindow; wanted = v && !v.isDestroyed() ? { width: v.getBounds().width, height: v.getBounds().height } : null; };
     popup.updatePosition = () => {
       place();
       const view = popup.browserWindow;
       if (!view || view.isDestroyed() || !win || win.isDestroyed()) return;
+      // Moving the popup to a screen with another scale (Lumen on a 150% monitor, the popup first made on a 100% one) keeps its pixels, not its DIPs: it came out 2/3 size and clipped. Ask for its size again, now that it is on the right screen.
+      const now = view.getBounds();
+      if (wanted && (now.width !== wanted.width || now.height !== wanted.height)) view.setBounds({ ...now, ...wanted });
       const b = view.getBounds();
       const w = win.getBounds();
       const x = Math.max(w.x + 8, Math.min(b.x, w.x + w.width - b.width - 8));
