@@ -1,3 +1,5 @@
+/* global shownChatId, renderAttachments */
+/* eslint no-global-assign: "off", no-undef: "off" */
 // What the AI sidebar keeps per tab when you switch tabs and chats (main.js "[chat per tab]", features/tab-chats.js, renderer/chat-core.js).
 // A fake Claude client (no network, no key). Two modes are walked through: "One chat per tab" (each tab owns a chat) and the default
 // (a tab with no chat of its own carries the chat you were in). Checked, for every switch A -> B -> A:
