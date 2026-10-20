@@ -23,6 +23,7 @@
   "agent.notify.failedHint": "Open the chat and press Retry.",
   "agent.notify.approval": "AI needs your OK",
   "agent.notify.approvalBody": "Open the chat to answer.",
+  "agent.notify.open": "Open chat",
   "approval.allow": "Allow site for this chat",
   "approval.allowed": "Allowed on {host}",
   "approval.allowedTool": "Allowed: {host}",
@@ -2778,7 +2779,7 @@
   "settings.ai.stayOnMyTab": "Bring tabs the AI opened to the front",
   "settings.ai.stayOnMyTabDesc": "On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.",
   "settings.ai.closeAiTabs": "When the AI finishes",
-  "settings.ai.closeAiTabsDesc": "Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close closes them when the AI is done, with Undo. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.",
+  "settings.ai.closeAiTabsDesc": "Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close (the default) closes them when the AI is done, with Undo, but keeps the tab you are looking at, one playing sound, one holding text you typed, and one the AI said you still need. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.",
   "settings.ai.closeAiTabs.off": "Leave open",
   "settings.ai.closeAiTabs.ask": "Ask",
   "settings.ai.closeAiTabs.always": "Close",
@@ -3821,6 +3822,58 @@
   "step.failed.push": "Couldn't push {what}",
   "step.failed.pull": "Couldn't pull {what}",
   "step.tool": "Using a tool",
+
+  "step.withArg": "{label}: {arg}",
+
+  "step.tool.toolSearch": "Looking up a tool",
+
+  "step.tool.bashOutput": "Checking a command's output",
+
+  "step.tool.killShell": "Stopping a command",
+
+  "step.tool.exitPlan": "Finishing the plan",
+
+  "step.tool.enterPlan": "Planning",
+
+  "step.tool.askUser": "Asking you a question",
+
+  "step.tool.monitor": "Watching a process",
+
+  "step.tool.taskStop": "Stopping a task",
+
+  "step.tool.taskOutput": "Reading a task's result",
+
+  "step.tool.wakeup": "Scheduling a check-in",
+
+  "step.tool.notebookRead": "Reading a notebook",
+
+  "step.tool.listFiles": "Looking at files",
+
+  "step.tool.clipboard": "Using the clipboard",
+
+  "step.tool.document": "Working on the document",
+
+  "step.tool.verify": "Checking the edits",
+
+  "step.tool.image": "Making a picture",
+
+  "step.tool.memory": "Using memory",
+
+  "step.tool.notes": "Using notes",
+
+  "step.tool.skill": "Using a skill",
+
+  "step.tool.macro": "Running a macro",
+
+  "step.tool.readingList": "Using the reading list",
+
+  "step.tool.connector": "Using a connector",
+
+  "step.tool.desktop": "Using another program",
+
+  "step.tool.readPdf": "Reading the PDF",
+
+  "step.tool.listTabs": "Listing the open tabs",
   "card.openPreview.title": "Switch to this tab, or open its page again if the tab was closed",
   "card.live": "{title}: {state}",
   "tabref.switch": "Switch to tab: {title}",
@@ -3873,7 +3926,8 @@
   "newtab.images.unreadable": "{name} could not be read.",
   "newtab.images.limit": "Up to {max} images: {n} left out.",
   "newtab.images.pick": "Add images to your question",
-  "newtab.images.pickFilter": "Images",
+  "newtab.images.pickFilter": "Images"
+,
   "approval.app.once": "Allow for this chat",
   "approval.app.always": "Always allow this app",
   "approval.app.always.title": "Add this app to Settings → AI → Apps the AI can use. You can remove it there.",

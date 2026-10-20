@@ -210,7 +210,7 @@ const DEFAULTS = {
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
-  closeAiTabs: 'off', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js)
+  closeAiTabs: 'always', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js). Always by default: a tab the user needs stays (the one in front, typed text, sound, keep:true)
   dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
   dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic

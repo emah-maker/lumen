@@ -282,7 +282,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1085,7 +1085,9 @@ ipcMain.on('page-notification:click', (event) => {
   }
 });
 if (TEST) global.__notifyClick = { // chat notifications: tell(spec, kind) makes one for a fake run (no OS toast), click(item) is its click, activate() an activation without a click
-  tell: (spec, kind) => { const messages = []; if (spec.aiNavTabId != null) messages.aiNavTabId = spec.aiNavTabId; const run = { chatId: spec.chatId, messages, runId: 0, rec: curRec, pending: new Map(), reply: '', error: null, tabId: spec.tabId ?? null, homeTab: spec.homeTab ?? null }; if (spec.bind != null) chatBind.bind(spec.bind, spec.chatId); const item = showNotification(run, kind); (global.__notifyClick.items ||= []).push(new WeakRef(item.n)); return global.__notifyClick.items.length - 1; },
+  fakeRun: (spec) => { const messages = []; if (spec.aiNavTabId != null) messages.aiNavTabId = spec.aiNavTabId; if (spec.bind != null) chatBind.bind(spec.bind, spec.chatId); return { chatId: spec.chatId, messages, runId: 0, rec: curRec, pending: new Map(), reply: spec.reply || '', error: null, tabId: spec.tabId ?? null, homeTab: spec.homeTab ?? null }; },
+  note: (spec, kind) => { noteChatInApp(global.__notifyClick.fakeRun(spec), kind); return global.__chatNotes.at(-1); }, // the strip's toast instead (Lumen in front, another tab)
+  tell: (spec, kind) => { const run = global.__notifyClick.fakeRun(spec); const item = showNotification(run, kind); (global.__notifyClick.items ||= []).push(new WeakRef(item.n)); return global.__notifyClick.items.length - 1; },
   click: (i) => global.__notifyClick.items[i].deref().emit('click'), // (a collected notification would be undefined here: that is what the keeper prevents)
   activate: () => activateNotified(),
   kept: () => notifyKeeper.size(), isKept: (i) => { const n = global.__notifyClick.items[i].deref(); return Boolean(n) && notifyKeeper.has(n); }, collect: () => { global.gc?.(); return typeof global.gc === 'function'; },
@@ -5878,12 +5880,31 @@ const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRun
 // back), and the unread mark when the reply isn't in view.
 function tellUser(run, kind) {
   if (run.deleted) { unreadChats.delete(run.chatId); pushAttention(); return; } // a chat deleted while it worked leaves no unread mark or notification behind
-  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...runView(run) });
+  const view = runView(run);
+  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...view });
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
-  if (!decided.os || TEST || !Notification.isSupported()) return;
+  if (!decided.os) return;
+  if (view.focused) { noteChatInApp(run, kind); return; } // Lumen is in front on another tab: macOS shows no banner for the front app, so the strip's toast says it
+  if (TEST || !Notification.isSupported()) return;
   showNotification(run, kind);
 }
+// The tab strip's toast for a chat that finished or needs an OK while the user is in Lumen on another tab. "Open chat" goes where a
+// click on the system notification would (openNotified). The newest few are kept for that button.
+const chatNotes = new Map();
+let chatNoteSeq = 0;
+function noteChatInApp(run, kind) {
+  const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
+  const token = ++chatNoteSeq;
+  chatNotes.set(token, { run, kind, approvalTab: kind === 'approval' ? run.tabId ?? null : null });
+  for (const old of chatNotes.keys()) { if (chatNotes.size <= 10) break; chatNotes.delete(old); }
+  const rec = focusedRec() || curRec;
+  if (!rcAlive(rec) || !winRecs.has(rec)) return;
+  withWindow(rec, () => ui()?.send('tabs:organize-note', { text: text.title, undo: true, ttl: kind === 'approval' ? 20000 : 12000, chatNote: token, undoLabel: t('agent.notify.open'), undoTitle: [text.title, text.body].filter(Boolean).join('\n') }));
+  if (TEST) (global.__chatNotes ||= []).push({ token, kind, text: text.title });
+}
+ipcMain.handle('chat:open-note', (_e, token) => { const entry = chatNotes.get(Number(token)); return entry ? openNotified(entry) : false; });
 // Electron drops a Notification's click handler when the object is garbage collected, so the keeper holds each one until it is
 // clicked (or old). A toast clicked after it went to the Action Center arrives as an activation instead (activateNotified).
 const notifyKeeper = notifyTarget.createKeeper();
@@ -6263,8 +6284,9 @@ if (TEST) global.__tabChats = { setSidebar: (id, open) => setTabSidebar(id, open
 // ---------- [ai manners] close the tabs the AI opened (features/ai-manners.js)
 // A tab the AI opened (agentOpenTab, a research tab, a tab Lumen opened for a chat) is marked `openedBy` the run and chat, shown
 // in the strip, and can be closed again: under the reply, from a tab's menu, from a chat's row, or by the setting (Off / Ask /
-// Always). The user's own tabs never are: a tab they clicked in, typed in, navigated, pinned or moved loses the mark, a pinned
-// tab and the tab a chat lives in are skipped, and an automatic close also leaves the tab in front and tabs holding typed text.
+// Always, the default). The user's own tabs never are: a tab they clicked in, typed in, navigated, pinned or moved loses the mark, a pinned
+// tab and the tab a chat lives in are skipped, and an automatic close also leaves the tab in front, tabs holding typed text, a tab
+// playing sound, and a tab the AI said the user needs (open_tab / switch_tab keep:true: manners.keepAfterRun).
 const aiCloseUndo = new Map(); // token -> [{ url, partition, rec }]: what a close took, for Undo
 let aiCloseSeq = 0;
 const chatNotEmpty = (cid) => chatRuns.has(cid) || chats().list().some((c) => c.id === cid);
@@ -6280,7 +6302,8 @@ function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null, bu
   const busy = agent.runTabIds();
   for (const r of rec ? [rec] : [...winRecs]) {
     if (!rcAlive(r)) continue;
-    const opts = { runId, chatId, boundIds: [...bound], busyIds: busy, activeId: activeIdOf(r), auto };
+    const audibleIds = auto ? tabsOf(r).filter((x) => x.openedBy && alive(x) && x.view.webContents.isCurrentlyAudible()).map((x) => x.id) : []; // [ai manners] a tab playing sound stays open after the run
+    const opts = { runId, chatId, boundIds: [...bound], busyIds: busy, audibleIds, activeId: activeIdOf(r), auto };
     for (const tab of wantBusy ? manners.busyKept(tabsOf(r), opts) : manners.closeSelection(tabsOf(r), opts)) found.push({ rec: r, tab });
   }
   return found;
@@ -6329,6 +6352,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
   const busyBefore = aiTabSelect({ ...selector, auto, busy: true }).length; // [ai manners] tabs a run is still working in: kept, and the toast says "Kept 1 tab the AI is still using"
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
+    if (alive(tab) && downloads.list.some((d) => d.state === 'progressing' && d.contents === tab.view.webContents)) return keepTab(rec, tab); // (a download in progress is the user's: closing the tab could cancel it)
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
@@ -8345,7 +8369,7 @@ const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
 const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.tabId ?? activeId) : activeId; };
 const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
 const agentOpenTab = (url, opts = {}) => {
-  const { ai = false, show: wantShow = false, ...rest } = opts || {};
+  const { ai = false, show: wantShow = false, keep = false, ...rest } = opts || {};
   const mcp = mcpCall();
   const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null; // ([acting helpers] a helper's tab never becomes the chat page's target)
   // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
@@ -8353,7 +8377,7 @@ const agentOpenTab = (url, opts = {}) => {
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
   const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : !rest.background));
-  const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: runOf() } : {}) });
+  const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: { ...runOf(), keep: keep === true } } : {}) }); // (keep: left open when the run ends)
   const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
   else if (show && !mcp) bindRunChatTo(tab.id);
@@ -8693,7 +8717,7 @@ const agent = new Agent({
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
-  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab),
+  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]

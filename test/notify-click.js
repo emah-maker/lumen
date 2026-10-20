@@ -2,7 +2,8 @@
 // 'page-notification:click'), like Chrome; a click the page fakes (dispatchEvent) does not, and the page's Notification API
 // is unchanged. A chat's own notification (main.js showNotification) goes to the tab the AI worked in (its own tab when it navigated),
 // an approval's to the tab it is about, a closed tab falls back to the chat's start; the notification stays referenced until clicked, and
-// an activation with no click (a toast from the Action Center) opens the newest. Real Lumen, throwaway profile, a local page.
+// an activation with no click (a toast from the Action Center) opens the newest. With Lumen in front the tab strip's toast says it instead
+// (main.js noteChatInApp), and its Open chat button goes to the same place. Real Lumen, throwaway profile, a local page.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
@@ -95,6 +96,15 @@ const http = require('http');
     await tell({ chatId: 'chat-e', homeTab: other, aiNavTabId: aiTab }, 'done');
     check('an activation without a click opens the newest notification', await N(() => global.__notifyClick.activate()) === true && (await active()) === aiTab, await active());
     check('and only once (a later plain relaunch just focuses)', (await N(() => global.__notifyClick.activate())) === false, '');
+
+    // Lumen in front on another tab (macOS shows no banner for the front app): the strip's toast says it, and its button goes where a click would
+    await N((_e, id) => global.__notifyClick.switchTab(id), other);
+    const note = await N((_e, s) => global.__notifyClick.note(s, 'done'), { chatId: 'chat-f', homeTab: other, aiNavTabId: aiTab, reply: 'Found 3 flights' });
+    const toast = await waitFor(() => ui.evaluate(() => { const n = document.querySelector('.organize-note'); return n && { text: n.querySelector('.organize-note-text')?.textContent, button: n.querySelector('button')?.textContent }; }));
+    check('a chat that finished while the user is on another tab shows a toast in the tab strip', toast && /Found 3 flights/.test(toast.text) && toast.button === 'Open chat' && note?.kind === 'done', JSON.stringify(toast));
+    await ui.evaluate(() => document.querySelector('.organize-note button').click());
+    check("the toast's Open chat goes to the AI's tab and opens the chat", await waitFor(async () => (await active()) === aiTab) && await waitFor(async () => (await ui.evaluate(() => window.__openChat)).includes('chat-f')), await active());
+    check('and the toast goes away', !(await ui.evaluate(() => Boolean(document.querySelector('.organize-note')))), '');
   } catch (err) {
     failures++;
     console.log(`FAIL  threw: ${err.stack || err}`);

@@ -74,5 +74,31 @@ check('opening a local PDF asks once per file (the read_pdf permission)', /local
 check('the tool descriptions say local PDFs work', /URL or local \.pdf path in the active tab/.test(agent) && /URL or local \.pdf path (\([^)]*\) )?in a background tab/.test(agent));
 
 fs.rmSync(root, { recursive: true, force: true });
-if (failures) { console.log(`${failures} FAILED`); process.exit(1); }
+if (failures) { console.log(`${failures} FAILED`); 
+// A real-world name (spaces, parentheses) in the forms an agent writes a path, and no PDF program needed to open it
+{
+  const odd = path.join(dir, 'Midterm_1_Review_Sheet_DiffEq (10).pdf');
+  fs.writeFileSync(odd, '%PDF-1.4\n');
+  const oddUrl = pathToFileURL(fs.realpathSync.native(odd)).href;
+  check('a name with spaces and parentheses', localPdf.resolve(odd)?.fileUrl === oddUrl && localPdf.resolve(odd).name === 'Midterm_1_Review_Sheet_DiffEq (10).pdf');
+  check('...as a file:// address (%20, parentheses)', localPdf.resolve(pathToFileURL(odd).href)?.fileUrl === oddUrl);
+  check('...quoted, with forward slashes', localPdf.resolve('"' + odd.split(BS).join('/') + '"')?.fileUrl === oddUrl);
+  check('a bare file name is refused with a plain "give the full path", not treated as a web address', /full path/.test(refused('Midterm_1_Review_Sheet_DiffEq (10).pdf') || '') && /full path/.test(refused('docs' + BS + 'a.pdf') || ''), String(refused('Midterm (10).pdf')));
+  check('web addresses ending .pdf are still web', localPdf.resolve('https://example.com/a (10).pdf') === null && localPdf.resolve('example.com/a.pdf') === null);
+  if (process.platform === 'win32') {
+    const drive = odd[0].toLowerCase();
+    const rest = odd.slice(3).split(BS).join('/');
+    check('Git Bash style /c/Users/...', localPdf.resolve('/' + drive + '/' + rest)?.fileUrl === oddUrl, String(refused('/' + drive + '/' + rest)));
+    check('WSL style /mnt/c/...', localPdf.resolve('/mnt/' + drive + '/' + rest)?.fileUrl === oddUrl);
+    check('Cygwin style /cygdrive/c/...', localPdf.resolve('/cygdrive/' + drive + '/' + rest)?.fileUrl === oddUrl);
+    check('a /c/ path to a missing file is not found, not a web error', /could not be found/.test(refused('/c/nope-' + Date.now() + '/x (1).pdf') || ''));
+    check('a network-looking //c/x is still refused', Boolean(refused('//c/share/a.pdf')));
+  }
+  // Lumen reads it with its own PDF reader (features/pdf-text.js), never a program: no pdftoppm anywhere in the source
+  const srcHits = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.js$/.test(e.name) && !/bundle/.test(e.name)) { const t = fs.readFileSync(p, 'utf8'); if (/(?:spawn|exec)\w*\([^)]*pdftoppm/.test(t)) srcHits.push(p); } } };
+  walk(path.join(__dirname, '..', 'src'));
+  check('Lumen never runs pdftoppm', srcHits.length === 0, srcHits.join(', '));
+}
+process.exit(1); }
 console.log('All local-pdf checks passed');
