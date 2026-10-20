@@ -93,7 +93,21 @@ function runParallel() {
   });
 }
 
-(jobs > 1 ? runParallel() : runSerial()).then((results) => {
+// A few suites load modules that require('electron'), and electron's index.js downloads its binary the first time it finds it missing.
+// Several suites at once would all start that download into the same folder and race ("File exists" on macOS). So when running in
+// parallel, install the binary once here first, before any suite starts. Nothing to do when it is already there.
+function ensureElectronBinary() {
+  const dir = path.join(__dirname, '..', 'node_modules', 'electron');
+  if (!fs.existsSync(path.join(dir, 'install.js')) || process.env.ELECTRON_OVERRIDE_DIST_PATH) return;
+  const pathFile = path.join(dir, 'path.txt');
+  const rel = fs.existsSync(pathFile) ? fs.readFileSync(pathFile, 'utf8') : '';
+  if (rel && fs.existsSync(path.join(dir, 'dist', rel))) return;
+  console.log('Installing the Electron binary once before the parallel suites start...');
+  const r = spawnSync(process.execPath, [path.join(dir, 'install.js')], { stdio: 'inherit' });
+  if (r.status !== 0) { console.error('Electron install failed'); process.exit(1); }
+}
+
+(jobs > 1 ? (ensureElectronBinary(), runParallel()) : runSerial()).then((results) => {
   results.sort((a, b) => (a.name < b.name ? -1 : 1));
   const failed = results.filter((r) => !r.ok);
   console.log('\n=== summary');
