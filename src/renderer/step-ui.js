@@ -846,6 +846,9 @@
     const touchedIds = Array.isArray(item.touched) ? item.touched.filter(Number.isInteger) : [];
     const lastBrowser = [...turn.cards].reverse().find((c) => c.hadBrowser);
     if (lastBrowser && touchedIds.length) { touchTabs(lastBrowser, touchedIds, item.tabs || null); tabsCount(lastBrowser); }
+    const written = Array.isArray(item.written) ? item.written.filter((x) => x && typeof x.id === 'string' && x.name) : []; // (main made these rows from the paths the reply kept: same links as live)
+    const filesCard = turn.cards[turn.cards.length - 1] || null; // (the card of the last step, as live: filesMade)
+    if (filesCard && written.length) { filesCard.files = written.slice(0, 12); filesCard.file = filesCard.files[filesCard.files.length - 1]; renderFiles(filesCard); }
     for (const card of turn.cards) { card.running = 0; refreshCard(turn, card); }
     return out;
   }
