@@ -17,6 +17,7 @@
     browser: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5S9.400 5.900 12 3.500Z"/></svg>',
     terminal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="m7.500 9.500 3 2.500-3 2.500M12.500 15h4"/></svg>',
     files: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.500h6.500L18 8v11.500a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.500 3.500V8H18M9 12.500h6M9 16h6"/></svg>',
+    word: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.500h6.500L18 8v11.500a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.500 3.500V8H18M9 11.500h6M9 14.500h6M9 17.500h3.500"/></svg>', // a page of text: Word work (a document)
   };
 
   // ---- rows
@@ -158,7 +159,7 @@
     el0.dataset.state = ''; // (the first refresh sets it: a browser card starts being watched then)
     el0.innerHTML = '<div class="act-head"><span class="act-icon"></span><div class="act-titles"><div class="act-title"></div><div class="act-sub"></div><div class="act-tabref" hidden></div></div></div>'
       + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"><div class="act-site"><img class="act-site-ico" alt="" hidden><span class="act-site-name"></span></div></div>'
-      + '<div class="act-shot2" hidden><img class="act-thumb2" alt="" decoding="async"></div>'
+      + '<div class="act-shot2" hidden><img class="act-thumb2" alt="" decoding="async"><div class="act-page" hidden></div></div>'
       + '<div class="act-status" hidden><span class="act-dot" aria-hidden="true"></span><span class="act-status-text"></span></div>'
       + '<div class="act-say" hidden></div>'
       + '<details class="act-tabs" hidden><summary class="act-tabs-head"></summary><div class="act-tabs-list"></div></details>'
@@ -167,7 +168,7 @@
       + '<div class="act-tabs-note" hidden></div>'
       + '<span class="act-live" role="status" aria-live="polite"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    const card = { el: el0, surface, entries: [], page: el0.querySelector('.act-page'), list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
@@ -198,7 +199,7 @@
       card.el.dataset.state = state;
       if (card.hadBrowser) { if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
     }
-    const kind = card.surface === 'browser' ? 'browser' : card.surface === 'app' ? 'terminal' : card.shellKind; // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
+    const kind = card.surface === 'browser' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
     const task = card.task || card.first;
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
@@ -308,8 +309,22 @@
     if (state !== 'working' || wait <= 0) write(); else card.liveTimer = setTimeout(() => { statusBar(card, card.el.dataset.state); }, wait);
   }
   // The tab a Browser card works in, as a chip (live title; clicking it switches to the tab).
+  // The document the AI works in, as the chip in the card's header (where a browser card has its tab): its name, and a click shows Word at the place it was changed.
+  function wordChip(card) {
+    const name = card.word.doc;
+    if (card.tabref.dataset.sig === `word|${name}`) { card.tabref.hidden = false; return; }
+    card.tabref.dataset.sig = `word|${name}`;
+    card.tabref.textContent = '';
+    const chip = el('button', { type: 'button', className: 'act-wordchip', title: tr('wordcard.chip.title', { doc: name }) });
+    chip.innerHTML = ICONS.word;
+    chip.append(el('span', { className: 'act-wordchip-name', textContent: name }));
+    chip.onclick = () => { if (card.app?.id) Promise.resolve(window.assistant?.desktopOpen?.(card.app.id)).catch(() => {}); };
+    card.tabref.append(chip);
+    card.tabref.hidden = false;
+  }
   function cardChip(card) {
     const t = card.tab;
+    if (card.surface === 'app' && card.word && card.word.doc && card.wordWork && !card.otherApp) { wordChip(card); return; } // (Word work: the document's name, which brings Word forward)
     if (card.surface !== 'browser') { card.tabref.hidden = true; return; } // (working in a command, a file or a program: the tab's chip waits)
     if (card.siteMode) { card.tabref.hidden = true; card.tabref.dataset.sig = ''; return; }
     if (!t || !window.tabRef) return;
@@ -407,8 +422,34 @@
     next();
   }
   const dropFrames = (card) => { card.frameGen = (card.frameGen || 0) + 1; card.nextSrc = null; };
+  // The page preview of a Word card (when Word's own window cannot be shown): the paragraphs around the last change, drawn as a small page; text only.
+  function setPage(card, page) {
+    const box = card.page;
+    if (!box) return;
+    if (!page || !Array.isArray(page.lines) || !page.lines.length) { box.hidden = true; box.textContent = ''; return; }
+    const sig = JSON.stringify(page.lines);
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.textContent = '';
+      let mark = null;
+      for (const line of page.lines.slice(0, 16)) {
+        const kind = /^(h[123]|p|li|tr)$/.test(String(line.k)) ? line.k : 'p';
+        const row = el('div', { className: `act-pg act-pg-${kind}${line.hl ? ' hl' : ''}` });
+        row.textContent = String(line.t ?? '').slice(0, 240);
+        box.append(row);
+        if (line.hl && !mark) mark = row;
+      }
+      box.setAttribute('role', 'img');
+      box.setAttribute('aria-label', tr('wordcard.pageAlt', { doc: String(page.doc || card.word?.doc || '') }));
+      if (mark) box.scrollTop = Math.max(0, mark.offsetTop - 36);
+    }
+    box.hidden = false;
+    card.img2.hidden = true;
+    card.shot2.hidden = false;
+  }
   function setShot2(card, src) {
     if (!src) return;
+    if (card.page) { card.page.hidden = true; card.img2.hidden = false; }
     if (card.img2.getAttribute('src') !== src) card.img2.src = src;
     card.shot2.hidden = false;
     if (!card.img2.alt) card.img2.alt = tr('card.thumb.alt2');
@@ -464,7 +505,7 @@
   // The surface a step works on: 'browser', 'shell' (commands and files), 'app' (another program on the PC), or null (no card).
   const bareName = (n) => String(n || '').replace(/^mcp__lumen__/, '');
   function surfaceFor(name) {
-    if (bareName(name) === 'desktop') return 'app';
+    if (bareName(name) === 'desktop' || bareName(name) === 'word') return 'app'; // (the word tool works in Word: the same card, with the document as its preview)
     return window.stepLabels.surfaceOf(name);
   }
   const isNote = (name) => bareName(name) === 'auto_allowed'; // "Allowed automatically: …": a small row in the card, never a line of its own
@@ -480,6 +521,7 @@
     if (surface === 'browser') card.hadBrowser = true;
     if (/^(mcp__lumen__)?(navigate|open_tab|go_back|go_forward|reload|switch_tab)$/.test(String(name || ''))) card.navigated = true;
     if (surface === 'shell') card.shellKind = WRITES.test(String(name)) ? 'files' : 'terminal';
+    if (surface === 'app') { if (String(name) === 'word') card.wordWork = true; else if (String(name) === 'desktop') card.otherApp = true; }
     if (card.surface !== surface) { card.surface = surface; card.el.dataset.surface = surface; }
   }
   // A row for an approval that was answered for you: small, inside the card (or, when no card is there yet, in its place until one is).
@@ -621,10 +663,12 @@
       turn.noteRows = null;
     }
     if (event.frame && card.surface === 'app' && card.app?.id === event.id && typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { setShot2(card, event.thumbnail); return true; } // a live picture: only the picture changes
-    setSurface(card, 'app', 'desktop');
+    setSurface(card, 'app', event.word === true ? 'word' : 'desktop');
     card.app = { id: event.id, name: String(event.app || ''), status: event.status || 'working' };
+    if (event.word === true) card.word = { doc: String(event.doc || '').slice(0, 200) };
     if (event.status === 'working' && event.task) card.latest = String(event.task);
-    if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { card.img2.alt = tr('desktopcard.thumbAlt', { app: card.app.name }); setShot2(card, event.thumbnail); }
+    if (event.word === true && event.page && Array.isArray(event.page.lines) && !(typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail))) { card.img2.removeAttribute('src'); setPage(card, event.page); } // (Word's window cannot be shown: the page around the change)
+    else if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { card.img2.alt = tr('desktopcard.thumbAlt', { app: event.word === true ? (card.word?.doc || card.app.name) : card.app.name }); setShot2(card, event.thumbnail); }
     else if (event.blocked) { card.img2.removeAttribute('src'); card.shot2.hidden = true; } // the window turned into something the AI may not use: its picture goes, the card shows no preview
     refreshCard(turn, card);
     return true;

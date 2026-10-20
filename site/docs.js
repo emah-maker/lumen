@@ -18,6 +18,7 @@ const PAGES = {
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
   'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
+  word: { title: 'The AI working in Word', file: 'docs/word.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },
   'meeting-helper': { title: 'Meeting helper', file: 'docs/meeting-helper.md' },
   'screen-recording': { title: 'Screen recording', file: 'docs/screen-recording.md' },

@@ -541,6 +541,86 @@ process.stdin.on('data', async (d) => {
   check('"Allowed automatically" rows are small rows in the card\'s step list (the one before the first step moved in), not lines between cards', synth.notes.length === 2 && /^Allowed automatically: reading/.test(synth.notes[0]) && synth.loose === 0, J(synth));
   check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done/.test(synth.done), J([synth.paused, synth.done]));
 
+  // ---- Word work: the same card, with the document as its preview (Word's window, or a page of the paragraphs around the change when the window cannot be shown),
+  // the document's name as the chip, the step in words, "Done" at the end. (A fake capture: a drawn picture stands in for Word's window.)
+  await app.evaluate(({ ipcMain }) => { global.__wordOpened = []; ipcMain.removeHandler('desktop:open'); ipcMain.handle('desktop:open', (_e, id) => { global.__wordOpened.push(id); return true; }); }); // (the chip asks main to show Word: main's answer is recorded)
+  const wordRun = await ui.evaluate(() => {
+    const host = document.createElement('div');
+    host.id = 'word-host';
+    host.style.cssText = 'display:flex;flex-direction:column;gap:16px;padding:16px;width:420px;background:var(--bg)';
+    document.body.append(host);
+    const mk = () => { const h = document.createElement('div'); host.append(h); return { h, opts: { messages: h, append: (n) => h.append(n), task: '' }, turn: { cards: [], card: null, plain: null, working: null } }; };
+    const label = 'Writing in Report.docx: adding a table of 3 rows after \u201cResults\u201d';
+    const lines = [
+      { k: 'h1', t: 'Report', hl: false }, { k: 'p', t: 'This report covers the spring results.', hl: false }, { k: 'h2', t: 'Results', hl: false },
+      { k: 'tr', t: 'Name  |  Score', hl: true }, { k: 'tr', t: 'Ann  |  9', hl: true }, { k: 'li', t: 'Scores are out of ten', hl: false }, { k: 'p', t: '<img src=x onerror="window.__xss=1"> and <b>text</b>', hl: false },
+    ];
+    // 1. the page preview (Word hidden, or the file route)
+    const a = mk();
+    window.stepUI.add(a.turn, { name: 'word', input: { action: 'table', rows: [['a'], ['b'], ['c']], at: 'after', heading: 'Results' }, id: 'ws1', label }, a.opts);
+    const sawA = window.stepUI.desktop(a.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-1', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'working', task: label, thumbnail: null, page: { doc: 'Report.docx', lines } }, a.opts);
+    const ca = a.h.querySelector('.act-card');
+    const out = {
+      sawA, cards: a.h.querySelectorAll('.act-card').length, surface: ca.dataset.surface, title: ca.querySelector('.act-title').textContent, iconKind: ca.querySelector('.act-icon').dataset.k,
+      chip: ca.querySelector('.act-tabref .act-wordchip')?.textContent || '', chipTag: ca.querySelector('.act-tabref .act-wordchip')?.tagName || '', chipVisible: !ca.querySelector('.act-tabref').hidden,
+      status: ca.querySelector('.act-status-text').textContent, step: ca.querySelector('.act-list .step .step-detail')?.textContent || '',
+      pageShown: !ca.querySelector('.act-page').hidden && !ca.querySelector('.act-shot2').hidden, imgShown: !ca.querySelector('.act-thumb2').hidden,
+      pageRows: [...ca.querySelectorAll('.act-page .act-pg')].map((r) => r.className.replace('act-pg ', '') + ':' + r.textContent.slice(0, 14)), hl: ca.querySelectorAll('.act-page .act-pg.hl').length,
+      pageImgs: ca.querySelectorAll('.act-page img').length, xss: window.__xss === 1, pageAlt: ca.querySelector('.act-page').getAttribute('aria-label'),
+      open: ca.querySelector('.act-btn').hidden ? '' : ca.querySelector('.act-btn').textContent,
+    };
+    ca.querySelector('.act-wordchip').click();
+    // 2. Word's window as the live picture (a drawn stand-in): the page gives way, frames only change the picture
+    const cv = document.createElement('canvas'); cv.width = 340; cv.height = 212; const x = cv.getContext('2d');
+    x.fillStyle = '#2b579a'; x.fillRect(0, 0, 340, 22); x.fillStyle = '#f3f3f3'; x.fillRect(0, 22, 340, 190); x.fillStyle = '#fff'; x.fillRect(60, 34, 220, 178);
+    x.fillStyle = '#222'; x.font = 'bold 13px sans-serif'; x.fillText('Report', 74, 56); x.font = '10px sans-serif'; x.fillText('This report covers the spring results.', 74, 74);
+    x.strokeStyle = '#999'; for (let r = 0; r < 3; r++) for (let c = 0; c < 2; c++) x.strokeRect(74 + c * 90, 96 + r * 18, 90, 18);
+    const b = mk();
+    window.stepUI.add(b.turn, { name: 'word', input: { action: 'insert', text: 'x' }, id: 'wb1', label: 'Writing in Report.docx: adding 1 paragraph at the end' }, b.opts);
+    window.stepUI.desktop(b.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-2', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'working', task: 'Writing in Report.docx: adding 1 paragraph at the end', thumbnail: cv.toDataURL('image/png'), page: null }, b.opts);
+    const cb = b.h.querySelector('.act-card');
+    out.live = { imgShown: !cb.querySelector('.act-thumb2').hidden, pageHidden: cb.querySelector('.act-page').hidden, src: Boolean(cb.querySelector('.act-thumb2').getAttribute('src')), alt: cb.querySelector('.act-thumb2').alt };
+    const before = cb.querySelector('.act-thumb2').getAttribute('src');
+    x.fillStyle = '#c00'; x.fillRect(74, 150, 120, 10);
+    window.stepUI.desktop(b.turn, { type: 'desktop_card', surface: 'app', word: true, frame: true, id: 'word-2', thumbnail: cv.toDataURL('image/png') }, b.opts);
+    out.live.changed = cb.querySelector('.act-thumb2').getAttribute('src') !== before;
+    // 3. the end: Done, and the last frame stays
+    const c = mk();
+    window.stepUI.add(c.turn, { name: 'word', input: { action: 'save' }, id: 'wc1', label: 'Saving Report.docx' }, c.opts);
+    window.stepUI.desktop(c.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-3', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'working', task: 'Saving Report.docx', thumbnail: cv.toDataURL('image/png'), page: null }, c.opts);
+    window.stepUI.desktop(c.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-3', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'completed', task: 'Saving Report.docx', thumbnail: cv.toDataURL('image/png'), page: null }, c.opts);
+    window.stepUI.finalize(c.turn, { type: 'done', reply: 'Added the results table to Report.docx.' });
+    const cc = c.h.querySelector('.act-card');
+    out.done = { status: cc.querySelector('.act-status-text').textContent, state: cc.dataset.state, imgShown: !cc.querySelector('.act-thumb2').hidden, chip: cc.querySelector('.act-wordchip')?.textContent || '' };
+    // a turn that used Word and another program is a Computer card, not a Word one
+    const d = mk();
+    window.stepUI.add(d.turn, { name: 'word', input: { action: 'list' }, id: 'wd1', label: 'Looking at the open Word documents' }, d.opts);
+    window.stepUI.add(d.turn, { name: 'desktop', input: { action: 'list_apps' }, id: 'wd2', label: 'Looking at the open apps' }, d.opts);
+    out.mixed = d.h.querySelector('.act-title').textContent;
+    return out;
+  });
+  wordRun.opened = await waitFor(() => app.evaluate(() => (global.__wordOpened.length ? global.__wordOpened.slice() : null)));
+  const shotDir = process.env.LUMEN_SHOT_DIR;
+  if (shotDir) {
+    fs.mkdirSync(shotDir, { recursive: true });
+    const cards = await ui.$$('#word-host .act-card');
+    const names = ['word-card-page.png', 'word-card-live.png', 'word-card-done.png'];
+    for (let i = 0; i < names.length && i < cards.length; i++) await cards[i].screenshot({ path: path.join(shotDir, names[i]) });
+    await ui.locator('#word-host').screenshot({ path: path.join(shotDir, 'word-cards-all.png') });
+  }
+  await ui.evaluate(() => document.getElementById('word-host')?.remove());
+  check('Word card: the same one card, titled Word with the document icon, the document name as its chip (a button), the step in words in the status bar and the step row', wordRun.sawA === true && wordRun.cards === 1 && wordRun.surface === 'app' && wordRun.title === 'Word' && wordRun.iconKind === 'word' && wordRun.chip === 'Report.docx' && wordRun.chipTag === 'BUTTON' && wordRun.chipVisible && /^Writing in Report.docx: adding a table of 3 rows after/.test(wordRun.status) && /^Writing in Report.docx: adding a table/.test(wordRun.step), J(wordRun));
+  check('Word card: with no window picture it draws the page around the change (headings, a bullet, table rows, the changed lines marked), as text only', wordRun.pageShown && !wordRun.imgShown && wordRun.pageRows.length === 7 && wordRun.pageRows[0].startsWith('act-pg-h1:Report') && wordRun.pageRows[3].startsWith('act-pg-tr hl') && wordRun.hl === 2 && wordRun.pageImgs === 0 && !wordRun.xss && /Preview of Report.docx/.test(wordRun.pageAlt), J(wordRun));
+  check('Word card: the chip brings Word forward (it asks main for this card\'s id), and the card offers Open', J(wordRun.opened) === '["word-1"]' && wordRun.open === 'Open', J([wordRun.opened, wordRun.open]));
+  check('Word card: with Word\'s window as the picture the page gives way, and a live frame only changes the picture', wordRun.live.imgShown && wordRun.live.pageHidden && wordRun.live.src && /Report.docx/.test(wordRun.live.alt) && wordRun.live.changed, J(wordRun.live));
+  check('Word card: at the end it says Done with the answer, keeps the last frame and the chip; Word mixed with another program is a Computer card', /^Done: Added the results table/.test(wordRun.done.status) && wordRun.done.state === 'completed' && wordRun.done.imgShown && wordRun.done.chip === 'Report.docx' && wordRun.mixed === 'Computer', J(wordRun.done) + wordRun.mixed);
+  const wordBack = await ui.evaluate(() => {
+    const nodes = window.stepUI.restoreNodes({ cards: true, tools: [{ name: 'word', input: { action: 'read', path: 'C:/x/Report.docx' }, label: 'Reading Report.docx', ok: true }, { name: 'word', input: { action: 'insert', text: 'a' }, label: 'Writing in Report.docx: adding 1 paragraph at the end', ok: true }] });
+    const c = nodes.find((n) => n.classList?.contains('act-card'));
+    return { n: nodes.length, title: c?.querySelector('.act-title').textContent, steps: c?.querySelector('.act-steps > summary').textContent };
+  });
+  check('a reopened chat shows its Word steps in one Word card', wordBack.n === 1 && wordBack.title === 'Word' && wordBack.steps === '2 steps', J(wordBack));
+
   // ---- steps after the card's text, and steps on no surface, stay in the turn's ONE card (never "Used 1 browser action" rows under it)
   const trailing = await ui.evaluate(() => {
     const host = document.createElement('div');

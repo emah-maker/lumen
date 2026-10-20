@@ -8587,8 +8587,19 @@ const desktopSettings = () => require('./desktop/settings').createDesktopSetting
 ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
 ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
-ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false));
+ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
+// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings > AI > "Let the AI use Microsoft Word" (aiWordControl, on by default).
+let wordCtl = null;
+const wordLazy = () => (wordCtl ||= require('./word').createWord({
+  settings: { enabled: () => readSettings().aiWordControl !== false },
+  checkFile: (p) => require('./features/device-access').checkedPath(p, 'file', { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }), // the AI's file rules: no credentials folders, no Lumen profile
+  checkTarget: (p) => { const why = require('./features/device-access').blockedReason(p, { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }); if (why) throw new Error(why); },
+  live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false), dpr: () => { try { return require('electron').screen?.getPrimaryDisplay?.().scaleFactor || 1; } catch { return 1; } } }, // the card's live picture of Word's window (word/card.js), the desktop card's own pacing
+  ...(TEST && process.env.LUMEN_WORD_HIDDEN === '1' ? { hostTest: { hidden: true, fresh: true } } : {}),
+}));
+if (TEST) global.__word = { ctl: () => wordLazy() };
+app.on('before-quit', () => { try { wordCtl?.destroy(); } catch { /* nothing started */ } }); // [word] the helper ends with Lumen (a Word it started is quit only when no document is open)
 app.on('before-quit', () => { try { desktopWired?.controller.destroy(); } catch { /* nothing started */ } }); // [desktop apps] the helper and the banner end with Lumen
 if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSettings };
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
@@ -8732,7 +8743,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
-  desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
+  word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
