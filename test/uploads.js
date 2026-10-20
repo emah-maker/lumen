@@ -272,7 +272,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
   check('the chat\'s attached files are kept in its own folder', fs.existsSync(chatDir) && fs.readdirSync(chatDir).length >= 3, fs.existsSync(chatDir) ? fs.readdirSync(chatDir).join(',') : 'none');
   await app.evaluate(() => { global.__agent.browser.autoApprove = () => true; });
   await ui.evaluate((id) => window.assistant.chats.remove(id), CHAT);
-  await waitFor(() => !fs.existsSync(chatDir));
+  await waitFor(() => !fs.existsSync(chatDir), 20000); // a saved chat is hidden for the 8 s Undo time first, then erased
   check('deleting the chat removes them', !fs.existsSync(chatDir));
 
   check('no page errors', errors.length === 0, errors.join('; '));
