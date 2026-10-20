@@ -41,6 +41,10 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
     }
   }
 }
+// One running copy per profile, taken as early as the profile is known (profile-guard above has set userData, which the lock is keyed on):
+// a second copy used to load the rest of this file's ~100 ms of modules first and took over 2 s to hand its links to the running one and leave.
+const singleInstance = process.argv.includes('--install-shortcuts') || require('./features/instance').acquireInstanceLock(app);
+if (!singleInstance) { app.quit(); return; } // (the running copy got our arguments through 'second-instance')
 const path = require('path');
 // Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
 // each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
@@ -470,7 +474,7 @@ const automationPlan = earlyAutomation !== undefined ? earlyAutomation : prepare
 // Chromium a private pipe instead of a debugging port) and leaves, before it opens anything. A copy
 // started while Lumen runs passes its links on and quits, the same as without automation.
 if (automationPlan?.relaunch && !process.argv.includes('--install-shortcuts')) {
-  require('./automation/launcher').handOver(app, () => instance.acquireInstanceLock(app));
+  require('./automation/launcher').handOver(app, () => singleInstance);
   return;
 }
 
@@ -12390,8 +12394,6 @@ const focusWindow = () => {
   if (!win.isVisible()) win.show();
   win.focus();
 };
-const singleInstance = process.argv.includes('--install-shortcuts') || instance.acquireInstanceLock(app);
-if (!singleInstance) app.quit();
 // Opening the shortcut again focuses the running browser (two copies would overwrite each other's
 // files); a link opened from another app while Lumen runs comes the same way, and opens in a tab.
 // The taskbar's "Close tabs the AI opened" arrives the same way, with no link: it does its work in the background and does not
