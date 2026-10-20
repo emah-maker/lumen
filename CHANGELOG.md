@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Test suites that guard the browser are steady again, and Settings' Search engine row loads faster.** Several suites raced the page (cards still sliding, a search before every section was built, a dialog answered twice, a Page unloading list that never refreshed in a page that draws no frames) and now wait for what they measure; the Page unloading lists now also refresh from a timer. On General, Focus mode and Sync (rows far below the first screen) are built a moment after the page shows instead of before it, and the Search engine row asks for just the list of engines instead of the whole AI state.
+- **The PDF and slide viewers no longer jump while they open.** The pages could be drawn at one size and then redrawn to fit the width, and the page count and zoom box moved the toolbar when they filled in. The pages now appear only once they are at the right size, and the toolbar keeps room for the page count and zoom. A new test measures the layout shift of both viewers.
 
 ## 0.5.58 (2026-10-19)
 
