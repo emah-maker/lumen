@@ -6148,6 +6148,7 @@ function flushLazyHistory() {
 }
 function applySync(view) {
   runStateSeq++;
+  const wasChat = shownChatId;
 
 
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
@@ -6170,7 +6171,7 @@ function applySync(view) {
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view);
-  window.chatList?.refreshOpen?.();
+  if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.();
   window.chatFolders?.refresh(view?.workFolder);
   chatHost.chatChanged?.();
 }

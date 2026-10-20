@@ -2845,6 +2845,7 @@ function flushLazyHistory() {
 }
 function applySync(view) {
   runStateSeq++;
+  const wasChat = shownChatId;
   // The chat this view already shows (or the one not started yet, which main has given an id): the box, its attachments and its pasted blocks are
   // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
@@ -2867,7 +2868,7 @@ function applySync(view) {
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
-  window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
+  if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
   window.chatFolders?.refresh(view?.workFolder); // [work folder] the composer's folder chip follows the chat
   chatHost.chatChanged?.();
 }
