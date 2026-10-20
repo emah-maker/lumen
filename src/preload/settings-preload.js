@@ -207,6 +207,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         cancelPair: call('settings:telegram-pair-cancel'),
         unpair: call('settings:telegram-unpair'),
         remove: call('settings:telegram-remove'),
+        showInbox: call('settings:telegram-show-inbox'), // [phone files] Downloads/From phone in Finder
       },
       openRouterSignIn: call('openrouter:sign-in'),
       cancelOpenRouterSignIn: call('openrouter:cancel'),

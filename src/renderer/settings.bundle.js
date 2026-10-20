@@ -6697,7 +6697,13 @@ function buildTelegram(slot) {
   channel.querySelector('.text').append(stateNote);
   const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
   const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
-  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+
+  const inboxNote = status('telegram-inbox');
+  const files = toggle('telegramFiles', tr('settings.telegram.files', 'Save photos and files I send to the bot'), tr('settings.telegram.filesDesc', ''), null, { fallback: true });
+  files.querySelector('.text').append(inboxNote);
+  files.querySelector('.controls')?.prepend(h('button', { id: 'telegram-show-inbox', text: tr('settings.telegram.showInbox', 'Show in Finder'), onclick: () => S.ai.telegram.showInbox().catch(() => {}) }));
+  later(() => S.ai.telegram.status()).then((s) => { if (s?.inboxDir) inboxNote.textContent = tr('settings.telegram.inbox', 'Phone inbox: {dir}', { dir: s.inboxDir }); }).catch(() => {});
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), withKeywords(files, 'photo picture image file upload transfer send phone inbox airdrop'), tokenRow, pairRow);
   later(refresh);
 }
 

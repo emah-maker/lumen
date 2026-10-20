@@ -286,7 +286,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1744,6 +1744,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
         { label: t('menu.record'), submenu: recordMenu(wc) }, // [screen recording]
         { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
+        ...(web && phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendPageToPhone(wc) }] : []), // [phone files]
         { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
         { label: t('menu.pictureInPicture'), enabled: web, click: () => togglePictureInPicture(wc) },
@@ -2001,6 +2002,7 @@ ipcMain.on('downloads:row-menu', (event, id) => {
     { label: t('dlpage.action.show'), click: () => downloads.act(id, 'show') },
     { type: 'separator' },
     { label: t('menu.pinToFiles'), click: () => downloads.act(id, 'pin') },
+    ...(phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendFileToPhone(d.path) }] : []), // [phone files]
   ]).popup({ window: BrowserWindow.fromWebContents(event.sender) || win });
 });
 ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event) && Number.isFinite(height)) placeDownloadsPanel(Math.max(120, Math.min(height, 640))); });
@@ -5496,6 +5498,7 @@ function showContextMenu(wc, p) {
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
+        ...(phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendPageToPhone(wc) }] : []), // [phone files]
         ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
       );
@@ -6766,6 +6769,7 @@ function macMenu() {
         { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
         normal({ label: t('menu.record'), submenu: recordMenu(wc()) }), // [screen recording]
         normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
+        ...(phoneReady() ? [normal({ label: t('phone.send.menu'), click: () => sendPageToPhone(wc()) })] : []), // [phone files]
         { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => printTab(wc())) },
         { label: t('menu.printSystem'), ...shown('Shift+Cmd+P'), click: pv('printSystem', () => printSystem(wc())) },
         { type: 'separator' },
@@ -9030,13 +9034,97 @@ const telegramDeps = () => ({
   },
   canEncrypt: () => safeStorage.isEncryptionAvailable(),
   isOnline: () => net.isOnline(),
+  inbox: phoneInbox(), onFile: (saved, caption) => notePhoneFile(saved, caption), openUrl: (url) => openFromPhone(url), // [phone files]
   tasks: { create: (spec) => { const task = bgTasks.create(spec); missionFromPhone.add(task.id); return task; }, stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
 });
+ipcMain.handle('settings:telegram-show-inbox', () => { const dir = phoneInbox().dir; fs.mkdirSync(dir, { recursive: true }); filesShell('open', dir); return true; }); // [phone files]
 for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
   ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
 }
 const telegram = { refresh: () => { if (telegramRt || readSettings().telegramChannel === true) telegramNow().refresh(); } };
 app.on('will-quit', () => telegramRt?.shutdown());
+// [phone files] Photos and files sent to the bot land in Downloads/From phone (features/phone-inbox.js). The strip's toast offers
+// Attach to chat (the bytes go to the composer like a dropped file, the caption into the empty composer, never sent); a program or
+// script only gets Show in Finder. Several in a row (an album) share one toast. Outside Lumen, a system notification says so.
+let phoneInboxRt = null;
+function phoneInbox() {
+  if (phoneInboxRt) return phoneInboxRt;
+  const dir = path.join(TEST && global.__phoneInboxDir ? global.__phoneInboxDir : app.getPath('downloads'), require('./features/phone-inbox').FOLDER);
+  const setXattr = (file, name, value) => require('./ai/cli-utils').execFile('/usr/bin/xattr', ['-w', name, value, file], { timeout: 5000 }, (err) => { if (err) console.error('[lumen] phone inbox: xattr:', err.message); });
+  phoneInboxRt = require('./features/phone-inbox').createPhoneInbox({ dir, setXattr });
+  return phoneInboxRt;
+}
+const phoneNotes = new Map(); // toast token -> { files: [saved], caption }
+let phoneNoteSeq = 0;
+let phoneBatch = null; // { token, at }: the toast files arriving close together join
+function notePhoneFile(saved, caption) {
+  const joins = phoneBatch && Date.now() - phoneBatch.at < 8000 && phoneNotes.has(phoneBatch.token);
+  const token = joins ? phoneBatch.token : ++phoneNoteSeq;
+  const entry = joins ? phoneNotes.get(token) : { files: [], caption: '' };
+  entry.files.push(saved);
+  if (caption && !entry.caption) entry.caption = String(caption).slice(0, 4000);
+  phoneNotes.set(token, entry);
+  phoneBatch = { token, at: Date.now() };
+  for (const old of phoneNotes.keys()) { if (phoneNotes.size <= 10) break; phoneNotes.delete(old); }
+  const text = entry.files.length === 1 ? t('phone.toast.one', { name: saved.name }) : t('phone.toast.many', { count: entry.files.length });
+  const showOnly = entry.files.every((f) => f.risky);
+  const rec = focusedRec() || curRec;
+  if (TEST) (global.__phoneNotes ||= []).push({ token, text, showOnly });
+  if ((TEST || BrowserWindow.getFocusedWindow()) && rcAlive(rec) && winRecs.has(rec)) { // (test windows stay in the background: the toast is what they check)
+    withWindow(rec, () => ui()?.send('tabs:organize-note', { text, undo: true, ttl: 15000, phoneNote: token, undoLabel: t(showOnly ? 'phone.toast.show' : 'phone.toast.attach'), undoTitle: entry.caption || text }));
+    return;
+  }
+  if (TEST) return;
+  try {
+    const n = new Notification({ title: t('phone.notify.title'), body: text, silent: false });
+    n.on('click', () => { focusWindow(); phoneNoteAction(token); });
+    n.show();
+    phoneNotifs.add(n); // (held: Electron drops the click handler of a collected Notification)
+    if (phoneNotifs.size > 10) phoneNotifs.delete(phoneNotifs.values().next().value);
+  } catch (err) { console.error('[lumen] phone files: notification:', err?.message || err); }
+}
+const phoneNotifs = new Set();
+// The toast's button: the files into the composer (the caption too, when the composer is empty), or Finder for programs.
+async function phoneNoteAction(token) {
+  const entry = phoneNotes.get(Number(token));
+  if (!entry) return false;
+  if (phoneBatch?.token === Number(token)) phoneBatch = null; // (a used toast takes no more files: the next one gets its own)
+  const safe = entry.files.filter((f) => !f.risky);
+  if (!safe.length) { filesShell('show', entry.files[0].path); return true; }
+  let first = true;
+  for (const f of safe.slice(0, 10)) {
+    let data;
+    try { data = await fs.promises.readFile(f.path); } catch { continue; } // moved or deleted since
+    ui()?.send('files:attach-file', { name: f.name, type: f.mime || '', data, ...(first && entry.caption ? { text: entry.caption } : {}) });
+    first = false;
+  }
+  return true;
+}
+ipcMain.handle('phone:note-action', (_e, token) => phoneNoteAction(token));
+// A link sent from the phone: a new tab in the window in front, behind the current one (nothing the user is doing is taken over).
+function openFromPhone(url) {
+  const rec = focusedRec() || curRec;
+  if (!rec) throw new Error('No Lumen window is open.');
+  withWindow(rec, () => { openTab(url, { background: true }); toast(t('phone.toast.opened')); });
+}
+// Send to phone (page menus, a finished download's menu): only ever the user's own click. Shown while a chat is paired.
+const phoneReady = () => readSettings().telegramChannel === true && telegramNow().paired();
+async function sendToPhone(what) {
+  const rec = focusedRec() || curRec;
+  try {
+    await telegramNow().sendToChat(what);
+    noteIn(rec, t('phone.send.sent'), { ttl: 2600 });
+  } catch (err) {
+    noteIn(rec, t('phone.send.failed', { error: String(err?.message || err).slice(0, 200) }), { ttl: 6000 });
+  }
+}
+const sendPageToPhone = (wc) => { if (wc && !wc.isDestroyed() && isWebUrl(wc.getURL())) sendToPhone({ text: [wc.getTitle(), wc.getURL()].filter(Boolean).join('\n') }); };
+async function sendFileToPhone(file) {
+  let data;
+  try { data = await fs.promises.readFile(file); } catch (err) { noteIn(focusedRec() || curRec, t('phone.send.failed', { error: err.message }), { ttl: 6000 }); return; }
+  return sendToPhone({ file: { name: path.basename(file), data, mime: require('./features/upload-files').mimeOf(file) } });
+}
+if (TEST) global.__phone = { inbox: phoneInbox, note: notePhoneFile, open: openFromPhone, notes: phoneNotes, action: phoneNoteAction, sendPage: sendPageToPhone, sendFile: sendFileToPhone, ready: () => phoneReady() };
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
