@@ -709,6 +709,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // Every message of yours is saved with the context Lumen added around it (<browser_state>, a file list...): whole tagged blocks
   // come out first, so search sees what you typed (cleanSaved alone would cut the message at the first tag).
+  // A skill's message searches as what the user typed ("Research skill: cats"), not its prompt or its tag.
+  const skillWords = (s) => (s.includes('skill_request') ? require('../renderer/step-labels').skillText(s) : s);
   const WRAPPED = /<([a-z]+_[a-z_]+)\b[^>]*>[\s\S]*?<\/\1>\s*/g;
   // What was said in a chat, for search (never tool results or attached page text), cut at a sane size.
   const SEARCH_CHARS = 200000;
@@ -719,7 +721,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : [];
       for (const b of blocks) {
         if (b?.type !== 'text' || typeof b.text !== 'string') continue;
-        const t = (m.role === 'user' ? cleanSaved(b.text.replace(WRAPPED, '')) : b.text).replace(/\s+/g, ' ').trim();
+        const t = (m.role === 'user' ? cleanSaved(skillWords(b.text).replace(WRAPPED, '')) : b.text).replace(/\s+/g, ' ').trim();
         if (!t) continue;
         parts.push(t);
         if ((n += t.length) > SEARCH_CHARS) return parts.join('\n').slice(0, SEARCH_CHARS);

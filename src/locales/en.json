@@ -1630,6 +1630,8 @@
   "sidebar.resize": "Resize sidebar",
   "sidebar.settings": "AI settings",
   "sidebar.settings.title": "AI settings (opens Settings)",
+  "skill.label": "{title} skill: {input}",
+  "skill.label.bare": "{title} skill",
   "skills.create": "Create a skill from this chat",
   "skills.create.description": "Turn the last exchange into a skill you can review and save.",
   "skills.create.opened": "The editor is open in Settings. Review it and save.",

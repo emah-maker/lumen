@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Math in a reply no longer shows up as raw `$$` text, and a skill's hidden markup no longer leaks into the chat.** A display formula now renders whether its closing `$$` is on the same line, on a later line, or after trailing spacing such as `\;` or `\\`, and a reply that was interrupted inside a formula shows what was written instead of the raw dollars. Prices like "$5 and $10" are still plain text. Running a skill (such as Research) no longer leaves `<skill_request ...>` in a step's subtitle, a chat title, the chat list or search: they read "Research skill: what you typed".
+
 ## 0.5.60 (2026-10-20)
 
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.
