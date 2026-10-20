@@ -574,7 +574,7 @@ contextBridge.exposeInMainWorld('assistant', {
     choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'),
-  stop: () => ipcRenderer.send('agent:stop'),
+  stop: (chatId) => ipcRenderer.send('agent:stop', chatId),
   sidebarTarget: (o) => ipcRenderer.invoke('chat:sidebar-target', o && o.approvalOnly === true ? { approvalOnly: true } : undefined),
   resync: () => ipcRenderer.invoke('chat:resync'),
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''),

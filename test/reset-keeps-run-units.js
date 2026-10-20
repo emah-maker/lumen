@@ -42,6 +42,19 @@ const agent = () => new Agent({ noTabReason: () => 'x', activeTab: () => null },
   a.stop();
   check('stop() still ends the only live run when the open conversation was swapped', runA.controller.signal.aborted);
 }
+{
+  // The Stop button of a chat with nothing running (its run just ended, a stale button) while ANOTHER chat works: main.js agent:stop
+  // calls stopOpen(), which stops only the open conversation's own run, never that other chat's.
+  const a = agent();
+  const runA = live();
+  a.runs.set([], runA);
+  a.stopOpen();
+  check('stopOpen() leaves another chat\'s run alone when the open chat has none', !runA.controller.signal.aborted);
+  const own = live();
+  a.runs.set(a.messages, own);
+  a.stopOpen();
+  check('stopOpen() stops the open chat\'s own run', own.controller.signal.aborted && !runA.controller.signal.aborted);
+}
 
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);
