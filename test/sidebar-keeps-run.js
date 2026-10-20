@@ -1,9 +1,9 @@
-// The sidebar button keeps a run in sight (main.js chat:sidebar-target, app.js toggleSidebarByHand), with a fake slow model and
-// invisible windows (LUMEN_TEST_BACKGROUND=1). With "Sidebar button starts a new chat" ON (the default):
-//   a run streaming on this tab, sidebar closed: opening shows that same chat, with its live stream;
-//   a run waiting for an OK: opening shows its approval card;
-//   a reply that finished while the sidebar was closed: opening shows it, marked unread until then;
-//   nothing running or unread: a new empty chat, as before;
+// The sidebar button (Ask AI) opens on a NEW chat, never the tab's last one (main.js chat:sidebar-target, app.js toggleSidebarByHand), with a
+// fake slow model and invisible windows (LUMEN_TEST_BACKGROUND=1). With "Sidebar button starts a new chat" ON (the default):
+//   a run streaming on this tab, sidebar closed: opening shows a new empty chat; the run keeps going and is listed as working;
+//   a reply that finished while the sidebar was closed: opening shows a new empty chat too (the reply is in History);
+//   an empty chat open already: it is reused (no pile of empty chats);
+//   a run waiting for an OK: opening shows its approval card (a question waiting for the user is never hidden);
 //   New chat pressed inside the sidebar during a run: a new chat starts; the old one keeps working and is listed as working.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -77,7 +77,6 @@ const fakeModel = (app, other) => app.evaluate((_e, otherUrl) => {
     const open = async () => { if (await pressed()) { await toggle(); await waitState(false); } await toggle(); return waitState(true); };
     const close = async () => { if (await pressed()) await toggle(); return waitState(false); };
     const userMsgs = () => ui.evaluate(() => [...document.querySelectorAll('.msg.user')].map((e) => e.textContent.trim()));
-    const assistantText = () => ui.evaluate(() => [...document.querySelectorAll('.msg.assistant')].map((e) => e.textContent).join('|'));
     const emptyShown = () => ui.evaluate(() => !document.getElementById('empty').hidden);
     const chatId = () => app.evaluate(() => global.__tabChats.chatId());
     const attention = () => ui.evaluate(() => document.getElementById('toggle-sidebar').dataset.attention || '');
@@ -89,7 +88,7 @@ const fakeModel = (app, other) => app.evaluate((_e, otherUrl) => {
 
     check('the setting is on by default', await app.evaluate(() => global.__settings.backend.prefs?.().sidebarNewChat ?? true) !== false, 'off');
 
-    // 1. a run streaming on this tab, sidebar closed: opening shows the same chat, live
+    // 1. a run streaming on this tab, sidebar closed: opening shows a new empty chat; the run goes on
     await open();
     await ask('slow please');
     await gated();
@@ -98,28 +97,30 @@ const fakeModel = (app, other) => app.evaluate((_e, otherUrl) => {
     await close();
     check('the run goes on with the sidebar closed', await app.evaluate(() => global.__tabChats.runs().some((r) => r.live)), 'not live');
     await open();
-    check('opening shows the same chat, not a new one', (await chatId()) === chatA && !(await emptyShown()) && (await userMsgs()).some((t) => /slow/.test(t)), `${await chatId()} ${await userMsgs()}`);
-    check('...with its live stream (the reply so far, still working)', await waitFor(async () => /Reply/.test(await assistantText()) && await working()), `${await assistantText()} ${await working()}`);
+    const chatNew = await chatId();
+    check('opening shows a NEW empty chat, not the last chat of this tab', chatNew !== chatA && await emptyShown() && (await userMsgs()).length === 0, `${chatNew} ${await userMsgs()}`);
+    check('the running chat keeps going in the background and is listed as working', await app.evaluate((_e, id) => global.__tabChats.runs().some((r) => r.chatId === id && r.live), chatA), 'not live');
     await release();
-    check('the stream finishes in that same chat', await waitFor(async () => /Reply to slow/.test(await assistantText())), await assistantText());
+    check('the old chat finishes its reply', await waitFor(() => app.evaluate((_e, id) => global.__tabChats.runs().every((r) => r.chatId !== id || !r.live), chatA)), 'still live');
     await idle();
 
-    // 2. a reply that finished while the sidebar was closed: shown, marked unread until then
+    // 2. a reply that finished while the sidebar was closed: a new empty chat too (the finished one is in History)
     await ask('slow again please');
     await gated();
+    const chatB2 = await chatId();
     await close();
     await release();
     await idle();
     check('the finished reply is unread on the closed sidebar button', await waitFor(async () => (await attention()) === 'unread'), await attention());
     await open();
-    check('opening shows that chat with the finished reply, not a new one', (await chatId()) === chatA && !(await emptyShown()) && (await userMsgs()).length === 2 && /Reply to slow/.test(await assistantText()), `${await chatId()} ${await userMsgs()}`);
-    check('...and it is no longer unread', await waitFor(async () => (await attention()) === ''), await attention());
+    check('opening shows a new empty chat, not the one with the finished reply', (await chatId()) !== chatB2 && await emptyShown() && (await userMsgs()).length === 0, `${await chatId()} ${await userMsgs()}`);
 
-    // 3. nothing running, nothing unread: a new chat, as today
+    // 3. an empty chat is open: reuse it (no duplicate empty chats)
+    const chatEmpty = await chatId();
     await close();
     await open();
     const chatB = await chatId();
-    check('nothing running or unread: a new empty chat', chatB !== chatA && await emptyShown() && (await userMsgs()).length === 0, `${chatB} ${await userMsgs()}`);
+    check('an empty chat open already is reused', chatB === chatEmpty && chatB !== chatA && await emptyShown() && (await userMsgs()).length === 0, `${chatB} ${chatEmpty}`);
 
     // 4. a run waiting for an OK: opening shows its approval card
     await ask('approve please');

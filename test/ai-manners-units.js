@@ -515,6 +515,20 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('front: taskTabInFront asks the window the tab lives in', /this\.browser\.tabInFront\(scope\.tabId\)/.test(agentSrc) && /tabInFront: inRun\(agentTabInFront\)/.test(mainSrc) && /activeIdOf\(rec\)/.test(mainSrc.slice(mainSrc.indexOf('const agentTabInFront'))));
   }
 
+  // ---- the AI closes the tab in front: to a tab an AI run is working in first (focusAfterAiClose)
+  {
+    const tab = (id, o = {}) => ({ id, viewedAt: 0, lastActiveAt: 0, ...o });
+    const tabs = [tab(1), tab(2, { viewedAt: 50 }), tab(3, { viewedAt: 90 }), tab(4, { lastActiveAt: 70 }), tab(5, { closing: true, viewedAt: 99 })];
+    const pick = (o) => (M.focusAfterAiClose({ tabs, closing: tabs[0], ...o }) || {}).id ?? null;
+    check('focus: no tab is being worked in, the normal rule decides (null)', pick({ workingIds: [] }) === null);
+    check('focus: the most recently looked at working tab', pick({ workingIds: [2, 3, 4] }) === 3);
+    check('focus: recency counts what is newest of viewedAt and lastActiveAt', pick({ workingIds: [2, 4] }) === 4);
+    check("focus: the closing chat's own run comes first, whatever the recency", pick({ workingIds: [2, 3], preferId: 2 }) === 2);
+    check('focus: a preferred tab that is not working is ignored', pick({ workingIds: [3], preferId: 2 }) === 3);
+    check('focus: the closing tab and a tab that is itself closing are never the answer', pick({ workingIds: [1, 5] }) === null && pick({ workingIds: [1, 5, 2] }) === 2);
+    check('focus: a working id with no such tab is skipped', pick({ workingIds: [99] }) === null && M.focusAfterAiClose() === null);
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();
