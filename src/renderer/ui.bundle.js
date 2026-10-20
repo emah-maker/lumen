@@ -4508,7 +4508,7 @@ function sendNow(entry) {
   if (!running) return;
   for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
   if (turn) turn.interrupted = true;
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
 }
 function sendQueued() {
 
@@ -5353,7 +5353,7 @@ function finishTurn(event, { early }) {
 const STOP_WAIT_MS = 2000;
 let stopTimer = null;
 function stopReply() {
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
   if (!running) return;
   if (turn) turn.stopRequested = true;
   const mine = runId;
@@ -6535,7 +6535,7 @@ async function askOnNewTopic(text, images, tabs) {
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
   back.onclick = async () => {
     back.disabled = true;
-    if (running) window.assistant.stop();
+    if (running) window.assistant.stop(shownChatId || undefined);
 
     const current = await window.assistant.chats.list().then((r) => r.current).catch(() => null);
     if (current && current !== previous) await window.assistant.chats.remove(current).catch(() => {});

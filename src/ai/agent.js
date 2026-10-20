@@ -528,6 +528,7 @@ const TOOLS = [
 ].map((tool) => ({ ...tool, eager_input_streaming: true }));
 // --- efficiency hook (snapshot.js): compact read_page, find, batch, cheaper screenshots ---
 const snapshot = require('./snapshot');
+snapshot.reads.setChatOf(() => taskScope.getStore()?.chat || null); // [parallel chats] each chat's page reads are its own (snapshot.js)
 snapshot.extendTools(TOOLS);
 // --- end efficiency hook ---
 imageRouter.extendTools(TOOLS); // [image routing]
@@ -1703,6 +1704,7 @@ class Agent {
   //   effectiveModel(id), anthropicAuth() }; everything past closeTab is optional.
   // getOptions() returns { model, adhdMode }; it is read when a conversation starts.
   constructor(browser, getClient, getOptions = () => ({}), getKey = () => null) {
+    this.prewarmed = new WeakMap(); // [parallel chats] messages -> { id }: each chat's pre-started Claude Code session (warming one chat keeps another's)
     this.browser = browser;
     this.getClient = getClient;
     this.getKey = getKey;
@@ -2093,6 +2095,14 @@ class Agent {
 
   stopFor(messages) {
     this.runs.get(messages)?.controller.abort();
+  }
+
+  // The open conversation's own run only. Unlike stop(), never the one other run that is going: a Stop pressed in a chat
+  // with nothing running (its run just ended, a stale button) must not reach another chat.
+  stopOpen() {
+    const rec = this.runs.get(this.messages);
+    if (rec) rec.controller.abort();
+    else if (this.controller && this.runs.size === 0) this.controller.abort();
   }
 
   // A new run waits for any previous run to finish stopping, so runs never overlap.
@@ -2833,7 +2843,7 @@ class Agent {
     emit({ type: 'turn_start' });
     if (command.name === 'compact') emit({ type: 'status', text: 'Compacting the conversation…' });
     this.engineRuns = (this.engineRuns || 0) + 1;
-    this.prewarmed = null;
+    (this.prewarmed ||= new WeakMap()).delete(messages); // (this command's turn is the session now)
     let out;
     try {
       out = await engine.run({
@@ -2970,7 +2980,7 @@ class Agent {
       previous: { tier: settings.ccAutoTier, turns: settings.ccAutoTurns || 0 }, pinned: resume, enabled: this.browser.autoModel?.() !== false || autoModel.isAuto(settings.model) || Boolean(settings.autoFrom), // (the engine's own Auto picks a real model per message whatever the setting: the warm process must not be started on 'default')
     });
     // A chat's first message reuses the session id its pre-warmed process (prewarm) was started with.
-    const sessionId = settings.ccSession || (this.prewarmed?.messages === messages ? this.prewarmed.id : crypto.randomUUID());
+    const sessionId = settings.ccSession || ((this.prewarmed ||= new WeakMap()).get(messages)?.id || crypto.randomUUID());
     const fullAccess = this.browser.claudeCodeFullAccess?.() === true; // [full access] Settings > AI (claude-code.js ARGS_FULL)
     // [model switch] A model that routing or Auto picks per message is not named in the system prompt: the warm-up (prewarm)
     // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
@@ -3010,7 +3020,7 @@ class Agent {
       return false;
     }
     if (cc.isWarm?.() && !(typed && cc.warmModel && cc.warmModel() !== (plan.spawn.model || 'default'))) return false;
-    if (!plan.resume) this.prewarmed = { messages, id: plan.spawn.sessionId };
+    if (!plan.resume) (this.prewarmed ||= new WeakMap()).set(messages, { id: plan.spawn.sessionId });
     cc.warm(plan.spawn, { speculative: true });
     if (own) this.engines.warmed?.(); // (the idle cap counts it)
     return true;
@@ -3065,7 +3075,7 @@ class Agent {
       return { text: interruptedNote(messages) + (caught ? `<earlier_conversation>\n${caught}\n</earlier_conversation>\n\n${prompt}` : prompt), images };
     };
     const first = slash ? { text: slash, images } : spawn.resume ? catchUp() : handoff();
-    this.prewarmed = null; // (its session id is this message's now)
+    (this.prewarmed ||= new WeakMap()).delete(messages); // (its session id is this message's now)
     const onLateUsage = ({ usage, cost }) => { recordUsage(messages, { model: settings.model, cost }, emit); this.reportUsage('claudecode', { usage, model: routed.model }); };
     emit({ type: 'turn_start' });
     const startedAt = Date.now() - 2000; // (pictures written from here on are this run's: enginePictures)
