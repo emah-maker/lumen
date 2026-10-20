@@ -416,7 +416,14 @@ function setupAiAgents(deps) {
       },
     };
   }
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, get codex() { return codexEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
+  // [cli helpers] Which CLIs a helper may run on (agent.js runCliHelpers): installed, signed in, and offered the way their chats are.
+  const cliHelperStatus = () => ({
+    claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn, enabled: readSettings().claudeCodeSidebar !== false },
+    grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
+    antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() },
+    codex: { installed: codexFound, signedIn: codexSignedIn, enabled: codexSidebar() },
+  });
+  agent.engines = { cliStatus: cliHelperStatus, get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, get codex() { return codexEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
     // [warm per chat] The chat's own engine outside a message (agent.js prewarm), and whether a message of that chat holds it.
     warmFor: (kind, key) => (kind === 'claudecode' && key != null && !oneShotClaude() ? chatClaudeCode(warmChats.peek(key)) : null),
     warmed: () => warmChats.warmed(),

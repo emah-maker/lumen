@@ -177,6 +177,27 @@ try {
   check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
   check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
 
+  // spawn_subagent: with the caller routing it, the watch waits for the call's input and reports it with the task (never a plain stop).
+  {
+    const sw = () => gb.toolWatch({ spawn: true });
+    const task = { description: 'Find usages', prompt: 'Search for foo' };
+    const play = (w, lines) => { for (const l of lines) { const bad = w(l); if (bad) return bad; } return null; };
+    const split = JSON.stringify(task);
+    const w1 = sw();
+    const hit = play(w1, [ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 's', name: 'spawn_subagent', input: {} } }), ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: split.slice(0, 12) } }), ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: split.slice(12) } })]);
+    check('tool check (stream): a spawn_subagent is reported once its input is complete, with the input kept', hit === 'spawn_subagent' && JSON.stringify(w1.spawned()) === split, String(hit));
+    const w2 = sw();
+    check('tool check (stream): a spawn_subagent with its input in the block start is reported at once', play(w2, [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: task } })]) === 'spawn_subagent' && w2.spawned().prompt === task.prompt, 'x');
+    const w3 = sw();
+    check('tool check (stream): a spawn_subagent that finishes without readable input is still reported (nothing to run)', play(w3, [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: {} } }), ev({ type: 'content_block_stop', index: 0 })]) === 'spawn_subagent' && w3.spawned() === null, 'x');
+    const w4 = sw();
+    check('tool check (stream): a spawn_subagent in a finished assistant message is reported with its input', play(w4, [{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'spawn_subagent', input: task }] } }]) === 'spawn_subagent' && w4.spawned().prompt === task.prompt, 'x');
+    check('tool check (stream): other off-tools are unchanged with spawn on (edit_file still refused), and spawn off keeps the plain stop', play(sw(), [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'edit_file', input: {} } })]) === 'edit_file' && streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: task } })]) === 'spawn_subagent', 'x');
+    check('spawnJobs: description and prompt become one job; nothing named is no job', JSON.stringify(gb.spawnJobs(task)) === JSON.stringify([{ task: 'Find usages: Search for foo', urls: [] }]) && gb.spawnJobs({}) === null && gb.spawnJobs(null) === null, JSON.stringify(gb.spawnJobs(task)));
+    check('offToolText: spawn_subagent names the reason and the way out; other tools keep the old text', /own helper agents/.test(gb.offToolText('spawn_subagent')) && /helpers of its own/.test(gb.offToolText('spawn_subagent')) && /isn't one of Lumen's \(edit_file\)/.test(gb.offToolText('edit_file')), gb.offToolText('spawn_subagent'));
+    check('Grok argv still hard-denies spawn_subagent and passes --no-subagents (Grok\'s own subagents stay off; Lumen routes the ask)', gb.ARGS_BASE.includes('--no-subagents') && gb.DENIED.includes('spawn_subagent'), gb.ARGS_BASE.join(' '));
+  }
+
   const toml = gb.grokConfig({ gate: 'C:\\Lumen\\grok-home\\lumen-gate.cmd' });
   const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
   check('Grok Build config.toml has only the lumen MCP server', JSON.stringify(servers) === '["lumen"]', JSON.stringify(servers));
