@@ -531,7 +531,7 @@ const fakeGate = {
         const routed = await via(true, warm);
         check(`spawn_subagent (${label}), routed: the task is handed back, nothing is reported as an error, the session is dropped`, routed.out.subagent?.tasks?.[0]?.task === 'Find usages: Search the repo for foo' && !routed.out.failed && routed.out.sessionId === null && !routed.events.some((e) => e.type === 'error'), JSON.stringify(routed));
         const plain = await via(false, warm);
-        check(`spawn_subagent (${label}), not routed: the run stops with a message that says what to do`, plain.out.failed === true && !plain.out.subagent && plain.events.some((e) => e.type === 'error' && /own helper agents/.test(e.text) && /Settings > AI/.test(e.text)), JSON.stringify(plain.events));
+        check(`spawn_subagent (${label}), not routed: the run stops with a message that says what to do`, plain.out.failed === true && !plain.out.subagent && plain.events.some((e) => e.type === 'error' && /own helper agents/.test(e.text) && /helpers of its own/.test(e.text)), JSON.stringify(plain.events));
       }
     }
 

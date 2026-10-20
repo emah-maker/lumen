@@ -615,7 +615,7 @@ function spawnJobs(input) {
 // The error for a run stopped on a tool that isn't Lumen's. A spawn_subagent gets its own words: Grok's subagents run outside
 // Lumen's approvals (their tool use isn't covered by Lumen's gate), so Lumen never lets them start; it can run the job with its own helpers.
 function offToolText(offTool) {
-  if (offTool === 'spawn_subagent') return 'Lumen stopped Grok Build: it tried to start one of its own helper agents. Those would work outside Lumen\'s approval checks, so Lumen doesn\'t allow them. Lumen\'s own helpers can do the same job once you add an AI key in Settings > AI (Anthropic, OpenAI or Google); or turn on "Give Grok Build full access to this computer" there if you want Grok\'s own helpers.';
+  if (offTool === 'spawn_subagent') return 'Lumen stopped Grok Build: it tried to start one of its own helper agents. Those would work outside Lumen\'s approval checks, so Lumen doesn\'t allow them. In a sidebar chat Lumen runs such jobs as helpers of its own (keep helpers on in Settings > AI); or turn on "Give Grok Build full access to this computer" there if you want Grok\'s own helpers.';
   return `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.`;
 }
 
