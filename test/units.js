@@ -3083,7 +3083,7 @@ async function tabsAskRuns() {
 
   // a skill's message in a chat's title
   const { autoTitle } = require('../src/features/chat-store');
-  check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate: French', '');
+  check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate skill: French', '');
   fs.rmSync(dirS, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 })();
 

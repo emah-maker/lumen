@@ -175,17 +175,33 @@
     if (!texLike(tex)) return -1;
     if (e < lineEnd) {
       const wholeLine = atLineStart && !s.slice(e + 2, lineEnd).trim();
-      return wholeLine || !/^\s/.test(tex) ? e : -1;
+
+      return wholeLine || !/^\s/.test(tex) || /\\[A-Za-z]|[_^]/.test(tex) ? e : -1;
     }
-    const opener = s.slice(i + 2, lineEnd);
-    return atLineStart && !opener.trim() && !/\n\s*\n/.test(tex) ? e : -1;
+    if (!atLineStart || /\n\s*\n/.test(tex)) return -1;
+    if (!s.slice(i + 2, lineEnd).trim()) return e;
+
+    const closeEnd = s.indexOf('\n', e) === -1 ? s.length : s.indexOf('\n', e);
+    return !s.slice(e + 2, closeEnd).trim() ? e : -1;
   }
+
+
+  function closePartial(tex) {
+    let t = String(tex).replace(/\s+$/, '');
+    const slashes = /\\*$/.exec(t)[0].length;
+    if (slashes % 2) t = t.slice(0, -1);
+    let depth = 0;
+    for (let k = 0; k < t.length; k++) { if (t[k] === '\\') k++; else if (t[k] === '{') depth++; else if (t[k] === '}' && depth > 0) depth--; }
+    return t + '}'.repeat(depth);
+  }
+
+  const partialEnd = (s, i) => { const b = s.slice(i).search(/\n[ \t]*\n/); return b === -1 ? s.length : i + b; };
   const URL_START = /^https?:\/\//;
 
 
 
 
-  function liftMath(source) {
+  function liftMath(source, { closeOpen = false } = {}) {
     source = source.replace(/[\uE000\uE001]/g, '');
     const maths = [];
     let out = '';
@@ -232,7 +248,13 @@
       if (source.startsWith('$$', i)) {
         const e = displayDollarEnd(source, i, onlySpaceBefore(i));
         if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
-        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i)) && !source.slice(i + 2, (source.indexOf('\n', i) + 1 || source.length + 1) - 1).trim()) open = i;
+        else if (onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1) {
+          const stop = partialEnd(source, i);
+          const tex = source.slice(i + 2, stop);
+
+          if (texLike(tex) && closeOpen) m = { tex: closePartial(tex), end: stop, display: true };
+          else if (open === -1 && !closeOpen && stop === source.length && (texLike(tex) || !tex.trim())) open = i;
+        }
         if (!m) { out += '$$'; i += 2; continue; }
       } else if (source.startsWith('\\[', i)) {
         const e = source.indexOf('\\]', i + 2);
@@ -240,6 +262,7 @@
 
         if (e !== -1 && /^[\d\s,–-]+$/.test(tex)) { out += `[${tex}]`; i = e + 2; continue; }
         if (e > i + 2 && !/\n\s*\n/.test(tex)) m = { tex, end: e + 2, display: true };
+        else if (e === -1 && closeOpen && onlySpaceBefore(i) && texLike(source.slice(i + 2, partialEnd(source, i)))) { const stop = partialEnd(source, i); m = { tex: closePartial(source.slice(i + 2, stop)), end: stop, display: true }; }
         else if (e === -1 && open === -1 && source.length - i < 300) open = i;
       } else if (source.startsWith('\\(', i)) {
         const e = source.indexOf('\\)', i + 2);
@@ -577,7 +600,7 @@
 
 
   function render(source, opts) {
-    const lifted = liftMath(liftRawSvg(String(source ?? '')));
+    const lifted = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
     const { maths } = lifted;
     const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
     const text = stack ? fractionize(lifted.text, maths) : lifted.text;
@@ -13514,7 +13537,15 @@ $('agent-stop')?.addEventListener('click', () => {
     if (!bubble || bubble.dataset.skill !== undefined) return;
     const text = bubble.textContent || '';
     const m = REQUEST.exec(text.trim());
-    if (!m) return;
+    if (!m) {
+
+      const words = text.includes('skill_request') ? window.stepLabels?.skillText?.(text) : '';
+      if (!words) return;
+      bubble.dataset.skill = '';
+      for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+      bubble.prepend(document.createTextNode(words));
+      return;
+    }
     bubble.dataset.skill = m[1];
     for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
     const tag = Object.assign(document.createElement('div'), { className: 'skill-tag' });

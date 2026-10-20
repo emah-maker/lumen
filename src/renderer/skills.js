@@ -118,7 +118,15 @@
     if (!bubble || bubble.dataset.skill !== undefined) return;
     const text = bubble.textContent || '';
     const m = REQUEST.exec(text.trim());
-    if (!m) return;
+    if (!m) {
+      // A tag that is cut off or malformed is still never shown: it reads as "Research skill: what was typed".
+      const words = text.includes('skill_request') ? window.stepLabels?.skillText?.(text) : '';
+      if (!words) return;
+      bubble.dataset.skill = '';
+      for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+      bubble.prepend(document.createTextNode(words));
+      return;
+    }
     bubble.dataset.skill = m[1];
     for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
     const tag = Object.assign(document.createElement('div'), { className: 'skill-tag' });
