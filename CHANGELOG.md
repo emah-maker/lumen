@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **When the AI closes the tab you are in, you land on a tab it is still working in.** Before, you were sent to the next tab along. Now, if an AI run is working in another tab, that is the one you see first (the chat that closed it first, then the tab it looked at most recently); with none, the usual neighbour. A tab you close yourself still goes to the neighbour. Split view keeps the other side open.
+- **A tab the AI closed stays in its chat card.** The chat's activity card keeps the tab's icon and name and the last picture of it, marked "closed", instead of losing them. Click the name to open the page again, like Reopen Closed Tab.
+- **Ask AI opens a new chat, not the last one.** The AI button, Ask AI on the new-tab page, the command bar and "Ask AI about selection" now start a fresh chat (an empty chat that is open is reused). A chat still working in the tab carries on and stays in History; a question waiting for your OK is still shown. Chat history reaches the older chats.
+
 ## 0.5.60 (2026-10-20)
 
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.

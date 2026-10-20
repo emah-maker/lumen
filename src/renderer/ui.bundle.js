@@ -3179,7 +3179,7 @@ else globalThis.screenIntent = api;
     const title = (live && live.title) || snap?.t || '';
     const url = (live && live.url) || snap?.u || '';
     const reopen = live ? live.reopen : /^https?:\/\//i.test(snap?.u || '');
-    return { state, title, url, reopen, favicon: live?.favicon || null };
+    return { state, title, url, reopen, favicon: live?.favicon || snap?.f || null };
   }
   function paint(el) {
     const v = view(el);
@@ -3196,7 +3196,7 @@ else globalThis.screenIntent = api;
     if (closed) tip.push(tr(v.reopen ? 'tabref.closed.reopen' : 'tabref.closed.gone'));
     el.title = tip.join('\n');
     const icon = el.querySelector('.tab-ref-icon');
-    const src = !closed && v.favicon ? v.favicon : '';
+    const src = v.favicon || '';
     if (icon.dataset.src !== src) {
       icon.dataset.src = src;
       icon.textContent = '';
@@ -3246,7 +3246,7 @@ else globalThis.screenIntent = api;
     el.className = 'tab-ref';
     if (key) el.dataset.key = key;
     el.innerHTML = '<span class="tab-ref-icon" aria-hidden="true"></span><span class="tab-ref-title"></span>';
-    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || '') }; if (key) snaps.set(key, el._snap); }
+    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || ''), f: String(snap.f || '') }; if (key) snaps.set(key, el._snap); }
     el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); click(el); });
     paint(el);
     if (key) { let set = chips.get(key); if (!set) chips.set(key, (set = new Set())); set.add(el); sync(); }
@@ -4325,6 +4325,13 @@ async function askInNewChat(text, files = []) {
   }
   $('new-chat').click();
   ask(text, images);
+}
+
+
+
+function askInFreshChat(text) {
+  if (!$('empty').hidden) $('new-chat').click();
+  return ask(text);
 }
 
 
@@ -7783,6 +7790,7 @@ function startChat() {
 
 
 
+
 (function (root) {
   function sidebarOpenPlan({ setting = true, empty = false, intent = false, busy = false } = {}) {
     if (intent || busy || setting === false) return 'keep';
@@ -10691,7 +10699,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.(); } catch {  }
+    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch {  }
     if (mine !== toggleSeq || sidebarWanted !== opening) return;
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
@@ -10876,7 +10884,7 @@ window.browser.onAskFromHome?.(({ text, tabId }) => {
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);
-  ask(t('ask.selection', { text }));
+  askInFreshChat(t('ask.selection', { text }));
 });
 
 
@@ -10918,9 +10926,9 @@ function loadCommandBar() {
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
   const text = String(e.detail || '').trim();
-  if (!text) return;
   showSidebar(true);
-  ask(text);
+  if (text) askInFreshChat(text);
+  else if (!$('empty').hidden) $('new-chat').click();
 });
 
 
