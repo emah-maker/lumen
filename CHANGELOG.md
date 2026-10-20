@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Grok Build no longer stops when it asks for a helper agent.** When Grok Build tried to start one of its own subagents, Lumen ended the whole reply with an error. Grok's own subagents work outside Lumen's approval checks, so they stay off, but Lumen now takes the job and runs it with its own helpers (the ones used for "delegate", on a cheaper model of an AI you have a key for), then hands the answer back to Grok so the reply carries on. Helpers read and search the web only, no files or terminal. If no AI key is set up, the message now says what to add or to turn on full access, where Grok's own helpers are allowed.
+
 - **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 
 ## 0.5.60 (2026-10-20)

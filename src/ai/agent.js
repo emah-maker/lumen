@@ -3130,10 +3130,33 @@ class Agent {
       workFolder: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
+      routeSubagents: !fullAccess && this.subagentsOn(), // [subagents] spawn_subagent is answered by Lumen's own helpers (below), never by Grok's
       signal,
       emit,
     });
     let out = await runGrok(first, settings.gbSession || crypto.randomUUID(), resume);
+    // Grok asked for a subagent of its own. Its subagents would run outside Lumen's approvals, so Lumen runs the job with its own
+    // read-only helpers (delegate) and carries on in a new Grok session that is handed the helpers' answer. Twice at most per message.
+    let lead = '';
+    for (let rounds = 0; out.subagent && !signal.aborted; rounds++) {
+      const helperModel = rounds < 2 ? this.grokHelperModel() : null;
+      if (!helperModel) { emit({ type: 'error', text: require('./grok-build').offToolText('spawn_subagent') }); out = { text: out.text, sessionId: null, failed: true }; break; }
+      lead += (lead && out.text ? '\n\n' : '') + (out.text || '');
+      let answers;
+      try {
+        emit({ type: 'notice', text: 'Grok Build asked for a helper agent, so Lumen is running the job with its own helpers.' });
+        answers = await this.delegate({ tasks: out.subagent.tasks }, { model: helperModel });
+      } catch (err) {
+        if (signal.aborted) throw err;
+        emit({ type: 'error', text: `Lumen's helpers couldn't do the job Grok Build asked for: ${String(err?.message || err).slice(0, 300)}` });
+        out = { text: '', sessionId: null, failed: true };
+        break;
+      }
+      const again = handoff();
+      const note = `<helper_results>\nYou asked for a subagent; Lumen ran that job with its own read-only helpers (web reading and search only, no files or terminal) and this is what they found. Carry on from it; do not call spawn_subagent.\n\n${String(answers).slice(0, 12000)}\n</helper_results>\n\n`;
+      out = await runGrok({ ...again, text: note + again.text }, crypto.randomUUID(), false);
+    }
+    if (lead && out.text !== undefined) out = { ...out, text: [lead, out.text].filter(Boolean).join('\n\n') };
     if (out.expired && !signal.aborted) {
       // [chat history] Grok no longer has this chat's session: a new one starts at once, handed the conversation so far.
       delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen;
@@ -4197,15 +4220,24 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/notes]
 
-  async delegate(input) {
+  // The model Lumen's helpers use when the chat's own engine has no API of its own (Grok Build asking for a subagent): the cheap model of
+  // the first provider that has a key. null when none does.
+  grokHelperModel() {
+    for (const [provider, model] of [['anthropic', DEFAULT_MODEL], ['openai', 'openai:gpt-5.6'], ['gemini', 'gemini:gemini-3.8-pro']]) {
+      if (this.getKey(provider)) return subagents.helperModel(model, 'auto');
+    }
+    return null;
+  }
+
+  async delegate(input, { model } = {}) {
     const scope = taskScope.getStore();
     const gate = scope?.gate;
     const emit = gate?.emit || (() => {});
     const signal = gate?.signal || new AbortController().signal;
     const chat = scope?.chat || null;
     const { tasks, dropped } = subagents.cleanTasks(input);
-    const own = chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
-    const cheap = subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
+    const own = model || chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
+    const cheap = model ? own : subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
     const used = { model: cheap };
     const turn = this.helperTurn({ chat, emit, signal, own, used });
     const taint = gate?.run ? Boolean(taintHolder(gate.run)?.tainted) : false;
