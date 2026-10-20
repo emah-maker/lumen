@@ -171,6 +171,114 @@ function scanSessions({ home, now = Date.now(), days = 7, maxFiles = 200, io = {
   };
 }
 
+// ---------- the chat's context window: how full it is, and what a turn really used ----------
+// Codex counts two ways, and Lumen needs both kept apart:
+//  - total_token_usage is CUMULATIVE for the whole thread (every model call since it began, resumed turns included: a tool loop's
+//    context is counted once per call). `codex exec --json`'s turn.completed carries this total too, not one turn's. It is right
+//    for a bill, wrong for a meter: adding it up per turn counts the early turns again and again and overshoots 100%.
+//  - last_token_usage is the LAST model call alone: its input is everything the model was sent (the whole context at that point,
+//    cached part included), so input + output (less the reasoning tokens Codex drops from the next call) is what the window holds.
+// The meter shows the second; the usage log the difference of the first (turnDelta).
+
+// The context fill of one model call (a tokensOf() record): input (fresh + cached) + output - reasoning, never less than the input.
+function contextFill(t) {
+  if (!t || typeof t !== 'object') return 0;
+  const input = (t.inputTokens || 0) + (t.cacheReadTokens || 0);
+  return Math.max(input, input + (t.outputTokens || 0) - (t.reasoningTokens || 0));
+}
+
+// The app-server's camelCase TokenUsageBreakdown (thread/tokenUsage/updated) -> tokensOf()'s record.
+function fromAppServerUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  return tokensOf({ input_tokens: u.inputTokens, cached_input_tokens: u.cachedInputTokens, cache_write_input_tokens: u.cacheWriteInputTokens, output_tokens: u.outputTokens, reasoning_output_tokens: u.reasoningOutputTokens });
+}
+
+// One turn's tokens from the thread's cumulative totals before (`base`) and after (`cum`) it. A total that went DOWN in any
+// field is a new thread (or Codex's own history rewrite): then `cum` is the turn.
+function turnDelta(cum, base) {
+  if (!cum) return null;
+  const keys = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens'];
+  if (!base || keys.some((k) => (cum[k] || 0) < (base[k] || 0))) return { ...cum };
+  const out = { ...cum };
+  for (const k of keys) out[k] = (cum[k] || 0) - (base[k] || 0);
+  return out;
+}
+
+// The rollout of a thread: <home>/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl (a resumed thread keeps appending to its first file).
+const rolloutCache = new Map();
+function findRollout(home, threadId, io = {}) {
+  if (!home || !/^[A-Za-z0-9_-]{8,80}$/.test(String(threadId || ''))) return null;
+  const f = io.fs || fs;
+  const key = `${path.resolve(home)}|${threadId}`;
+  const known = rolloutCache.get(key);
+  if (known) { try { f.statSync(known); return known; } catch { rolloutCache.delete(key); } }
+  const root = path.join(home, 'sessions');
+  const list = (dir) => { try { return f.readdirSync(dir); } catch { return []; } };
+  const down = (names, re) => names.filter((n) => re.test(n)).sort().reverse();
+  const tail = `-${threadId}.jsonl`;
+  for (const y of down(list(root), /^\d{4}$/)) for (const m of down(list(path.join(root, y)), /^\d{2}$/)) for (const d of down(list(path.join(root, y, m)), /^\d{2}$/)) {
+    const name = list(path.join(root, y, m, d)).find((n) => n.startsWith('rollout-') && n.endsWith(tail));
+    if (name) { const file = path.join(root, y, m, d, name); rolloutCache.set(key, file); return file; }
+  }
+  return null;
+}
+
+// What a thread's rollout says now, from its tail only: the last model call (`last`), the thread's cumulative `total`, the model's
+// window, the model that answered (a turn_context line's `model` slug; nothing else of that line is kept), and the latest compaction
+// (`compactedAt` ms; `afterCall`: it came after the last model call, so that call's figure is the context from before it, and
+// `compactChars` is the size of what replaced it, for an estimate). { last, total, window, model, compactedAt, afterCall, compactChars, at } or null.
+function threadStats(file, io = {}) {
+  const f = io.fs || fs;
+  let fd;
+  try {
+    fd = f.openSync(file, 'r');
+    const size = f.fstatSync(fd).size;
+    for (const span of [256 * 1024, 4 * 1024 * 1024]) {
+      const len = Math.min(size, span);
+      const buf = Buffer.alloc(len);
+      f.readSync(fd, buf, 0, len, size - len);
+      const lines = buf.toString('utf8').split('\n');
+      if (len < size) lines.shift(); // starts mid-line
+      let call = null;
+      let callAt = -1;
+      let model = null;
+      let compaction = null;
+      for (let i = lines.length - 1; i >= 0 && !(call && model && compaction); i--) {
+        const line = lines[i];
+        const isCall = !call && line.includes('token_count');
+        const isModel = !model && line.includes('"turn_context"');
+        const isCompact = !compaction && /"compacted"|context_compacted/.test(line);
+        if (!isCall && !isModel && !isCompact) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+        if (isCall) { const ev = fromRolloutLine(obj); if (ev && (ev.last || ev.total)) { call = ev; callAt = i; } }
+        if (isModel && obj.type === 'turn_context' && typeof obj.payload?.model === 'string' && /^[\w.:\/-]{1,80}$/.test(obj.payload.model)) model = obj.payload.model;
+        if (isCompact && (obj.type === 'compacted' || obj.payload?.type === 'context_compacted')) compaction = { at: Date.parse(obj.timestamp) || null, index: i, chars: line.length };
+      }
+      if (call || compaction) {
+        return {
+          last: call?.last || null, total: call?.total || null, window: call?.contextWindow || 0, model, at: call?.at || null,
+          compactedAt: compaction ? compaction.at : null, afterCall: Boolean(compaction && (!call || compaction.index > callAt)), compactChars: compaction ? compaction.chars : 0,
+        };
+      }
+      if (len >= size) break;
+    }
+  } catch { /* unreadable: no figure */ } finally { if (fd !== undefined) try { f.closeSync(fd); } catch {} }
+  return null;
+}
+
+// threadStats() -> what the meter needs: { tokens (the context in use), window (0 when unknown), slug (the model), estimated, total
+// (cumulative), compacted (a compaction since `startedAt`) } or null. A compaction after the last model call: that call's figure is
+// the context from before it, so the size of what replaced it stands in (estimated) until the next call measures it.
+function contextOf(stats, { startedAt = 0 } = {}) {
+  if (!stats) return null;
+  let tokens = stats.last ? contextFill(stats.last) : 0;
+  let estimated = false;
+  if (stats.afterCall && stats.compactChars) { tokens = Math.ceil(stats.compactChars / 4); estimated = true; }
+  if (!(tokens > 0)) return null;
+  return { tokens, window: stats.window || 0, slug: stats.model || null, estimated, total: stats.total || null, compacted: stats.compactedAt != null && stats.compactedAt >= startedAt };
+}
+
 const DEFAULT_WINDOWS = { five: 300, week: 10080 };
 // The 5-hour and weekly windows out of a limits reading, whichever of primary / secondary each is (by window_minutes).
 function windowsOf(limits) {
@@ -208,4 +316,4 @@ async function loginState({ home, run, io = {} } = {}) {
   return { signedIn: hasAuthFile ? true : null, method: 'unknown', fromFile: true };
 }
 
-module.exports = { tokensOf, limitsOf, fromRolloutLine, fromExecEvent, limitMessage, lastTokenCount, recentRollouts, scanSessions, windowsOf, limitReached, loginState };
+module.exports = { contextOf, contextFill, fromAppServerUsage, turnDelta, findRollout, threadStats, tokensOf, limitsOf, fromRolloutLine, fromExecEvent, limitMessage, lastTokenCount, recentRollouts, scanSessions, windowsOf, limitReached, loginState };
