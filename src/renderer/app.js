@@ -2305,36 +2305,7 @@ $('app-menu').onclick = () => {
   // `right` lets main.js right-align the menu to the button, inside the window (app-menu-layout.js).
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
-// Extension icons past the list's width cap are clipped: a "..." button lists them, and a pick triggers the
-// extension as its icon does. (The list is a custom element with an open shadow root of one button per action.)
-{
-  const list = $('extension-actions');
-  const more = $('actions-overflow');
-  const hiddenActions = () => {
-    const lr = list.getBoundingClientRect();
-    return [...(list.shadowRoot?.querySelectorAll('.action') || [])].filter((n) => n.getBoundingClientRect().right > lr.right + 1);
-  };
-  let frame = 0;
-  const refresh = () => {
-    if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; more.hidden = !hiddenActions().length; });
-  };
-  new ResizeObserver(refresh).observe(list);
-  customElements.whenDefined('browser-action-list').then(() => {
-    // subtree + attributes: a button's own size/visibility can change (badge, popup state) without a child being added
-    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true });
-    refresh();
-  });
-  more.onclick = () => {
-    const r = more.getBoundingClientRect();
-    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || '' })));
-  };
-  window.browser.onActionsOverflowPick?.((id) => {
-    const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);
-    const r = more.getBoundingClientRect();
-    window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
-  });
-}
+// The toolbar's extension buttons, the puzzle button and its menu: renderer/extensions-bar.js.
 $('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 // The buttons at the address field's right end (zoom, translate, reader, star, reload) are laid over
 // it, so the field's padding has to clear however many are showing: styles.css reads their width
@@ -2689,7 +2660,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch { /* an older main: no such question */ } // [ask ai new chat] only a run waiting for an OK keeps its chat; a working or unread one stays in History (and on its tab's chip)
     if (mine !== toggleSeq || sidebarWanted !== opening) return; // pressed again (or changed by something else) while main answered: that decides
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
@@ -2874,7 +2845,7 @@ window.browser.onAskFromHome?.(({ text, tabId }) => {
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);
-  ask(t('ask.selection', { text }));
+  askInFreshChat(t('ask.selection', { text })); // [ask ai new chat] a new chat with that context
 });
 
 // "Ask AI about this" on a screenshot: the PNG (base64) goes into the sidebar's composer.
@@ -2916,9 +2887,9 @@ function loadCommandBar() {
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
   const text = String(e.detail || '').trim();
-  if (!text) return;
   showSidebar(true);
-  ask(text);
+  if (text) askInFreshChat(text); // [ask ai new chat]
+  else if (!$('empty').hidden) $('new-chat').click(); // plain Ask AI: the sidebar opens on a new chat (an empty one is reused)
 });
 
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.

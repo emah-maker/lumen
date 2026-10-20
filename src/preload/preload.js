@@ -131,6 +131,8 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
   get: () => ipcRenderer.invoke('prefs:ui'),
   onChange: on('prefs:ui'),
+  syncExtensionPins: () => ipcRenderer.invoke('ext:pins-sync'), // [extensions] new extension buttons get their first pin choice (renderer/extensions-bar.js)
+  setExtensionOrder: (ids) => ipcRenderer.invoke('ext:pins-order', ids), // ...and a drag in the toolbar is saved
 });
 
 // The toolbar's update prompt (renderer/updates.js, features/updates.js).
@@ -164,7 +166,7 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: () => ipcRenderer.send('agent:stop'),
-  sidebarTarget: () => ipcRenderer.invoke('chat:sidebar-target'), // the sidebar is about to open: the chat on this tab that works, waits for an OK or finished unread ({ id, reason, view }), or null
+  sidebarTarget: (o) => ipcRenderer.invoke('chat:sidebar-target', o && o.approvalOnly === true ? { approvalOnly: true } : undefined), // the sidebar is about to open: the chat on this tab that works, waits for an OK or finished unread ({ id, reason, view }), or null
   resync: () => ipcRenderer.invoke('chat:resync'), // the chat this window's front tab shows, with its own run state
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
   reset: () => ipcRenderer.send('agent:reset'),

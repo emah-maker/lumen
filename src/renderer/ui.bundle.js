@@ -175,17 +175,33 @@
     if (!texLike(tex)) return -1;
     if (e < lineEnd) {
       const wholeLine = atLineStart && !s.slice(e + 2, lineEnd).trim();
-      return wholeLine || !/^\s/.test(tex) ? e : -1;
+
+      return wholeLine || !/^\s/.test(tex) || /\\[A-Za-z]|[_^]/.test(tex) ? e : -1;
     }
-    const opener = s.slice(i + 2, lineEnd);
-    return atLineStart && !opener.trim() && !/\n\s*\n/.test(tex) ? e : -1;
+    if (!atLineStart || /\n\s*\n/.test(tex)) return -1;
+    if (!s.slice(i + 2, lineEnd).trim()) return e;
+
+    const closeEnd = s.indexOf('\n', e) === -1 ? s.length : s.indexOf('\n', e);
+    return !s.slice(e + 2, closeEnd).trim() ? e : -1;
   }
+
+
+  function closePartial(tex) {
+    let t = String(tex).replace(/\s+$/, '');
+    const slashes = /\\*$/.exec(t)[0].length;
+    if (slashes % 2) t = t.slice(0, -1);
+    let depth = 0;
+    for (let k = 0; k < t.length; k++) { if (t[k] === '\\') k++; else if (t[k] === '{') depth++; else if (t[k] === '}' && depth > 0) depth--; }
+    return t + '}'.repeat(depth);
+  }
+
+  const partialEnd = (s, i) => { const b = s.slice(i).search(/\n[ \t]*\n/); return b === -1 ? s.length : i + b; };
   const URL_START = /^https?:\/\//;
 
 
 
 
-  function liftMath(source) {
+  function liftMath(source, { closeOpen = false } = {}) {
     source = source.replace(/[\uE000\uE001]/g, '');
     const maths = [];
     let out = '';
@@ -232,7 +248,13 @@
       if (source.startsWith('$$', i)) {
         const e = displayDollarEnd(source, i, onlySpaceBefore(i));
         if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
-        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i)) && !source.slice(i + 2, (source.indexOf('\n', i) + 1 || source.length + 1) - 1).trim()) open = i;
+        else if (onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1) {
+          const stop = partialEnd(source, i);
+          const tex = source.slice(i + 2, stop);
+
+          if (texLike(tex) && closeOpen) m = { tex: closePartial(tex), end: stop, display: true };
+          else if (open === -1 && !closeOpen && stop === source.length && (texLike(tex) || !tex.trim())) open = i;
+        }
         if (!m) { out += '$$'; i += 2; continue; }
       } else if (source.startsWith('\\[', i)) {
         const e = source.indexOf('\\]', i + 2);
@@ -240,6 +262,7 @@
 
         if (e !== -1 && /^[\d\s,–-]+$/.test(tex)) { out += `[${tex}]`; i = e + 2; continue; }
         if (e > i + 2 && !/\n\s*\n/.test(tex)) m = { tex, end: e + 2, display: true };
+        else if (e === -1 && closeOpen && onlySpaceBefore(i) && texLike(source.slice(i + 2, partialEnd(source, i)))) { const stop = partialEnd(source, i); m = { tex: closePartial(source.slice(i + 2, stop)), end: stop, display: true }; }
         else if (e === -1 && open === -1 && source.length - i < 300) open = i;
       } else if (source.startsWith('\\(', i)) {
         const e = source.indexOf('\\)', i + 2);
@@ -577,7 +600,7 @@
 
 
   function render(source, opts) {
-    const lifted = liftMath(liftRawSvg(String(source ?? '')));
+    const lifted = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
     const { maths } = lifted;
     const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
     const text = stack ? fractionize(lifted.text, maths) : lifted.text;
@@ -1281,7 +1304,9 @@ else root.usagePopover = api;
 
 
 
-window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false } = {}) => {
+
+
+window.lumenPicker = (select, { label = null, recentKey = null, extra = null, anchor = null, title = null, onBack = null, placeholder = null, headings = false, onMore = null, filters = [], wide = false, effort = null } = {}) => {
   const uid = `pk${Math.random().toString(36).slice(2, 8)}`;
 
 
@@ -1304,7 +1329,8 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   const where = Object.assign(document.createElement('span'), { className: 'picker-provider' });
   const text = Object.assign(document.createElement('span'), { className: 'picker-text' });
   const last = Object.assign(document.createElement('span'), { className: 'picker-last', hidden: true });
-  button.append(where, text, last);
+  const level = Object.assign(document.createElement('span'), { className: 'picker-effort-tag', hidden: true });
+  button.append(where, text, level, last);
   if (anchor) button.hidden = true;
   const menu = Object.assign(document.createElement('div'), { className: 'picker-menu', hidden: true });
   const search = Object.assign(document.createElement('input'), { type: 'search', className: 'picker-search', autocomplete: 'off', spellcheck: false });
@@ -1349,7 +1375,54 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     chips.append(chip);
   }
   const passes = (o) => o.dataset.more || filters.every((f) => !on.has(f.key) || f.test(o));
-  menu.append(head, search, chips, list, live);
+
+  const EFFORT_SHORT = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'XHigh', max: 'Max' };
+  const EFFORT_FULL = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Maximum' };
+  const EFFORT_HINT = { '': 'Uses your default for this AI', minimal: 'Fastest, barely thinks', low: 'Faster, lighter thinking', medium: 'Balanced', high: 'Thinks longer on hard tasks', xhigh: 'Thinks much longer', max: 'Thinks longest, slowest' };
+  const effRow = Object.assign(document.createElement('div'), { className: 'picker-effort', hidden: true });
+  const effHead = Object.assign(document.createElement('span'), { className: 'picker-effort-label', id: `${uid}-effort` });
+  const seg = Object.assign(document.createElement('div'), { className: 'picker-effort-seg' });
+  seg.setAttribute('role', 'radiogroup');
+  seg.setAttribute('aria-labelledby', effHead.id);
+  const effHint = Object.assign(document.createElement('span'), { className: 'picker-effort-hint' });
+  effRow.append(effHead, seg, effHint);
+  const levelName = (l) => tr(`picker.effort.full.${l || 'auto'}`, l ? EFFORT_FULL[l] || l : 'Auto');
+  let segKey = '';
+  function renderEffort() {
+    const levels = effort ? effort.levels() : [];
+    effRow.hidden = !levels.length;
+    if (!levels.length) { segKey = ''; return; }
+    const cur = levels.includes(effort.value()) ? effort.value() : '';
+    effHead.textContent = tr('picker.effort', 'Effort');
+    effHint.textContent = tr(`picker.effort.hint.${cur || 'auto'}`, EFFORT_HINT[cur] || '');
+    const key = levels.join();
+    if (key !== segKey) {
+      segKey = key;
+      seg.replaceChildren(...['', ...levels].map((l) => {
+        const b = Object.assign(document.createElement('button'), { type: 'button', className: 'picker-effort-opt', textContent: l ? tr(`picker.effort.${l}`, EFFORT_SHORT[l] || l) : tr('picker.effort.auto', 'Auto') });
+        b.dataset.level = l;
+        b.setAttribute('role', 'radio');
+        b.title = levelName(l);
+        b.setAttribute('aria-label', levelName(l));
+        return b;
+      }));
+    }
+    for (const b of seg.children) { const on = b.dataset.level === cur; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
+  }
+  const effChoose = (l) => { effort.set(l); renderEffort(); sync(); };
+  seg.addEventListener('pointerdown', (e) => { if (e.target.closest('.picker-effort-opt')) e.preventDefault(); });
+  seg.addEventListener('click', (e) => { const b = e.target.closest('.picker-effort-opt'); if (b) effChoose(b.dataset.level); });
+  seg.addEventListener('keydown', (e) => {
+    const opts = [...seg.children];
+    const at = opts.indexOf(document.activeElement);
+    const to = e.key === 'ArrowRight' ? (at + 1) % opts.length : e.key === 'ArrowLeft' ? (at - 1 + opts.length) % opts.length : e.key === 'Home' ? 0 : e.key === 'End' ? opts.length - 1 : -1;
+    if (to === -1 || at === -1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    opts[to].focus();
+    effChoose(opts[to].dataset.level);
+  });
+  menu.append(head, search, chips, list, live, effRow);
   let loading = false;
   let slow = false;
   let slowTimer = 0;
@@ -1368,9 +1441,12 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else { where.textContent = tag && !name.toLowerCase().startsWith(tag.toLowerCase()) ? tag : ''; text.textContent = name; }
     last.textContent = option ? lastOf(option) : '';
     last.hidden = !last.textContent;
+    const lv = effort && option && effort.levels().length ? effort.value() : '';
+    level.textContent = lv && effort.levels().includes(lv) ? `· ${tr(`picker.effort.${lv}`, EFFORT_SHORT[lv] || lv)}` : '';
+    level.hidden = !level.textContent;
     where.hidden = !where.textContent || select.querySelectorAll('optgroup').length < 2;
     button.title = option ? [groupOf(option), name, option.value.toLowerCase() === name.toLowerCase() ? '' : option.value].filter(Boolean).join(' · ') : '';
-    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': '));
+    button.setAttribute('aria-label', [baseLabel, where.hidden ? '' : where.textContent, text.textContent, last.textContent].filter(Boolean).join(': ') + (level.hidden ? '' : `, ${tr('picker.effort.aria', '{level} effort', { level: levelName(effort.value()) })}`));
     requestAnimationFrame(fitTag);
   };
 
@@ -1386,9 +1462,9 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
 
     const full = nameOf(select.selectedOptions[0] || { dataset: {}, textContent: '' });
     text.textContent = full;
-    if (text.scrollWidth + 30 > room) text.textContent = shortName(full);
+    if (text.scrollWidth + (level.hidden ? 0 : level.scrollWidth + 6) + 30 > room) text.textContent = shortName(full);
     button.classList.remove('picker-narrow');
-    const need = where.scrollWidth + text.scrollWidth + (last.hidden ? 0 : last.scrollWidth + 6) + 30;
+    const need = where.scrollWidth + text.scrollWidth + (level.hidden ? 0 : level.scrollWidth + 6) + (last.hidden ? 0 : last.scrollWidth + 6) + 30;
     button.classList.toggle('picker-narrow', need > Math.min(room, 320));
   }
   if (typeof ResizeObserver === 'function') new ResizeObserver(fitTag).observe(button.parentElement?.parentElement || button);
@@ -1693,6 +1769,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     place();
     { const d = document.scrollingElement; docAt = d ? { top: d.scrollTop, left: d.scrollLeft } : null; }
     centreNext = true;
+    renderEffort();
     render();
     document.addEventListener('pointerdown', outside, true);
     window.addEventListener('resize', onResize);
@@ -1716,7 +1793,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
   });
   const page = () => Math.max(1, Math.floor(list.clientHeight / 44));
   function onKey(e) {
-    const onControl = e.target.closest?.('.picker-chip, .picker-back');
+    const onControl = e.target.closest?.('.picker-chip, .picker-back, .picker-effort-opt');
     if (onControl && (e.key === 'Enter' || e.key === ' ')) return;
     if (onControl && /^(Arrow(Up|Down)|Page(Up|Down)|Home|End)$/.test(e.key)) owner().focus();
     if (e.key === 'ArrowDown') setActive(active + 1);
@@ -1726,6 +1803,13 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else if ((e.key === 'Home' || e.key === 'End') && (e.target !== search || !search.value)) setActive(e.key === 'Home' ? 0 : rows.length - 1);
     else if (e.key === 'Enter') { rows[active]?.el.click(); }
     else if (e.key === 'Escape') { if (search.value) { search.value = ''; render(); } else if (onBack) { close(false); onBack(); } else close(); }
+    else if (e.key === 'Tab' && !head.querySelector('.picker-back') && !filters.length && !effRow.hidden) {
+
+      const stops = [owner(), seg.querySelector('[tabindex="0"]')];
+      const next = stops.indexOf(document.activeElement) + (e.shiftKey ? -1 : 1);
+      if (next < 0 || next >= stops.length) { close(false); return; }
+      stops[next].focus();
+    }
     else if (e.key === 'Tab' && (head.querySelector('.picker-back') || filters.length)) {
 
       const stops = [head.querySelector('.picker-back'), owner(), ...chips.children].filter((x) => x && !x.hidden);
@@ -3215,7 +3299,7 @@ else globalThis.screenIntent = api;
     const title = (live && live.title) || snap?.t || '';
     const url = (live && live.url) || snap?.u || '';
     const reopen = live ? live.reopen : /^https?:\/\//i.test(snap?.u || '');
-    return { state, title, url, reopen, favicon: live?.favicon || null };
+    return { state, title, url, reopen, favicon: live?.favicon || snap?.f || null };
   }
   function paint(el) {
     const v = view(el);
@@ -3232,7 +3316,7 @@ else globalThis.screenIntent = api;
     if (closed) tip.push(tr(v.reopen ? 'tabref.closed.reopen' : 'tabref.closed.gone'));
     el.title = tip.join('\n');
     const icon = el.querySelector('.tab-ref-icon');
-    const src = !closed && v.favicon ? v.favicon : '';
+    const src = v.favicon || '';
     if (icon.dataset.src !== src) {
       icon.dataset.src = src;
       icon.textContent = '';
@@ -3282,7 +3366,7 @@ else globalThis.screenIntent = api;
     el.className = 'tab-ref';
     if (key) el.dataset.key = key;
     el.innerHTML = '<span class="tab-ref-icon" aria-hidden="true"></span><span class="tab-ref-title"></span>';
-    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || '') }; if (key) snaps.set(key, el._snap); }
+    if (snap && (snap.t || snap.u)) { el._snap = { t: String(snap.t || ''), u: String(snap.u || ''), f: String(snap.f || '') }; if (key) snaps.set(key, el._snap); }
     el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); click(el); });
     paint(el);
     if (key) { let set = chips.get(key); if (!set) chips.set(key, (set = new Set())); set.add(el); sync(); }
@@ -3637,8 +3721,31 @@ function setPillText(key, shortKey, name) {
 }
 
 
+
+
+let chatEffort = '';
+const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+function followChatEffort(level) {
+  if (typeof level !== 'string' || level === chatEffort) return;
+  chatEffort = level;
+  $('model').pickerSync?.();
+}
+window.followChatEffort = followChatEffort;
+const effortLevels = () => (($('model').selectedOptions[0]?.dataset.efforts) || '').split(',').filter(Boolean);
 const modelPicker = window.lumenPicker($('model'), {
   recentKey: 'model',
+  effort: {
+    levels: effortLevels,
+
+    value: () => {
+      const levels = effortLevels();
+      if (!chatEffort || !levels.length || levels.includes(chatEffort)) return chatEffort;
+      const at = EFFORT_ORDER.indexOf(chatEffort);
+      return levels.reduce((best, l) => (Math.abs(EFFORT_ORDER.indexOf(l) - at) < Math.abs(EFFORT_ORDER.indexOf(best) - at) ? l : best), levels[0]);
+    },
+    set: (level) => { chatEffort = level; window.assistant.setEffort?.(level)?.catch?.(() => {}); },
+  },
   onMore: () => openModelSearch(),
 
   extra: (q) => (q && modelGroups.has('openrouter:__more') ? [{ label: t('models.searchFor', { q }), detail: t('models.more.detail'), run: (text) => openModelSearch(text) }] : []),
@@ -3655,6 +3762,7 @@ async function loadModels() {
   const select = $('model');
   const picker = select.closest('.model-picker');
   modelReady = Boolean(s.model);
+  chatEffort = s.effort || '';
   if (picker) picker.hidden = !modelReady;
   const groups = new Map();
   for (const m of s.models) {
@@ -3673,6 +3781,7 @@ async function loadModels() {
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
     if (m.lastUsed) option.dataset.lastUsed = m.lastUsed;
+    if (m.efforts?.length) option.dataset.efforts = m.efforts.join(',');
     if (m.auto) option.dataset.auto = '1';
     groups.get(m.group).append(option);
   }
@@ -4438,6 +4547,13 @@ async function askInNewChat(text, files = []) {
   }
   $('new-chat').click();
   ask(text, images);
+}
+
+
+
+function askInFreshChat(text) {
+  if (!$('empty').hidden) $('new-chat').click();
+  return ask(text);
 }
 
 
@@ -6209,6 +6325,7 @@ function applySync(view) {
   chatHost.synced?.(view);
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.();
   window.chatFolders?.refresh(view?.workFolder);
+  followChatEffort(view?.effort);
   chatHost.chatChanged?.();
 }
 window.assistant.onSync?.(({ view } = {}) => applySync(view));
@@ -6439,6 +6556,7 @@ function clearChatView({ keepBox = false } = {}) {
 }
 $('new-chat').onclick = () => {
   window.assistant.reset();
+  followChatEffort('');
   clearChatView();
   window.planModeUI?.chatShown(null, false);
   window.chatList?.refreshUsage('');
@@ -7904,6 +8022,7 @@ function startChat() {
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
 // ---- sidebar-open.js
+
 
 
 
@@ -10437,35 +10556,6 @@ $('app-menu').onclick = () => {
   window.browser.openAppMenu?.({ x: Math.round(r.left), y: Math.round(r.bottom), right: Math.round(r.right) });
 };
 
-
-{
-  const list = $('extension-actions');
-  const more = $('actions-overflow');
-  const hiddenActions = () => {
-    const lr = list.getBoundingClientRect();
-    return [...(list.shadowRoot?.querySelectorAll('.action') || [])].filter((n) => n.getBoundingClientRect().right > lr.right + 1);
-  };
-  let frame = 0;
-  const refresh = () => {
-    if (frame) return;
-    frame = requestAnimationFrame(() => { frame = 0; more.hidden = !hiddenActions().length; });
-  };
-  new ResizeObserver(refresh).observe(list);
-  customElements.whenDefined('browser-action-list').then(() => {
-
-    if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true });
-    refresh();
-  });
-  more.onclick = () => {
-    const r = more.getBoundingClientRect();
-    window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, hiddenActions().map((n) => ({ id: n.id, title: n.title || '' })));
-  };
-  window.browser.onActionsOverflowPick?.((id) => {
-    const node = [...(list.shadowRoot?.querySelectorAll('.action') || [])].find((n) => n.id === id);
-    const r = more.getBoundingClientRect();
-    window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: node?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
-  });
-}
 $('agent-stop').onclick = () => (window.chatStopReply ? window.chatStopReply() : window.assistant.stop());
 
 
@@ -10820,7 +10910,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.(); } catch {  }
+    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch {  }
     if (mine !== toggleSeq || sidebarWanted !== opening) return;
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
@@ -11005,7 +11095,7 @@ window.browser.onAskFromHome?.(({ text, tabId }) => {
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);
-  ask(t('ask.selection', { text }));
+  askInFreshChat(t('ask.selection', { text }));
 });
 
 
@@ -11047,9 +11137,9 @@ function loadCommandBar() {
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
   const text = String(e.detail || '').trim();
-  if (!text) return;
   showSidebar(true);
-  ask(text);
+  if (text) askInFreshChat(text);
+  else if (!$('empty').hidden) $('new-chat').click();
 });
 
 
@@ -11488,6 +11578,7 @@ $('agent-stop')?.addEventListener('click', () => {
     showHistory(view.items);
     resumeLive(view.live);
     refreshUsage(view.usage);
+    window.followChatEffort?.(view.effort);
     window.chatUsageMeter?.refresh();
     closePanel(false);
     prompt.focus();
@@ -12770,7 +12861,8 @@ $('agent-stop')?.addEventListener('click', () => {
     ring.setAttribute('aria-label', label);
     ringBar.setAttribute('aria-valuetext', label);
     ringText.textContent = window.t(view.estimated ? 'context.strip.estimated' : 'context.strip', { used: short(view.tokens), total: short(view.window) });
-    ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)} ${window.t(percent >= 75 ? 'context.compact' : 'context.more')}`;
+    const model = view.model ? ` ${window.t('context.model', { model: view.model })}` : '';
+    ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)}${model} ${window.t(percent >= 75 ? (view.auto ? 'context.auto' : 'context.compact') : 'context.more')}`;
   }
   async function refreshContext() {
     if (!chatsApi?.list) return;
@@ -13517,7 +13609,15 @@ $('agent-stop')?.addEventListener('click', () => {
     if (!bubble || bubble.dataset.skill !== undefined) return;
     const text = bubble.textContent || '';
     const m = REQUEST.exec(text.trim());
-    if (!m) return;
+    if (!m) {
+
+      const words = text.includes('skill_request') ? window.stepLabels?.skillText?.(text) : '';
+      if (!words) return;
+      bubble.dataset.skill = '';
+      for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
+      bubble.prepend(document.createTextNode(words));
+      return;
+    }
     bubble.dataset.skill = m[1];
     for (const node of [...bubble.childNodes]) if (node.nodeType === Node.TEXT_NODE) node.remove();
     const tag = Object.assign(document.createElement('div'), { className: 'skill-tag' });
@@ -14578,13 +14678,14 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
-  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
   const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
   const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
   const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
 
 
   function planToolError(name, input = {}) {
+    if (name === 'word') return ['list', 'read'].includes(String(input?.action || '')) ? null : PLAN_REFUSAL;
     if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
     return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
   }
@@ -14743,7 +14844,7 @@ $('agent-stop')?.addEventListener('click', () => {
   function chatShown(view, sameChat) {
     if (sameChat) { remember(); return; }
     const id = view?.id || null;
-    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && (window.lumenPlanModeDefault === true || view?.project?.plan === true);
     render();
   }
 
@@ -15316,6 +15417,238 @@ $('agent-stop')?.addEventListener('click', () => {
   for (const id of ['hands-off', 'hands-off-strip']) document.getElementById(id)?.addEventListener('click', () => window.lumenPrefs?.openSettingsPage('hands-off'));
   window.lumenPrefs?.get().then(applyPrefs).catch(() => {});
   window.lumenPrefs?.onChange(applyPrefs);
+}
+;
+// ---- ext-pins-core.js
+
+
+
+
+(function (root) {
+  const MODES = ['pinned', 'all', 'none'];
+  const DEFAULT_MODE = 'pinned';
+  const AUTO_PIN = 3;
+  const MAX = 200;
+  const ID = /^[a-p]{32}$/;
+
+  const ids = (list) => [...new Set((Array.isArray(list) ? list : []).filter((id) => typeof id === 'string' && ID.test(id)))].slice(0, MAX);
+  const cleanMode = (m) => (MODES.includes(m) ? m : DEFAULT_MODE);
+
+
+  function clean(state) {
+    const order = ids(state?.order);
+    return { order, seen: [...new Set([...ids(state?.seen), ...order])].slice(-MAX), migrated: state?.migrated === true };
+  }
+
+
+
+
+
+  function reconcile(state, installed, done) {
+    const s = clean(state);
+    const order = [...s.order];
+    const seen = new Set(s.seen);
+    for (const id of ids(installed)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      if (!s.migrated || order.length < AUTO_PIN) order.push(id);
+    }
+    return clean({ order, seen: [...seen], migrated: s.migrated || done === true });
+  }
+
+
+  function setPinned(state, id, on) {
+    const s = clean(state);
+    if (!ID.test(String(id))) return s;
+    const order = s.order.filter((x) => x !== id);
+    if (on) order.push(id);
+    return clean({ order, seen: [...s.seen, id], migrated: s.migrated });
+  }
+
+
+  function move(state, id, beforeId) {
+    const s = clean(state);
+    if (!s.order.includes(id)) return s;
+    const order = s.order.filter((x) => x !== id);
+    const at = order.indexOf(beforeId);
+    order.splice(at < 0 ? order.length : at, 0, id);
+    return { ...s, order };
+  }
+
+
+  function nudge(state, id, step) {
+    const s = clean(state);
+    const i = s.order.indexOf(id);
+    const j = i + (step < 0 ? -1 : 1);
+    if (i < 0 || j < 0 || j >= s.order.length) return s;
+    const order = [...s.order];
+    [order[i], order[j]] = [order[j], order[i]];
+    return { ...s, order };
+  }
+
+
+
+
+  function layout(state, mode, installed) {
+    const have = ids(installed);
+    const s = clean(state);
+    const pinned = s.order.filter((id) => have.includes(id));
+    const rest = have.filter((id) => !pinned.includes(id));
+    const m = cleanMode(mode);
+    if (!have.length || m === 'none') return { toolbar: [], menu: have, puzzle: 'never', mode: m };
+    if (m === 'all') return { toolbar: [...pinned, ...rest], menu: [], puzzle: 'overflow', mode: m };
+    return { toolbar: pinned, menu: rest, puzzle: 'always', mode: m };
+  }
+
+
+  const needsAttention = (lay, badged) => lay.puzzle !== 'never' && lay.menu.some((id) => badged.includes(id));
+
+  const api = { MODES, DEFAULT_MODE, AUTO_PIN, ID, clean, cleanMode, reconcile, setPinned, move, nudge, layout, needsAttention };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.extPinsCore = api;
+})(this);
+;
+// ---- extensions-bar.js
+
+
+
+
+
+
+{
+  const core = window.extPinsCore;
+  const list = document.getElementById('extension-actions');
+  const puzzle = document.getElementById('actions-overflow');
+  if (core && list && puzzle) {
+    let mode = core.DEFAULT_MODE;
+    let pins = core.clean(null);
+    let lay = core.layout(pins, mode, []);
+    let shown = false;
+    const nodes = () => [...(list.shadowRoot?.querySelectorAll('.action') || [])];
+    const byId = (id) => nodes().find((n) => n.id === id);
+    const label = puzzle.getAttribute('aria-label') || '';
+
+    const clipped = () => {
+      const lr = list.getBoundingClientRect();
+      return nodes().some((n) => !n.hidden && n.getBoundingClientRect().right > lr.right + 1);
+    };
+    const set = (n, prop, v) => { if (n[prop] !== v) n[prop] = v; };
+
+    let styled = false;
+    const style = () => {
+      if (styled || !list.shadowRoot) return;
+      styled = true;
+      const s = document.createElement('style');
+      s.textContent = '.action:focus-visible { box-shadow: var(--focus-ring); } .action.dragging { opacity: 0.4; } .action.drop-before { box-shadow: -2px 0 0 var(--accent); } .action.drop-after { box-shadow: 2px 0 0 var(--accent); }';
+      list.shadowRoot.appendChild(s);
+    };
+
+    let syncedFor = '';
+    function apply() {
+      style();
+      const all = nodes();
+      const ids = all.map((n) => n.id);
+      const eff = core.reconcile(pins, ids);
+      lay = core.layout(eff, mode, ids);
+      const inBar = new Set(shown ? lay.toolbar : []);
+      for (const n of all) {
+        const at = lay.toolbar.indexOf(n.id);
+        set(n, 'hidden', !inBar.has(n.id));
+        if (at >= 0) set(n.style, 'order', String(at));
+        set(n, 'draggable', mode !== 'none' && eff.order.includes(n.id));
+      }
+      document.documentElement.classList.toggle('pref-no-extensions', shown && mode === 'none');
+      const badged = all.filter((n) => n.querySelector('.badge')).map((n) => n.id);
+      const attention = shown && core.needsAttention(lay, badged);
+      puzzle.classList.toggle('has-attention', attention);
+      const text = attention ? window.t('toolbar.extensionsAttention') : label;
+      if (puzzle.getAttribute('aria-label') !== text) { puzzle.setAttribute('aria-label', text); puzzle.title = text; }
+      puzzle.hidden = !shown || lay.puzzle === 'never' || (lay.puzzle === 'overflow' && !clipped());
+
+      const key = ids.join(',');
+      if (shown && ids.some((id) => !pins.seen.includes(id)) && key !== syncedFor) { syncedFor = key; window.lumenPrefs?.syncExtensionPins?.(); }
+    }
+    let frame = 0;
+    const refresh = () => { if (!frame) frame = requestAnimationFrame(() => { frame = 0; apply(); }); };
+
+    new ResizeObserver(refresh).observe(list);
+    customElements.whenDefined('browser-action-list').then(() => {
+
+      if (list.shadowRoot) new MutationObserver(refresh).observe(list.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden', 'title'] });
+      refresh();
+    });
+    const onPrefs = (p) => {
+      if (!p || !('extensionsToolbar' in p)) return;
+      mode = core.cleanMode(p.extensionsToolbar);
+      pins = core.clean(p.extensionPins);
+      shown = true;
+      refresh();
+    };
+    window.lumenPrefs?.get().then(onPrefs).catch(() => {});
+    window.lumenPrefs?.onChange(onPrefs);
+
+
+    puzzle.onclick = () => {
+      const r = puzzle.getBoundingClientRect();
+      const items = [...lay.toolbar, ...lay.menu].map((id) => ({ id, title: byId(id)?.title || '' }));
+      window.browser.openActionsOverflow?.({ x: Math.round(r.left), y: Math.round(r.bottom) }, items);
+    };
+    window.browser.onActionsOverflowPick?.((id) => {
+      const r = puzzle.getBoundingClientRect();
+      window.browserAction?.activate(list.partition || '_self', { eventType: 'click', extensionId: id, tabId: byId(id)?.tab ?? list.tab ?? -1, alignment: list.alignment, anchorRect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+    });
+
+
+    const save = (next) => {
+      pins = next;
+      apply();
+      window.lumenPrefs?.setExtensionOrder?.(next.order);
+    };
+    const target = (e) => e.composedPath().find((n) => n instanceof Element && n.classList?.contains('action'));
+    let dragging = null;
+    const pinned = () => nodes().filter((n) => !n.hidden && n.draggable).sort((a, b) => Number(a.style.order) - Number(b.style.order));
+    const clear = () => nodes().forEach((n) => n.classList.remove('dragging', 'drop-before', 'drop-after'));
+    const dropAt = (x) => {
+      const row = pinned().filter((n) => n.id !== dragging);
+      const before = row.find((n) => { const r = n.getBoundingClientRect(); return x < r.left + r.width / 2; });
+      return { before: before || null, last: row[row.length - 1] || null };
+    };
+    list.addEventListener('dragstart', (e) => {
+      const n = target(e);
+      if (!n?.draggable) return;
+      dragging = n.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', n.title || n.id);
+      n.classList.add('dragging');
+    });
+    list.addEventListener('dragover', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const { before, last } = dropAt(e.clientX);
+      for (const n of nodes()) n.classList.remove('drop-before', 'drop-after');
+      if (before) before.classList.add('drop-before'); else last?.classList.add('drop-after');
+    });
+    list.addEventListener('drop', (e) => {
+      if (!dragging) return;
+      e.preventDefault();
+      const id = dragging;
+      const { before } = dropAt(e.clientX);
+      dragging = null;
+      clear();
+      save(core.move(core.reconcile(pins, nodes().map((n) => n.id)), id, before?.id ?? null));
+    });
+    list.addEventListener('dragend', () => { dragging = null; clear(); });
+    list.addEventListener('keydown', (e) => {
+      if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+      const n = target(e);
+      if (!n?.draggable) return;
+      e.preventDefault();
+      const eff = core.reconcile(pins, nodes().map((x) => x.id));
+      const next = core.nudge(eff, n.id, e.key === 'ArrowLeft' ? -1 : 1);
+      if (next.order.join() !== eff.order.join()) save(next);
+    });
+  }
 }
 ;
 // ---- tab-search-match.js

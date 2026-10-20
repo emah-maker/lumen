@@ -1,7 +1,8 @@
 // lumen://chat > Projects: named groups of chats that share instructions (like Claude Projects and ChatGPT Projects). Only the page
 // uses this file. The data lives in main (features/chat-store.js: `projects` and each chat's optional `project`); this draws the
 // rail's Projects block, the editor (name and instructions) and the "Move to project" picker, and calls the chat page's api.
-//   window.chatProjects.render({ host, projects, chats, active, expanded?, current?, onSelect(id|null), onToggle?(id), onOpen?(id), onAdd(), onEdit(project), onNewChat(project) })
+//   window.chatProjects.render({ host, projects, chats, active, expanded?, current?, onSelect(id|null), onToggle?(id), onOpen?(id), onAdd(), onEdit(project), onNewChat(project), onPage?(project) })
+//     onPage: the project's own page (chat-project-page.js: instructions, files, pinned pages, memory, defaults, chats)
 //     expanded: Set of project ids shown open (their chats listed under them: rows to open, and to drag out: chat-project-drag.js)
 //   window.chatProjects.editor({ api, project, onDone(result) })    result: { saved } or { removed }
 //   window.chatProjects.picker({ api, chat, projects, anchor, onPick?(projectId|null), onDone(), onNew(), onClose?() })
@@ -14,7 +15,7 @@
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
 
   // ---- the rail's block: a heading with +, then one row per project; the chosen project's own actions sit under it
-  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat }) {
+  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null }) {
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const head = el('div', { className: 'cp-pj-head' });
@@ -70,6 +71,11 @@
         instr.onclick = () => onEdit(p);
         const fresh = el('button', { type: 'button', className: 'cp-pj-act', textContent: tr('chatpage.project.newChat', 'New chat here') });
         fresh.onclick = () => onNewChat(p);
+        if (onPage) {
+          const page = el('button', { type: 'button', className: 'cp-pj-act cp-pj-page', textContent: tr('projectws.open', 'Open project') });
+          page.onclick = () => onPage(p);
+          bar.append(page);
+        }
         bar.append(fresh, instr);
         rows.push(bar);
       }

@@ -545,6 +545,8 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
   get: () => ipcRenderer.invoke('prefs:ui'),
   onChange: on('prefs:ui'),
+  syncExtensionPins: () => ipcRenderer.invoke('ext:pins-sync'),
+  setExtensionOrder: (ids) => ipcRenderer.invoke('ext:pins-order', ids),
 });
 
 contextBridge.exposeInMainWorld('lumenUpdates', {
@@ -573,7 +575,7 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'),
   stop: () => ipcRenderer.send('agent:stop'),
-  sidebarTarget: () => ipcRenderer.invoke('chat:sidebar-target'),
+  sidebarTarget: (o) => ipcRenderer.invoke('chat:sidebar-target', o && o.approvalOnly === true ? { approvalOnly: true } : undefined),
   resync: () => ipcRenderer.invoke('chat:resync'),
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''),
   reset: () => ipcRenderer.send('agent:reset'),
