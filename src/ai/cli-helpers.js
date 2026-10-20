@@ -24,15 +24,21 @@ const promptFor = (task) => `You are a helper for another assistant (the lead), 
 
 Job: ${task}`;
 
-// [{ task }] from the engine's spawn request (or a tool input) -> clean jobs, at most MAX_TASKS.
-function cleanJobs(list) {
+// [{ task, n? }] from the engine's spawn request (or a tool input) -> clean jobs, at most max (MAX_TASKS). n: the job's number in the
+// caller's own list (the API helpers' fallback keeps their numbers), else its place here.
+function cleanJobs(list, max = MAX_TASKS) {
   const jobs = [];
   for (const entry of Array.isArray(list) ? list : []) {
     const task = String(typeof entry === 'string' ? entry : entry?.task ?? '').trim().slice(0, TASK_CHARS);
-    if (task) jobs.push({ task });
+    if (task) jobs.push({ task, ...(Number.isInteger(entry?.n) && entry.n > 0 ? { n: entry.n } : {}) });
   }
-  return { jobs: jobs.slice(0, MAX_TASKS), dropped: Math.max(0, jobs.length - MAX_TASKS) };
+  return { jobs: jobs.slice(0, max), dropped: Math.max(0, jobs.length - max) };
 }
+
+// An API chat's helper (delegate) only reads. A job that names files or a terminal, or a helper that asked for a tool it does not have
+// (click, a file, a command), needs more than that: the job goes to a signed-in CLI, which has Lumen's tools (and the chat's work folder).
+const NEEDS_MORE = /\b(terminal|command[ -]line|shell|powershell|bash|run (a |the |this )?(command|script|program)|local files?|files? (on|in) (my|this|the) (computer|pc|disk|drive|folder)|(my|the) (documents|downloads|desktop) folder|(edit|write|save|create|read|open) (to |the |a )?(local |this )?(file|folder|spreadsheet|document) )/i;
+const needsMore = (task, result = null) => NEEDS_MORE.test(String(task || '')) || Boolean(result?.refused?.length);
 
 // The engines a helper may run on, in order. own: the chat's engine kind (a CLI chat) or null; status: agent.engines.cliStatus()
 // ({ kind: { installed, signedIn, enabled } }); the chat's own is tried even when its status is unknown (it is running the chat).
@@ -73,7 +79,7 @@ function createPool(max = MAX_CLI) {
 // chat's step rows. Returns the result rows formatResults takes.
 async function runJobs({ jobs, list, runOn, api = null, pool, signal, onEvent = () => {}, timeMs = TIME_MS }) {
   return Promise.all(jobs.map(async (job, i) => {
-    const n = i + 1;
+    const n = job.n || i + 1;
     const ctrl = new AbortController();
     const outer = () => ctrl.abort();
     signal?.addEventListener('abort', outer, { once: true });
@@ -126,4 +132,4 @@ function formatResults(results, { dropped = 0 } = {}) {
   return `<untrusted_page_content>\n${head}\n\n${body}${more}\n</untrusted_page_content>`;
 }
 
-module.exports = { MAX_CLI, MAX_TASKS, NAMES, OTHERS, promptFor, cleanJobs, candidates, createPool, runJobs, formatResults };
+module.exports = { MAX_CLI, MAX_TASKS, NAMES, OTHERS, promptFor, cleanJobs, needsMore, candidates, createPool, runJobs, formatResults };

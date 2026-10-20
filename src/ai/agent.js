@@ -545,6 +545,14 @@ const DELEGATE_TOOL = {
   },
   eager_input_streaming: true,
 };
+// [cli helpers] The same name for the CLI chats that have no subagent of their own that passes Lumen's approvals (Claude Code without full access, Codex,
+// Antigravity): listed to their MCP session only (features/ai-agents.js runTools), so it costs the shared tool list and Grok's prompt nothing.
+// agent.delegate runs the jobs as helpers on a CLI (ai/cli-helpers.js): this chat's own engine first, then other signed-in CLIs, then an API key.
+const CLI_DELEGATE_TOOL = {
+  name: 'delegate',
+  description: 'Run 1-3 independent jobs as helpers side by side, each with Lumen\'s tools under the user\'s approvals. tasks:[{task}], each self-contained. Returns each report.',
+  input_schema: DELEGATE_TOOL.input_schema,
+};
 // [acting helpers] parallel_tasks (ai/acting-helpers.js) is for the sidebar's API chats only, like delegate, and only while Settings > AI and agents >
 // "Let helpers act in tabs" (actingHelpers, off by default) is on. Not listed to MCP clients or the CLI engines (they have their own subagents).
 const PARALLEL_TASKS_TOOL = {
@@ -4262,12 +4270,13 @@ ${prompt}` : prompt), historyImages: [] };
   // normal mode with the parent's scope, so its tool calls use Lumen's tools through the parent run's own gate and approval cards; full
   // access only where it is the chat's own engine and the chat already has it. At most 3 helper processes at once; a stopped parent stops them.
   // Returns the result text, or null when nothing can run a job (no CLI signed in, no API key).
-  async runCliHelpers(list, { own = null, settings = {}, signal, emit }) {
+  // raw: the result rows instead of the text; api: false leaves the API key out of the order (the caller's API run already failed); max: jobs taken.
+  async runCliHelpers(list, { own = null, settings = {}, signal, emit, raw = false, api: useApi = true, max }) {
     const lib = require('./cli-helpers');
-    const { jobs, dropped } = lib.cleanJobs(list);
+    const { jobs, dropped } = lib.cleanJobs(list, max);
     if (!jobs.length) return null;
     const status = (() => { try { return this.engines?.cliStatus?.() || {}; } catch { return {}; } })();
-    const helperModel = this.grokHelperModel();
+    const helperModel = useApi ? this.grokHelperModel() : null;
     const order = lib.candidates({ own, status, apiKey: Boolean(helperModel) });
     if (!order.length) return null;
     this.helperPool ||= lib.createPool(lib.MAX_CLI);
@@ -4289,7 +4298,31 @@ ${prompt}` : prompt), historyImages: [] };
       },
     });
     if (signal?.aborted) throw new (sdk().APIUserAbortError)();
-    return lib.formatResults(results, { dropped });
+    return raw ? results : lib.formatResults(results, { dropped });
+  }
+
+  // Is any CLI signed in and offered, so a helper job can run on it? (Not counting the chat's own engine: an API chat has none.)
+  cliHelpersReady() {
+    try { return require('./cli-helpers').candidates({ own: null, status: this.engines?.cliStatus?.() || {} }).length > 0; } catch { return false; }
+  }
+
+  // The delegate tool of a CLI chat (CLI_DELEGATE_TOOL): its jobs run as helpers on a CLI, this chat's own engine first.
+  async cliDelegate(input, { kind, chat, signal, emit }) {
+    const list = (Array.isArray(input?.tasks) ? input.tasks : []).map((e) => ({ task: [typeof e === 'string' ? e : e?.task, Array.isArray(e?.urls) && e.urls.length ? 'Start with: ' + e.urls.slice(0, 6).join(', ') : ''].filter(Boolean).join('\n') }));
+    if (!list.some((e) => String(e.task).trim())) throw new Error('delegate needs tasks: [{ task }], each a self-contained job.');
+    const text = await this.runCliHelpers(list, { own: kind, settings: chat?.settings || {}, signal, emit });
+    if (text === null) throw new Error('No helper could take this job: no signed-in CLI AI and no API key. Do the jobs yourself.');
+    return text;
+  }
+
+  // The delegate tool a CLI chat's MCP session lists (features/ai-agents.js runTools): [] where the engine has a subagent of its own or must
+  // not start helpers. Claude Code with full access keeps its own Agent tool (its steps show as helper rows, claude-code.js); Grok Build's
+  // spawn_subagent is answered by runCliHelpers directly; a helper's own engine never offers it.
+  cliHelperToolDefs(kind, engine = null) {
+    if (!['claudecode', 'codex', 'antigravity'].includes(kind) || !this.subagentsOn()) return [];
+    if (engine && this.helperEngines?.has(engine)) return [];
+    if (kind === 'claudecode' && this.browser.claudeCodeFullAccess?.() === true) return [];
+    return [CLI_DELEGATE_TOOL];
   }
 
   // One helper's run on one CLI engine: a fresh session, its own engine (a side engine while the chat holds the shared one), released
@@ -4297,6 +4330,7 @@ ${prompt}` : prompt), historyImages: [] };
   async cliHelperOnce(kind, { prompt, signal, emit, own, settings, scope }) {
     const lease = this.engines?.lease?.(kind, null);
     if (!lease) throw new Error(`${kind} is not available for a helper right now.`);
+    (this.helperEngines ||= new WeakSet()).add(lease.engine); // its MCP session is not offered delegate (cliHelperToolDefs): helpers do not start helpers
     let said = '';
     let problem = '';
     const sink = (event) => {
@@ -4324,6 +4358,7 @@ ${prompt}` : prompt), historyImages: [] };
       const text = String(out?.text || said || '').trim();
       return { text, failed: Boolean(out?.failed) || (!text && Boolean(problem)), stopped: Boolean(out?.stopped), error: problem };
     } finally {
+      this.helperEngines?.delete(lease.engine);
       try { lease.release(); } catch { /* already gone */ }
     }
   }
@@ -4344,6 +4379,8 @@ ${prompt}` : prompt), historyImages: [] };
     const emit = gate?.emit || (() => {});
     const signal = gate?.signal || new AbortController().signal;
     const chat = scope?.chat || null;
+    const cliKind = !model && chat ? /^(claudecode|codex|antigravity|grokbuild):/.exec(String(chat.settings?.model || ''))?.[1] : null;
+    if (cliKind) return this.cliDelegate(input, { kind: cliKind, chat, signal, emit }); // [cli helpers] a CLI chat's delegate: helpers on a CLI
     const { tasks, dropped } = subagents.cleanTasks(input);
     const own = model || chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
     const cheap = model ? own : subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
@@ -4378,13 +4415,31 @@ ${prompt}` : prompt), historyImages: [] };
     // that expands as it reads: the helpers' live steps (start / step / done) are not sent to the user's window.
     const onEvent = agentsQuiet.helperUiEvent;
     const limits = this.browser.subagentLimits?.() || {};
+    // [cli helpers] An API chat's jobs run on the chat's API model first. A job that names files or a terminal goes straight to a signed-in CLI
+    // (when one is signed in), and a job whose API run failed (no key, rate limit, quota, network) or that asked for a tool a reading helper
+    // lacks is run on one after: ai/cli-helpers.js order, the same approvals (the chat's scope), the same 3-process limit.
+    const cliLib = !model && this.cliHelpersReady() ? require('./cli-helpers') : null;
+    const toCli = tasks.map((t) => Boolean(cliLib && cliLib.needsMore(t.task)));
+    const apiIdx = tasks.map((_, i) => i).filter((i) => !toCli[i]);
     let results;
     try {
-      results = await subagents.runHelpers({ tasks, turn, exec, signal, tools: HELPER_TOOL_DEFS, maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent });
+      const ran = apiIdx.length ? await subagents.runHelpers({ tasks: apiIdx.map((i) => tasks[i]), turn, exec, signal, tools: HELPER_TOOL_DEFS, maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent }) : [];
+      results = tasks.map(() => null);
+      ran.forEach((r, j) => { results[apiIdx[j]] = { ...r, n: apiIdx[j] + 1 }; });
     } finally {
       if (read) this.markTainted(gate?.run); // what the helpers read is now in this chat
     }
     if (signal.aborted) throw new (sdk().APIUserAbortError)();
+    if (cliLib) {
+      const redo = tasks.map((t, i) => ({ t, i })).filter(({ i }) => toCli[i] || results[i].status === 'failed' || cliLib.needsMore('', results[i]));
+      const onCli = redo.length ? await this.runCliHelpers(redo.map(({ t, i }) => ({ task: t.task + (t.urls?.length ? '\nStart with: ' + t.urls.join(', ') : ''), n: i + 1 })), { own: null, settings: chat?.settings || {}, signal, emit, raw: true, api: false, max: subagents.MAX_TASKS }) : null;
+      for (const r of onCli || []) {
+        const i = r.n - 1;
+        if (r.status === 'done' || r.status === 'stopped' || !results[i]) results[i] = { ...r, task: tasks[i].task };
+      }
+      for (let i = 0; i < results.length; i++) if (!results[i]) results[i] = { n: i + 1, task: tasks[i].task, status: 'failed', text: '', error: 'no signed-in CLI could take this job' };
+      if (signal.aborted) throw new (sdk().APIUserAbortError)();
+    }
     return subagents.formatResults(results, { dropped, model: used.model === own ? '' : authorName(used.model) });
   }
   // ---- [/subagents]
