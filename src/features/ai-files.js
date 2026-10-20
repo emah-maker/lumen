@@ -166,6 +166,34 @@ function restore(block) {
   const [file] = resolveFiles([block?.path]);
   return file ? shared.add(file, block.trusted === true) : null;
 }
+// The files a saved reply says the AI wrote ({ meta.written }: paths only), as cards for a reopened chat. Each path is checked as when it was made
+// (a drive path, no network or device name, no stream) and again on the disk now: a file that is gone still gets its row (clicking it says so), but
+// nothing here reads a file, and a path is only ever acted on through the id of a card made here (main.js aifiles:open stats it again, and a script or
+// program is only shown in its folder). Cards are trusted: they are the files the AI wrote in this chat.
+const MAX_WRITTEN = 12;
+function restoreWritten(paths, { platform = process.platform } = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(paths) ? paths.slice(0, MAX_WRITTEN) : []) {
+    try {
+      const p = typeof raw === 'string' ? raw : '';
+      if (!p || p.length > 500 || p.includes('\0') || NETWORK.test(p)) continue;
+      if (platform === 'win32' ? !WIN_DRIVE.test(p) || p.slice(2).includes(':') : !path.isAbsolute(p)) continue;
+      let [file] = resolveFiles([p], { platform });
+      if (!file) { // gone (or unreadable now): the row stays, so the chat can say so
+        const norm = path.normalize(p);
+        if (norm.split(/[\\/]/).some((x) => DEVICE_NAME.test(x))) continue;
+        const ext = extOf(norm);
+        file = { path: norm, name: path.basename(norm), dir: path.dirname(norm), ext, kind: kindOf(ext), size: 0 };
+      }
+      const key = normal(file.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(shared.add(file, true));
+    } catch { /* not a usable path: no row */ }
+  }
+  return out;
+}
 // Is `file` (from resolveFiles) inside one of `roots` and written after `since`? (A run that has its own tools: files it made without a Write result.)
 function isFresh(file, { roots = [], since = null, until = Date.now() } = {}) {
   if (since === null) return false;
@@ -188,4 +216,4 @@ function wasWritten(chat, file) {
   return Boolean(set && (set.has(normal(path.resolve(file.path))) || set.has(normal(file.path))));
 }
 
-module.exports = { noteWritten, wasWritten, findPaths, resolveFiles, cardOf, createRegistry, previewOf, pickMain, kindOf, extOf, canOpenInTab, canOpenInSystem, fileUrlOf, idOf, shared, restore, isFresh, normal, MAX_FILES, PREVIEW_MAX };
+module.exports = { noteWritten, wasWritten, findPaths, resolveFiles, cardOf, createRegistry, previewOf, pickMain, kindOf, extOf, canOpenInTab, canOpenInSystem, fileUrlOf, idOf, shared, restore, restoreWritten, isFresh, normal, MAX_FILES, PREVIEW_MAX };

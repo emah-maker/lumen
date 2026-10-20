@@ -10291,6 +10291,7 @@ function trackRunDetails(run, msg) {
   const d = run.details;
   const touch = (id) => { if (Number.isInteger(id) && id >= 0 && !d.touched.includes(id) && d.touched.length < 24) d.touched.push(id); }; // [activity cards] the card's Tabs list: every tab the turn used, first touched first
   if (msg.type === 'tool') { try { for (const id of tabMarker.stepTabs(msg.name, msg.input)) touch(id); } catch { /* none */ } } else if (msg.type === 'thumb' || msg.type === 'tool_done') touch(msg.tabId);
+  if (msg.type === 'card_files') { for (const f of Array.isArray(msg.files) ? msg.files : []) if (f && typeof f.path === 'string' && d.written.length < 12 && !d.written.includes(f.path)) d.written.push(f.path); return; } // [activity cards] the files the run wrote: kept with the reply, so a reopened chat has the links
   if (msg.type === 'thinking') {
     if (!d.thinkingSince) d.thinkingSince = Date.now();
     if (d.thinking.length < 20000) d.thinking += msg.text || '';
@@ -10556,7 +10557,7 @@ function stampRun(run, done = null) {
       if (done && d.touched?.length) noteRunTabs(run, d.touched.filter(Number.isInteger)); // (the card's Tabs list: each tab as it last looked, so a closed one still reads after a restart)
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
@@ -10583,7 +10584,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [] } };
+  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
@@ -10627,6 +10628,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
+    if (msg.type === 'card_files' && run.doneMsg && !run.deleted) { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); } // (files listed after the run ended: kept too)
     const afterMsg = []; // (the card's tab / site, said right after the step that named it: the chat has drawn the step's card by then)
     const pushThumb = (ev) => {
       if (run.deleted) return;
