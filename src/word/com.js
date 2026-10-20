@@ -22,6 +22,7 @@ function createWordHost(deps = {}) {
     const seam = deps.test ? { LUMEN_WORD_TEST: '1', ...(deps.test.hidden ? { LUMEN_WORD_HIDDEN: '1' } : {}), ...(deps.test.fresh ? { LUMEN_WORD_NEW: '1' } : {}) } : {};
     const realSpawn = deps.spawn || ((...a) => require('../ai/cli-utils').spawn(...a));
     client = lib.createClient({
+      platform,
       idleMs: IDLE_MS, startMs: START_MS, testRun: false,
       scriptFile: () => lib.scriptFile({ script: SCRIPT, name: 'word' }),
       spawn: (file, args, opts) => realSpawn(file, args, { ...opts, env: { ...process.env, ...(opts?.env || {}), ...seam } }),
