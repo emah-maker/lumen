@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 - **The AI sidebar now keeps each chat as you left it when you switch tabs or chats.** Switching to another tab and back used to throw the conversation to the bottom, drop the pictures and "@" tab chips waiting in the box (or carry the pictures into the other tab's chat), fold the step cards you had opened, and leave the open chat list marking the wrong chat. After a restart the sidebar also did not know which chat it showed, so the draft you had typed was lost. Now each chat keeps its place in the conversation, its unsent text, pictures, tab chips and Plan first setting, and its open step cards while you are elsewhere (in memory: a restart keeps the text only). The chat list, Notes and the other panels belong to the window, so they stay open when the tab changes and the chat list marks the chat of the tab in front. New test: `test/sidebar-tab-state.js`.
 
 ## 0.5.60 (2026-10-20)
