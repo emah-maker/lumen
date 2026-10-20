@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A chat that finishes or needs your OK while you are on another tab now says so in Lumen.** macOS shows no banner for the app in front, so the system notification Lumen sent went unseen when you were in Lumen on a different tab. In that case the tab strip now shows a toast ("AI finished: …", "AI needs your OK") with **Open chat**, which goes where a click on the system notification would: the tab the AI worked in, with the chat open. In another app you still get the system notification. Same switches as before (Tasks → Settings). Tests: `test/notify-click.js`.
 - **The AI closes the tabs it opened when it's done, unless you need them.** "When the AI finishes" (Settings → AI → AI tabs) now defaults to **Close**: the tabs a reply opened for its research or work close as soon as it finishes, with Undo in the toast and under the reply. It keeps the tab you are looking at, a tab playing sound, a tab holding text you typed, and a tab the AI says you still need: `open_tab` and `switch_tab` take `keep: true` for a page you asked to see or a step left for you (signing in, a checkout to confirm). Tabs you clicked in, typed in, pinned or moved stay yours as before. If you had picked Leave open or Ask, that choice stays. Tests: `test/ai-manners-units.js`, `test/close-ai-tabs-units.js`.
 
 ## 0.5.59 (2026-10-19)

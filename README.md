@@ -55,6 +55,8 @@ Search or ask the AI from the same box (**Search | Ask AI**, `Ctrl+/` and `Alt+A
 
 When the AI names a tab (in its answer, in a step such as switching to or closing a tab, or on the Browser card), the chat shows a **tab chip**: the tab's icon and current title. Click it to go to that tab, even in another window. A tab that has closed keeps its last title and, when its address is known, a click opens it again. Saved chats keep the chips, and Export chat writes them as "Title (address)".
 
+**When a chat finishes or needs your OK while you are elsewhere,** Lumen tells you. In another app, it is a system notification. In Lumen on another tab, it is a toast in the tab strip with **Open chat**, which goes to the tab the AI worked in and opens the chat (macOS shows no banner for the app in front, so a system notification would go unseen). Both follow Tasks → Settings → **Notify me when a task finishes or needs me**.
+
 `Ctrl+J` opens it (and moves the keyboard to its message box). On a web page it slides in over a picture of the page; on the new-tab page, and with Reduce motion or Performance mode on, it opens in one step like Chrome's side panel, so the new-tab page's cards and widgets never move. The AI reads the page and operates the browser.
 
 - **Low-level actions:** click, type, keys and shortcuts, scroll, hover, click at a point on a screenshot, tabs, back/forward/reload.

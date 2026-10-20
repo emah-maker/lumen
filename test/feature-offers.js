@@ -51,7 +51,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     try {
       await open();
       const c = await waitFor(card);
-      check('update: the card shows on the empty chat, with every new feature', c?.title === 'New in Lumen: want to turn these on?' && c.rows.map((r) => r.id).join() === 'memory,plan,skills,telegram,voice', JSON.stringify(c));
+      check('update: the card shows on the empty chat, with every new feature', c?.title === 'New in Lumen: want to turn these on?' && c.rows.map((r) => r.id).join() === 'memory,plan,skills,telegram,voice,helpers', JSON.stringify(c));
       check('each line is plain, with Turn on or Set up', c?.rows.every((r) => r.name && r.desc.length < 200 && r.button === (['telegram', 'voice'].includes(r.id) ? 'Set up' : 'Turn on')) && c.foot.join() === 'Not now,Don’t show again', JSON.stringify(c));
       await waitFor(() => JSON.stringify(settingsOf(updated).featureOffersSeen) === ALL, 4000);
       check('once it has been on screen, the features are recorded as offered', JSON.stringify(settingsOf(updated).featureOffersSeen) === ALL, JSON.stringify(settingsOf(updated)));
