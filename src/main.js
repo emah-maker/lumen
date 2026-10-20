@@ -8445,8 +8445,17 @@ const mcpCall = () => Boolean(agent.currentScope()?.mcp);
 // [working-on chip] A chat-page run has no tab until its tools actually need one: then it takes the tab the user last looked at
 // (chatPageRt.pick) and keeps it for the rest of the reply. Asking for the active tab outside a task (the first look at the
 // request, the /btw card) names that tab without taking it, so nothing is marked "working on" or shows the AI's dot for it.
+// [parallel chats] Is the calling run the chat page's own? Only then do its tab choices go to the page's "working on" tab: another
+// chat's run (a sidebar chat working at the same time) keeps its own tabs. Outside a task (the page's first look) it is the page's.
+function pageRunHere() {
+  if (!chatPageRt?.runFromPage()) return false;
+  const scope = agent.currentScope();
+  if (!scope) return true;
+  const page = chatPageRt.runs.get();
+  return Boolean(scope.chat) && chatRuns.get(page?.chatId)?.messages === scope.chat;
+}
 const agentActiveTab = () => {
-  const fromPage = !mcpCall() && Boolean(chatPageRt?.runFromPage());
+  const fromPage = !mcpCall() && pageRunHere();
   const pinned = fromPage ? chatPageRt.runTarget() : null;
   if (pinned != null) return agentTabById(pinned);
   if (fromPage) {
@@ -8471,7 +8480,7 @@ const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null
 const agentOpenTab = (url, opts = {}) => {
   const { ai = false, show: wantShow = false, keep = false, ...rest } = opts || {};
   const mcp = mcpCall();
-  const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null; // ([acting helpers] a helper's tab never becomes the chat page's target)
+  const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null && pageRunHere(); // ([acting helpers] a helper's tab never becomes the chat page's target; [parallel chats] nor another chat's)
   // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
@@ -8485,7 +8494,7 @@ const agentOpenTab = (url, opts = {}) => {
 };
 const agentSwitchTab = (id, opts = {}) => {
   if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
-  const fromPage = chatPageRt?.runTarget() != null;
+  const fromPage = chatPageRt?.runTarget() != null && pageRunHere(); // ([parallel chats] the page's own run only)
   if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const aiCall = Boolean(opts && 'show' in opts && agent.currentScope()); // only a run's switch_tab passes `show`
     const ok = aiCall ? asAiSwitch(() => switchTab(id)) : switchTab(id);
@@ -10739,7 +10748,8 @@ ipcMain.on('agent:stop', (event, id) => {
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
-  else { agent.stop(); if (run?.messages) agent.stopFor(run.messages); } // [stop always works] the chat's own run, even when the agent's open conversation is another
+  else if (run?.messages) agent.stopFor(run.messages); // [stop always works] the chat's own run, even when the agent's open conversation is another
+  else agent.stopOpen(); // (no run of its own: only the open conversation's, never another chat's that happens to be the only one going)
 });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });

@@ -385,7 +385,9 @@ function setupAiAgents(deps) {
   // [warm per chat] key: the message's tab chat (agent.js engineFor). Claude Code then uses that chat's own engine, kept
   // warm between its messages (warmChats); without a key (or under the one-shot test CLI) it is leased as above.
   function leaseEngine(kind, key = null) {
-    if (kind === 'claudecode' && key != null && !oneShotClaude()) {
+    // [parallel chats] Only while the chat's own engine is free: a second message for a chat whose last one is still winding
+    // down (a resend right after a switch) gets a one-message engine below, so two turns never share one engine's `active`.
+    if (kind === 'claudecode' && key != null && !oneShotClaude() && !warmChats.busy(key)) {
       const lease = warmChats.lease(key);
       chatClaudeCode(lease.engine);
       return lease;

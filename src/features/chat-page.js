@@ -114,7 +114,7 @@ function guardOthers(wc) {
 function createRunTracker() {
   let run = null;
   return {
-    start: (info) => { run = { runId: info.runId, text: String(info.text || ''), fromChat: Boolean(info.fromChat), target: info.target ?? null }; return run; },
+    start: (info) => { run = { runId: info.runId, chatId: info.chatId ?? null, text: String(info.text || ''), fromChat: Boolean(info.fromChat), target: info.target ?? null }; return run; },
     end: () => { run = null; },
     setTarget: (id) => { if (run) run.target = id; },
     get: () => (run ? { ...run } : null),
@@ -206,7 +206,10 @@ function create(deps) {
   // tab is opened if there is none. Other views hear about it so they show the same turn.
   function beginRun(event, { text, runId, images, files, chatId = null }) {
     const fromChat = isChatSender(event);
-    runs.start({ runId, text, fromChat, target: null }); // [working-on chip] no tab until a tool takes one (retarget)
+    // [parallel chats] A sidebar chat starting while a chat-page run works leaves the page's run in place: replacing it would
+    // drop the page's "working on" tab and hand the page's tab choices to the sidebar's run.
+    const pageBusy = !fromChat && liveRun() && runs.get()?.fromChat;
+    if (!pageBusy) runs.start({ runId, chatId, text, fromChat, target: null }); // [working-on chip] no tab until a tool takes one (retarget)
     if (fromChat) pushTarget();
     broadcast('chat:run-start', { text, runId, chatId, images: (images || []).map((i) => ({ media_type: i.media_type, data: i.data })), files: files || [] }, event.sender);
     return fromChat;
