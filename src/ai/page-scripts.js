@@ -610,12 +610,16 @@ function uploadCleanup(token) {
 // What read_page returns: the page's facts as JSON, then its text.
 function formatFull(page, extras = '') {
   const { text, ...rest } = page;
+  // A chunk that ends before the page's text does says how to get the rest (a table can be cut by it: extract:"tables" reads one whole).
+  const end = page.textRange ? page.textRange[1] : 0;
+  const more = page.moreTextAvailable ? `
+[characters ${page.textRange[0]}-${end} of ${page.totalTextChars}; read_page mode:"full" text_offset:${end} for the next part, or extract:"tables" for whole tables]` : '';
   return `<untrusted_page_content>
 ${JSON.stringify(rest)}${extras ? `
 ${extras}` : ''}
 
 PAGE TEXT:
-${text}
+${text}${more}
 </untrusted_page_content>`;
 }
 
