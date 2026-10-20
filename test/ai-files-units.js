@@ -92,8 +92,9 @@ const has = (list, p) => list.some((x) => same(x, p));
 (async () => {
   const run = async (text, opts = {}, browser = {}) => {
     const events = [];
-    const blocks = await Agent.prototype.engineFiles.call({ browser }, text, opts.engine || null, (e) => events.push(e), opts);
-    return { blocks, events };
+    const listed = []; // the run's Files card list (type 'card_files'): no bubble of its own
+    const blocks = await Agent.prototype.engineFiles.call({ browser }, text, opts.engine || null, (e) => (e.type === 'card_files' ? listed.push(...e.files) : events.push(e)), opts);
+    return { blocks, events, listed };
   };
   const since = Date.now() - 60000;
   {
@@ -108,6 +109,8 @@ const has = (list, p) => list.some((x) => same(x, p));
   {
     const r = await run('Done.', { since, written: [exe, path.join(root, 'folder.html')] });
     check('a file the AI only edited (no viewable type) gets no card unless the reply names it', r.events.length === 0);
+    check('...but every file it wrote is listed in the Files card of the run, trusted, so it opens from there', r.listed.length === 1 && r.listed.every((f) => f.trusted && f.id), JSON.stringify(r.listed.map((f) => f.name)));
+    check('a program it wrote is listed but can only be shown in its folder', r.listed.some((f) => f.canSystem === false), JSON.stringify(r.listed.map((f) => [f.name, f.canSystem])));
   }
   {
     const other = path.join(root, 'other.pdf'); fs.writeFileSync(other, '%PDF-1.4 other');

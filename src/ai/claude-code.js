@@ -442,6 +442,7 @@ class ClaudeCodeEngine {
     // leftover output is being read off (take() waits for it).
     const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
+    proc.cwd = workDir || (fullAccess ? os.homedir() : dir); // (a relative path in a file step is from here)
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
     // The CLI may name the session it continues differently from the id it was started with (a
     // resumed session forked): the process is then kept for the id the chat saves.
@@ -846,7 +847,7 @@ class ClaudeCodeEngine {
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
           active.builtin.add(b.id);
           if (b.name === 'Bash') for (const d of dirsInCommand(b.input?.command)) this.runDirs.add(d); // (freshRoots)
-          else if (WRITE_TOOLS.test(String(b.name)) && typeof b.input?.file_path === 'string' && this.runWrittenPaths.size < 60) { this.runWrittenPaths.add(b.input.file_path); aiFiles.noteWritten(active.scope?.chat, b.input.file_path); } // [ai files]
+          else if (WRITE_TOOLS.test(String(b.name)) && typeof b.input?.file_path === 'string' && this.runWrittenPaths.size < 60) { const abs = path.isAbsolute(b.input.file_path) ? b.input.file_path : path.resolve(proc.cwd || os.homedir(), b.input.file_path); this.runWrittenPaths.add(abs); aiFiles.noteWritten(active.scope?.chat, abs); } // [ai files]
           active.inflight++;
           emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
         }

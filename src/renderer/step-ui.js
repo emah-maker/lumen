@@ -18,6 +18,7 @@
     terminal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="m7.500 9.500 3 2.500-3 2.500M12.500 15h4"/></svg>',
     files: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.500h6.500L18 8v11.500a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z"/><path d="M13.500 3.500V8H18M9 12.500h6M9 16h6"/></svg>',
   };
+  ICONS.tool = ICONS.terminal; // (a step that is on no surface: the card names it "Working")
 
   // ---- rows
   function makeRow(label, running, data) {
@@ -161,13 +162,14 @@
       + '<div class="act-shot2" hidden><img class="act-thumb2" alt="" decoding="async"></div>'
       + '<div class="act-status" hidden><span class="act-dot" aria-hidden="true"></span><span class="act-status-text"></span></div>'
       + '<div class="act-say" hidden></div>'
+      + '<div class="act-files" hidden></div>'
       + '<details class="act-tabs" hidden><summary class="act-tabs-head"></summary><div class="act-tabs-list"></div></details>'
       + '<div class="act-actions"><button type="button" class="act-btn" hidden></button><button type="button" class="act-resume" hidden></button><button type="button" class="act-stop" hidden></button>'
       + '<button type="button" class="act-toggle" hidden></button><button type="button" class="act-closeall" hidden></button></div>'
       + '<div class="act-tabs-note" hidden></div>'
       + '<span class="act-live" role="status" aria-live="polite"></span>'
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
-    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
+    const card = { el: el0, surface, entries: [], list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), filesBox: el0.querySelector('.act-files'), files: [], linkKey: '', sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
     card.btn.onclick = () => openIt(card);
@@ -194,11 +196,11 @@
   }
   function refreshCard(turn, card) {
     const state = stateOf(turn, card);
-    if (card.el.dataset.state !== state) {
+    if (card.el.dataset.state !== state || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on)
       card.el.dataset.state = state;
-      if (card.hadBrowser) { if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
+      if (card.hadBrowser) { card.hb = true; if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
     }
-    const kind = card.surface === 'browser' ? 'browser' : card.surface === 'app' ? 'terminal' : card.shellKind; // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
+    const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? 'terminal' : card.surface === 'tool' ? 'tool' : card.shellKind; // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
     const task = card.task || card.first;
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
@@ -301,11 +303,76 @@
     card.status.hidden = false;
     card.status.dataset.state = state;
     if (card.statusText.textContent !== text) card.statusText.textContent = text;
+    linkStatus(card, text);
     if (card.liveText === text) return;
     const write = () => { card.liveTimer = 0; card.liveAt = Date.now(); card.liveText = text; card.live.textContent = text; };
     clearTimeout(card.liveTimer);
     const wait = card.liveAt + 1500 - Date.now();
     if (state !== 'working' || wait <= 0) write(); else card.liveTimer = setTimeout(() => { statusBar(card, card.el.dataset.state); }, wait);
+  }
+  // ---- the files the AI made: each one opens from the card (its name, and "Show in folder"); a script or program is only ever shown in its folder.
+  // The card's files come from main as cards of the file registry (id, name, path, canTab, canSystem): the chat names a file by that id, never by a path.
+  const FILE_MAX = 5;
+  const howOpen = (f) => (f.canTab ? 'tab' : f.canSystem ? 'system' : 'reveal');
+  async function openFile(card, f, how, anchor) {
+    const api = window.stepUI.opener || window.assistant?.files?.open;
+    let got;
+    try { got = await Promise.resolve(api?.(f.id, how || howOpen(f))); } catch { got = null; }
+    if (got && got.ok === false && got.reason === 'blocked') { try { got = await Promise.resolve(api?.(f.id, 'reveal')); } catch { got = null; } } // (a program or script: its folder, never run)
+    const msg = got && got.ok === false ? tr(got.reason === 'gone' ? 'card.file.gone' : 'card.file.failed') : '';
+    let note = [...card.filesBox.querySelectorAll('.act-filenote')].find((n) => n.dataset.note === f.id);
+    if (!note && msg) { note = el('span', { className: 'act-filenote' }); note.dataset.note = f.id; (anchor?.closest?.('.act-file') || card.filesBox).append(note); }
+    if (note) note.textContent = msg;
+  }
+  function fileLink(card, f, text) {
+    const b = el('button', { type: 'button', className: 'act-filelink', textContent: text || f.name, title: f.path || f.name });
+    b.onclick = (e) => { e.stopPropagation(); openFile(card, f, null, b); };
+    return b;
+  }
+  function renderFiles(card) {
+    const list = card.files;
+    card.filesBox.hidden = !list.length;
+    card.filesBox.textContent = '';
+    for (const f of list.slice(0, FILE_MAX)) {
+      const row = el('div', { className: 'act-file' });
+      const show = el('button', { type: 'button', className: 'act-fileshow', textContent: tr('card.showFolder') });
+      show.onclick = (e) => { e.stopPropagation(); openFile(card, f, 'reveal', show); };
+      row.append(fileLink(card, f), show);
+      card.filesBox.append(row);
+    }
+    if (list.length > FILE_MAX) card.filesBox.append(el('div', { className: 'act-filemore', textContent: tr('card.files.more', { count: list.length - FILE_MAX }) }));
+    for (const row of card.list.querySelectorAll('.step[data-surf="files"]')) { // (each file step has its link)
+      const p = String(row._s?.input?.file_path || row._s?.input?.path || '');
+      const f = WRITES.test(String(row._s?.name)) && list.find((x) => x.name && x.name === p.split(/[\\/]/).pop());
+      if (!f || row.querySelector(':scope > .act-filelink')) continue;
+      const b = fileLink(card, f, tr('card.openShort'));
+      b.classList.add('act-steplink');
+      row.append(b);
+    }
+    card.linkKey = '';
+    statusBar(card, card.el.dataset.state);
+  }
+  // The status row says "Done: Created Ai/HANDOFF.md": that file name is a link.
+  function linkStatus(card, text) {
+    const key = text + '|' + card.files.map((f) => f.id).join();
+    if (card.linkKey === key) return;
+    card.linkKey = key;
+    const f = card.files.find((x) => x.name && text.includes(x.name));
+    if (!f) return;
+    const at = text.indexOf(f.name);
+    let start = at;
+    while (start > 0 && /[\w./\\-]/.test(text[start - 1])) start--;
+    card.statusText.replaceChildren(text.slice(0, start), fileLink(card, f, text.slice(start, at + f.name.length)), text.slice(at + f.name.length));
+  }
+  // main sent the files the run wrote (type 'card_files'): they join the turn's Files card (the last card when the turn is over).
+  function filesMade(turn, files) {
+    const card = turn?.card?.el.isConnected ? turn.card : [...(turn?.cards || [])].reverse().find((c) => c.el.isConnected);
+    if (!card || !Array.isArray(files)) return false;
+    for (const f of files) if (f && typeof f.id === 'string' && f.name && !card.files.some((x) => x.id === f.id)) card.files.push(f);
+    if (!card.file && card.files.length) card.file = card.files[card.files.length - 1];
+    renderFiles(card);
+    refreshCard(turn, card);
+    return true;
   }
   // The tab a Browser card works in, as a chip (live title; clicking it switches to the tab).
   function cardChip(card) {
@@ -471,7 +538,7 @@
   const WRITES = /^(Write|Edit|MultiEdit|NotebookEdit)$/;
   // Marks a row with the surface it was done on (shown before the step: Browser, Computer, Files).
   function markRow(row, surface, name) {
-    const k = surface === 'browser' ? 'browser' : surface === 'app' ? 'terminal' : WRITES.test(String(name)) ? 'files' : 'terminal';
+    const k = surface === 'browser' || surface === 'web' ? 'browser' : surface === 'app' ? 'terminal' : WRITES.test(String(name)) ? 'files' : 'terminal';
     row.dataset.surf = k;
     row.dataset.surfLabel = tr(k === 'files' ? 'card.files.short' : `card.${k}`);
     row.title = `${row.firstChild?.textContent || ''} (${row.dataset.surfLabel})`; // the icon's word, as the tooltip
@@ -509,7 +576,9 @@
     const running = Boolean(event.id);
     const data = { name: event.name, input: event.input && typeof event.input === 'object' ? event.input : null, label, baseLabel: label, hasOutputSlot: running };
     const row = makeRow(label, running, data);
-    const surface = isNote(event.name) ? null : surfaceFor(event.name);
+    const own = isNote(event.name) ? null : surfaceFor(event.name);
+    // The first step of a turn starts its card whatever it is (a web search, a page read, any tool); a step with no surface of its own after that joins the card.
+    const surface = own || (isNote(event.name) || turn.card?.el.isConnected ? null : window.stepLabels.weakSurfaceOf(event.name));
     const info = SL().groupInfo(event.name, data.input, label);
     window.tabRef?.forStep(row, event.name, data.input, null); // [tab chips] a step that names a tab
     const tail = (e) => !turn.working || e.nextElementSibling === turn.working || !e.nextElementSibling;
@@ -520,13 +589,13 @@
       if (!card || !card.el.isConnected) {
         card = makeCard(turn, surface, { append: (n) => opts.append(n) });
         turn.card = card;
-        if (surface === 'browser') { card.task = SL().taskName(opts.task || ''); if (turn.lastThumb) { card.tab = turn.lastThumb.tab; setThumb(card, turn.lastThumb.src); } }
         for (const n of turn.noteRows || []) card.list.append(n); // (approvals that came before the first step)
         turn.noteRows = null;
         adoptPlain(turn, card); // (steps of this turn that came before the card: they belong in it)
       }
       if (card.ended) { card.ended = false; card.stopped = false; } // (a step after the card said Done: it works again, and says Done at the turn's real end)
       setSurface(card, surface, event.name);
+      if (surface === 'browser' && !card.browserInit) { card.browserInit = true; card.task = SL().taskName(opts.task || ''); if (turn.lastThumb && !card.tab) { card.tab = turn.lastThumb.tab; setThumb(card, turn.lastThumb.src); } }
       markRow(row, surface, event.name);
       if (opts.runId != null && card.runId == null) card.runId = opts.runId;
       if (!card.first) card.first = label;
@@ -664,13 +733,13 @@
     let legacy = null;
     const flushLegacy = () => { /* one folded group for all the steps that are on no surface (kept: a later step does not start another) */ };
     const early = []; // steps on no surface that came before the card's first step
-    const hasCard = tools.some((x) => x && x.name && !isNote(String(x.name)) && surfaceFor(String(x.name)));
+    const hasCard = tools.some((x) => x && x.name && !isNote(String(x.name))); // (any step starts the card, as live)
     for (const tool of tools) {
       const name = String(tool.name || '');
       let input = tool.input && typeof tool.input === 'object' ? tool.input : null;
       if (!input && /^(Bash|PowerShell)$/.test(name) && /^Running /.test(tool.label || '')) input = { command: String(tool.label).replace(/^Running /, '') };
       const label = (window.stepLabels && SL().label(name, input || {})) || tool.label || name;
-      const surface = !name || isNote(name) ? null : surfaceFor(name);
+      const surface = !name || isNote(name) ? null : surfaceFor(name) || (turn.card ? null : window.stepLabels.weakSurfaceOf(name));
       const data = { name, input, label, baseLabel: label, done: true };
       const row = makeRow(label, false, data);
       if (tool.ok === false) { row.className = 'step failed restored'; } else row.className = 'step done restored';
@@ -685,7 +754,7 @@
         if (!card) {
           card = makeCard(turn, surface, host);
           turn.card = card;
-          if (surface === 'browser') unwatch(card.el);
+          if (surface === 'browser') { unwatch(card.el); card.browserInit = true; }
           for (const n of turn.noteRows || []) card.list.append(n);
           turn.noteRows = null;
           for (const e of early) { card.count++; e.row._card = card; place(card, e.row, e.info); }
@@ -733,5 +802,13 @@
     return out;
   }
 
-  window.stepUI = { init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor };
+  // A row that is no step (the AI's thinking): in the card's step list, in order, once the turn has a card; until then loose in the chat, and it moves
+  // into the card with the notes when the first step makes it. Returns true when it is in the card.
+  function bare(turn, node) {
+    const card = turn?.card;
+    if (card?.el.isConnected) { card.list.append(node); card.entries.push({ info: null, members: [], el: node }); return true; }
+    if (turn) (turn.noteRows ||= []).push(node);
+    return false;
+  }
+  window.stepUI = { bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor };
 })();

@@ -172,5 +172,20 @@ check('the sidebar loads them after its start-up bundle (not inside it), and a s
 const used = new Set([...read('src/renderer/step-labels.js').matchAll(/\bT?\(?'((?:step|card)\.[\w.]+)'/g)].map((m) => m[1]));
 check('every step.* key the labeller uses is in en.json', [...used].every((k) => k in en), [...used].filter((k) => !(k in en)).join(','));
 
+// ---- the card at the first step, and the background-reading line
+eq('a web search starts a "web" card (browser look, no preview)', sl.weakSurfaceOf('web_search'), 'web');
+eq('WebSearch (an engine) too', sl.weakSurfaceOf('WebSearch'), 'web');
+eq('read_urls through the Lumen MCP too', sl.weakSurfaceOf('mcp__lumen__read_urls'), 'web');
+eq('any other tool starts a "tool" card', sl.weakSurfaceOf('ToolSearch'), 'tool');
+eq('a tool with no name too', sl.weakSurfaceOf(''), 'tool');
+eq('the same host twice is named once, with the page count', sl.readUrlsLabel(['www.youtube.com', 'www.youtube.com']), 'Reading 2 pages on youtube.com in the background');
+eq('one page', sl.readUrlsLabel(['https://www.youtube.com/watch?v=1']), 'Reading youtube.com in the background');
+eq('hosts are not repeated', sl.readUrlsLabel(['https://a.com/1', 'https://b.com/2', 'https://a.com/3']), 'Reading a.com, b.com in the background');
+eq('many sites are summed up', sl.readUrlsLabel(['a.com', 'b.com', 'c.com', 'd.com']), 'Reading a.com, b.com and 2 more sites in the background');
+eq('signed in is said', sl.readUrlsLabel(['a.com'], true), 'Reading a.com in the background (signed in, if you allow it)');
+check('the card title for a step on no surface is in en.json', 'card.tool' in en, '');
+const ui0 = read('src/renderer/step-ui.js');
+check('step-ui starts the card at the first step of any kind (weakSurfaceOf), and agent.js uses the deduped line', /weakSurfaceOf\(event\.name\)/.test(ui0) && /readUrlsLabel\(/.test(read('src/ai/agent.js')), '');
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

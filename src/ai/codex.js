@@ -539,7 +539,7 @@ class CodexEngine {
         if (bad) { offItem = bad; this.kill(child); }
         else if (ev.phase === 'completed') {
           for (const f of itemImagePaths(ev.item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
-          if (/^file_?change$/i.test(String(ev.item?.type || ''))) for (const c of (Array.isArray(ev.item.changes) ? ev.item.changes : []).slice(0, 20)) if (typeof c?.path === 'string' && writtenPaths.length < 60 && !writtenPaths.includes(c.path)) writtenPaths.push(c.path);
+          if (/^file_?change$/i.test(String(ev.item?.type || ''))) for (const c of (Array.isArray(ev.item.changes) ? ev.item.changes : []).slice(0, 20)) if (typeof c?.path === 'string' && writtenPaths.length < 60 && !writtenPaths.includes(path.resolve(cwd, c.path))) writtenPaths.push(path.resolve(cwd, c.path)); // (a relative path is from the run's folder)
         }
       } else if (ev.kind === 'done') { completed = true; usage = ev.usage || usage; if (!failedMsg && !offItem) turnDone(); }
       else if (ev.kind === 'failed') failedMsg = ev.error || 'The turn failed.';

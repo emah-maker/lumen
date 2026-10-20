@@ -1060,13 +1060,45 @@ function ask(text, images = [], tabs = null, screen, opts = null) {
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
-// The thinking block's summary once the answer starts: "Thought for 4s".
-function settleThinking() {
-  const box = turn?.thinking?.parentElement;
-  if (!box || !turn.thinkingSince || box.dataset.settled) return;
-  box.dataset.settled = '1';
-  box.firstChild.textContent = t('chat.thoughtFor', { n: Math.max(1, Math.round((Date.now() - turn.thinkingSince) / 1000)) });
+// Thinking: all the thinking blocks between two steps (or with nothing visible between them) are ONE row, "Thought for 3s" (the blocks' times added,
+// each block's words in order when it is opened). Blocks with no words (empty or hidden reasoning) get no row of their own: they only add their time
+// to the row beside them, and a lone one under a second shows nothing. In a run that uses tools the row sits in the card's step list, in its place.
+// turn.seg = { texts: [one string per block], ms: closed blocks' time, since: start of the open block (0 when none), row, div }
+function thinkingRow(seg) {
+  if (seg.row) return seg.row;
+  const details = document.createElement('details');
+  details.className = 'thinking';
+  details.innerHTML = '<summary></summary><div></div>';
+  details.firstChild.textContent = t('chat.thinking');
+  seg.row = details;
+  seg.div = details.querySelector('div');
+  if (!window.stepUI?.bare(turn, details)) appendToTurn(details);
+  return details;
 }
+function thinkingEvent(text) {
+  const seg = turn.seg || (turn.seg = { texts: [], ms: 0, since: 0, row: null, div: null });
+  if (!seg.since) { seg.since = Date.now(); seg.texts.push(''); }
+  const chunk = String(text || '');
+  if (chunk.trim() || seg.texts.some((s) => s.trim())) {
+    const last = seg.texts.length - 1;
+    const first = !seg.texts[last].trim() && chunk.trim() && seg.texts.slice(0, last).some((s) => s.trim());
+    thinkingRow(seg);
+    if (first) seg.div.textContent += '\n\n'; // (a new block of words: apart from the one before)
+  }
+  seg.texts[seg.texts.length - 1] += chunk;
+  if (seg.div && chunk) seg.div.textContent += chunk;
+}
+// The answer or a step comes: the open block ends and its row says how long it all took, "Thought for 4s".
+function settleThinking() {
+  const seg = turn?.seg;
+  if (!seg || !seg.since) return;
+  seg.ms += Date.now() - seg.since;
+  seg.since = 0;
+  const secs = Math.round(seg.ms / 1000);
+  if (!seg.row && secs < 1) return; // (no words and under a second: nothing to show)
+  thinkingRow(seg).firstChild.textContent = t('chat.thoughtFor', { n: Math.max(1, secs) });
+}
+function endThinking() { settleThinking(); if (turn) turn.seg = null; }
 // Retry (after an error) and Regenerate (the latest reply): the last exchange is taken back in main and on screen,
 // then asked again, as if it had never been sent.
 let lastAsk = null;
@@ -1243,7 +1275,7 @@ function beginTurn() {
   working.className = 'working';
   working.setAttribute('role', 'status');
   working.setAttribute('aria-label', t('chat.thinking'));
-  turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
+  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
   setRunning(true);
 }
 
@@ -1476,6 +1508,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; } // [ai files]
   // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.
+  if (event.type === 'card_files' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.filesMade(finishedRun.turn, event.files); return; } // (the files a run wrote, after its reply was whole)
   if (event.type === 'thumb' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.thumb(finishedRun.turn, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
@@ -1492,23 +1525,14 @@ window.assistant.onEvent((event) => {
       turn.text = null; // next text starts a fresh block after any tool steps
       if (event.type === 'text_block') window.stepUI?.endCard(turn); // (narration does not end the card either: one turn is one card, which stays until the turn ends, see step-ui.js endCard)
       turn.textSource = '';
-      turn.thinking = null;
       break;
     case 'thinking': {
-      if (!turn.thinking) {
-        const details = document.createElement('details');
-        details.className = 'thinking';
-        details.innerHTML = '<summary></summary><div></div>';
-        details.firstChild.textContent = t('chat.thinking');
-        turn.thinking = appendToTurn(details).querySelector('div');
-        turn.thinkingSince = Date.now();
-      }
-      turn.thinking.textContent += event.text;
+      thinkingEvent(event.text);
       moveWorkingToEnd();
       break;
     }
     case 'image': { // a picture the AI made (or a tool returned): main saved it; drawn here below what was said
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream(); // (its streaming dot goes: the text before a picture is whole)
       turn.text = null; // words after the picture start a new block under it
@@ -1522,7 +1546,7 @@ window.assistant.onEvent((event) => {
     }
     case 'file': { // [ai files] a file the AI made, or one its reply names: a card under what was said (renderer/ai-files.js)
       if (!window.aiFiles || !event.file) break;
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream(); // (its streaming dot goes: the text before a file card is whole)
       turn.text = null;
@@ -1537,7 +1561,7 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'text': {
-      settleThinking();
+      endThinking();
       if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
@@ -1546,10 +1570,10 @@ window.assistant.onEvent((event) => {
     case 'retry':
       // The turn is being asked again (see agent.js loop): drop what it had streamed so far.
       turn.text?.remove();
-      turn.thinking?.closest('details')?.remove();
+      turn.seg?.row?.remove();
+      turn.seg = null;
       turn.text = null;
       turn.textSource = '';
-      turn.thinking = null;
       break;
     case 'tool': {
       settleThinking(); // (it thought, then acted: "Thought for 3s", not "Thinking" for ever)
@@ -1559,6 +1583,7 @@ window.assistant.onEvent((event) => {
       const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
       turn.lastSaid = null; // (words before a step: that step's live line in the card, not a bubble)
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      turn.seg = null; // (thinking after this step is a row of its own, after it)
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
       if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') })); // [connectors] what a write made, with its link
@@ -1571,11 +1596,11 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'desktop_card': { // [desktop apps] another program: the turn's one activity card follows it (its window as the preview, its state in the status bar)
-      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { settleThinking(); break; }
+      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { endThinking(); break; }
       const drawn = window.desktopCard?.update(event);
       if (!drawn) break;
       if (drawn.created) {
-        settleThinking();
+        endThinking();
         finishReply(turn.text, turn.textSource);
         endStream();
         turn.text = null;
@@ -1614,6 +1639,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'card_files': // the files the run wrote: clickable in its Files card
+      window.stepUI?.filesMade(turn, event.files);
+      break;
     case 'thumb': // the tab the AI works in, as a small picture for its Browser card
       window.stepUI?.thumb(turn, event);
       break;
@@ -1627,7 +1655,7 @@ window.assistant.onEvent((event) => {
       showHelperCard(event);
       break;
     case 'plan': { // [plan mode] propose_plan: the plan as a card with Run plan / Edit / Keep planning (renderer/plan-mode.js)
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream();
       turn.text = null;
@@ -1755,6 +1783,7 @@ window.assistant.onEvent((event) => {
 // (reply_complete); the run's own 'done' then only adds what it carries (late 'done' in onEvent).
 function finishTurn(event, { early }) {
   settleThinking();
+  dropEmptyBubbles();
   finishReply(turn.text, turn.textSource, { latest: true });
   // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
   if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
@@ -1825,6 +1854,14 @@ function queuedToDraft() {
 // The 'done' of a run whose reply ended early (reply_complete): the model label, Undo and the opened-tabs row. A message sent
 // in between has its own turn on screen by now: the label still goes on the earlier reply, but its Undo / tabs row is left out
 // (it would land under the new message), as the chat history keeps what the run did.
+// An assistant bubble that never got any words (a block that was only blank, or one a step moved on from) is a thin empty bar: gone when the run ends.
+function dropEmptyBubbles() {
+  for (const b of messages.querySelectorAll(':scope > .msg.assistant:not(.reply-actions-only):not(.gen-pics):not(.ai-files):not(.desktop-cards)')) {
+    if (b.textContent.trim() || b.querySelector('img, svg, video, canvas, button, table, hr, figure, math, pre')) continue;
+    if (b === turn?.text) { turn.text = null; turn.textSource = ''; }
+    b.remove();
+  }
+}
 function lateDone(event) {
   const { bubble } = earlyEnded;
   earlyEnded = null;
