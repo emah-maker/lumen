@@ -286,7 +286,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1717,6 +1717,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.commandBar'), accelerator: 'CmdOrCtrl+K', click: openCommandBar },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
         { label: t('menu.findFiles'), accelerator: 'CmdOrCtrl+Shift+F', click: openFilesPicker },
+        { label: t('menu.receiveFromPhone'), click: () => { openWifiUpload().catch(() => {}); } }, // [phone wifi]
         ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
@@ -6763,6 +6764,7 @@ function macMenu() {
         normal({ label: t('menu.commandBar'), ...shown('Cmd+K'), click: openCommandBar }),
         normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
         normal({ label: t('menu.findFiles'), ...shown('Cmd+Shift+F'), click: openFilesPicker }),
+        normal({ label: t('menu.receiveFromPhone'), click: () => { openWifiUpload().catch(() => {}); } }), // [phone wifi]
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
@@ -9057,14 +9059,15 @@ function phoneInbox() {
 const phoneNotes = new Map(); // toast token -> { files: [saved], caption }
 let phoneNoteSeq = 0;
 let phoneBatch = null; // { token, at }: the toast files arriving close together join
-function notePhoneFile(saved, caption) {
-  const joins = phoneBatch && Date.now() - phoneBatch.at < 8000 && phoneNotes.has(phoneBatch.token);
+// `batch`: files of one Wi-Fi session share a toast however far apart they came (openWifiUpload).
+function notePhoneFile(saved, caption, { batch = null } = {}) {
+  const joins = phoneBatch && phoneNotes.has(phoneBatch.token) && (batch ? phoneBatch.key === batch : !phoneBatch.key && Date.now() - phoneBatch.at < 8000);
   const token = joins ? phoneBatch.token : ++phoneNoteSeq;
   const entry = joins ? phoneNotes.get(token) : { files: [], caption: '' };
   entry.files.push(saved);
   if (caption && !entry.caption) entry.caption = String(caption).slice(0, 4000);
   phoneNotes.set(token, entry);
-  phoneBatch = { token, at: Date.now() };
+  phoneBatch = { token, at: Date.now(), key: batch };
   for (const old of phoneNotes.keys()) { if (phoneNotes.size <= 10) break; phoneNotes.delete(old); }
   const text = entry.files.length === 1 ? t('phone.toast.one', { name: saved.name }) : t('phone.toast.many', { count: entry.files.length });
   const showOnly = entry.files.every((f) => f.risky);
@@ -9124,7 +9127,79 @@ async function sendFileToPhone(file) {
   try { data = await fs.promises.readFile(file); } catch (err) { noteIn(focusedRec() || curRec, t('phone.send.failed', { error: err.message }), { ttl: 6000 }); return; }
   return sendToPhone({ file: { name: path.basename(file), data, mime: require('./features/upload-files').mimeOf(file) } });
 }
-if (TEST) global.__phone = { inbox: phoneInbox, note: notePhoneFile, open: openFromPhone, notes: phoneNotes, action: phoneNoteAction, sendPage: sendPageToPhone, sendFile: sendFileToPhone, ready: () => phoneReady() };
+// [phone wifi] Receive from phone (Wi-Fi) (features/wifi-upload.js): a QR sheet for a one-time address on this computer's
+// Wi-Fi; the phone's page sends files into the phone inbox. The server runs only while the sheet is open. What came is handed
+// over when it closes: opened from the composer's + menu, straight into the composer; from a menu, the strip's toast.
+let wifiRt = null;
+let wifiSheet = null; // { win, session, attach, received: [{ saved, caption }], id }
+let wifiSeq = 0;
+function wifiUpload() {
+  if (wifiRt) return wifiRt;
+  const words = Object.fromEntries(['title', 'intro', 'pick', 'note', 'waiting', 'sent', 'failed', 'tooBig', 'ended', 'taken', 'sessionFull', 'diskFull', 'noNetwork'].map((k) => [k, t(`wifi.page.${k}`)]));
+  wifiRt = require('./features/wifi-upload').createWifiUpload({
+    http: require('http'), interfaces: () => require('os').networkInterfaces(), inbox: phoneInbox(), words,
+    allowLoopback: TEST && global.__wifiLoopback === true,
+    onFile: (saved, caption) => { wifiSheet?.received.push({ saved, caption }); },
+    onEvent: onWifiEvent,
+  });
+  return wifiRt;
+}
+function onWifiEvent(e) {
+  const sheet = wifiSheet;
+  if (TEST) (global.__wifiEvents ||= []).push(e);
+  if (!sheet) return;
+  if (e.type === 'claimed') toolOverlay.update(sheet.win, sheet.session, { status: t('wifi.connected') });
+  else if (e.type === 'file') toolOverlay.update(sheet.win, sheet.session, { status: t('wifi.received', { count: sheet.received.length || 1 }) });
+  else if (e.type === 'stopped') {
+    wifiSheet = null;
+    if (e.reason !== 'closed') toolOverlay.hide(sheet.win, sheet.session);
+    if (e.reason === 'idle' || e.reason === 'expired') toast(t('wifi.endedIdle'));
+    else if (e.reason === 'bad-keys') toast(t('wifi.endedBadKeys'));
+    deliverWifi(sheet);
+  }
+}
+function deliverWifi(sheet) {
+  if (!sheet.received.length) return;
+  if (sheet.attach) {
+    const token = ++phoneNoteSeq;
+    phoneNotes.set(token, { files: sheet.received.map((r) => r.saved), caption: sheet.received.find((r) => r.caption)?.caption || '' });
+    phoneNoteAction(token).catch((err) => console.error('[lumen] wifi upload: could not attach:', err?.message || err));
+    return;
+  }
+  for (const r of sheet.received) notePhoneFile(r.saved, r.caption, { batch: `wifi-${sheet.id}` });
+}
+async function openWifiUpload({ attach = false } = {}) {
+  if (wifiSheet) wifiUpload().stop('replaced'); // (one at a time: what came so far is handed over)
+  const rec = focusedRec() || curRec;
+  if (!rec) return null;
+  return withWindow(rec, async () => {
+    const w = win; // (taken before the await: another window may be in front by then)
+    const wc = activeTab()?.webContents;
+    let info;
+    try { info = await wifiUpload().start(); } catch (err) {
+      noteIn(rec, err?.code === 'no-network' ? t('wifi.noNetwork') : t('wifi.failed', { error: String(err?.message || err).slice(0, 200) }), { ttl: 6000 });
+      return null;
+    }
+    const sheet = { win: w, session: null, attach, received: [], id: ++wifiSeq };
+    wifiSheet = sheet;
+    sheet.session = await toolOverlay.show(w, {
+      mode: 'qr',
+      restoreFocus: () => { if (wc && !wc.isDestroyed()) wc.focus(); },
+      payload: {
+        title: t('wifi.title'), sub: t('wifi.scan'), modules: require('./features/qr').makeMatrix(info.url), alt: t('wifi.alt'),
+        text: t('wifi.address', { address: `${info.ip}:${info.port}` }), warn: t('wifi.trusted'), // (the address without its key: only the QR carries that)
+        buttons: [{ id: 'close', label: t('wifi.done'), primary: true }],
+      },
+      onAction: () => {},
+      onClose: () => { if (wifiSheet === sheet) wifiUpload().stop('closed'); },
+    });
+    if (TEST) global.__wifiUrl = info.url;
+    return info;
+  });
+}
+ipcMain.on('phone:wifi-open', () => { openWifiUpload({ attach: true }).catch((err) => console.error('[lumen] wifi upload:', err?.message || err)); }); // the composer's + menu
+app.on('will-quit', () => wifiRt?.stop('quit'));
+if (TEST) global.__phone = { inbox: phoneInbox, note: notePhoneFile, open: openFromPhone, notes: phoneNotes, action: phoneNoteAction, sendPage: sendPageToPhone, sendFile: sendFileToPhone, ready: () => phoneReady(), wifi: openWifiUpload, wifiStatus: () => wifiRt?.status() || { running: false }, wifiClose: () => { const s = wifiSheet; if (s) toolOverlay.hide(s.win, s.session); } };
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;

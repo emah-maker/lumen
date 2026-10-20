@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('browser', {
   gpuRestart: (safe) => ipcRenderer.send('gpu:restart', safe === true),
   undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
   openChatNote: (token) => ipcRenderer.invoke('chat:open-note', token), // the strip's toast about a chat that finished on another tab
+  phoneWifi: () => ipcRenderer.send('phone:wifi-open'), // [phone wifi] the composer's + menu: Receive from phone (Wi-Fi)
   phoneNoteAction: (token) => ipcRenderer.invoke('phone:note-action', token), // [phone files] the toast about a file from the phone: Attach to chat / Show in Finder
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
