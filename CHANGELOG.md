@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.61 (2026-10-20)
+
 - **An app without a token can connect even if its name matches an app you set up.** Claude Code (or Claude Desktop, Cursor, VS Code, or any app you added in Lumen) that connected without a token used to be refused outright, so a Claude Code set up before tokens existed could not reconnect at all. It now connects like any other app without a token: Lumen asks you to Allow it for that session, shows it as "Claude Code (no token)", and it never gets the permissions of the app you set up. To give it those permissions, put its token in its config (Settings > AI > Let other apps use Lumen). A wrong token is still refused.
 - **A blank new tab shows as blank to AI tools again.** The list of open tabs that an AI or MCP client sees had stopped saying anything for a blank new tab (it left the address out instead of showing an empty one), which broke the check that this list never exposes Lumen pages. The empty address is back. Lumen pages, settings and file:// tabs were still hidden the whole time.
 - **Connector badges in Settings show their colour again.** The coloured letter badges on the connector cards were blocked by the page's security policy, which also logged a console error for each one. They are now coloured through the page's own style object, so nothing is blocked.
