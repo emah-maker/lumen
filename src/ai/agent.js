@@ -3135,17 +3135,19 @@ class Agent {
       emit,
     });
     let out = await runGrok(first, settings.gbSession || crypto.randomUUID(), resume);
-    // Grok asked for a subagent of its own. Its subagents would run outside Lumen's approvals, so Lumen runs the job with its own
-    // read-only helpers (delegate) and carries on in a new Grok session that is handed the helpers' answer. Twice at most per message.
+    // Grok asked for a subagent of its own. Its subagents would run outside Lumen's approvals, so Lumen runs the job as a helper of
+    // its own (cliHelpers: a run of this or another signed-in CLI with Lumen's tools and approvals, else the delegate helpers on an API
+    // key) and carries on in a new Grok session that is handed the helpers' answer. Twice at most per message.
     let lead = '';
     for (let rounds = 0; out.subagent && !signal.aborted; rounds++) {
-      const helperModel = rounds < 2 ? this.grokHelperModel() : null;
-      if (!helperModel) { emit({ type: 'error', text: require('./grok-build').offToolText('spawn_subagent') }); out = { text: out.text, sessionId: null, failed: true }; break; }
       lead += (lead && out.text ? '\n\n' : '') + (out.text || '');
-      let answers;
+      let answers = null;
       try {
-        emit({ type: 'notice', text: 'Grok Build asked for a helper agent, so Lumen is running the job with its own helpers.' });
-        answers = await this.delegate({ tasks: out.subagent.tasks }, { model: helperModel });
+        if (rounds < 2) {
+          emit({ type: 'notice', text: 'Grok Build asked for a helper agent, so Lumen is running the job as a helper of its own.' });
+          answers = await this.runCliHelpers(out.subagent.tasks, { own: 'grokbuild', settings, signal, emit });
+        }
+        if (answers === null) { emit({ type: 'error', text: require('./grok-build').offToolText('spawn_subagent') }); out = { text: '', sessionId: null, failed: true }; break; }
       } catch (err) {
         if (signal.aborted) throw err;
         emit({ type: 'error', text: `Lumen's helpers couldn't do the job Grok Build asked for: ${String(err?.message || err).slice(0, 300)}` });
@@ -3153,7 +3155,7 @@ class Agent {
         break;
       }
       const again = handoff();
-      const note = `<helper_results>\nYou asked for a subagent; Lumen ran that job with its own read-only helpers (web reading and search only, no files or terminal) and this is what they found. Carry on from it; do not call spawn_subagent.\n\n${String(answers).slice(0, 12000)}\n</helper_results>\n\n`;
+      const note = `<helper_results>\nYou asked for a subagent; Lumen ran that job as a helper of its own (an AI run with Lumen's tools, under the user's usual approvals) and this is what it reported. Carry on from it; do not call spawn_subagent.\n\n${String(answers).slice(0, 12000)}\n</helper_results>\n\n`;
       out = await runGrok({ ...again, text: note + again.text }, crypto.randomUUID(), false);
     }
     if (lead && out.text !== undefined) out = { ...out, text: [lead, out.text].filter(Boolean).join('\n\n') };
@@ -4219,6 +4221,78 @@ ${prompt}` : prompt), historyImages: [] };
     return require('./notes').runTool(input, { store: n.store(), changed: () => n.changed?.() });
   }
   // ---- [/notes]
+
+  // ---- [cli helpers] (ai/cli-helpers.js, loaded on first use) A CLI chat's request for helpers (Grok Build's spawn_subagent) runs each job as a
+  // helper: a CLI run of the chat's own engine, else another signed-in CLI, else the delegate helpers on an API key. A CLI helper runs in
+  // normal mode with the parent's scope, so its tool calls use Lumen's tools through the parent run's own gate and approval cards; full
+  // access only where it is the chat's own engine and the chat already has it. At most 3 helper processes at once; a stopped parent stops them.
+  // Returns the result text, or null when nothing can run a job (no CLI signed in, no API key).
+  async runCliHelpers(list, { own = null, settings = {}, signal, emit }) {
+    const lib = require('./cli-helpers');
+    const { jobs, dropped } = lib.cleanJobs(list);
+    if (!jobs.length) return null;
+    const status = (() => { try { return this.engines?.cliStatus?.() || {}; } catch { return {}; } })();
+    const helperModel = this.grokHelperModel();
+    const order = lib.candidates({ own, status, apiKey: Boolean(helperModel) });
+    if (!order.length) return null;
+    this.helperPool ||= lib.createPool(lib.MAX_CLI);
+    const stamp = Date.now().toString(36);
+    const scope = taskScope.getStore();
+    const onEvent = (e) => {
+      const id = `helper-${stamp}-${e.n}`;
+      if (e.type === 'start') emit({ type: 'tool', id, name: 'helper', input: { task: e.task }, label: `Helper ${e.n}: ${String(e.task).replace(/\s+/g, ' ').slice(0, 80)}` });
+      else if (e.type === 'step') emit({ type: 'tool_update', id, name: 'helper', input: { task: e.task }, label: `Helper ${e.n} on ${e.via}: ${String(e.task).replace(/\s+/g, ' ').slice(0, 70)}` });
+      else if (e.type === 'inner') { const ev = e.event; if (ev && /^tool(_update|_done)?$/.test(ev.type) && ev.id) emit({ ...ev, id: `${id}:${ev.id}`, ...(ev.label ? { label: `Helper ${e.n} · ${ev.label}` } : {}) }); }
+      else if (e.type === 'done') emit(e.status === 'done' ? { type: 'tool_done', id, ok: true } : e.status === 'stopped' ? { type: 'tool_done', id, ok: false, stopped: true } : { type: 'tool_done', id, ok: false, error: String(e.error || 'The helper did not finish').slice(0, 200) });
+    };
+    const results = await lib.runJobs({
+      jobs, list: order, pool: this.helperPool, signal, onEvent,
+      runOn: (c, { prompt, signal: sig, emit: inner }) => this.cliHelperOnce(c.kind, { prompt, signal: sig, emit: inner, own: c.kind === own, settings, scope }),
+      api: async (job, sig) => {
+        const text = await this.delegate({ tasks: [{ task: job.task }] }, { model: helperModel });
+        return String(text);
+      },
+    });
+    if (signal?.aborted) throw new (sdk().APIUserAbortError)();
+    return lib.formatResults(results, { dropped });
+  }
+
+  // One helper's run on one CLI engine: a fresh session, its own engine (a side engine while the chat holds the shared one), released
+  // after. -> { text, failed, stopped, error }. Never resumes anything; a helper does not start helpers (routeSubagents off).
+  async cliHelperOnce(kind, { prompt, signal, emit, own, settings, scope }) {
+    const lease = this.engines?.lease?.(kind, null);
+    if (!lease) throw new Error(`${kind} is not available for a helper right now.`);
+    let said = '';
+    let problem = '';
+    const sink = (event) => {
+      if (event.type === 'text') said += event.text || '';
+      else if (event.type === 'text_block' && said && !/\n\n$/.test(said)) said += '\n\n';
+      else if (event.type === 'error') problem = String(event.text || event.message || 'failed');
+      else if (/^tool(_update|_done)?$/.test(event.type)) emit(event);
+    };
+    const base = { ...(settings || {}), model: `${kind}:default` };
+    const full = own && (kind === 'grokbuild' ? this.browser.grokBuildFullAccess?.() : kind === 'claudecode' ? this.browser.claudeCodeFullAccess?.() : kind === 'codex' ? this.browser.codexFullAccess?.() : this.browser.antigravityFullAccess?.()) === true;
+    const picked = own ? engineModel(settings?.model || base.model) : 'default';
+    const common = { scope, prompt, images: [], signal, emit: sink };
+    try {
+      let out;
+      if (kind === 'grokbuild') {
+        out = await lease.engine.run({ ...common, sessionId: crypto.randomUUID(), resume: false, model: picked, maxTurns: stepLimit(this.browser.maxSteps?.()), systemPrompt: this.grokBuildSystem(base, full), fullAccess: full, workFolder: '', effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), routeSubagents: false });
+      } else if (kind === 'claudecode') {
+        const { spawn } = this.claudeCodePlan({ settings: base }, '', 0, 0);
+        out = await lease.engine.run({ ...common, ...spawn, fullAccess: full, quietExpired: false, prestart: false });
+      } else if (kind === 'codex') {
+        out = await lease.engine.run({ ...common, sessionId: null, quietExpired: false, model: picked, systemPrompt: systemFor(base) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess: full }), fullAccess: full, workDir: '', effort: effortLib.clean('codex', this.browser.effort?.('codex')) });
+      } else {
+        out = await lease.engine.run({ ...common, sessionId: null, model: picked, systemPrompt: systemFor(base) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess: full }), fullAccess: full, workDir: '', effort: effortLib.clean('antigravity', this.browser.effort?.('antigravity')) });
+      }
+      const text = String(out?.text || said || '').trim();
+      return { text, failed: Boolean(out?.failed) || (!text && Boolean(problem)), stopped: Boolean(out?.stopped), error: problem };
+    } finally {
+      try { lease.release(); } catch { /* already gone */ }
+    }
+  }
+  // ---- [/cli helpers]
 
   // The model Lumen's helpers use when the chat's own engine has no API of its own (Grok Build asking for a subagent): the cheap model of
   // the first provider that has a key. null when none does.
