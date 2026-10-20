@@ -270,7 +270,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
@@ -1630,6 +1630,7 @@ async function setupExtensions() {
     }
   })));
   perf.mark('extLoaded');
+  settingsBackend.extensionsLoaded().catch(() => {}); // [extensions] the ones installed before pins existed start pinned
   // Store extensions' updates: looked for once the first tab has loaded, then every 5 hours, as the library did.
   const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
   firstTabLoaded.then(() => setTimeout(checkUpdates, 30000).unref?.());
@@ -1655,9 +1656,13 @@ function reportIssueUrl() {
 function extensionsMenu() {
   const installed = session.defaultSession.extensions.getAllExtensions()
     .filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
+  const buttons = new Map(settingsBackend.listExtensions().map((e) => [e.id, e]));
   const items = installed.map((ext) => ({
     label: ext.name,
     submenu: [
+      ...(buttons.get(ext.id)?.button
+        ? [{ label: t('extension.showInToolbar'), type: 'checkbox', checked: buttons.get(ext.id).pinned, enabled: settingsBackend.prefs().extensionsToolbar === 'pinned', click: (item) => { settingsBackend.pinExtension(ext.id, item.checked); } }]
+        : []),
       ...(ext.manifest.options_page || ext.manifest.options_ui
         ? [{ label: t('menu.options'), click: () => openTab(`chrome-extension://${ext.id}/${ext.manifest.options_ui?.page || ext.manifest.options_page}`) }]
         : []),
@@ -1676,6 +1681,7 @@ function extensionsMenu() {
   items.push({ label: t('menu.getExtensions'), click: () => openTab('https://chromewebstore.google.com/') });
   return items;
 }
+if (TEST) global.__extensionsAppMenu = () => extensionsMenu().filter((i) => i.submenu).map((i) => ({ label: i.label, pin: i.submenu.find((s) => s.label === t('extension.showInToolbar')) ? { label: t('extension.showInToolbar'), enabled: i.submenu.find((s) => s.label === t('extension.showInToolbar')).enabled, checked: i.submenu.find((s) => s.label === t('extension.showInToolbar')).checked } : null }));
 
 // The ⋯ menu. Its sections are listed flat, as they show on a tall window; on a short window or
 // screen features/app-menu-layout.js folds the marked ones into submenus (More Tools first, then the
@@ -10155,20 +10161,32 @@ ipcMain.handle('suggest:query', async (_e, query) => { if (/^\s*(lumen:\/\/)?set
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));
-// The extension icons the toolbar has no room for: listed in a menu under the "..." button; the pick goes back
-// to the toolbar, which triggers that extension's action as its icon would.
+// The puzzle button's menu: every extension that has a toolbar button, in the toolbar's order (the pinned ones, then the rest). A pick goes back
+// to the toolbar, which triggers that extension's action as its icon would (its popup opens under the puzzle button). "Pin to toolbar" holds a
+// checkbox for each; Settings → Extensions has the same switches (settings-backend.js pinExtension).
 // A toolbar action with no title of its own is labelled by its extension's manifest name, never the raw id.
 const extensionName = (id) => {
   let name = '';
   try { name = String(session.defaultSession.extensions.getExtension(id)?.name || ''); } catch { /* gone */ }
   return name.slice(0, 80) || t('extension.fallbackName');
 };
+function extensionsPuzzleMenu(list) {
+  const { extensionsToolbar: mode, extensionPins } = settingsBackend.prefs();
+  const name = (i) => menuLabel(i.title.slice(0, 80) || extensionName(i.id));
+  return [
+    ...list.map((i) => ({ label: name(i), click: () => ui()?.send('actions:overflow-pick', i.id) })),
+    { type: 'separator' },
+    { label: t('extension.pinToToolbar'), submenu: list.map((i) => ({ label: name(i), type: 'checkbox', checked: extensionPins.order.includes(i.id), enabled: mode === 'pinned', click: (item) => { settingsBackend.pinExtension(i.id, item.checked); } })) },
+    { label: t('extension.manage'), click: () => openSettingsPage('extensions') },
+  ];
+}
 ipcMain.on('actions:overflow', (_e, point, items) => {
   const list = (Array.isArray(items) ? items : []).filter((i) => i && typeof i.id === 'string' && typeof i.title === 'string').slice(0, 60);
   if (!list.length || !win || win.isDestroyed()) return;
+  const template = extensionsPuzzleMenu(list);
+  if (TEST) { global.__extensionsMenu = template; return; } // (a popup menu blocks until it is picked: the test reads the items and clicks one itself)
   const n = (v) => (Number.isFinite(v) ? Math.round(v) : 0);
-  const menu = Menu.buildFromTemplate(list.map((i) => ({ label: i.title.slice(0, 80) || extensionName(i.id), click: () => ui()?.send('actions:overflow-pick', i.id) })));
-  menu.popup({ window: win, x: n(point?.x), y: n(point?.y) });
+  Menu.buildFromTemplate(template).popup({ window: win, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('suggest:pick', (_e, index, listId) => ui()?.send('suggest:picked', { index, listId }));
 
