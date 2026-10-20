@@ -31,7 +31,7 @@
     if (data && (data.input || running)) { row.tabIndex = 0; row.setAttribute('role', 'button'); row.setAttribute('aria-expanded', 'false'); row.dataset.more = '1'; }
     return row;
   }
-  function setLabel(row, label) { row.firstChild.textContent = label; row.title = label; if (row._s) row._s.label = label; }
+  function setLabel(row, label) { row.firstChild.textContent = label; row.title = row.dataset.surfLabel ? `${label} (${row.dataset.surfLabel})` : label; if (row._s) row._s.label = label; }
 
   const clipText = (s) => { const v = String(s ?? ''); return v.length > MORE_MAX ? `${v.slice(0, MORE_MAX)}\n${tr('step.details.cut')}` : v; };
   const inputText = (s) => {
@@ -515,6 +515,7 @@
     const k = surface === 'browser' ? 'browser' : surface === 'app' ? 'terminal' : WRITES.test(String(name)) ? 'files' : 'terminal';
     row.dataset.surf = k;
     row.dataset.surfLabel = tr(k === 'files' ? 'card.files.short' : `card.${k}`);
+    row.title = `${row.firstChild?.textContent || ''} (${row.dataset.surfLabel})`; // the icon's word, as the tooltip
   }
   // The card moves to the surface of the step now being done (its icon, title, preview and status follow).
   function setSurface(card, surface, name) {

@@ -69,9 +69,9 @@ const mk = (id, extra = {}, by = { chatId: 'c1', runId: 7 }) => M.markOpened({ i
 
 // ---- after a run, and the setting
 {
-  check('after a run: Never (the default) puts a Close button under the reply', M.closeAfterRun({ setting: 'off', n: 5 }) === 'offer' && M.closeAfterRun({ n: 5 }) === 'offer');
+  check('after a run: Leave open puts a Close button under the reply; Close is the default (no setting, or a bad one)', M.closeAfterRun({ setting: 'off', n: 5 }) === 'offer' && M.closeAfterRun({ n: 5 }) === 'close' && M.closeAfterRun({ setting: 'bogus', n: 5 }) === 'close');
   check('after a run: Ask asks; Always closes with Undo; nothing opened shows nothing', M.closeAfterRun({ setting: 'ask', n: 5 }) === 'ask' && M.closeAfterRun({ setting: 'always', n: 5 }) === 'close' && M.closeAfterRun({ setting: 'always', n: 0 }) === 'none' && M.closeAfterRun({ setting: 'off', n: 0 }) === 'none');
-  check('setting: anything unknown is Never', M.cleanCloseSetting('sometimes') === 'off' && M.cleanCloseSetting(undefined) === 'off');
+  check('setting: anything unknown is Close (the default)', M.cleanCloseSetting('sometimes') === 'always' && M.cleanCloseSetting(undefined) === 'always');
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
