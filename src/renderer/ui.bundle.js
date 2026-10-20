@@ -4667,6 +4667,8 @@ function annotateChip(step) {
   }
 }
 
+
+const unknownLabel = (event) => { try { return window.stepLabels?.defaults?.generic(event.name, event.input || {}) || t('step.tool'); } catch { return t('step.tool'); } };
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
   screenshot: () => t('tool.screenshot'),
@@ -4892,7 +4894,7 @@ window.assistant.onEvent((event) => {
       settleThinking();
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
-      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
       turn.lastSaid = null;
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
@@ -4927,7 +4929,7 @@ window.assistant.onEvent((event) => {
     case 'tool_update': {
       const step = turn.steps.get(event.id);
       if (!step) break;
-      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       if (window.stepUI) window.stepUI.update(turn, step, { ...event, label: event.label || fallback }); else if (event.label) { step.firstChild.textContent = event.label; step.title = event.label; }
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       break;
@@ -6570,7 +6572,7 @@ function startChat() {
         summary.firstChild.textContent = label;
         const list = el('div', { className: 'step-items' });
         for (const tool of tools) {
-          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : t('step.tool'));
+          const text = (tool.input && window.stepUI?.labelFor({ name: tool.name, input: tool.input })) || tool.label || (typeof TOOL_LABELS !== 'undefined' && TOOL_LABELS[tool.name] ? safeLabel(tool) : plainUnknown(tool));
           const row = el('div', { className: tool.ok === false ? 'step failed restored' : 'step done restored', title: text });
           row.innerHTML = '<span class="step-detail"></span>';
           row.firstChild.textContent = text;
@@ -6582,7 +6584,8 @@ function startChat() {
     }
     return out;
   }
-  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return t('step.tool'); } }
+  function plainUnknown(tool) { try { return window.stepLabels?.defaults?.generic(tool.name, tool.input || {}) || t('step.tool'); } catch { return t('step.tool'); } }
+  function safeLabel(tool) { try { return TOOL_LABELS[tool.name](tool.input || {}); } catch { return plainUnknown(tool); } }
 
 
   document.addEventListener('keydown', (e) => {
@@ -9763,7 +9766,7 @@ const showGpuNote = (info) => {
 window.browser.onGpuNote?.(showGpuNote);
 window.lumenPrefs?.get().then((p) => { if (p?.safeDrawing) showGpuNote({ kind: 'safe' }); }).catch(() => {});
 
-window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo }) => {
+window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo, chatNote }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
   const words = Object.assign(document.createElement('span'), { className: 'organize-note-text', textContent: text });
@@ -9805,7 +9808,7 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     setTimeout(() => { if (note.isConnected) { summary(); summary.fit?.(); } }, 200);
   }
   if (undo) {
-    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
+    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
   }
   organizeBtn.after(note);
   setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000);
@@ -11185,7 +11188,7 @@ function mcpPillRefresh() {
 }
 
 function mcpStepRow(event) {
-  const label = event.label || (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {});
+  const label = event.label || (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
   if (document.body.classList.contains('agent-window')) { mcpStepNow = `${event.clientName}: ${label}`; return; }
   const step = document.createElement('div');
   step.className = 'step running mcp-step';

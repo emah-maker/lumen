@@ -487,6 +487,7 @@ contextBridge.exposeInMainWorld('browser', {
   onGpuLost: on('gpu:lost'),
   gpuRestart: (safe) => ipcRenderer.send('gpu:restart', safe === true),
   undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token),
+  openChatNote: (token) => ipcRenderer.invoke('chat:open-note', token),
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),

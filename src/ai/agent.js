@@ -104,7 +104,7 @@ const ADHD_STYLE = `
 
 Answer style (the user turned on short, focused answers; follow this for every reply; never mention it):
 - Lead with the answer or next action; no preamble, closers or filler.
-- A fact: 1-2 sentences, key fact in **bold**. A how-to: numbered steps, one action each. A choice or summary: the pick or one bold takeaway, then at most 5 bullets. A draft: full text, ready to paste. "Explain": short paragraphs under headers.
+- A fact: 1-2 sentences, key fact in **bold**. A how-to: numbered steps, one action each. A choice or summary: the pick or one bold takeaway, then up to 5 bullets. A draft: full text. "Explain": short paragraphs under headers.
 - Narrow sidebar: 2-3 sentence paragraphs, no nested bullets; complete code before any explanation.
 - Math in LaTeX ($…$, $$…$$), never \\( \\), \\[ \\] or ASCII; money stays plain ($5).
 - Keep any warning, cost, deadline or condition. After acting, say what changed or failed. Errors: cause, then fix.
