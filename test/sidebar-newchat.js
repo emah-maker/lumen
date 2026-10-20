@@ -114,8 +114,8 @@ const fakeModel = (app) => app.evaluate(() => {
     await toggle();
     check('closing the sidebar while it writes', await waitState(false), 'open');
     await toggle();
-    // (test/sidebar-keeps-run.js: a chat that is still working on this tab is kept, not replaced; the New chat button still starts one)
-    check('opening again keeps the chat that still works', await waitState(true) && !(await emptyShown()) && (await userMsgs()).some((t) => /slow/.test(t)), JSON.stringify(await userMsgs()));
+    // (test/sidebar-keeps-run.js: Ask AI opens a new chat even while another one works; only a run waiting for an OK is kept)
+    check('opening again shows a new empty chat (the one still working carries on in History)', await waitState(true) && await emptyShown() && !(await userMsgs()).some((t) => /slow/.test(t)), JSON.stringify(await userMsgs()));
     await ui.click('#new-chat');
     check('New chat in the sidebar shows an empty chat while the first still works', await emptyShown(), JSON.stringify(await userMsgs()));
     await app.evaluate(() => global.__release());

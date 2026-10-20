@@ -122,7 +122,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
     await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
     await ui.waitForSelector('#sidebar', { state: 'visible' });
     await ui.evaluate(async ({ id, url }) => {
-      await loadStepUI();
+      await window.loadStepUI();
       const host = document.createElement('div');
       host.id = 'cf-host';
       document.body.append(host);
