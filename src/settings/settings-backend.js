@@ -172,6 +172,7 @@ const DEFAULTS = {
   featureCardNever: false, // [offers] "Don't show again" on the New in Lumen card (features/feature-offers.js); Lumen records it itself
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
   telegramChannel: false, // [telegram] Settings > AI > Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
+  telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
   telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)

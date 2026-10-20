@@ -24,10 +24,18 @@ function fakeApi() {
     fail: (f) => { failWith = f; },
     slow: (ms) => { delay = ms; },
     sent: () => calls.filter((c) => c.method === 'sendMessage'),
+    files: new Map(), // [phone files] file_id -> { path, bytes }
     fetch: async (url, init) => {
+      const dl = /^https:\/\/api\.telegram\.org\/file\/bot([^/]+)\/(.+)$/.exec(url);
+      if (dl) {
+        calls.push({ method: 'download', path: dl[2], token: dl[1] });
+        const f = [...api.files.values()].find((x) => x.path === dl[2]);
+        if (dl[1] !== TOKEN || !f) return { ok: false, status: 404, headers: { get: () => null }, arrayBuffer: async () => new ArrayBuffer(0) };
+        return { ok: true, status: 200, headers: { get: (h) => (h === 'content-length' ? String(f.bytes.length) : null) }, arrayBuffer: async () => f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.length) };
+      }
       const m = /^https:\/\/api\.telegram\.org\/bot([^/]+)\/(\w+)$/.exec(url);
       const method = m[2];
-      const body = JSON.parse(init.body || '{}');
+      const body = init.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(init.body || '{}');
       calls.push({ method, body, token: m[1] });
       const json = (data, status = 200) => ({ ok: status === 200, status, json: async () => data });
       if (failWith === 'network') throw new Error(`request to ${url} failed`);
@@ -40,6 +48,7 @@ function fakeApi() {
         if (delay) await new Promise((r) => setTimeout(r, delay));
         return json({ ok: true, result: queue.filter((u) => u.update_id >= (body.offset || 0)) }); // (what arrived while the poll was held comes back with it)
       }
+      if (method === 'getFile') { const f = api.files.get(body.file_id); return f ? json({ ok: true, result: { file_id: body.file_id, file_size: f.reported ?? f.bytes.length, file_path: f.path } }) : json({ ok: false, error_code: 400, description: 'Bad Request: file is too big' }, 400); }
       if (method === 'sendMessage') return json({ ok: true, result: { message_id: nextMessageId++, chat: { id: body.chat_id }, text: body.text } });
       return json({ ok: true, result: true });
     },
@@ -78,24 +87,29 @@ function fakeTasks() {
   };
 }
 
-function setup({ settings = {}, token = TOKEN, clock = { now: 1_800_000_000_000 } } = {}) {
+function setup({ settings = {}, token = TOKEN, clock = { now: 1_800_000_000_000 }, phone = true } = {}) {
   const api = fakeApi();
   const tasks = fakeTasks();
   let stored = { telegramChannel: true, ...settings };
   let tok = token;
   const sleeps = [];
+  const saved = []; // [phone files] what reached the inbox
+  const opened = [];
+  const shown = [];
+  const inbox = { dir: '/tmp/From phone', save: (x) => { saved.push(x); if (x.name === 'boom.txt') throw new Error('disk full'); return { name: x.name, path: `/tmp/From phone/${x.name}`, size: x.data.length, mime: x.mime, risky: false }; } };
   const tg = T.create({
     fetch: api.fetch, t, tasks,
+    ...(phone ? { inbox, onFile: (f, caption) => shown.push({ f, caption }), openUrl: (u) => { opened.push(u); } } : {}),
     readSettings: () => stored, writeSettings: (s) => { stored = s; },
     getToken: () => tok, setToken: (x) => { tok = x || null; }, canEncrypt: () => true,
     now: () => clock.now, pollTimeout: 0,
     sleep: (ms, signal) => { sleeps.push(ms); return new Promise((r) => { const timer = setTimeout(r, 5); signal?.addEventListener('abort', () => { clearTimeout(timer); r(); }, { once: true }); }); },
   });
-  return { api, tasks, tg, clock, sleeps, settings: () => stored, token: () => tok };
+  return { api, tasks, tg, clock, sleeps, saved, opened, shown, settings: () => stored, token: () => tok };
 }
 
 let uid = 1;
-const msg = (chatId, text, { date, from } = {}) => ({ update_id: uid++, message: { message_id: uid, chat: { id: chatId, type: 'private' }, from: from || { id: chatId, first_name: 'Sam', username: 'sam' }, date: date ?? 1_800_000_000, text } });
+const msg = (chatId, text, { date, from, extra } = {}) => ({ update_id: uid++, message: { message_id: uid, chat: { id: chatId, type: 'private' }, from: from || { id: chatId, first_name: 'Sam', username: 'sam' }, date: date ?? 1_800_000_000, text, ...extra } });
 const press = (chatId, data) => ({ update_id: uid++, callback_query: { id: `cb${uid}`, from: { id: chatId }, message: { message_id: 100, chat: { id: chatId } }, data } });
 const lastText = (api) => api.sent().at(-1)?.body.text || '';
 
@@ -374,6 +388,80 @@ const lastText = (api) => api.sent().at(-1)?.body.text || '';
     e.tg.refresh();
     check('turning it on listens again (once)', e.tasks.listeners() === 1);
     e.tg.shutdown();
+  }
+
+  // ---- [phone files] photos and files from the phone, links, Send to phone
+  {
+    const doc = { file_id: 'D1', file_name: 'Lease.pdf', mime_type: 'application/pdf', file_size: 3 };
+    const photo = [{ file_id: 'P-small', width: 90, height: 90, file_size: 1 }, { file_id: 'P-big', width: 1280, height: 960, file_size: 2 }];
+    check('fileOf: a document keeps its name and type', T.fileOf({ document: doc }).name === 'Lease.pdf' && T.fileOf({ document: doc }).mime === 'application/pdf');
+    check('fileOf: a photo is its largest size, named by the time', T.fileOf({ photo, date: 1_800_000_000 }).fileId === 'P-big' && /^Photo 2027-01-1[45] \d\d\.00\.00\.jpg$/.test(T.fileOf({ photo, date: 1_800_000_000 }).name), T.fileOf({ photo, date: 1_800_000_000 }).name);
+    check('fileOf: voice and video get a name; text has no file', /^Voice .+\.ogg$/.test(T.fileOf({ voice: { file_id: 'V' } }).name) && /\.mp4$/.test(T.fileOf({ video_note: { file_id: 'N' } }).name) && T.fileOf({ text: 'hi' }) === null);
+    check('isBareUrl: one http(s) link only', T.isBareUrl('https://example.com/a?b=1') === 'https://example.com/a?b=1' && T.isBareUrl('look at https://example.com') === null && T.isBareUrl('javascript:alert(1)') === null && T.isBareUrl('file:///etc/passwd') === null && T.isBareUrl('example.com') === null);
+
+    const e = setup({ settings: { telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    e.api.files.set('D1', { path: 'documents/file_1.pdf', bytes: Buffer.from('PDF') });
+    e.api.files.set('P-big', { path: 'photos/file_2.jpg', bytes: Buffer.from('JP') });
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { document: doc } }));
+    await e.tg.settled();
+    check('a file from the owner reaches the inbox with its bytes', e.saved.length === 1 && e.saved[0].name === 'Lease.pdf' && e.saved[0].data.toString() === 'PDF', JSON.stringify(e.saved.map((x) => x.name)));
+    check('…the phone is told it was saved, and Lumen shows it', /Saved to Lumen: Lease\.pdf/.test(lastText(e.api)) && e.shown.length === 1);
+    check('…and no task was started', e.tasks.tasks.size === 0);
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { photo, caption: 'what plant is this?' } }));
+    await e.tg.settled();
+    check('a photo with a caption: the caption comes along and is not run', e.saved[1]?.caption === 'what plant is this?' && e.shown[1]?.caption === 'what plant is this?' && e.tasks.tasks.size === 0);
+    check('the file download never carries the token into an error or a reply', !e.api.sent().some((c) => c.body.text.includes(TOKEN)));
+
+    e.api.files.set('BIG', { path: 'videos/big.mp4', bytes: Buffer.from('x'), reported: 25 * 1024 * 1024 });
+    const before = e.api.calls.filter((c) => c.method === 'download').length;
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { video: { file_id: 'BIG', file_size: 25 * 1024 * 1024 } } }));
+    await e.tg.settled();
+    check('over 20 MB is refused before anything is downloaded', /over 20 MB/.test(lastText(e.api)) && e.api.calls.filter((c) => c.method === 'download').length === before && e.saved.length === 2);
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { video: { file_id: 'BIG' } } }));
+    await e.tg.settled();
+    check('…also when only getFile says how big it is', /over 20 MB/.test(lastText(e.api)) && e.saved.length === 2);
+    e.api.files.set('BOOM', { path: 'documents/boom.txt', bytes: Buffer.from('b') });
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { document: { file_id: 'BOOM', file_name: 'boom.txt' } } }));
+    await e.tg.settled();
+    check('a file that could not be saved says why', /couldn't save that file: disk full/.test(lastText(e.api)));
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { document: doc, forward_origin: { type: 'user' } } }));
+    await e.tg.settled();
+    check('a forwarded file is refused like a forwarded message', /Forwarded/.test(lastText(e.api)) && e.saved.length === 3);
+    await e.tg.handleUpdate(msg(STRANGER, undefined, { extra: { document: doc } }));
+    await e.tg.settled();
+    check('a stranger\'s file is never saved', e.saved.length === 3);
+
+    await e.tg.handleUpdate(msg(OWNER, 'https://example.com/recipe'));
+    await e.tg.handleUpdate(msg(OWNER, '/open https://example.org'));
+    await e.tg.settled();
+    check('a bare link and /open <link> open tabs, not tasks', e.opened.join(' ') === 'https://example.com/recipe https://example.org/' && e.tasks.tasks.size === 0 && /Opened in Lumen/.test(lastText(e.api)), e.opened);
+    await e.tg.handleUpdate(msg(OWNER, '/open javascript:alert(1)'));
+    await e.tg.settled();
+    check('/open refuses anything but http(s)', e.opened.length === 2 && /\/open followed by a link/.test(lastText(e.api)));
+    await e.tg.handleUpdate(msg(OWNER, '/background https://example.com/recipe'));
+    await e.tg.settled();
+    check('/background <link> still runs it as a task', e.tasks.tasks.size === 1 && e.opened.length === 2);
+
+    await e.tg.sendToChat({ text: 'Recipe\nhttps://example.com/recipe' });
+    await e.tg.settled();
+    check('Send to phone: a link goes to the paired chat', e.api.sent().at(-1).body.chat_id === OWNER && /example\.com\/recipe/.test(lastText(e.api)));
+    await e.tg.sendToChat({ file: { name: 'notes.txt', data: Buffer.from('hello'), mime: 'text/plain' } });
+    const docCall = e.api.calls.filter((c) => c.method === 'sendDocument').at(-1);
+    check('Send to phone: a file goes out as a document to the paired chat', docCall && docCall.body.chat_id === String(OWNER) && docCall.body.document?.name === 'notes.txt');
+    const tooBig = await e.tg.sendToChat({ file: { name: 'big.bin', data: Buffer.alloc(T.MAX_OUT_BYTES + 1) } }).then(() => null, (err) => err.message);
+    check('Send to phone refuses a file over 50 MB', /over 50 MB/.test(tooBig || ''), tooBig);
+    check('paired() is true while a chat is paired', e.tg.paired() === true);
+    e.tg.unpair();
+    const unpaired = await e.tg.sendToChat({ text: 'x' }).then(() => null, (err) => err.message);
+    check('Send to phone without a paired chat says to pair first', /Pair a Telegram chat first/.test(unpaired || '') && e.tg.paired() === false, unpaired);
+  }
+  {
+    const e = setup({ settings: { telegramFiles: false, telegram: { bot: { id: 42, username: 'my_lumen_bot' }, owner: { id: OWNER, name: 'Sam' } } } });
+    e.api.files.set('D1', { path: 'documents/file_1.pdf', bytes: Buffer.from('PDF') });
+    await e.tg.handleUpdate(msg(OWNER, undefined, { extra: { document: { file_id: 'D1', file_name: 'a.pdf' } } }));
+    await e.tg.settled();
+    check('with telegramFiles off, files get the old text-only reply', e.saved.length === 0 && /only take text requests/.test(lastText(e.api)));
+    check('status() reports the files switch and the inbox', e.tg.status().files === false && e.tg.status().inboxDir === '/tmp/From phone');
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');
