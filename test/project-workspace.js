@@ -95,7 +95,7 @@ function makePdf(pages) {
     const project = await api('saveProject', { name: 'Biology thesis', instructions: 'Answer in a formal tone.', folderMode: 'none' });
     check('create: a project with instructions', project?.id && project.instructions === 'Answer in a formal tone.', JSON.stringify(project));
     const add = await inPage(`window.assistant.chats.projectFilesAdd(${JSON.stringify(project.id)}, [
-      { name: 'budget.md', bytes: new TextEncoder().encode('# Budget\\n\\nThe budget for the thesis is 4,000 dollars.\\n\\nThe deadline is in March.').buffer },
+      { name: 'budget.md', bytes: new TextEncoder().encode('# Budget\\n\\n' + 'Filler words keep the index summary short of the figures. '.repeat(2) + '\\n\\nThe budget for the thesis is 4,000 dollars.\\n\\nThe deadline is in March.').buffer },
       { name: 'essay.docx', bytes: ${bytesOf(makeDocx(['Essay', 'Chloroplasts make sugar from light.']))} },
       { name: 'bio.pdf', bytes: ${bytesOf(makePdf(['Mitochondria make energy for the cell']))} },
       { name: 'run.exe', bytes: new TextEncoder().encode('MZ').buffer },
@@ -119,7 +119,7 @@ function makePdf(pages) {
     await send('ASKFILES what is the budget?');
     await settled();
     const req = (await fake()).requests[0];
-    check('the context carries the instructions and the file index, not a file\'s text', /<project_instructions>[\s\S]*formal tone/.test(req.system) && /<project_context>[\s\S]*1\. budget\.md[\s\S]*2\. essay\.docx/.test(req.system) && /Reference page/.test(req.system) && !/4,000 dollars/.test(req.system), req.system.slice(req.system.indexOf('<project_instructions>')));
+    check('the context carries the instructions and the file index, not a file\'s text', /<project_instructions>[\s\S]*formal tone/.test(req.system) && /<project_context>[\s\S]*1\. budget\.md[\s\S]*2\. essay\.docx/.test(req.system) && /Reference page/.test(req.system) && !/4,000 dollars/.test(req.system), JSON.stringify([/formal tone/.test(req.system), /1. budget.md/.test(req.system), /2. essay.docx/.test(req.system), /Reference page/.test(req.system), /4,000 dollars/.test(req.system)]) + req.system.slice(req.system.indexOf('<project_context>')));
     check('the project context stays small (instructions + index well under 7,000 characters)', req.system.slice(req.system.indexOf('<project_instructions>')).length < 7000, req.system.length);
     check('project_files is offered in the project chat', req.tools.includes('project_files'), req.tools.join());
     const results = (await fake()).toolResults;
@@ -174,7 +174,7 @@ function makePdf(pages) {
     })()`);
     check('the page opens', opened === true && (await inPage("Boolean(document.getElementById('cp-project-page'))")) === true);
     const text = await inPage("document.getElementById('cp-project-page').innerText");
-    check('the page shows instructions, the three files, the pinned page, defaults and memory', /Biology thesis/.test(text) && /budget\.md/.test(text) && /essay\.docx/.test(text) && /bio\.pdf/.test(text) && /Reference page/.test(text) && /Defaults/.test(text) && /kiwi/.test(text), text.slice(0, 600));
+    check('the page shows instructions, the three files, the pinned page, defaults and memory', (await inPage("document.querySelector('#cp-project-page .pjp-title').value")) === 'Biology thesis' && /budget\.md/.test(text) && /essay\.docx/.test(text) && /bio\.pdf/.test(text) && /Reference page/.test(text) && /Defaults/.test(text) && /kiwi/.test(text), JSON.stringify([/Biology thesis/.test(text), /budget.md/.test(text), /essay.docx/.test(text), /bio.pdf/.test(text), /Reference page/.test(text), /Defaults/.test(text), /kiwi/.test(text)]));
     const instr = await inPage("document.querySelector('#cp-project-page textarea').value");
     check('the instructions are in their box', instr === 'Answer in a formal tone.', instr);
     await inPage("(async () => { const input = document.querySelector('.pjp-search-input'); input.value = 'dollars'; input.dispatchEvent(new Event('input')); })()");
@@ -230,9 +230,11 @@ function makePdf(pages) {
     const tabId = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 5000); }); return t.id; }, `${base}/pinned-tab`);
     const menu = await app.evaluate((_e, id) => global.__projectWorkspace.menuItems(id), tabId);
     check('the tab menu has Add to project, with the projects', menu.length === 1 && menu[0].label === 'Add to project' && menu[0].items.includes('Biology thesis') && menu[0].enabled, JSON.stringify(menu));
+    await waitFor(async () => /pinned-tab/.test((await app.evaluate((_e, id) => global.__projectWorkspace.info(id), tabId))?.url || ''));
+    await sleep(500);
     const pinned = await app.evaluate((_e, { id, pid }) => global.__projectWorkspace.addTab(id, pid), { id: tabId, pid: project.id });
     const again = await app.evaluate((_e, { id, pid }) => global.__projectWorkspace.addTab(id, pid), { id: tabId, pid: project.id });
-    check('Add this tab pins the page with its title; again says it is already there', pinned.ok && /Fixture pinned-tab/.test(pinned.title) && again.ok && again.already === true && (await api('project', project.id)).project.links.length === 2, JSON.stringify([pinned.ok, pinned.title, again]));
+    check('Add this tab pins the page with its title; again says it is already there', pinned.ok && /Fixture pinned-tab/.test(pinned.title) && again.ok && again.already === true && (await api('project', project.id)).project.links.length === 2, JSON.stringify([pinned.ok, pinned.title, again, await app.evaluate((_e, id) => global.__projectWorkspace.info(id), tabId)]));
 
     // ======== delete with Undo ========
     const files = await api('project', project.id);

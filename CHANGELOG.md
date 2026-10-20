@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Projects now hold files, pages and their own memory for the AI.** Open a project and add files (PDF, Word, PowerPoint, email, text, pictures) or pin web pages with Add this tab. The AI sees a short list of them in every chat in the project and reads the ones it needs with a project_files tool. Memory it saves in a project chat stays in that project. Each project can set a default model, start in plan mode, and switch connectors and MCP tools off. Deleting a project can be undone for a short while, and its files and pages sync between your computers when sync is on.
+
 - **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 
 ## 0.5.60 (2026-10-20)

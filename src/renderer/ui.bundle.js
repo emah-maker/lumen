@@ -14485,7 +14485,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
-  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
   const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
   const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
   const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
@@ -14650,7 +14650,7 @@ $('agent-stop')?.addEventListener('click', () => {
   function chatShown(view, sameChat) {
     if (sameChat) { remember(); return; }
     const id = view?.id || null;
-    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && (window.lumenPlanModeDefault === true || view?.project?.plan === true);
     render();
   }
 
