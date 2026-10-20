@@ -10,6 +10,7 @@
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
 //   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
+//   /fractions on|off  [prefer fractions] the Settings → AI switch: exact fractions, stacked, instead of decimals (new chats).
 //   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI and agents → Memory.
 //   /help      lists every command.
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows
@@ -251,6 +252,22 @@
       open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
       box.append(' ', open);
       note(box);
+      return { ok: true };
+    },
+  });
+  slash.register({
+    name: 'fractions',
+    label: tr('slash.fractions', 'Prefer fractions'),
+    description: tr('slash.fractions.description', 'Turn Prefer fractions on or off: /fractions on. The AI writes exact fractions, not decimals, in new chats.'),
+    hint: tr('slash.fractions.hint', 'on or off, then press Enter'),
+    takesInput: true,
+    async run({ input }) {
+      const api = window.assistant?.preferFractions;
+      if (!api) return { ok: false, message: tr('slash.fractions.none', 'Prefer fractions is in Settings → AI and agents.') };
+      const word = String(input || '').trim().toLowerCase();
+      if (word !== 'on' && word !== 'off') return { ok: false, message: tr('slash.fractions.usage', 'Type /fractions on or /fractions off.') };
+      const now = await api(word === 'on');
+      notice(now ? tr('slash.fractions.on', 'Prefer fractions is on. New chats write exact fractions (stacked), not decimals.') : tr('slash.fractions.off', 'Prefer fractions is off.'));
       return { ok: true };
     },
   });
