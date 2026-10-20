@@ -1001,6 +1001,8 @@ window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, not
     });
     renderAttachments(); // (the tooltip states the limit)
   }
+  const phoneBtn = $('from-phone'); // [phone wifi] a QR for the phone; what it sends comes into this composer when the sheet closes
+  if (phoneBtn) phoneBtn.onclick = () => window.browser?.phoneWifi?.();
 }
 
 prompt.addEventListener('paste', async (e) => {

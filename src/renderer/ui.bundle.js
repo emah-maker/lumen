@@ -4424,6 +4424,8 @@ window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, not
     });
     renderAttachments();
   }
+  const phoneBtn = $('from-phone');
+  if (phoneBtn) phoneBtn.onclick = () => window.browser?.phoneWifi?.();
 }
 
 prompt.addEventListener('paste', async (e) => {

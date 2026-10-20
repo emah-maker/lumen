@@ -28,6 +28,7 @@ const PAGES = {
   routines: { title: 'Routines', file: 'docs/routines.md' },
   'mission-control': { title: 'AI activity', file: 'docs/mission-control.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
+  'phone-wifi': { title: 'Receive from phone (Wi-Fi)', file: 'docs/phone-wifi.md' },
   sync: { title: 'Sync through a folder', file: 'docs/sync.md' },
   notes: { title: 'Notes', file: 'docs/notes.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },

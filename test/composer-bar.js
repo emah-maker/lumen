@@ -142,13 +142,14 @@ const SEND_LONG = `(async () => {
     // ---- the + menu: opens, arrow keys, Escape, and the rows keep working
     await ui.click('#composer-plus');
     let m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, expanded: document.getElementById('composer-plus').getAttribute('aria-expanded'), rows: [...document.querySelectorAll('#composer-menu [role^="menuitem"]')].map((e) => e.id) }));
-    check('+ opens a menu with Screenshot, Attach files and Plan', m.open && m.expanded === 'true' && m.rows.join() === 'screen-btn,attach,plan-chip', JSON.stringify(m));
+    check('+ opens a menu with Screenshot, Attach files, From your phone (Wi-Fi) and Plan', m.open && m.expanded === 'true' && m.rows.join() === 'screen-btn,attach,from-phone,plan-chip', JSON.stringify(m));
     await ui.keyboard.press('Escape');
     m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, focus: document.activeElement.id }));
     check('Escape closes it and returns focus to +', !m.open && m.focus === 'composer-plus', JSON.stringify(m));
     await ui.keyboard.press('ArrowDown');
     m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, focus: document.activeElement.id }));
     check('ArrowDown on + opens it on the first row', m.open && m.focus === 'screen-btn', JSON.stringify(m));
+    await ui.keyboard.press('ArrowDown');
     await ui.keyboard.press('ArrowDown');
     await ui.keyboard.press('ArrowDown');
     m = await ui.evaluate(() => document.activeElement.id);

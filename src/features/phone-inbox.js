@@ -48,10 +48,24 @@ function createPhoneInbox(deps) {
     const clean = uniqueName(cleanName(name), (n) => fs.existsSync(path.join(dir, n)));
     const file = path.join(dir, clean);
     fs.writeFileSync(file, buf, { flag: 'wx' }); // (wx: never replaces a file that appeared meanwhile)
+    mark(file);
+    return { path: file, name: clean, size: buf.length, mime: String(mime || ''), risky: isRisky(clean) };
+  }
+
+  // [phone wifi] A file that was streamed to `tmp` (a hidden .part file in the inbox, features/wifi-upload.js) takes its name:
+  // renamed into place, never over another file. -> the same as save().
+  function saveFile(tmp, name, mime = '') {
+    const clean = uniqueName(cleanName(name), (n) => fs.existsSync(path.join(dir, n)));
+    const file = path.join(dir, clean);
+    fs.linkSync(tmp, file); // (a hard link fails when the name was taken meanwhile, where a rename would replace it)
+    fs.unlinkSync(tmp);
+    mark(file);
+    return { path: file, name: clean, size: fs.statSync(file).size, mime: String(mime || ''), risky: isRisky(clean) };
+  }
+  function mark(file) {
     if (platform === 'darwin' && deps.setXattr) {
       try { deps.setXattr(file, 'com.apple.quarantine', quarantineValue(now())); } catch (err) { console.error('[lumen] phone inbox: could not mark a file quarantined:', err?.message || err); }
     }
-    return { path: file, name: clean, size: buf.length, mime: String(mime || ''), risky: isRisky(clean) };
   }
 
   // The newest files first: [{ name, path, size, mtime }].
@@ -60,7 +74,7 @@ function createPhoneInbox(deps) {
     try { names = fs.readdirSync(dir); } catch { return []; }
     const out = [];
     for (const name of names) {
-      if (name.startsWith('.')) continue;
+      if (name.startsWith('.')) continue; // (hidden: an upload still arriving, .incoming-*.part)
       try {
         const st = fs.statSync(path.join(dir, name));
         if (st.isFile()) out.push({ name, path: path.join(dir, name), size: st.size, mtime: st.mtimeMs });
@@ -69,7 +83,7 @@ function createPhoneInbox(deps) {
     return out.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
   }
 
-  return { dir, save, listRecent };
+  return { dir, save, saveFile, listRecent };
 }
 
 module.exports = { createPhoneInbox, uniqueName, isRisky, quarantineValue, FOLDER, MAX_SAVE_BYTES };
