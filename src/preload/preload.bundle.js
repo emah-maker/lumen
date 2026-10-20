@@ -448,7 +448,7 @@ contextBridge.exposeInMainWorld('browser', {
 
   openFiles: (files) => ipcRenderer.send('files:open', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   closeTab: (id) => ipcRenderer.send('tab:close', id),
-  switchTab: (id) => ipcRenderer.send('tab:switch', id, performance.timeOrigin + performance.now()),
+  switchTab: (id, byUser) => ipcRenderer.send('tab:switch', id, performance.timeOrigin + performance.now(), byUser === true),
   switchStripDrawn: (id, at) => ipcRenderer.send('tab:switch-strip', id, at),
   tabHover: (id, on) => ipcRenderer.send('tab:hover', id, on),
   tabDown: (id) => ipcRenderer.send('tab:down', id),

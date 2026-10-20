@@ -182,6 +182,40 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   const cGone = await waitFor(async () => !(await urlsNow()).some((u) => /\/C-/.test(u)), 20000);
   check('after a crash the next start closes the tabs the killed run left (Close)', Boolean(cGone), JSON.stringify(await urlsNow()));
 
+  // ---- 5. A tab the user clicked in the strip to look at stays ("Keep AI tabs I click on", on by default); with it off it closes like any other.
+  // Only a press in the strip counts (a switch with no origin flag, such as the AI's switch_tab, the chip or tab search, leaves the tab the AI's: tab-strip-units.js checks the wiring).
+  await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'always'));
+  await fakeModel(app, base); // (the app came back from the crash)
+  await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  if (!(await ui.isVisible('#sidebar'))) await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
+  await newChat();
+  await script('V', [0, 1, 2, 3].map((n) => ({ name: 'open_tab', input: { url: `/V-${n}` } })));
+  await hold('V');
+  await send('chat-V: open four');
+  await waitFor(async () => (await marks()).filter((x) => /[/]V-/.test(x.url)).length === 4, 30000);
+  await waitFor(async () => { const us = await urlsNow(); return [0, 1, 2, 3].every((n) => us.some((u) => u.endsWith(`/V-${n}`))); }, 15000);
+  const [v0, v1] = [await idOf("/V-0"), await idOf("/V-1")];
+  const marked = (tid) => app.evaluate((_e, i) => Boolean(global.__aiTabs.tab(i)?.openedBy), tid);
+  await app.evaluate(() => global.__settings.backend.set('keepViewedAiTabs', false));
+  await ui.click(`#tabs .tab[data-id="${v1}"]`);
+  await waitFor(async () => (await active()) === v1, 8000);
+  check('with "Keep AI tabs I click on" off, a click in the strip does not take the tab over', await marked(v1), 'mark gone');
+  await app.evaluate(() => global.__settings.backend.set('keepViewedAiTabs', true));
+  await ui.click(`#tabs .tab[data-id="${v0}"]`);
+  await waitFor(async () => (await active()) === v0, 8000);
+  check('with it on, a click in the strip takes the tab over', !(await marked(v0)), 'still marked');
+  await app.evaluate(() => global.__settings.backend.set('keepViewedAiTabs', false));
+  await ui.click(`#tabs .tab[data-id="${user}"]`);
+  await waitFor(async () => (await active()) === user, 8000);
+  await release('V');
+  await waitFor(async () => /V done/.test(await bodyText()), 20000);
+  await waitFor(async () => !(await urlsNow()).some((u) => /[/]V-[23]$/.test(u)), 20000); // (the tabs nobody clicked close first)
+  await sleep(1500);
+  const vLeft = await urlsNow();
+  check('the AI tab clicked with the setting on stays after the run', vLeft.some((u) => u.endsWith('/V-0')), JSON.stringify(vLeft));
+  // (a tab shown in front also gets this chat bound to it, which keeps it open on its own, so the off case is shown by the mark: it is still the AI's, and a close of the AI's tabs reaches it)
+  check('the AI tab clicked with the setting off is still marked as the AI tab after the run', await marked(v1), 'mark gone');
+
   check('no script errors in the UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();

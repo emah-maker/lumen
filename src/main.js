@@ -10061,7 +10061,7 @@ ipcMain.on('missingfile:choose', async (event) => {
   wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
 });
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
-ipcMain.on('tab:switch', (_e, id, at) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; switchTab(id); switchInput = null; });
+ipcMain.on('tab:switch', (_e, id, at, byUser) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; const shown = switchTab(id); switchInput = null; if (byUser === true && shown && readSettings().keepViewedAiTabs !== false) userTookOver(tabs.find((t) => t.id === id)); }); // [ai manners] byUser: only a press in the tab strip or side list sets it (the chip, the AI and the app's own switches do not), and a tab the user chose to look at is theirs to keep
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
   moveTab(id, toIndex);
   // An in-strip drag holds its tab hidden until this: the strip shows it in the slot it landed in.

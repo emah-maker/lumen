@@ -74,5 +74,15 @@ const mk = (id, extra = {}, by = { chatId: 'c1', runId: 7 }) => M.markOpened({ i
   check('setting: anything unknown is Close (the default)', M.cleanCloseSetting('sometimes') === 'always' && M.cleanCloseSetting(undefined) === 'always');
 }
 
+// ---- a tab the user clicked in the strip (only that origin hands a tab over)
+{
+  const fsr = require('fs'), pth = require('path');
+  const rd = (p) => fsr.readFileSync(pth.join(__dirname, '..', p), 'utf8');
+  const main = rd('src/main.js'), pre = rd('src/preload/preload.js'), app = rd('src/renderer/app.js'), be = rd('src/settings/settings-backend.js');
+  check('click origin: the strip click and its Enter/Space send the flag, the preload passes only an exact true', /switchTab[(]r[.]activate, true[)]/.test(app) && /switchTab[(]id, true[)]/.test(app) && /byUser === true/.test(pre));
+  check('click origin: other callers (chip, command bar, tab search, AI) send no flag', !/switchTab[(](needs.0.|item[.]tabId|item[.]id)[^)]*true/.test(app + rd('src/renderer/command-bar.js') + rd('src/renderer/tab-search.js')));
+  check('click origin: main hands the tab over only for the flag and with "Keep AI tabs I click on" not off', /ipcMain[.]on[(]'tab:switch', .*byUser === true && shown && readSettings[(][)][.]keepViewedAiTabs !== false[)] userTookOver/.test(main) && /keepViewedAiTabs: true/.test(be));
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nAll checks passed');
 process.exit(failures ? 1 : 0);
