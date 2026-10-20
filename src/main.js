@@ -6330,6 +6330,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
   const busyBefore = aiTabSelect({ ...selector, auto, busy: true }).length; // [ai manners] tabs a run is still working in: kept, and the toast says "Kept 1 tab the AI is still using"
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
+    if (alive(tab) && downloads.list.some((d) => d.state === 'progressing' && d.contents === tab.view.webContents)) return keepTab(rec, tab); // (a download in progress is the user's: closing the tab could cancel it)
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
@@ -8694,7 +8695,7 @@ const agent = new Agent({
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
-  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun(closeTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run requestCloseTab: inRun(agentRequestCloseTab),
+  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]
