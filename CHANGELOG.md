@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A chat that finishes or needs your OK while you are on another tab now says so in Lumen.** macOS shows no banner for the app in front, so the system notification Lumen sent went unseen when you were in Lumen on a different tab. In that case the tab strip now shows a toast ("AI finished: …", "AI needs your OK") with **Open chat**, which goes where a click on the system notification would: the tab the AI worked in, with the chat open. In another app you still get the system notification. Same switches as before (Tasks → Settings). Tests: `test/notify-click.js`.
+
 ## 0.5.59 (2026-10-19)
 
 - **Test suites that guard the browser are steady again, and Settings' Search engine row loads faster.** Several suites raced the page (cards still sliding, a search before every section was built, a dialog answered twice, a Page unloading list that never refreshed in a page that draws no frames) and now wait for what they measure; the Page unloading lists now also refresh from a timer. On General, Focus mode and Sync (rows far below the first screen) are built a moment after the page shows instead of before it, and the Search engine row asks for just the list of engines instead of the whole AI state.

@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('browser', {
   onGpuLost: on('gpu:lost'), // the GPU process died: a page snapshot on screen is put away
   gpuRestart: (safe) => ipcRenderer.send('gpu:restart', safe === true),
   undoAiClose: (token) => ipcRenderer.invoke('tabs:undo-ai-close', token), // [ai manners]
+  openChatNote: (token) => ipcRenderer.invoke('chat:open-note', token), // the strip's toast about a chat that finished on another tab
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
