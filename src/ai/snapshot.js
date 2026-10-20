@@ -297,7 +297,7 @@ function findMatches(opts) {
   return { matches: [...c, ...t], url: location.href, title: document.title };
 }
 
-// read_page extract: tables, links or lists as JSON (what run_script was used for), optionally within a selector.
+// read_page extract: links or lists as JSON (what run_script was used for), optionally within a selector. Tables: extractTables below.
 function extractData(opts) {
   const root = opts.selector ? document.querySelector(opts.selector) : document.body;
   if (!root) return { error: 'No element matches selector.' };
@@ -305,12 +305,7 @@ function extractData(opts) {
   const shown = (el) => Boolean(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   const within = (sel) => [...(root.matches(sel) ? [root] : []), ...root.querySelectorAll(sel)].filter(shown);
   let data;
-  if (opts.kind === 'tables') {
-    data = within('table').slice(0, 5).map((t) => ({
-      caption: clean(t.caption && t.caption.innerText, 100),
-      rows: [...t.rows].slice(0, 60).map((r) => [...r.cells].slice(0, 12).map((c) => clean(c.innerText, 120))),
-    }));
-  } else if (opts.kind === 'lists') {
+  if (opts.kind === 'lists') {
     data = within('ul,ol').slice(0, 8).map((l) => [...l.children].slice(0, 40).map((li) => clean(li.innerText, 160)));
   } else {
     const seen = new Set();
@@ -318,6 +313,199 @@ function extractData(opts) {
       .filter(([text, href]) => text && !seen.has(href) && seen.add(href)).slice(0, 80);
   }
   return { url: location.href, kind: opts.kind, data };
+}
+
+// read_page extract:"tables": every table of the page, whole. Runs in the page (serialized, async): <table> and div role="table" / "grid"
+// / "treegrid" (rows role="row", cells role="cell" | "gridcell" | "columnheader" | "rowheader"), in open shadow roots and same-origin
+// frames, collapsed or hidden ones too (a closed <details> or display:none section still has its text), and rows a virtualized grid
+// only draws near its scroll position (the table's scroll container is stepped through, then put back). Returns every row;
+// formatTables below pages them out. opts: { selector } to look inside one element.
+async function extractTables(opts) {
+  const MAX_TABLES = 40, MAX_ROWS = 5000, MAX_TOTAL = 20000, CELL = 300, MS = 6000;
+  const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const cut = { cells: 0, rows: false, tables: false };
+  const cellText = (c) => { const t = clean(c.innerText || c.textContent); if (t.length <= CELL) return t; cut.cells++; return `${t.slice(0, CELL)}…`; };
+  const TABLE = 'table,[role=table],[role=grid],[role=treegrid]';
+  const CELLS = '[role=cell],[role=gridcell],[role=columnheader],[role=rowheader]';
+  const scope = opts.selector ? document.querySelector(opts.selector) : null;
+  if (opts.selector && !scope) return { error: 'No element matches selector.' };
+  const roots = [];
+  const addRoot = (r, depth) => {
+    roots.push(r);
+    for (const el of r.querySelectorAll('*')) {
+      if (el.shadowRoot) addRoot(el.shadowRoot, depth);
+      else if ((el.tagName === 'IFRAME' || el.tagName === 'FRAME') && depth < 3) { try { const d = el.contentDocument; if (d && d.documentElement) addRoot(d, depth + 1); } catch {} }
+    }
+  };
+  addRoot(scope || document, 0);
+  const found = [];
+  for (const r of roots) { if (r.matches && r.matches(TABLE)) found.push(r); found.push(...r.querySelectorAll(TABLE)); }
+  const upTo = (el, sel) => { for (let n = el.parentElement; n; n = n.parentElement) if (n.matches(sel)) return n; return null; };
+  const rowsOf = (t) => (t.tagName === 'TABLE' ? [...t.rows] : [...t.querySelectorAll('[role=row]')].filter((r) => upTo(r, TABLE) === t));
+  const cellsOf = (r) => {
+    if (r.tagName === 'TR') return [...r.cells];
+    const own = [...r.querySelectorAll(CELLS)].filter((c) => upTo(c, '[role=row],tr') === r);
+    return own.length ? own : [...r.children];
+  };
+  const isHead = (r, cells) => (r.tagName === 'TR' ? (r.parentElement && r.parentElement.tagName === 'THEAD') || cells.every((c) => c.tagName === 'TH') : cells.length > 0 && cells.every((c) => c.getAttribute('role') === 'columnheader'));
+  const wait = (ms) => new Promise((done) => setTimeout(done, ms));
+  const scrollerOf = (t) => {
+    for (let n = t; n; n = n.parentElement || (n.getRootNode() && n.getRootNode().host) || null) {
+      if (n.nodeType !== 1) continue;
+      const s = n.ownerDocument.defaultView.getComputedStyle(n);
+      if (/(auto|scroll)/.test(s.overflowY) && n.scrollHeight > n.clientHeight + 4) return n;
+    }
+    return null;
+  };
+  const headingBefore = (t) => {
+    const root = t.getRootNode();
+    let best = null;
+    for (const h of root.querySelectorAll ? root.querySelectorAll('h1,h2,h3,h4,h5,h6,[role=heading]') : []) { if (h.compareDocumentPosition(t) & 4) best = h; else break; }
+    return best ? clean(best.innerText || best.textContent).slice(0, 100) : '';
+  };
+  // What is written just above the table inside the nearest container that has any text besides it ("Problem 2", "Table A-3").
+  const nearText = (t) => {
+    const mine = clean(t.textContent);
+    const own = mine.slice(0, 40);
+    let n = t;
+    for (let i = 0; i < 6 && n.parentElement; i++) {
+      n = n.parentElement;
+      const all = clean(n.textContent);
+      if (all.length > mine.length + 3) { const at = own ? all.indexOf(own) : -1; return (at > 0 ? all.slice(Math.max(0, at - 160), at) : all.slice(0, 160)).trim(); }
+    }
+    return '';
+  };
+  const out = [];
+  let total = 0;
+  for (const t of found) {
+    if (out.length >= MAX_TABLES) { cut.tables = true; break; }
+    const probe = rowsOf(t);
+    if (probe.length < 2 && !t.hasAttribute('aria-rowcount')) continue; // one row: layout, not data
+    const state = { items: [], seen: new Set(), header: null, started: false };
+    const grab = () => {
+      for (const r of rowsOf(t)) {
+        if (state.items.length >= MAX_ROWS || total + state.items.length >= MAX_TOTAL) { cut.rows = true; return; }
+        const cells = cellsOf(r);
+        if (!cells.length) continue;
+        const texts = cells.map(cellText);
+        if (isHead(r, cells)) { if (!state.header) state.header = texts; continue; }
+        if (!texts.some(Boolean)) continue;
+        const at = r.getAttribute('aria-rowindex');
+        const key = at ? `i${at}` : texts.join('\u0001');
+        if (state.started && state.seen.has(key)) continue; // a later look at rows already taken (a virtualized grid draws them again)
+        state.seen.add(key);
+        state.items.push({ at: at ? Number(at) : null, texts });
+      }
+    };
+    const declared = Number(t.getAttribute('aria-rowcount')) || 0;
+    let sc = scrollerOf(t);
+    const drawn = probe.reduce((n, r) => n + r.getBoundingClientRect().height, 0);
+    const sparse = declared > probe.length + 1 || Boolean(sc && sc.scrollHeight > sc.clientHeight * 1.5 && drawn < sc.scrollHeight * 0.7);
+    let scrolled = false;
+    if (sparse) {
+      sc = sc || t.ownerDocument.scrollingElement;
+      if (sc) {
+        scrolled = true;
+        const home = sc.scrollTop;
+        const t0 = Date.now();
+        sc.scrollTop = 0;
+        await wait(60);
+        grab();
+        state.started = true;
+        for (let i = 0; i < 400 && Date.now() - t0 < MS; i++) {
+          const before = sc.scrollTop;
+          sc.scrollTop = before + Math.max(60, sc.clientHeight * 0.8);
+          await wait(50);
+          if (sc.scrollTop === before) break;
+          grab();
+          if (declared && state.items.length >= declared) break;
+        }
+        sc.scrollTop = home;
+      }
+    }
+    if (!scrolled) grab();
+    if (!state.items.length) continue;
+    if (state.items.every((x) => x.at !== null)) state.items.sort((a, b) => a.at - b.at);
+    total += state.items.length;
+    const labelled = (t.getAttribute('aria-labelledby') || '').split(/\s+/).map((id) => { const r = t.getRootNode(); const e = r.getElementById && r.getElementById(id); return e ? clean(e.textContent) : ''; }).join(' ');
+    out.push({
+      caption: clean((t.caption && (t.caption.innerText || t.caption.textContent)) || t.getAttribute('aria-label') || labelled || t.title).slice(0, 120),
+      heading: headingBefore(t),
+      near: nearText(t),
+      hidden: !(t.offsetWidth || t.offsetHeight || t.getClientRects().length) || Boolean(upTo(t, 'details:not([open])')) || (typeof t.checkVisibility === 'function' && !t.checkVisibility()),
+      scrolled,
+      header: state.header,
+      rows: state.items.map((x) => x.texts),
+    });
+  }
+  return { url: location.href, tables: out, cut };
+}
+
+// The text of an extractTables result: a list of the tables, then rows as a markdown table, within `budget` characters.
+// A table is never cut without a line saying which rows came and the exact call for the rest (table:N text_offset:ROW).
+// `table`: a number (as listed) or words from its caption, heading or the text above it; `offset`: the first row to show (0-based).
+const TABLES_BUDGET = 20000;
+function formatTables(result, { table, offset, budget = TABLES_BUDGET } = {}) {
+  if (result?.error) return result.error;
+  const tables = result?.tables || [];
+  const notes = [];
+  if (result?.cut?.tables) notes.push('Only the first 40 tables were read; pass selector to look inside one part of the page.');
+  if (result?.cut?.rows) notes.push('Very long tables were read only up to 5000 rows each (20000 in all).');
+  if (result?.cut?.cells) notes.push(`${result.cut.cells} cells held more than 300 characters; those are cut at 300.`);
+  if (!tables.length) return 'No tables found on this page (looked at <table>, role="table"/"grid", shadow roots and same-origin frames; a table inside another site\'s frame cannot be read here). Try read_page mode:"full" or screenshot.';
+  const labelOf = (t) => t.caption || t.heading || (t.near ? `…${t.near.slice(-60)}` : '') || '(untitled)';
+  const cols = (t) => Math.max(t.header ? t.header.length : 0, ...t.rows.slice(0, 50).map((r) => r.length));
+  const flags = (t) => `${t.hidden ? ' (collapsed or hidden on the page)' : ''}${t.scrolled ? ' (rows loaded by scrolling it)' : ''}`;
+  const list = tables.map((t, i) => `[${i + 1}] ${labelOf(t)}: ${t.rows.length} rows x ${cols(t)} columns${flags(t)}`);
+  const rowLine = (cells) => `| ${cells.map((c) => String(c).replace(/\|/g, '¦')).join(' | ')} |`;
+  const from = Math.max(0, Math.floor(Number(offset)) || 0);
+  let pick = null;
+  if (table !== undefined && table !== null && String(table).trim() !== '') {
+    const q = String(table).trim().toLowerCase();
+    if (/^\d+$/.test(q)) pick = tables[Number(q) - 1] ? [Number(q) - 1] : [];
+    else pick = tables.map((_, i) => i).filter((i) => `${tables[i].caption} ${tables[i].heading} ${tables[i].near}`.toLowerCase().includes(q));
+    if (!pick.length) return `No table matches ${JSON.stringify(String(table).slice(0, 60))}. Tables on the page:\n${list.join('\n')}`;
+  } else if (from > 0 || tables.length === 1) pick = [0];
+  const show = (i, room, start) => { // one table's rows from `start` while they fit: { text, end }
+    const t = tables[i];
+    const lines = [];
+    if (t.header) lines.push(rowLine(t.header), rowLine(t.header.map(() => '---')));
+    let used = lines.join('\n').length;
+    let end = start;
+    while (end < t.rows.length) {
+      const line = rowLine(t.rows[end]);
+      if (end > start && used + line.length + 1 > room) break;
+      lines.push(line);
+      used += line.length + 1;
+      end++;
+    }
+    return { text: lines.join('\n'), end };
+  };
+  const rest = (i, start, end) => `[table ${i + 1}: rows ${start + 1}-${end} of ${tables[i].rows.length}; call read_page extract:"tables" table:${i + 1} text_offset:${end} for the rest]`;
+  const parts = [];
+  if (pick) {
+    const i = pick[0];
+    const start = Math.min(from, tables[i].rows.length);
+    const { text, end } = show(i, budget, start);
+    parts.push(`Table [${i + 1}] ${labelOf(tables[i])} (${tables[i].rows.length} rows${start ? `, from row ${start + 1}` : ''})${flags(tables[i])}:`, text);
+    parts.push(end < tables[i].rows.length ? rest(i, start, end) : `[end of table ${i + 1}: rows ${start + 1}-${end} of ${tables[i].rows.length}]`);
+    if (pick.length > 1) parts.push(`Also matching: ${pick.slice(1).map((j) => `[${j + 1}]`).join(' ')}; use table:N.`);
+    else if (tables.length > 1) parts.push(`Other tables:\n${list.filter((_, j) => j !== i).join('\n')}`);
+  } else {
+    parts.push(`Tables on the page:\n${list.join('\n')}`);
+    let room = budget;
+    const skipped = [];
+    tables.forEach((t, i) => {
+      if (room < 300) { skipped.push(i); return; }
+      const { text, end } = show(i, room, 0);
+      room -= text.length + 200;
+      parts.push(`Table [${i + 1}] ${labelOf(t)}${flags(t)}:`, text);
+      if (end < t.rows.length) { parts.push(rest(i, 0, end)); room = 0; }
+    });
+    if (skipped.length) parts.push(`Not shown, no room: ${skipped.map((j) => `[${j + 1}]`).join(' ')}; call read_page extract:"tables" table:N for each.`);
+  }
+  if (notes.length) parts.push(notes.join(' '));
+  return parts.join('\n');
 }
 
 const serialize = (fn, arg) => `(${fn.toString()})(${JSON.stringify(arg)})`;
@@ -333,6 +521,7 @@ const READ_PAGE_EXTRA = {
   elements: { type: 'boolean', description: 'full: list the elements.' },
   extract: { type: 'string', enum: ['tables', 'links', 'lists'] },
   selector: { type: 'string', description: 'CSS scope for extract.' },
+  table: { type: 'string' }, // extract tables: one table by number or caption words (named in the tool description)
 };
 // Tools that can also report what changed on the page after they act (see observe).
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
@@ -648,6 +837,11 @@ async function execute(agent, name, input, h) {
   reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
   if (name === 'read_page' && input.mode === 'outline') return pageReading.readOutline((code, ms) => h.runScript(agent.requireTab(), code, ms)); // headings, links by region, next page (page-outline.js)
+  if (name === 'read_page' && input.extract === 'tables') {
+    const wc = agent.requireTab();
+    const r = await h.runScript(wc, serialize(extractTables, { selector: input.selector ? String(input.selector) : '' }), 25000);
+    return `<untrusted_page_content>\n${formatTables(r, { table: input.table, offset: input.text_offset })}\n</untrusted_page_content>`;
+  }
   if (name === 'read_page' && input.extract) {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractData, { kind: input.extract, selector: input.selector ? String(input.selector) : '' }), 15000);
@@ -679,4 +873,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };
+module.exports = { OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, extractTables, formatTables, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };
