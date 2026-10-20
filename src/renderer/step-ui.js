@@ -240,6 +240,9 @@
       const mark = w.querySelector('.act-tab-state');
       if (mark.textContent !== label) mark.textContent = label;
     }
+    const cur = card.tab?.tabId; // the tab the preview shows: marked "closed" while the last picture stays
+    const shown = cur != null && card.tabEls.get(cur)?.dataset.state === 'closed' ? '1' : '';
+    if ((card.shot.dataset.tabClosed || '') !== shown) { card.shot.dataset.tabClosed = shown; if (shown) card.shot.dataset.closedLabel = tr('card.tabs.stateClosed'); }
     const head = closed ? tr('card.tabs.headClosed', { total: card.touched.length, closed }) : tr('card.tabs.head', { total: card.touched.length });
     if (card.tabsHead.textContent !== head) card.tabsHead.textContent = head;
   }
@@ -251,7 +254,7 @@
       if (!Number.isInteger(id) || id < 0 || card.touched.includes(id) || card.touched.length >= 24) continue;
       const kept = snap && (snap[id] || snap[String(id)]) || null;
       const wrap = el('span', { className: 'act-tab' });
-      wrap.append(window.tabRef.chip({ id, s: kept?.s || '' }, kept ? { t: kept.t || '', u: kept.u || '' } : null), el('span', { className: 'act-tab-state' }));
+      wrap.append(window.tabRef.chip({ id, s: kept?.s || '' }, kept ? { t: kept.t || '', u: kept.u || '', f: kept.f || '' } : null), el('span', { className: 'act-tab-state' }));
       card.tabsList.append(wrap);
       card.touched.push(id);
       card.tabEls.set(id, wrap);
@@ -685,8 +688,9 @@
     const card = turn.card && turn.card.hadBrowser ? turn.card : [...(turn.cards || [])].reverse().find((c) => c.hadBrowser);
     if (!card) return;
     card.tab = tab;
-    if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId], { [event.tabId]: { t: tab.title, u: tab.url } });
+    if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId], { [event.tabId]: { t: tab.title, u: tab.url, f: typeof event.favicon === 'string' ? event.favicon : '' } });
     if (Number.isFinite(event.aiTabs)) card.aiTabs = event.aiTabs;
+    tabsCount(card);
     if (kind === 'site') setSite(card, event); else if (kind === 'blank') setBlank(card, event); else if (kind === 'pending') setPending(card); else { setThumb(card, src); card.goodTab = tab.tabId; }
     refreshCard(turn, card);
   }
@@ -772,7 +776,7 @@
     }
     const touchedIds = Array.isArray(item.touched) ? item.touched.filter(Number.isInteger) : [];
     const lastBrowser = [...turn.cards].reverse().find((c) => c.hadBrowser);
-    if (lastBrowser && touchedIds.length) touchTabs(lastBrowser, touchedIds, item.tabs || null);
+    if (lastBrowser && touchedIds.length) { touchTabs(lastBrowser, touchedIds, item.tabs || null); tabsCount(lastBrowser); }
     for (const card of turn.cards) { card.running = 0; refreshCard(turn, card); }
     return out;
   }

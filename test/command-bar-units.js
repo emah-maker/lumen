@@ -113,7 +113,7 @@ check('ipc: cmdbar:data and cmdbar:run are UI-only calls and the preload sends e
 check('lazy: the main side is required on first use, not at startup', /lazy\(\(\) => require\('\.\/features\/command-bar'\)/.test(main) && !/^const [^\n]*= require\('\.\/features\/command-bar'\)/m.test(main), '');
 const appJs = read('src', 'renderer', 'app.js');
 check('lazy: the window loads command-bar.js, its matcher and its CSS on first use; none is in the bundle', /command-bar\.css/.test(appJs) && /command-bar-match\.js/.test(appJs) && !/command-bar/.test(read('src', 'renderer', 'index.src.html')) && !read('src', 'renderer', 'ui.bundle.js').includes('const commandBar'), '');
-check('ask: Ask AI is an event the sidebar code handles by opening the sidebar and asking', /cmdbar:ask/.test(rendererJs) && /addEventListener\('cmdbar:ask'[\s\S]{0,200}showSidebar\(true\);\s*ask\(text\)/.test(appJs), '');
+check('ask: Ask AI is an event the sidebar code handles by opening the sidebar and asking', /cmdbar:ask/.test(rendererJs) && /addEventListener\('cmdbar:ask'[\s\S]{0,200}showSidebar\(true\);[\s\S]{0,60}askInFreshChat\(text\)/.test(appJs), '');
 check('safety: nothing typed or found is put into markup', !/innerHTML|insertAdjacentHTML|outerHTML/.test(rendererJs), '');
 const keys = [...rendererJs.matchAll(/'(commandBar\.[A-Za-z.]+)'/g)].map((m) => m[1]).concat(SECTION_IDS.map((id) => `settings.section.${id}`), ['menu.commandBar', 'shortcuts.commandBar']);
 const missing = [...new Set(keys)].filter((k) => !(k in en));

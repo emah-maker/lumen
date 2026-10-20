@@ -131,6 +131,19 @@ const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8').repla
   const bundle = read('src/renderer/ui.bundle.js');
   check('the UI bundle includes the chip scripts', /---- tab-marker\.js/.test(bundle) && /---- tab-ref\.js/.test(bundle), '');
 
+  // ---- a closed tab keeps its icon: the chip and a saved chat still show it, dimmed
+  {
+    const closed = new Map([[7, { t: 'Docs', u: 'https://example.com/docs', f: 'https://example.com/favicon.ico' }], [8, { t: 'No icon', u: 'https://example.com/x', f: '' }]]);
+    const rt = chips.create({ closed, lookup: () => null, raise: () => false, openUrl: () => null, isInternal: () => false, aliveSender: () => true });
+    const k = rt.describe('7');
+    check('closed: the icon the tab had comes with it', k.state === 'closed' && k.favicon === 'https://example.com/favicon.ico' && k.reopen === true, JSON.stringify(k));
+    check('closed: a tab with no icon has none (the globe)', rt.describe('8').favicon === null, JSON.stringify(rt.describe('8')));
+    const snap = rt.snapshot('7');
+    check('a saved chat keeps the icon address with the tab', snap && snap.f === 'https://example.com/favicon.ico' && snap.t === 'Docs', JSON.stringify(snap));
+    check('...and a later run of the app shows it from the snapshot', rt.describe('99@aaaaaaaa', snap).favicon === 'https://example.com/favicon.ico' && rt.describe('99@aaaaaaaa', snap).state === 'closed', JSON.stringify(rt.describe('99@aaaaaaaa', snap)));
+    check('a snapshot icon that is not an image address is dropped', rt.describe('99@aaaaaaaa', { t: 'x', u: 'https://a.b/', f: 'javascript:alert(1)' }).favicon === null && rt.snapshot('8').f === undefined, '');
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();
