@@ -2645,6 +2645,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
+  if (!groupId) joinAiGroup(tab); // [ai tabs] the folded "AI tabs" group (a tab given a group of its own, a research tab, keeps that one)
 
   if (background) {
     // Adding or first loading the view may hand it the keyboard without an event we can see: look again as it settles.
@@ -3857,12 +3858,37 @@ function onTabGone(id, fn) {
 }
 
 // [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
-// and "close the tabs the AI opened" leaves it alone.
+// and "close the tabs the AI opened" leaves it alone. It also leaves the folded "AI tabs" group, back among the user's tabs.
 function userTookOver(tab) {
   if (tab?.rec?.agent) tab.rec.agent.used = true; // [agent window] the user clicked or typed in the agent's window: it is theirs to keep
   if (!manners.handOver(tab)) return;
   const rec = tab.rec;
-  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
+  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
+}
+// [ai tabs] Settings → AI tabs → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
+// gray "AI tabs" group there, folded when it is made, so a run that opens dozens of tabs adds one label to the strip. The
+// tab in front shows even in a folded group (app.js), and the user's own unfolding is kept. The group holds no other tabs
+// (one the user takes over leaves it), so when the AI's tabs close it goes too. Runs in the tab's window (tabGroups is that window's).
+const aiGroupName = () => t('tabs.aiGroup');
+function aiGroup() {
+  for (const g of tabGroups.groups.values()) {
+    if (g.aiTabs) return g;
+    if (g.name === aiGroupName() && !g.userNamed && tabs.some((x) => x.groupId === g.id) && tabs.every((x) => x.groupId !== g.id || manners.isAiTab(x))) { g.aiTabs = true; return g; } // (restored after a restart: the mark itself is not saved)
+  }
+  return null;
+}
+function joinAiGroup(tab) {
+  if (!manners.isAiTab(tab) || tab.pinned || curRec?.agent || readSettings().groupAiTabs === false) return;
+  const group = aiGroup();
+  if (group) { if (tab.groupId !== group.id) { if (tab.groupId) tabGroups.remove(tab.id); tabGroups.add(tab.id, group.id); } return; }
+  if (tab.groupId) tabGroups.remove(tab.id);
+  const made = tabGroups.create(aiGroupName(), [tab.id], { color: 'gray' });
+  made.aiTabs = true;
+  made.collapsed = true;
+}
+function leaveAiGroup(tab) {
+  const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
+  if (group?.aiTabs) tabGroups.remove(tab.id, { byUser: true });
 }
 
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
