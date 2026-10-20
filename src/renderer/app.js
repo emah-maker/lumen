@@ -1728,7 +1728,7 @@ const showGpuNote = (info) => {
 window.browser.onGpuNote?.(showGpuNote);
 window.lumenPrefs?.get().then((p) => { if (p?.safeDrawing) showGpuNote({ kind: 'safe' }); }).catch(() => {}); // (a safe-drawing session says so once the UI is up; Restart normally drops the flag)
 // "Organized (no AI needed)", "Grouped your loose tabs while you were away": a short note with Undo.
-window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo }) => {
+window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo, chatNote }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
   const words = Object.assign(document.createElement('span'), { className: 'organize-note-text', textContent: text });
@@ -1770,7 +1770,7 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     setTimeout(() => { if (note.isConnected) { summary(); summary.fit?.(); } }, 200); // the tab state with the new groups may arrive just after the note
   }
   if (undo) {
-    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } })); // ([ai manners] a close of the AI's tabs undoes itself) // (a merge's note brings its own wording)
+    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } })); // ([ai manners] a close of the AI's tabs undoes itself) // (a merge's note brings its own wording)
   }
   organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
   setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000); // main's undo window is the same length as the note's life
