@@ -56,7 +56,7 @@ function agyAllowed({ name, args, home, toolNames = null, required = true }) {
 // from the MCP side. The hook has no PostToolUse, so a row ends when that helper's next call starts, or at finish().
 const SAFE_CONV = /^[A-Za-z0-9_.-]{1,128}$/;
 const clipText = (v, n) => { const t = String(v ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
-const baseName = (p) => clipText(path.basename(String(p || '')) || p, 60);
+const baseName = (p) => clipText(String(p || '').split(/[\\/]/).filter(Boolean).pop() || p, 60); // (either separator: a Windows path on any platform)
 const arg = (a, ...keys) => { for (const k of keys) if (typeof a?.[k] === 'string' && a[k]) return a[k]; return ''; };
 // "Helper · Running npm test": agy's own tool names (run_command, view_file, ...) in plain words, the main argument when it has one.
 function helperLabel(name, args) {
