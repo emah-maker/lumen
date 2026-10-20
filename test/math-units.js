@@ -202,6 +202,43 @@ check('Temml: HTML in a formula stays text', () => {
   const html = md.render('$\\text{<img src=x onerror=alert(1)>}$');
   assert.ok(!/<img/i.test(html), html);
 });
+// ---- display math that must never show as raw "$$…" (a reply cut off, spacing commands, formulas across lines)
+const typeset = (src) => md.render(src);
+const notRaw = (src, what) => { const html = typeset(src); assert.ok(!html.includes('$$'), `${what}: ${html}`); assert.ok(html.includes('<math'), `${what}: ${html}`); return html; };
+check('display math: $$…$$ on one line with a trailing \\; renders', () => { notRaw('For it:\n\n$$ar(r-1) + br + c = 0 \\;$$\n\nDone.', '\\;'); });
+check('display math: trailing \\, \\quad \\\\ before the closing $$ render', () => {
+  for (const tail of ['\\,', '\\quad', '\\\\', '\\;\\,']) notRaw(`$$x = 1 ${tail}$$`, tail);
+});
+check('display math: $$ on the opening line and the closing $$ on a later line renders', () => { notRaw('Then:\n$$ar(r-1) + br + c = 0 \\;\\\\\n  \\Rightarrow r = 2$$\nok', 'multi-line'); });
+check('display math: $$ … $$ on lines of their own, and spaces inside a sentence', () => {
+  notRaw('A\n$$\nx^2 = 4 \\quad\n$$\nB', 'own lines');
+  notRaw('so $$ x^2 \\; $$ holds', 'in a sentence');
+});
+check('display math: \\[ … \\] and \\( … \\) render, with spacing commands', () => {
+  notRaw('\\[ a = b \\;\\]', '\\[');
+  assert.ok(typeset('is \\( x \\, y \\) here').includes('<math'));
+});
+check('display math: an unclosed $$ at the end of a reply (interrupted) renders what there is, not raw', () => {
+  const html = notRaw('Yes. For $ax^2y\'\' + bxy\' + cy = 0$:\n\n$$ar(r-1) + br + c = 0 \\;\\', 'cut off after \\;\\');
+  assert.ok(!html.includes('ar(r-1)') || html.includes('<math'), html);
+  notRaw('$$a = \\sqrt{x', 'open brace');
+  notRaw('Text\n$$a = 1\n\nand a paragraph after', 'cut off before a blank line');
+  notRaw('\\[ a = 1 \\quad', 'unclosed \\[');
+});
+check('display math: while streaming, an unclosed $$ is held back (math in progress), never shown raw', () => {
+  for (const s of ['$$', '$$ar(r-1) = 0 \\;\\', 'x\n$$\na = 1 \\\\\nb', 'x\n\\[ a = 1']) {
+    const at = md.openMath(s);
+    assert.ok(at !== -1, JSON.stringify(s));
+    assert.ok(!s.slice(0, at).includes('$$'), s);
+  }
+  assert.strictEqual(md.openMath('$$a = 1 \\;$$'), -1);
+});
+check('display math: money and price tiers stay text', () => {
+  for (const s of ['It costs $5 and $10.', 'From $5-$10 a month', 'Pricey ($$ to $$$$) place', 'Costs $$ here and there.']) {
+    const html = typeset(s);
+    assert.ok(!html.includes('<math'), `${s}: ${html}`);
+  }
+});
 delete globalThis.temml;
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

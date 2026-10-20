@@ -658,7 +658,10 @@ function pickerOptions(options = modelOptions()) {
   const last = lastRaw && options.some((o) => o.id === lastRaw.id && o.signedIn !== false && !(o.badges || []).includes('sign in')) ? lastRaw : null;
   const pick = chatModelPick() ?? readSettings().model ?? null;
   const withOwn = autoModel.withProviderAutos(options, { pick, last, exclude: autoExcluded(), dedupe: true, describe: (scope) => t('models.auto.providerDetail', { name: autoModel.scopeName(scope) }) });
-  return [autoModel.pickerEntry({ last: last && !last.scope ? last : null, describe: t('models.auto.detail') }), ...withOwn];
+  // The levels each model takes, for the effort row of the model menu (ai/effort.js): none for Auto, local models and the rest.
+  const effortLib = require('./ai/effort');
+  const withEfforts = (o) => (o.more || autoModel.isAuto(o.id) ? o : { ...o, efforts: effortLib.offered(o.id, { anthropicHasEffort: Boolean(MODELS[o.id]?.effort) }) });
+  return [autoModel.pickerEntry({ last: last && !last.scope ? last : null, describe: t('models.auto.detail') }), ...withOwn].map(withEfforts);
 }
 
 let client = null;
@@ -5804,7 +5807,7 @@ function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), ...(live ? { live } : {}) };
+  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), effort: agent.openEffort(), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -8591,8 +8594,19 @@ const desktopSettings = () => require('./desktop/settings').createDesktopSetting
 ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
 ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
-ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false));
+ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
+// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings > AI > "Let the AI use Microsoft Word" (aiWordControl, on by default).
+let wordCtl = null;
+const wordLazy = () => (wordCtl ||= require('./word').createWord({
+  settings: { enabled: () => readSettings().aiWordControl !== false },
+  checkFile: (p) => require('./features/device-access').checkedPath(p, 'file', { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }), // the AI's file rules: no credentials folders, no Lumen profile
+  checkTarget: (p) => { const why = require('./features/device-access').blockedReason(p, { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }); if (why) throw new Error(why); },
+  live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false), dpr: () => { try { return require('electron').screen?.getPrimaryDisplay?.().scaleFactor || 1; } catch { return 1; } } }, // the card's live picture of Word's window (word/card.js), the desktop card's own pacing
+  ...(TEST && process.env.LUMEN_WORD_HIDDEN === '1' ? { hostTest: { hidden: true, fresh: true } } : {}),
+}));
+if (TEST) global.__word = { ctl: () => wordLazy() };
+app.on('before-quit', () => { try { wordCtl?.destroy(); } catch { /* nothing started */ } }); // [word] the helper ends with Lumen (a Word it started is quit only when no document is open)
 app.on('before-quit', () => { try { desktopWired?.controller.destroy(); } catch { /* nothing started */ } }); // [desktop apps] the helper and the banner end with Lumen
 if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSettings };
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
@@ -8736,7 +8750,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
-  desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
+  word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
@@ -11652,6 +11666,7 @@ ipcMain.handle('settings:get', () => {
     searchEngine: readSettings().searchEngine || DEFAULT_ENGINE,
     searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })),
     model: standIn.from ? standIn.model : model,
+    effort: agent.openEffort(), // the open chat's own reasoning effort ('' = Auto), see settings:set-effort
     fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
     autoFallback: fallbackOn(),
     models: pickerOptions(options),
@@ -11927,6 +11942,14 @@ ipcMain.handle('settings:set-model', (_e, id) => {
   try { setTimeout(() => { try { agent.prewarm(''); } catch { /* not set up yet */ } }, 0); } catch { /* quitting */ } // (the new pick's process starts now, not at the first message)
   // Mid-reply the switch waits for the next message (agent.setModel); the sidebar says so.
   return agent.setModel(id) ? 'next-message' : true;
+});
+// The open chat's own reasoning effort (the model menu's Effort row; '' = Auto). It belongs to the chat and is saved with it.
+ipcMain.handle('settings:set-effort', (_e, level) => {
+  const next = require('./ai/effort').cleanChat(level);
+  if (level && !next) return false;
+  const waits = agent.setEffort(next, ownPickOfOpenChat() || undefined);
+  modelsChanged(); // every sidebar and chat page showing this chat follows
+  return waits ? 'next-message' : true;
 });
 ipcMain.handle('settings:set-auto-group', (_e, on) => setAutoGroup(on));
 ipcMain.handle('settings:set-tab-grouping', (_e, mode) => setTabGrouping(mode));
