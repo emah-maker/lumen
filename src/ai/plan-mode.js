@@ -17,6 +17,7 @@
 
   // null when `name` may run while planning, else the refusal text.
   function planToolError(name, input = {}) {
+    if (name === 'word') return ['list', 'read'].includes(String(input?.action || '')) ? null : PLAN_REFUSAL; // [word] reading only
     if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
     return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
   }

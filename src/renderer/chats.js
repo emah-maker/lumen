@@ -89,6 +89,7 @@
     showHistory(view.items);
     resumeLive(view.live); // still running: its reply goes on here
     refreshUsage(view.usage);
+    window.followChatEffort?.(view.effort); // the opened chat's own reasoning effort
     window.chatUsageMeter?.refresh(); // the context bar follows the chat that is open now
     closePanel(false);
     prompt.focus();

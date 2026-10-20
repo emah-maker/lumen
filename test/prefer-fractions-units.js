@@ -97,7 +97,7 @@ check('page: ui-prefs.js keeps window.lumenPreferFractions for markdown.js', /wi
 const en = JSON.parse(read('src/locales/en.json'));
 check('strings: setting and /fractions texts exist', ['settings.ai.preferFractions', 'settings.ai.preferFractionsDesc', 'slash.fractions', 'slash.fractions.on', 'slash.fractions.off', 'slash.fractions.usage'].every((k) => en[k]));
 const docs = read('docs/settings.md');
-check('docs: a settings row and a changelog entry', /Prefer fractions/.test(docs) && /aiPreferFractions/.test(docs) && /Prefer fractions/.test(read('CHANGELOG.md').split('## Unreleased')[1]?.split(/\n## /)[0] || ''));
+check('docs: a settings row and a changelog entry', /Prefer fractions/.test(docs) && /aiPreferFractions/.test(docs) && /Prefer fractions/.test(read('CHANGELOG.md'))); // (anywhere: a release cut moves the entry out of Unreleased)
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

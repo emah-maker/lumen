@@ -66,6 +66,48 @@ function cliArgs(engine, level) {
   return [];
 }
 
+// ---- Per chat (the composer's model menu) ----
+// A chat can carry its own level (messages.settings.effort). Absent = Auto: the Settings choice for that AI above, or the AI's own default.
+const ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const cleanChat = (value) => (ORDER.includes(String(value || '').toLowerCase()) ? String(value).toLowerCase() : '');
+
+// The settings key (LEVELS) for a model id as the picker knows it ('claudecode:default', 'openai:gpt-5', a bare Claude id), or '' for
+// one with no effort control (Auto, local models, anything unknown).
+function keyOfModel(id) {
+  const s = String(id || '');
+  if (!s || /^auto(:|$)/.test(s)) return '';
+  const i = s.indexOf(':');
+  if (i < 0) return 'anthropic';
+  const key = s.slice(0, i);
+  return LEVELS[key] ? key : '';
+}
+
+// The levels a model takes, lowest first ([] = hide the row). anthropicHasEffort: the Claude API model is one Lumen already sends an effort to.
+function offered(id, { anthropicHasEffort = false } = {}) {
+  const key = keyOfModel(id);
+  if (!key) return [];
+  if (key === 'anthropic') return anthropicHasEffort ? LEVELS.anthropic.slice() : [];
+  const only = API_MODELS[key];
+  if (only && !only.test(String(id).slice(String(id).indexOf(':') + 1))) return [];
+  return LEVELS[key].slice();
+}
+
+// What a request carries for `key`: the chat's own level when set (clamped to the nearest level this AI takes, so "High" survives a
+// switch to an AI whose top level is lower), else the Settings level. '' = send nothing.
+function pick(key, chatLevel, settingsLevel) {
+  const own = cleanChat(chatLevel);
+  const levels = LEVELS[key];
+  if (!own || !levels) return clean(key, settingsLevel);
+  if (levels.includes(own)) return own;
+  const at = ORDER.indexOf(own);
+  let best = levels[0];
+  for (const l of levels) if (Math.abs(ORDER.indexOf(l) - at) < Math.abs(ORDER.indexOf(best) - at)) best = l;
+  return best;
+}
+
+// Short labels for the small segmented control (LABELS are the full names, kept for tooltips and screen readers).
+const SHORT = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'XHigh', max: 'Max' };
+
 const LABELS = { minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Maximum' };
 
-module.exports = { LEVELS, KEYS, LABELS, clean, cleanAll, chatParams, anthropicEffort, cliArgs };
+module.exports = { LEVELS, KEYS, LABELS, SHORT, ORDER, cleanChat, keyOfModel, offered, pick, clean, cleanAll, chatParams, anthropicEffort, cliArgs };

@@ -370,7 +370,12 @@ function setupAiAgents(deps) {
   // [connectors] The connector tool (the user's connected accounts) is offered only to a run Lumen itself started and still owns: its per-run
   // random tag (mcp config / bearer token Lumen writes into that run's own temp config) is what proves it. An outside client has no such tag,
   // so it never sees the tool and is refused if it names it. A background task's run is left out too (nobody there to confirm a write).
-  const runTools = (session) => (session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)) ? deps.connectorTools?.() || [] : []);
+  // [cli helpers] The same runs are offered delegate where their engine has no subagent of its own that passes Lumen's approvals (agent.js cliHelperToolDefs).
+  const runTools = (session) => {
+    if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
+    const owner = engineForSession(session);
+    return [...(deps.connectorTools?.() || []), ...(deps.helperTools?.(owner?.kind, owner) || [])];
+  };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
   // own, so its MCP token file is never another chat's).
@@ -416,7 +421,14 @@ function setupAiAgents(deps) {
       },
     };
   }
-  agent.engines = { get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, get codex() { return codexEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
+  // [cli helpers] Which CLIs a helper may run on (agent.js runCliHelpers): installed, signed in, and offered the way their chats are.
+  const cliHelperStatus = () => ({
+    claudecode: { installed: claudeCodeFound, signedIn: claudeCodeSignedIn, enabled: readSettings().claudeCodeSidebar !== false },
+    grokbuild: { installed: grokBuildFound, signedIn: grokBuildSignedIn, enabled: grokSidebar() },
+    antigravity: { installed: antigravityFound, signedIn: antigravitySignedIn, enabled: antigravitySidebar() },
+    codex: { installed: codexFound, signedIn: codexSignedIn, enabled: codexSidebar() },
+  });
+  agent.engines = { cliStatus: cliHelperStatus, get claudecode() { return claudeCodeEngine(); }, get grokbuild() { return grokBuildEngine(); }, get antigravity() { return antigravityEngine(); }, get codex() { return codexEngine(); }, lease: leaseEngine, leased: (kind) => [...leased].some((e) => e.kind === kind), sideCount: () => sideEngines.size,
     // [warm per chat] The chat's own engine outside a message (agent.js prewarm), and whether a message of that chat holds it.
     warmFor: (kind, key) => (kind === 'claudecode' && key != null && !oneShotClaude() ? chatClaudeCode(warmChats.peek(key)) : null),
     warmed: () => warmChats.warmed(),

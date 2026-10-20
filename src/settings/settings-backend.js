@@ -176,6 +176,7 @@ const DEFAULTS = {
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
+  aiWordControl: true, // [ai] the AI may work with Microsoft Word documents directly (src/word/): Word's own automation on Windows, .docx files without Word; every edit and save still asks first, and nothing starts until the AI first uses it
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
