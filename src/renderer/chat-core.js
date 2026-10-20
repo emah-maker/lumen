@@ -2850,7 +2850,7 @@ function decorateEntries(userEntries, replyEntries) {
     markEditable(bubble, { at: item.at, versions });
   }
 }
-window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
+window.assistant.onHistory?.(({ items, chatId } = {}) => { showHistory(items); if (chatId && !shownChatId) nameChat(chatId); }); // (start-up: the chat this window comes back to is named, so its draft and view are kept under it)
 
 // A turn that started in the other view (the sidebar or the chat page) shows here too: the same
 // events follow, tagged with its run id.

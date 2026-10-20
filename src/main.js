@@ -8173,7 +8173,13 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     // [chat per tab] Restoring the tabs (or the tab that moved in) brought the open chat to the front tab's. A chat still working
     // there (a tab that moved here mid-task) shows live, and its events come to this window from now on.
     if (ui() && runIsLive(chatRuns.get(chatId))) pushChatView(ui());
-    else if (ui()) pushChatView(ui()); // (a sync, not a bare history: the sidebar must know which chat it shows, or its draft and what it keeps per chat go under no chat)
+    else {
+      const items = agent.transcript();
+      if (ui()) shownChat.set(ui(), chatId);
+      // (with the chat's id: the sidebar must know which chat it shows, or its draft and what it keeps per chat go under no chat)
+      if (items.length) ui()?.send('agent:history', { items, chatId });
+      else if (ui()) pushChatView(ui());
+    }
     uiReady = true;
     perf.mark('uiReady');
     downloads.send(); // last session's downloads: the toolbar button shows when there are any

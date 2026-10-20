@@ -6273,7 +6273,7 @@ function decorateEntries(userEntries, replyEntries) {
     markEditable(bubble, { at: item.at, versions });
   }
 }
-window.assistant.onHistory?.(({ items } = {}) => showHistory(items));
+window.assistant.onHistory?.(({ items, chatId } = {}) => { showHistory(items); if (chatId && !shownChatId) nameChat(chatId); });
 
 
 
