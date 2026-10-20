@@ -661,11 +661,11 @@ process.stdin.on('data', async (d) => {
     // three steps on no surface (and no card at all): ONE row, "Used 3 browser actions", with every step inside
     const three = window.stepUI.restoreNodes({ cards: true, tools: ['TodoWrite', 'clipboard', 'TodoWrite'].map((name, i) => ({ name, input: {}, label: name + ' ' + i, ok: true })) });
     for (const n of three) host.append(n);
-    out.outside = { rows: host.querySelectorAll('details.step-group.restored').length, label: host.querySelector('details.step-group.restored > summary')?.textContent || '', members: host.querySelectorAll('details.step-group.restored .step-items .step').length, cards: host.querySelectorAll('.act-card').length };
+    out.outside = { cards: host.querySelectorAll('.act-card').length, steps: host.querySelector('.act-steps > summary')?.textContent || '', loose: [...host.children].filter((n) => !n.classList.contains('act-card')).length };
     host.textContent = '';
     const one = window.stepUI.restoreNodes({ cards: true, tools: [{ name: 'TodoWrite', input: {}, label: 'a', ok: true }] });
     for (const n of one) host.append(n);
-    out.singular = host.querySelector('details.step-group.restored > summary')?.textContent || '';
+    out.singular = host.querySelector('.act-steps > summary')?.textContent || '';
     host.textContent = '';
     // the older saved form (no cards): the same single folded row
     for (const n of window.chatActions.details({ steps: 3, tools: ['TodoWrite', 'clipboard', 'TodoWrite'].map((name, i) => ({ name, input: {}, label: name + ' ' + i, ok: true })) })) host.append(n);
@@ -676,7 +676,7 @@ process.stdin.on('data', async (d) => {
   check('8 steps, then text, then 3 more: ONE card with 11 steps (working until the turn ends) and no "Used 1 browser action" rows', trailing.afterText === 'working' && trailing.working === 'working' && trailing.live.cards === 1 && /^11 steps/.test(trailing.live.steps) && trailing.live.loose === 0 && trailing.live.used === 0 && trailing.done === 'completed', J(trailing));
   check('a step after Done reopens the same card (Working) and it says Done again at the end, with the new step counted', trailing.reopened === 'working' && trailing.doneAgain.state === 'completed' && trailing.doneAgain.steps === '12 steps' && trailing.doneAgain.cards === 1, J(trailing.doneAgain));
   check('the same turn from a saved chat: one card, 11 steps, no folded "Used N browser actions" rows under it', trailing.restored.cards === 1 && trailing.restored.steps === '11 steps' && trailing.restored.folded === 0 && trailing.restored.loose === 0 && trailing.restored.used === 0 && trailing.restored.state === 'completed', J(trailing.restored));
-  check('three separate out-of-card actions are ONE row: "Used 3 browser actions" with all three inside (and "Used 1 browser action" for one)', trailing.outside.rows === 1 && trailing.outside.label.trim() === 'Used 3 browser actions' && trailing.outside.members === 3 && trailing.outside.cards === 0 && trailing.singular.trim() === 'Used 1 browser action', J([trailing.outside, trailing.singular]));
+  check('steps on no surface also start a card (from the first step): three saved steps are ONE card, "3 steps", no loose rows ("1 step" for one)', trailing.outside.cards === 1 && /^3 steps/.test(trailing.outside.steps.trim()) && trailing.outside.loose === 0 && /^1 step$/.test(trailing.singular.trim()), J([trailing.outside, trailing.singular]));
   check('the older saved form (no cards) is one folded row as well', trailing.older.rows === 1 && trailing.older.label.trim() === 'Used 3 browser actions', J(trailing.older));
 
   // ---- searches in a burst are one row, in the chat (plain rows) and inside a card; the queries and times are in it; restored the same
@@ -717,12 +717,12 @@ process.stdin.on('data', async (d) => {
     const s1 = search(t2, 'p', 'one'); const s2 = search(t2, 'q', 'two');
     window.stepUI.add(t2, { name: 'TodoWrite', input: {}, id: 'td', label: 'Planning' }, opts);
     const s3 = search(t2, 'r', 'three'); const s4 = search(t2, 'u', 'four');
-    out.split = [...host.children].map((n) => (n.matches('details.step-group') ? 'group:' + sum(n).firstChild.textContent : 'row:' + n.firstChild.textContent));
+    out.split = [...host.querySelector('.act-list').children].map((n) => (n.matches('details.step-group') ? 'group:' + sum(n).firstChild.textContent : 'row:' + n.firstChild.textContent));
     // one search alone keeps its own label
     host.textContent = '';
     const t3 = mkTurn();
     search(t3, 'z', 'alone');
-    out.single = [...host.children].map((n) => n.matches('.step') ? n.firstChild.textContent : 'group');
+    out.single = [...host.querySelector('.act-list').children].map((n) => n.matches('.step') ? n.firstChild.textContent : 'group');
     // inside a card's step list (pages read in a burst)
     host.textContent = '';
     const t4 = mkTurn();
@@ -735,8 +735,8 @@ process.stdin.on('data', async (d) => {
     host.textContent = '';
     const nodes = window.stepUI.restoreNodes({ cards: true, tools: ['one', 'two', 'three'].map((q) => ({ name: 'web_search', input: { query: q }, label: 'Searching the web for "' + q + '"', ok: true })) });
     for (const n of nodes) host.append(n);
-    const outer = host.querySelector('details.step-group');
-    const inner = outer && outer.querySelector('details.step-group.live');
+    const outer = host.querySelector('.act-card');
+    const inner = outer && outer.querySelector('.act-list details.step-group');
     out.restored = { outer: Boolean(outer), label: inner ? sum(inner).firstChild.textContent : '', members: inner ? [...inner.querySelectorAll('.step-items > .step')].map((r) => r.firstChild.textContent) : [] };
     host.remove();
     return out;
@@ -844,7 +844,7 @@ process.stdin.on('data', async (d) => {
   check('a run from the full page draws a live Browser card too', Boolean(livePage), String(livePage));
   const pageThumb = await waitFor(() => inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const i = c && c.querySelector('.act-thumb'); return i && i.src.startsWith('data:image/jpeg') ? i.src.length : 0; })()`), 15000);
   check('…with its thumbnail', pageThumb > 500, String(pageThumb));
-  const cap = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const sh = c.querySelector('.act-shot'); const i = c.querySelector('.act-thumb'); const sr = sh.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { shot: sr.width, card: cr.width, nat: i.naturalWidth, dpr: devicePixelRatio, left: sr.left - cr.left, ratio: sr.width / sr.height }; })()`);
+  const cap = await inPage(`(async () => { await Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))); const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); const sh = c.querySelector('.act-shot'); const i = c.querySelector('.act-thumb'); const sr = sh.getBoundingClientRect(); const cr = c.getBoundingClientRect(); return { shot: sr.width, card: cr.width, nat: i.naturalWidth, dpr: devicePixelRatio, left: sr.left - cr.left, ratio: sr.width / sr.height }; })()`);
   check('the preview is small: at most 360 px wide and never above its own pixels (width / devicePixelRatio), left-aligned, 16:10, and the card is only as wide as it (plus padding)', cap.shot <= 360 && cap.shot <= cap.nat / cap.dpr + 1 && Math.abs(cap.card - cap.shot - 26) <= 4 && cap.left < 24 && Math.abs(cap.ratio - 1.6) < 0.1, J(cap));
   await waitFor(async () => (await inPage(`document.getElementById('send').classList.contains('stop')`)) === false, 40000);
   const pageDone = await inPage(`(() => { const c = [...document.querySelectorAll('#messages .act-card[data-surface="browser"]')].pop(); return c && c.querySelector('.act-sub').textContent; })()`);

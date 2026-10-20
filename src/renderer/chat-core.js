@@ -1889,6 +1889,7 @@ function queuedToDraft() {
 // An assistant bubble that never got any words (a block that was only blank, or one a step moved on from) is a thin empty bar: gone when the run ends.
 function dropEmptyBubbles() {
   for (const b of messages.querySelectorAll(':scope > .msg.assistant:not(.reply-actions-only):not(.gen-pics):not(.ai-files):not(.desktop-cards)')) {
+    if (b === turn?.text && turn.textSource?.trim()) continue; // (words that are still being drawn)
     if (b.textContent.trim() || b.querySelector('img, svg, video, canvas, button, table, hr, figure, math, pre')) continue;
     if (b === turn?.text) { turn.text = null; turn.textSource = ''; }
     b.remove();
