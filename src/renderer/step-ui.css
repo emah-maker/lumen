@@ -34,6 +34,8 @@
    step-ui.js capSize() lowers the cap on a display with a scale above 1, so a picture is never stretched past its pixels. */
 .act-shot { position: relative; width: 100%; max-width: 340px; align-self: flex-start; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; cursor: pointer; }
 .act-thumb { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.act-shot[data-tab-closed="1"] .act-thumb { filter: grayscale(.6) brightness(.85); }
+.act-shot[data-tab-closed="1"]::after { content: attr(data-closed-label); position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border); font-size: 11px; line-height: 1.4; pointer-events: none; }
 .act-shot:not([data-mode="frame"]) .act-thumb { visibility: hidden; }
 .act-site { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; color: var(--muted); font-size: 12px; background: var(--bg); }
 .act-shot[data-mode="site"] .act-site { display: flex; }

@@ -63,4 +63,13 @@ assert.strictEqual(stateFor(60).images.length, 1, 'pictures alone are something 
 rt.fromHome(12, { draft: '' });
 assert.deepStrictEqual(stateFor(60).images, []);
 
+// Plain Ask AI (nothing typed): the page opens on a NEW chat (the page asks main's state, sees fresh, and presses New chat), once.
+rt.fromHome(13, {});
+assert.strictEqual(stateFor(60).fresh, true, 'nothing typed: open on a new chat');
+assert.strictEqual(stateFor(60).fresh, false, 'asked for once');
+rt.fromHome(13, { draft: 'plan a trip' });
+assert.strictEqual(stateFor(60).fresh, false, 'text typed: asked in its own new chat instead');
+rt.fromHome(13, { draft: '', images: [img('d.png')], send: true });
+assert.strictEqual(stateFor(60).fresh, false, 'pictures only: they start their own new chat');
+
 console.log('PASS  chat-page-from-home-units');

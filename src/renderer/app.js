@@ -2660,7 +2660,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.(); } catch { /* an older main: no such question */ }
+    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch { /* an older main: no such question */ } // [ask ai new chat] only a run waiting for an OK keeps its chat; a working or unread one stays in History (and on its tab's chip)
     if (mine !== toggleSeq || sidebarWanted !== opening) return; // pressed again (or changed by something else) while main answered: that decides
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
@@ -2845,7 +2845,7 @@ window.browser.onAskFromHome?.(({ text, tabId }) => {
 });
 window.browser.onAskSelection((text) => {
   showSidebar(true);
-  ask(t('ask.selection', { text }));
+  askInFreshChat(t('ask.selection', { text })); // [ask ai new chat] a new chat with that context
 });
 
 // "Ask AI about this" on a screenshot: the PNG (base64) goes into the sidebar's composer.
@@ -2887,9 +2887,9 @@ function loadCommandBar() {
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
   const text = String(e.detail || '').trim();
-  if (!text) return;
   showSidebar(true);
-  ask(text);
+  if (text) askInFreshChat(text); // [ask ai new chat]
+  else if (!$('empty').hidden) $('new-chat').click(); // plain Ask AI: the sidebar opens on a new chat (an empty one is reused)
 });
 
 // [files] Alt+Enter in the Files picker (features/files.js): the chosen file goes into the sidebar's composer like a dropped one.

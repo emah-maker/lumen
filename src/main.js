@@ -3855,7 +3855,7 @@ function userTookOver(tab) {
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
 }
 
-function closeTab(id, { destroyed = false, user = false } = {}) {
+function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
   if (chatFullTab === id) chatFullTab = null;
@@ -3872,7 +3872,7 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
   { // [tab chips]
     const chipUrl = tab.isolated || isInternal(url) ? '' : url;
     closedChipTabs.delete(id);
-    closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.pendingCloseTitle || tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000) });
+    closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.pendingCloseTitle || tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000), f: typeof tab.favicon === 'string' && tab.favicon.length <= 2000 ? tab.favicon : '' }); // (f: its icon, kept so a closed chip still shows it)
     if (closedChipTabs.size > 300) closedChipTabs.delete(closedChipTabs.keys().next().value);
     tabChipsRt?.changed();
   }
@@ -3900,9 +3900,28 @@ function closeTab(id, { destroyed = false, user = false } = {}) {
     openTab();
     return;
   }
-  if (activeId === id) switchTab(mate && tabs.includes(mate) && !mate.closing ? mate.id : tabs[Math.min(index, tabs.length - 1)].id);
+  if (activeId === id) {
+    const working = !user && (ai || tab.aiClosing) ? aiWorkingTabAfterClose(tab) : null; // [ai close focus] the AI closed the tab in front: to a tab it is still working in first, then the normal rule
+    switchTab(working && tabs.includes(working) ? working.id : mate && tabs.includes(mate) && !mate.closing ? mate.id : tabs[Math.min(index, tabs.length - 1)].id);
+  }
   else { if (mate) layout(); sendTabs(); }
   chatTabGone(id, tab.rec); // [chat per tab] a chat still working there goes on in a background tab
+}
+
+// [ai close focus] The tab an AI run is still working in, to show when the AI closes the tab in front: the closing chat's own run first,
+// then the working tab looked at last (features/ai-manners.js focusAfterAiClose). null: none, the normal rule picks.
+function aiWorkingTabAfterClose(tab) {
+  const working = agent.runTabIds();
+  if (!working.length) return null;
+  let preferId = null;
+  const scope = agent.currentScope();
+  if (scope?.chat) preferId = agent.runTabIdFor(scope.chat);
+  if (preferId == null) {
+    const cid = tab.openedBy?.chatId ?? chatBind.chatOf(tab.id);
+    const run = cid != null ? chatRuns.get(cid) : null;
+    if (run && !run.deleted && !run.queued) preferId = agent.runTabIdFor(run.messages);
+  }
+  return manners.focusAfterAiClose({ tabs, closing: tab, workingIds: working, preferId });
 }
 
 // The interactive "close this tab" entry points (the tab strip's ✕, Ctrl/Cmd+W, the tab menu) go
@@ -4660,6 +4679,7 @@ function reopenClosedTab(url, info) {
   keepPinnedFirst();
   tabGroups.arrange();
   sendTabs();
+  return tab;
 }
 
 // Puts `tab` right after `anchor`, in anchor's group. An unpinned tab next to a pinned one goes
@@ -6160,7 +6180,7 @@ ipcMain.handle('chat:resync', (event) => {
 // or finished unread while the sidebar was closed? Then that chat is the one to show, whatever "Sidebar button starts a new chat"
 // says. The chat is the tab's own, or the one whose run works in this tab (a tab the AI opened). Answers { id, reason, view } with the
 // chat taken as the open one, or null when nothing is there to keep.
-ipcMain.handle('chat:sidebar-target', (event) => {
+ipcMain.handle('chat:sidebar-target', (event, opts) => {
   const wc = event.sender;
   if (!wc || wc.isDestroyed() || chatPageRt.isChatSender(event)) return null;
   syncToSender(event);
@@ -6170,6 +6190,7 @@ ipcMain.handle('chat:sidebar-target', (event) => {
   const reasonOf = (id) => {
     const run = chatRuns.get(id);
     if (run && !run.deleted && run.pending.size) return 'approval';
+    if (opts?.approvalOnly === true) return null; // [ask ai new chat] the AI button starts a new chat even over a running one; only a question waiting for an OK keeps its chat
     if (chatBusy(id)) return 'running';
     return unreadChats.has(id) ? 'unread' : null;
   };
@@ -8737,7 +8758,7 @@ const agent = new Agent({
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
-  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun(closeTab), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
+  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun((id) => closeTab(id, { ai: true })), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
   hasUnsavedInput: inRun(agentHasUnsavedInput), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]
@@ -10243,6 +10264,7 @@ function thumbTargetOf(run, name, input) {
     if (first) { let host = ''; try { host = new URL(String(first)).host.replace(/^www\./, ''); } catch { /* none */ } return { kind: 'site', url: String(first).slice(0, 500), host }; }
   }
   const named = bare === 'read_tabs' ? (Array.isArray(inp.ids) ? inp.ids : []).find(Number.isInteger) : Number.isInteger(inp.tab_id) ? inp.tab_id : null;
+  if (bare === 'close_tab' && run.thumbTarget) return run.thumbTarget; // closing a tab changes nothing about what the card shows: it keeps the tab it had and its last picture
   if (Number.isInteger(named)) return { kind: 'tab', tabId: named };
   const pinned = agent.runTabIdFor(run.messages) ?? run.tabId;
   return pinned != null ? { kind: 'tab', tabId: pinned } : run.thumbTarget || null;
@@ -10414,7 +10436,11 @@ function tabChips() {
       if (hit.rec !== from && rcAlive(hit.rec) && !(TEST && process.env.LUMEN_TEST_BACKGROUND)) raiseWindow(hit.rec.win); // another window comes to the front
       return true;
     },
-    openUrl: (url, wc) => { const rec = recOfSender(wc); return rec ? withWindow(rec, () => openTab(url)) : openTab(url); },
+    openUrl: (url, wc) => { // a closed tab's chip: the tab comes back as Reopen Closed Tab brings it (its place, group and history), and leaves that list
+      const go = () => { const at = closedTabs.lastIndexOf(url); return at >= 0 ? reopenClosedTab(url, (closedTabs.splice(at, 1), closedInfo.splice(at, 1)[0])) : openTab(url); };
+      const rec = recOfSender(wc);
+      return rec ? withWindow(rec, go) : go();
+    },
     isInternal: (url) => isInternal(url),
     aliveSender: (wc) => Boolean(wc) && !wc.isDestroyed(),
   });
@@ -10448,6 +10474,7 @@ function stampRun(run, done = null) {
     const info = { at: Date.now() };
     try { // [tab chips] the tabs the replies name
       for (const m of run.messages.slice(run.startLen)) if (m.role === 'assistant') for (const b of Array.isArray(m.content) ? m.content : []) if (b.type === 'text') { const ids = tabMarker.idsIn(b.text); if (ids.length) noteRunTabs(run, ids); }
+      if (done && d.touched?.length) noteRunTabs(run, d.touched.filter(Number.isInteger)); // (the card's Tabs list: each tab as it last looked, so a closed one still reads after a restart)
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
     if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, auto: done.auto || d.auto });
