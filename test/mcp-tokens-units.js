@@ -32,6 +32,7 @@ const tokens = (chars) => Math.ceil(chars / 4);
   const shown = slimTabRow({ id: 1, title: 'A', url: 'https://a.test/', active: true, group: 'Research', in_front: true, off_limits: 'read-only' });
   check('list_tabs row: active, group, in_front and off_limits kept when set', shown.active === true && shown.group === 'Research' && shown.in_front === true && shown.off_limits === 'read-only', JSON.stringify(shown));
   check('list_tabs row: an AI-off tab is its id (and the flag) only', JSON.stringify(slimTabRow({ id: 4, active: false, ai_off: true })) === '{"id":4,"ai_off":true}', JSON.stringify(slimTabRow({ id: 4, active: false, ai_off: true })));
+  check('list_tabs row: a blank new tab keeps url ""', slimTabRow({ id: 5, url: '', active: false }).url === '', JSON.stringify(slimTabRow({ id: 5, url: '', active: false })));
   const twenty = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, title: `Page ${i} of the example site`, url: `https://example.com/section/${i}`, active: i === 0, group: null }));
   const before = JSON.stringify(twenty).length;
   const after = JSON.stringify(twenty.map(slimTabRow)).length;
