@@ -12,8 +12,10 @@
   const rail = $('cp-rail');
   const body = document.body;
   const tr = window.chatTr;
+  const trv = (key, english, vars) => tr(key, english).replace(/\{(\w+)\}/g, (w, n) => (vars && n in vars ? String(vars[n]) : w)); // (tr with {name} values)
   const pageTools = window.chatPageTools;
   let userName = '';
+  let viewProject = null; // [project workspace] the project of the view last shown ({ id, name }): a chat not saved yet has no list entry
 
   // ---- hooks into the shared chat
   chatHost.running = (on) => {
@@ -25,7 +27,7 @@
   const labelMsg = (el) => { if (el.nodeType !== 1 || !el.classList.contains('msg') || el.getAttribute('role')) return; const mine = el.classList.contains('user'); if (!mine && el.classList.contains('reply-actions-only')) return; el.setAttribute('role', 'group'); el.setAttribute('aria-label', t(mine ? 'chatpage.who.you' : 'chatpage.who.ai')); };
   new MutationObserver((list) => { for (const m of list) m.addedNodes.forEach(labelMsg); }).observe($('messages'), { childList: true });
   chatHost.chatChanged = () => renderList();
-  chatHost.synced = (view) => window.chatPageTools.setTemporary(view?.temporary); // another view started or left a temporary chat
+  chatHost.synced = (view) => { window.chatPageTools.setTemporary(view?.temporary); viewProject = view?.project || null; showProjectChip(); }; // another view started or left a temporary chat, or moved to a chat of a project
   // The empty chat greets by the name set for the new-tab page ("Good evening, Sam"), or asks what it can help with.
   const greeting = () => {
     if (!userName) return t('chatpage.greeting.none');
@@ -173,6 +175,8 @@
     drawProjects();
     drawItems();
     showTitle();
+    showProjectChip();
+    window.chatProjectPage?.refresh();
     empty.hidden = chats.length > 0;
     if (focused) {
       const rows = [...items.querySelectorAll('.chat-item')];
@@ -192,22 +196,86 @@
       onSelect: (id) => { projectView = id; if (id) view = 'chats'; renderList(); },
       onAdd: () => editProject(null),
       onEdit: (p) => editProject(p),
-      onNewChat: async (p) => {
-        const next = await api.newInProject(p.id).catch(() => null);
-        if (!next) return;
-        clearChatView();
-        pageTools.setTemporary(false);
-        shownChatId = next.id || null;
-        refreshUsage('');
-        await renderList();
-        if (narrowQuery.matches && drawerOpen) toggleRail(false);
-        prompt.focus();
-      },
+      onPage: (p) => openProjectPage(p.id),
+      onNewChat: (p) => newChatInProject(p),
     });
     drag.refresh();
   }
+  async function newChatInProject(p) {
+    const next = await api.newInProject(p.id).catch(() => null);
+    if (!next) return;
+    closeProjectPage();
+    clearChatView();
+    pageTools.setTemporary(false);
+    shownChatId = next.id || null;
+    viewProject = next.project || null;
+    window.planModeUI?.chatShown(next, false); // (the project's plan default)
+    refreshUsage('');
+    await renderList();
+    if (narrowQuery.matches && drawerOpen) toggleRail(false);
+    prompt.focus();
+  }
+  // ---- [project workspace] a project's own page (chat-project-page.js, loaded the first time), the name chip in a project chat's header, and
+  // "Add this tab to the project" in the + menu
+  let pageLoading = null;
+  function loadProjectPage() {
+    if (window.chatProjectPage) return Promise.resolve();
+    return (pageLoading ||= new Promise((resolve, reject) => {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-project-page.css' });
+      const js = Object.assign(document.createElement('script'), { src: 'chat-project-page.js' });
+      js.onload = () => resolve();
+      js.onerror = () => { pageLoading = null; reject(new Error('project page')); };
+      document.head.append(css);
+      document.body.append(js);
+    }));
+  }
+  const closeProjectPage = () => window.chatProjectPage?.close(false);
+  async function openProjectPage(id) {
+    try { await loadProjectPage(); } catch { toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
+    if (narrowQuery.matches && drawerOpen) toggleRail(false);
+    await window.chatProjectPage.open({
+      api, id,
+      host: {
+        chats: () => lastChats, projects: () => lastProjects,
+        openChat: (cid) => openChat(cid), newChat: (p) => newChatInProject(p), editFolder: (p) => editProject(p), moveChats: (ids, pid) => moveChats(ids, pid),
+        undoToast: (text, ms, undo) => tools.undoToast(text, ms, undo), toast: (text) => toast(text),
+        models: () => [...document.querySelectorAll('#model option')].map((o) => ({ value: o.value, label: o.textContent })),
+        closed: () => prompt.focus(), refresh: () => renderList(),
+      },
+    });
+  }
+  const projectChip = $('cp-project-chip');
+  const addTabItem = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-item', id: 'add-tab-to-project', hidden: true });
+  addTabItem.setAttribute('role', 'menuitem');
+  addTabItem.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg><span class="cm-label"></span>';
+  addTabItem.querySelector('.cm-label').textContent = tr('projectws.addTab', 'Add this tab to the project');
+  $('composer-menu')?.append(addTabItem);
+  let chipProject = null;
+  function showProjectChip() {
+    const mine = lastChats.find((c) => c.id === (shownChatId || lastCurrent));
+    const id = mine ? mine.project || null : viewProject?.id || null;
+    chipProject = id ? lastProjects.find((p) => p.id === id) || (viewProject?.id === id ? viewProject : null) : null;
+    projectChip.hidden = !chipProject;
+    projectChip.textContent = chipProject ? chipProject.name : '';
+    projectChip.title = chipProject ? trv('projectws.chip', 'Project: {name}. Click to open its page.', { name: chipProject.name }) : '';
+    projectChip.setAttribute('aria-label', projectChip.title);
+    addTabItem.hidden = !chipProject;
+    document.body.classList.toggle('cp-in-project', Boolean(chipProject));
+  }
+  projectChip.onclick = () => { if (chipProject) openProjectPage(chipProject.id); };
+  addTabItem.onclick = async () => {
+    if (!chipProject) return;
+    const out = await api.projectAddTab(chipProject.id).catch(() => null);
+    toast(out?.ok ? (out.already ? tr('projectws.pages.already', 'That page is already pinned.') : trv('projectws.tabAdded', 'Added to {name}', { name: chipProject.name })) : out?.reason === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages.') : tr('projectws.pages.notweb', 'The tab you are looking at is not a web page.'));
+    window.chatProjectPage?.isOpen() && openProjectPage(window.chatProjectPage.id());
+  };
   function editProject(project, then) {
     pj.editor({ api, project, onDone: async (r) => {
+      if (r.removed) {
+        const gone = lastProjects.find((p) => p.id === r.removed);
+        if (window.chatProjectPage?.id() === r.removed) closeProjectPage();
+        if (gone) tools.undoToast(trv('projectws.deleted', 'Deleted “{name}”', { name: gone.name }), 10000, async () => { const back = await api.restoreProject(gone.id).catch(() => null); await renderList(); return Boolean(back); });
+      }
       if (r.removed && projectView === r.removed) projectView = null;
       if (r.saved && !project && !then) projectView = r.saved.id; // (made with +: its list opens; made from a chat's menu: the list stays)
       await renderList();
@@ -266,6 +334,8 @@
   async function openChat(id, { share = false } = {}) {
     const opened = await (share ? api.share(id) : api.open(id));
     if (!opened) return false; // gone: the row says so, then the list redraws (chat-items.js moveHere) (deleted, or unreadable on this machine)
+    closeProjectPage();
+    viewProject = opened.project || null;
     clearChatView();
     pageTools.setTemporary(Boolean(opened.temporary));
     shownChatId = opened.id || null;
@@ -280,7 +350,7 @@
   }
   tools.arrows(items); // Up/Down between chats, Home/End to the ends
   // New chat is the shared #new-chat button (chat-core.js resets the chat and empties the view).
-  $('new-chat').addEventListener('click', () => { pageTools.setTemporary(false); setTimeout(renderList, 50); if (narrowQuery.matches && drawerOpen) toggleRail(false); });
+  $('new-chat').addEventListener('click', () => { closeProjectPage(); viewProject = null; pageTools.setTemporary(false); setTimeout(renderList, 50); if (narrowQuery.matches && drawerOpen) toggleRail(false); });
   api.onChanged?.(() => { if (!items.querySelector('.chat-rename-input')) renderList(); }); // running, needs an OK, finished unseen
 
   // ---- the tab the AI works in
@@ -369,6 +439,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
+    viewProject = now?.project || null;
     pageTools.setTemporary(Boolean(now?.temporary));
     showHistory(now?.items);
     refreshUsage(now?.usage || '');
