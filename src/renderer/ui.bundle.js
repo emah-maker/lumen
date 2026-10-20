@@ -9745,7 +9745,7 @@ $('tabs').addEventListener('keydown', (e) => {
   if (step) focusStripItem(items[(i + step + items.length) % items.length]);
   else if (e.key === 'Home') focusStripItem(items[0]);
   else if (e.key === 'End') focusStripItem(items[items.length - 1]);
-  else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id);
+  else if (isTab && (e.key === 'Enter' || e.key === ' ')) window.browser.switchTab(id, true);
   else if (isTab && (e.key === 'm' || e.key === 'M') && el.querySelector('.tab-audio')) window.browser.toggleMute(id);
   else if (isTab && e.key === 'Delete') {
     const next = items[i + 1] || items[i - 1];
@@ -9785,7 +9785,7 @@ function clickTab(e, id) {
   });
   selectionAnchor = r.anchor;
   setSelection(r.selection);
-  if (r.activate != null) { window.browser.switchTab(r.activate); showActiveNow(r.activate); }
+  if (r.activate != null) { window.browser.switchTab(r.activate, true); showActiveNow(r.activate); }
 }
 
 function showActiveNow(id) {

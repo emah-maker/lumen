@@ -2872,6 +2872,8 @@
   "settings.ai.closeAiTabs.off": "Leave open",
   "settings.ai.closeAiTabs.ask": "Ask",
   "settings.ai.closeAiTabs.always": "Close",
+  "settings.ai.keepViewedAiTabs": "Keep AI tabs I click on",
+  "settings.ai.keepViewedAiTabsDesc": "A tab the AI opened stays open after it finishes if you clicked it to look at it.",
   "tabs.aiOpened": "Opened by the AI",
   "tabs.aiKeptOff": "AI read-only",
   "toolbar.aiOffTab.off": "Keep the AI from acting on this tab",
