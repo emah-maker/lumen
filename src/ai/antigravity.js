@@ -62,6 +62,9 @@
 //   6. Images: no documented way, so they are written to files in the working folder and named in the prompt.
 //   7. settings.json keys toolPermission and trustedWorkspaces (from a third-party reference, not Google's docs).
 //   8. The stream-json event shapes (from the headless docs; parsed defensively).
+//   9. [helpers] That the PreToolUse hook also fires for a subagent's tool calls, with the subagent's own conversationId (agy's embedded hooks.md
+//      documents conversationId on every payload; a subagent is a conversation with a parent_conversation_id, and its stream step has
+//      subagent_info { conversation_id, log_uri }; the stream's step_update has no parent field). If it does not, helperRows (agy-tools.js) shows nothing.
 //
 // FULL ACCESS (Settings > AI > "Give Antigravity full access to this computer", antigravityFullAccess, off by default).
 // The user's own opt-in to run agy in the sidebar the way it runs in a terminal. With it on, and only then:
@@ -86,7 +89,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { exists, lookup, killTree, validModel, fullAccessRejected } = require('./cli-utils');
-const { agyAllowed } = require('./agy-tools'); // the allowlist the hook gate (mcp-http.js agyDecision) shares
+const { agyAllowed, helperRows } = require('./agy-tools'); // the allowlist the hook gate (mcp-http.js agyDecision) shares
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { isLimitText } = require('../features/grok-limit');
 const { antigravityLimit } = require('../features/provider-usage'); // the quota message and its reset time ("Resets in 110h")
@@ -545,7 +548,9 @@ class AntigravityEngine {
     const chatHome = chatHomeFor(this.userData, scope?.chatId);
     const resume = Boolean(sessionId);
     const tag = crypto.randomBytes(18).toString('hex');
-    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home });
+    const rows = fullAccess ? helperRows(emit) : null; // [helpers] what a subagent does, from the hook (agy-tools.js helperRows)
+    rows?.parent(sessionId);
+    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home, onCall: rows ? (m) => rows.call(m) : null });
     const files = []; // everything written for this run, removed after it
     let mcpFile = null;
     let mcpText = null; // what this run wrote there: removed afterwards only if no newer run of the chat has replaced it
@@ -572,7 +577,7 @@ class AntigravityEngine {
       }
       // [work folder] the chosen folder (when it is there) is the working folder; agy's permission gate and sandbox are as before
       if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
-      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort, workDir }), folder: fullAccess ? folder : workDir || folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess });
+      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort, workDir }), folder: fullAccess ? folder : workDir || folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess, rows });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})));
       // The run's token file. A newer message of the same chat ("Send now") may have written its own already: that one stays.
@@ -581,7 +586,7 @@ class AntigravityEngine {
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, home = this.home, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false }) {
+  async attempt({ bin, gate, gateRun, tag, home = this.home, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false, rows = null }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
@@ -614,12 +619,14 @@ class AntigravityEngine {
       if (offTool) return;
       if (msg.event === 'init') {
         conversation = msg.conversation_id || conversation;
+        rows?.parent(msg.conversation_id); // the run's own conversation: a hook call with another id is a subagent's
         initModel = msg.init?.model || initModel;
       } else if (msg.event === 'step_update' && msg.step_update) {
         const su = msg.step_update;
         conversation = su.conversation_id || conversation;
         if (su.usage) usage = su.usage;
         const tool = su.tool_name || su.tool_info?.name || null;
+        if (rows && su.state === 'DONE' && (su.subagent_info || /^invoke_subagent$/i.test(String(tool || '')))) rows.finish(typeof su.subagent_info?.conversation_id === 'string' ? su.subagent_info.conversation_id : null);
         if (tool || su.step_type === 'tool') {
           const bad = this.watch && !fullAccess ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home) : null; // [full access] agy's own tools are expected
           if (bad) { offTool = bad; this.kill(child); return; }
@@ -661,6 +668,7 @@ class AntigravityEngine {
     signal.removeEventListener('abort', onAbort);
     if (this.active?.tag === tag) this.active = null;
     gate.close(tag);
+    rows?.finish();
 
     if (offTool) {
       emit({ type: 'error', text: `Lumen stopped Antigravity: it used a tool that isn't one of Lumen's (${offTool}). Antigravity should only use Lumen's browser tools; if this keeps happening, pick another AI in the model picker.` });
