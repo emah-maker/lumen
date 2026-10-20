@@ -62,7 +62,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     for (const a of actions) {
       const ra = box(a);
       if (!ra.r) continue;
-      for (const o of others) { if (!o.contains(a) && hit(ra, box(o))) overlaps.push(a.className + ' x ' + (o.className || o.tagName)); }
+      for (const o of others) { if (o.checkVisibility?.() === false) continue; if (!o.contains(a) && hit(ra, box(o))) overlaps.push(a.className + ' x ' + (o.className || o.tagName)); }
       for (const o of actions) { if (o !== a && hit(ra, box(o))) overlaps.push(a.className + ' x ' + o.className); }
     }
     return { regen: q('.reply-regen'), retry: q('.reply-retry'), only: q('.reply-actions-only'), running: document.getElementById('send').classList.contains('stop'), overlaps };

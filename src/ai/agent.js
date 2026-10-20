@@ -2498,7 +2498,8 @@ class Agent {
 
     // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
     // [image routing] A request that points at something with nothing to read (no readable tab, attachment or earlier message): asked once.
-    if (needsContext && !images.length && !wanted.length && !attachedFiles && !page && !this.skillRun && !this.hasConversation(messages) && !this.tabHasContent(tab)) {
+    // (Not on the chat page: it has no tab of its own, the user's other tabs and downloads are still there to read, so the model goes and looks.)
+    if (needsContext && extra.fromPage !== true && !images.length && !wanted.length && !attachedFiles && !page && !this.skillRun && !this.hasConversation(messages) && !this.tabHasContent(tab)) {
       const text = imageRouter.noContextAsk({ tab: this.noContextTabLabel(tab) });
       emit({ type: 'turn_start' });
       emit({ type: 'text', text });

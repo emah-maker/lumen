@@ -51,7 +51,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     strip: Boolean(document.querySelector('.msg.assistant > .reply-meta')),
     model: document.querySelector('.reply-meta .reply-model')?.textContent || '',
     time: Boolean(document.querySelector('.reply-meta time.msg-time')),
-    thumbs: document.querySelectorAll('.reply-meta .reply-thumb').length,
+    thumbs: document.querySelectorAll('.reply-meta .reply-thumbs .reply-thumb').length,
     copy: Boolean(document.querySelector('.msg-user-actions .msg-copy')),
     edit: Boolean(document.querySelector('.msg-user-actions .msg-edit')),
     userTime: Boolean(document.querySelector('.msg-user-actions time.msg-time')),
