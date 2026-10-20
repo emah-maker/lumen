@@ -12700,7 +12700,8 @@ $('agent-stop')?.addEventListener('click', () => {
     ring.setAttribute('aria-label', label);
     ringBar.setAttribute('aria-valuetext', label);
     ringText.textContent = window.t(view.estimated ? 'context.strip.estimated' : 'context.strip', { used: short(view.tokens), total: short(view.window) });
-    ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)} ${window.t(percent >= 75 ? 'context.compact' : 'context.more')}`;
+    const model = view.model ? ` ${window.t('context.model', { model: view.model })}` : '';
+    ring.title = `${window.t(view.estimated ? 'context.title.estimated' : 'context.title', vars)}${model} ${window.t(percent >= 75 ? (view.auto ? 'context.auto' : 'context.compact') : 'context.more')}`;
   }
   async function refreshContext() {
     if (!chatsApi?.list) return;
@@ -14523,6 +14524,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
   function planToolError(name, input = {}) {
+    if (name === 'word') return ['list', 'read'].includes(String(input?.action || '')) ? null : PLAN_REFUSAL;
     if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
     return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
   }
