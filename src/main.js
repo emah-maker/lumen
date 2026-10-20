@@ -282,7 +282,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1084,7 +1084,9 @@ ipcMain.on('page-notification:click', (event) => {
   }
 });
 if (TEST) global.__notifyClick = { // chat notifications: tell(spec, kind) makes one for a fake run (no OS toast), click(item) is its click, activate() an activation without a click
-  tell: (spec, kind) => { const messages = []; if (spec.aiNavTabId != null) messages.aiNavTabId = spec.aiNavTabId; const run = { chatId: spec.chatId, messages, runId: 0, rec: curRec, pending: new Map(), reply: '', error: null, tabId: spec.tabId ?? null, homeTab: spec.homeTab ?? null }; if (spec.bind != null) chatBind.bind(spec.bind, spec.chatId); const item = showNotification(run, kind); (global.__notifyClick.items ||= []).push(new WeakRef(item.n)); return global.__notifyClick.items.length - 1; },
+  fakeRun: (spec) => { const messages = []; if (spec.aiNavTabId != null) messages.aiNavTabId = spec.aiNavTabId; if (spec.bind != null) chatBind.bind(spec.bind, spec.chatId); return { chatId: spec.chatId, messages, runId: 0, rec: curRec, pending: new Map(), reply: spec.reply || '', error: null, tabId: spec.tabId ?? null, homeTab: spec.homeTab ?? null }; },
+  note: (spec, kind) => { noteChatInApp(global.__notifyClick.fakeRun(spec), kind); return global.__chatNotes.at(-1); }, // the strip's toast instead (Lumen in front, another tab)
+  tell: (spec, kind) => { const run = global.__notifyClick.fakeRun(spec); const item = showNotification(run, kind); (global.__notifyClick.items ||= []).push(new WeakRef(item.n)); return global.__notifyClick.items.length - 1; },
   click: (i) => global.__notifyClick.items[i].deref().emit('click'), // (a collected notification would be undefined here: that is what the keeper prevents)
   activate: () => activateNotified(),
   kept: () => notifyKeeper.size(), isKept: (i) => { const n = global.__notifyClick.items[i].deref(); return Boolean(n) && notifyKeeper.has(n); }, collect: () => { global.gc?.(); return typeof global.gc === 'function'; },
@@ -5877,12 +5879,31 @@ const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRun
 // back), and the unread mark when the reply isn't in view.
 function tellUser(run, kind) {
   if (run.deleted) { unreadChats.delete(run.chatId); pushAttention(); return; } // a chat deleted while it worked leaves no unread mark or notification behind
-  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...runView(run) });
+  const view = runView(run);
+  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...view });
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
-  if (!decided.os || TEST || !Notification.isSupported()) return;
+  if (!decided.os) return;
+  if (view.focused) { noteChatInApp(run, kind); return; } // Lumen is in front on another tab: macOS shows no banner for the front app, so the strip's toast says it
+  if (TEST || !Notification.isSupported()) return;
   showNotification(run, kind);
 }
+// The tab strip's toast for a chat that finished or needs an OK while the user is in Lumen on another tab. "Open chat" goes where a
+// click on the system notification would (openNotified). The newest few are kept for that button.
+const chatNotes = new Map();
+let chatNoteSeq = 0;
+function noteChatInApp(run, kind) {
+  const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
+  const token = ++chatNoteSeq;
+  chatNotes.set(token, { run, kind, approvalTab: kind === 'approval' ? run.tabId ?? null : null });
+  for (const old of chatNotes.keys()) { if (chatNotes.size <= 10) break; chatNotes.delete(old); }
+  const rec = focusedRec() || curRec;
+  if (!rcAlive(rec) || !winRecs.has(rec)) return;
+  withWindow(rec, () => ui()?.send('tabs:organize-note', { text: text.title, undo: true, ttl: kind === 'approval' ? 20000 : 12000, chatNote: token, undoLabel: t('agent.notify.open'), undoTitle: [text.title, text.body].filter(Boolean).join('\n') }));
+  if (TEST) (global.__chatNotes ||= []).push({ token, kind, text: text.title });
+}
+ipcMain.handle('chat:open-note', (_e, token) => { const entry = chatNotes.get(Number(token)); return entry ? openNotified(entry) : false; });
 // Electron drops a Notification's click handler when the object is garbage collected, so the keeper holds each one until it is
 // clicked (or old). A toast clicked after it went to the Action Center arrives as an activation instead (activateNotified).
 const notifyKeeper = notifyTarget.createKeeper();
