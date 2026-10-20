@@ -66,7 +66,7 @@ const SHEET_CSV = 'name,score\nAda,91\nGrace,97\n';
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cb-read-docs-'));
   const app = await electron.launch({
     args: [path.join(__dirname, '..')],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, TEMP: dir, TMP: dir, ANTHROPIC_API_KEY: 'sk-ant-test' },
+    env: { ...process.env, PATH: process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') : '/usr/bin:/bin', CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, TEMP: dir, TMP: dir, ANTHROPIC_API_KEY: 'sk-ant-test' },
   });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
@@ -134,6 +134,33 @@ const SHEET_CSV = 'name,score\nAda,91\nGrace,97\n';
     const jump = await run('scroll', { direction: 'down', page: 5 });
     state = await inTab('window.lumenPdf.state()');
     check(`PDF (${label}): scroll with page:5 goes straight to page 5`, state.page === 5 && /page 5 of 6/.test(jump), `${jump} ${JSON.stringify(state)}`);
+  }
+
+  // ---- a local PDF with spaces and parentheses in its name (like "Midterm_1_Review_Sheet_DiffEq (10).pdf"), in every way an agent writes its path,
+  // opened and read with no PDF program on the PATH (the app above was started with only the system folder on it): Lumen's own reader does it.
+  {
+    const odd = path.join(dir, 'Midterm_1_Review_Sheet_DiffEq (10).pdf');
+    fs.writeFileSync(odd, pdfBytes);
+    const found = require('child_process').spawnSync(process.platform === 'win32' ? 'where' : 'which', ['pdftoppm'], { env: { PATH: process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32') : '/usr/bin:/bin' } });
+    check('the app runs with no pdftoppm on its PATH', found.status !== 0, String(found.stdout));
+    const forms = [['a Windows path', odd], ['a path with forward slashes', odd.split(path.sep).join('/')], ['a file:// address', pathToFileURL(odd).href]];
+    if (process.platform === 'win32') forms.push(['a Git Bash path', '/' + odd[0].toLowerCase() + odd.slice(2).split(path.sep).join('/')]);
+    const openLocal = (url) => app.evaluate(async (_e, u) => {
+      const agent = global.__agent;
+      const signal = new AbortController().signal;
+      const chat = []; chat.settings = { model: 'claude-opus-5' };
+      const gate = { emit: () => {}, signal, hosts: new Set(), who: 'Claude', external: false, noAsk: true, run: { tainted: false } };
+      const tabId = agent.browser.activeTab().id;
+      try {
+        return await agent.inTask(tabId, signal, async () => { await agent.ensureAllowed('open_tab', () => {}, signal, { ...gate, input: { url: u } }); const r = await agent.execute('open_tab', { url: u }); return typeof r === 'string' ? r : JSON.stringify(r); }, chat);
+      } catch (err) { return 'ERROR: ' + err.message; }
+    }, url);
+    for (const [label, url] of forms) {
+      const opened = await openLocal(url);
+      await sleep(1500);
+      const out = await readPdf({});
+      check('local PDF with spaces and parentheses, as ' + label + ': opens and is read', !/ERROR|http and https|pdftoppm/.test(opened) && /Template section 1 heading/.test(out) && /Template section 6 heading/.test(out), opened + ' / ' + out);
+    }
   }
 
   await app.close().catch(() => {});

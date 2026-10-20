@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **A chat that finishes or needs your OK while you are on another tab now says so in Lumen.** macOS shows no banner for the app in front, so the system notification Lumen sent went unseen when you were in Lumen on a different tab. In that case the tab strip now shows a toast ("AI finished: …", "AI needs your OK") with **Open chat**, which goes where a click on the system notification would: the tab the AI worked in, with the chat open. In another app you still get the system notification. Same switches as before (Tasks → Settings). Tests: `test/notify-click.js`.
+- **The steps list in the chat lines up, every step says what it is, and a PDF on your computer opens whatever its path looks like.** A small icon (globe, monitor or page) now sits in its own slot before each step instead of being drawn over its text, and the text starts at the same place on every row. Steps with no wording of their own say what tool they use and what it is working on instead of "Using a tool". Opening a PDF by a path like /c/Users/me/Midterm (10).pdf, ~/Downloads/a.pdf or a file:// address now works, a name with no folder gets a plain "give the full path", and Claude Code is told to open a local PDF in Lumen and read it there rather than with a tool that needs a PDF program this PC does not have.
 
 ## 0.5.59 (2026-10-19)
 

@@ -175,6 +175,20 @@
       return '';
     };
 
+    // A tool with no label of its own (another program's tool, a Lumen tool that has no special line): what it is in plain words, with its main argument
+    // ("Looking up a tool: calendar", "Using list files: Downloads"); never the generic "Using a tool" while the name is known.
+    const KNOWN = { ToolSearch: 'toolSearch', BashOutput: 'bashOutput', KillShell: 'killShell', KillBash: 'killShell', ExitPlanMode: 'exitPlan', EnterPlanMode: 'enterPlan', AskUserQuestion: 'askUser', Monitor: 'monitor', TaskStop: 'taskStop', TaskOutput: 'taskOutput', ScheduleWakeup: 'wakeup', NotebookRead: 'notebookRead', list_files: 'listFiles', clipboard: 'clipboard', document: 'document', verify_changes: 'verify', generate_image: 'image', memory: 'memory', notes: 'notes', use_skill: 'skill', run_macro: 'macro', reading_list: 'readingList', connector: 'connector', desktop: 'desktop', read_pdf: 'readPdf', list_tabs: 'listTabs' };
+    const ARGS = ['query', 'description', 'url', 'path', 'file_path', 'pattern', 'name', 'command', 'text', 'title', 'prompt', 'action', 'folder'];
+    const humanize = (n) => String(n).replace(/^mcp__[^_]+(?:_[^_]+)*__/, '').replace(/([a-zd])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim().toLowerCase();
+    L.generic = (name, input = {}) => {
+      const n = String(name || '').replace(/^mcp__lumen__/, '');
+      const i = input && typeof input === 'object' ? input : {};
+      let arg = '';
+      for (const k of ARGS) { const v = i[k]; if (typeof v === 'string' && v.trim()) { arg = /^(?:file_path|path|folder)$/.test(k) ? base(v) : /^url$/.test(k) ? hostOf(v) : clip(v, 40); break; } }
+      const text = KNOWN[n] ? t(`step.tool.${KNOWN[n]}`) : humanize(n) ? t('step.using', { name: humanize(n) }) : t('step.tool');
+      return clip(arg && KNOWN[n] !== 'listTabs' ? t('step.withArg', { label: text, arg }) : text);
+    };
+
     // What the engine's saved/shown label should be: the line above, else the engine's own `fallback`.
     L.labelOr = (name, input, fallback) => L.label(name, input) || fallback || String(name || '');
 
