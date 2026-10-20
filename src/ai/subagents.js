@@ -113,6 +113,8 @@ async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSte
   let steps = 0;
   let calls = 0;
   let said = '';
+  const refused = new Set(); // tools the helper asked for that it does not have (click, a file, a terminal): the job needs more than reading (cli-helpers.js needsMore)
+  const more = () => (refused.size ? { refused: [...refused].slice(0, 5) } : {});
   try {
     for (let step = 0; step < maxSteps; step++) {
       const last = step === maxSteps - 1 || repeats.stalled || now() - began > timeMs * SOFT_AT;
@@ -125,11 +127,12 @@ async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSte
       if (text) said = text;
       const uses = (message.content || []).filter((b) => b?.type === 'tool_use');
       if (!uses.length || last) {
-        return { status: 'done', text: (text || said || '(no answer)').slice(0, answerChars), steps, calls };
+        return { status: 'done', text: (text || said || '(no answer)').slice(0, answerChars), steps, calls, ...more() };
       }
       const one = async (use) => {
         calls++;
         if (!allowed(use.name)) {
+          refused.add(use.name);
           return { type: 'tool_result', tool_use_id: use.id, is_error: true, content: `Not available to helpers: ${use.name}. ${refusal}` };
         }
         onStep({ n, step, kind: use.name, input: use.input });
@@ -155,11 +158,11 @@ async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSte
       if (images && results.some((r) => Array.isArray(r.content))) dropOldImages(messages);
       messages.push({ role: 'user', content: results });
     }
-    return { status: 'done', text: (said || '(no answer)').slice(0, answerChars), steps, calls };
+    return { status: 'done', text: (said || '(no answer)').slice(0, answerChars), steps, calls, ...more() };
   } catch (err) {
-    if (timedOut) return { status: 'timeout', text: said.slice(0, answerChars), steps, calls, error: `ran out of time (${Math.round(timeMs / 1000)} s)` };
+    if (timedOut) return { status: 'timeout', text: said.slice(0, answerChars), steps, calls, error: `ran out of time (${Math.round(timeMs / 1000)} s)`, ...more() };
     if (signal?.aborted) return { status: 'stopped', text: said.slice(0, answerChars), steps, calls };
-    return { status: 'failed', text: said.slice(0, answerChars), steps, calls, error: String(err?.message || err).split('\n')[0] };
+    return { status: 'failed', text: said.slice(0, answerChars), steps, calls, error: String(err?.message || err).split('\n')[0], ...more() };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', outer);
@@ -188,11 +191,16 @@ async function runHelpers({ tasks, turn, exec, signal, tools, maxSteps, timeMs, 
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 
 // The parent's tool result. Helper answers come from web pages, so they travel as untrusted page content (defanged, errors capped).
+// A row with `via` ran as a separate CLI run (cli-helpers.js: the fallback when the chat's API model could not do the job): it had Lumen's tools under
+// the user's approvals, so the head no longer says nothing was changed.
 function formatResults(results, { dropped = 0, model = '' } = {}) {
-  const head = `${results.length} helper${results.length === 1 ? '' : 's'} ran side by side${model ? ` on ${model}` : ''}. They only read (read_urls, web_search): nothing was clicked or changed in any tab.`;
+  const viaCli = results.some((r) => r.via);
+  const head = viaCli
+    ? `${results.length} helper${results.length === 1 ? '' : 's'} ran side by side. Some ran as separate CLI runs with Lumen's tools; anything that needed approval was asked of the user.`
+    : `${results.length} helper${results.length === 1 ? '' : 's'} ran side by side${model ? ` on ${model}` : ''}. They only read (read_urls, web_search): nothing was clicked or changed in any tab.`;
   const body = results.map((r) => {
     const error = defang(String(r.error || '').replace(/\s+/g, ' ').slice(0, 300));
-    const state = r.status === 'done' ? `done, ${r.steps} step${r.steps === 1 ? '' : 's'}` : r.status === 'timeout' ? `PARTIAL: ${error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${error}`;
+    const state = r.status === 'done' ? (r.via ? `done on ${r.via}` : `done, ${r.steps} step${r.steps === 1 ? '' : 's'}`) : r.status === 'timeout' ? `PARTIAL: ${error}` : r.status === 'stopped' ? 'stopped' : `FAILED: ${error}`;
     const answer = r.text ? defang(r.text) : r.status === 'done' ? '(no answer)' : '(nothing to report)';
     return `Helper ${r.n} [${state}] ${defang(r.task.replace(/\s+/g, ' ').slice(0, 120))}\n${answer}`;
   }).join('\n\n');

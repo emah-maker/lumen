@@ -110,22 +110,28 @@ function contextTokensOf(raw) {
 const ENGINE_WINDOWS = { 'codex:': 272_000, 'antigravity:': 1_000_000, 'grokbuild:': 256_000 };
 function windowFor(model, reported) {
   if (Number(reported) > 0) return Number(reported);
+  const prefix = Object.keys(ENGINE_WINDOWS).find((p) => String(model || '').startsWith(p)); // (a CLI engine's own table first: "[1m]" is Claude's suffix, never Codex's)
+  if (prefix) return ENGINE_WINDOWS[prefix];
   if (/\[1m\]/i.test(String(model || ''))) return 1_000_000;
-  const prefix = Object.keys(ENGINE_WINDOWS).find((p) => String(model || '').startsWith(p));
-  return prefix ? ENGINE_WINDOWS[prefix] : DEFAULT_WINDOW;
+  return DEFAULT_WINDOW;
 }
 
+// Engines that keep the conversation in a session of their own and compact it themselves when it fills up (Lumen cannot /compact them).
+const selfCompacts = (model) => /^(codex|grokbuild|antigravity):/.test(String(model || ''));
+
 // Records the chat's context on its settings; returns it (null when there is nothing real to record).
-function setContext(settings, { tokens, window, model, estimated = false, now = Date.now() } = {}) {
+// `name`: the model that really answered, as the tooltip says it (Codex's default model is only known from its own log).
+function setContext(settings, { tokens, window, model, name, estimated = false, now = Date.now() } = {}) {
   if (!settings || !(Number(tokens) >= 0) || !Number.isFinite(Number(tokens))) return null;
-  settings.context = { tokens: Math.round(Number(tokens)), window: windowFor(model, window), at: now, ...(estimated ? { estimated: true } : {}) };
+  const shown = typeof name === 'string' ? name.replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, 60) : '';
+  settings.context = { tokens: Math.round(Number(tokens)), window: windowFor(model, window), at: now, ...(estimated ? { estimated: true } : {}), ...(shown ? { name: shown } : {}), ...(selfCompacts(model) ? { auto: true } : {}) };
   return settings.context;
 }
 
 // What the renderer gets for a chat: { tokens, window, percent (0 to 100), estimated }, or null when unknown.
 function contextView(ctx) {
   if (!ctx || !(ctx.window > 0) || !Number.isFinite(ctx.tokens)) return null;
-  return { tokens: ctx.tokens, window: ctx.window, percent: Math.max(0, Math.min(100, (ctx.tokens / ctx.window) * 100)), estimated: Boolean(ctx.estimated) };
+  return { tokens: ctx.tokens, window: ctx.window, percent: Math.max(0, Math.min(100, (ctx.tokens / ctx.window) * 100)), estimated: Boolean(ctx.estimated), ...(ctx.name ? { model: ctx.name } : {}), ...(ctx.auto ? { auto: true } : {}) };
 }
 
 // "18.1k" -> 18100, "1M" -> 1000000, "2,048" -> 2048.

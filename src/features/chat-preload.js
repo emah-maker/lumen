@@ -121,6 +121,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+    setEffort: (level) => ipcRenderer.invoke('settings:set-effort', level),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
     openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
     // Page only

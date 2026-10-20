@@ -843,12 +843,13 @@ class ClaudeCodeEngine {
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (b.type === 'tool_use' && b.id && !msg.parent_tool_use_id) pending.set(b.id, String(b.name || '').replace(/^mcp__lumen__/, ''));
-          if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id) || msg.parent_tool_use_id) continue;
+          // [helpers] With full access Claude Code keeps its own Agent tool; what its subagent does shows as helper rows, like Lumen's own helpers.
+          if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id)) continue;
           active.builtin.add(b.id);
           if (b.name === 'Bash') for (const d of dirsInCommand(b.input?.command)) this.runDirs.add(d); // (freshRoots)
           else if (WRITE_TOOLS.test(String(b.name)) && typeof b.input?.file_path === 'string' && this.runWrittenPaths.size < 60) { this.runWrittenPaths.add(b.input.file_path); aiFiles.noteWritten(active.scope?.chat, b.input.file_path); } // [ai files]
           active.inflight++;
-          emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: builtinLabel(b.name, b.input || {}) });
+          emit({ type: 'tool', id: `cc-${String(b.id).replace(/[^\w-]/g, '').slice(0, 60)}`, name: String(b.name), input: b.input || {}, label: (msg.parent_tool_use_id ? 'Helper · ' : '') + builtinLabel(b.name, b.input || {}) });
         }
         active.arm();
       } else if (msg.type === 'user') {

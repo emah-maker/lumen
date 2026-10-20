@@ -164,6 +164,46 @@ const cc = require('../src/ai/claude-code');
 check('Claude Code: an early row for a tool with no early label is not generic', cc.earlyLabel('list_tabs') === 'Listing the open tabs' && cc.earlyLabel('document') === 'Working on the document', cc.earlyLabel('list_tabs'));
 check('Claude Code: its own tools get plain labels', cc.builtinLabel('ToolSearch', { query: 'x' }) === 'Looking up a tool: x' && cc.builtinLabel('TaskStop', {}) === 'Stopping a task', cc.builtinLabel('TaskStop', {}));
 
+// ---- a skill's message never shows its <skill_request> markup
+{
+  const wrapped = (name, title, input, body = 'Do the research.\nUse the page.') => `<skill_request name="${name}" title="${title}" input="${input}">\n${body}\n</skill_request>`;
+  const full = wrapped('research', 'Research', 'cats &#38; dogs');
+  const forms = [full, full.slice(0, 60), full.slice(0, 31), '<skill_request name="research" …', `${full} and then more`, `before ${full.slice(0, 45)}…`, '</skill_request>'];
+  const none = (label, v) => check(label, !/skill_request/.test(String(v)), JSON.stringify(v));
+  eq('skillText: a whole message reads "Title skill: what was typed"', sl.skillText(full), 'Research skill: cats & dogs');
+  eq('skillText: a cut-off tag still reads as the skill', sl.skillText('<skill_request name="research" …'), 'Research skill');
+  eq('skillText: a tag cut inside the input keeps the words typed so far', sl.skillText('<skill_request name="research" title="Research" input="how do axol'), 'Research skill: how do axol');
+  eq('skillText: no input -> just the skill', sl.skillText(wrapped('translate', 'Translate', '')), 'Translate skill');
+  eq('skillText: text around the tag stays', sl.skillText(`Hi ${wrapped('x', 'X', 'y')} bye`), 'Hi X skill: y bye');
+  eq('skillText: plain text is untouched', sl.skillText('Summarize this page'), 'Summarize this page');
+  for (const f of forms) {
+    none(`label clip: ${f.slice(0, 24)}…`, L.label('Task', { description: f }));
+    none(`failure text: ${f.slice(0, 24)}…`, L.failure('Bash', { command: 'x' }, f).text);
+    none(`taskName: ${f.slice(0, 24)}…`, L.taskName(f));
+    none(`clip: ${f.slice(0, 24)}…`, sl.clip(f));
+    none(`chat title: ${f.slice(0, 24)}…`, require('../src/features/chat-title').autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: f }] }] }));
+    none(`saved title: ${f.slice(0, 24)}…`, require('../src/features/chat-title').cleanSaved(f));
+  }
+  eq('taskName: the card subtitle is what was asked, not the tag', L.taskName(full), 'Cats & dogs');
+  eq('chat title: a skill chat is titled by the skill and its input', require('../src/features/chat-title').autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: full }] }] }), 'Research skill: cats & dogs');
+  eq('saved title: an old title with the tag is made readable', require('../src/features/chat-title').cleanSaved('<skill_request name="research" title="Research" input="cats'), 'Research skill: cats');
+  const { createChatStore } = require('../src/features/chat-store');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-search-'));
+  const enc = (x) => Buffer.from(x).toString('base64');
+  const dec = (x) => Buffer.from(x, 'base64').toString();
+  const store = createChatStore({ dir, encrypt: enc, decrypt: dec });
+  const saved = { id: store.newId() };
+  store.save(saved.id, { messages: [{ role: 'user', content: [{ type: 'text', text: wrapped('research', 'Research', 'axolotl habitats', 'PROMPTBODY') }] }, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }] });
+  const hit = store.search('axolotl');
+  check('search: what was typed after a skill is found', hit.length === 1 && hit[0].id === saved?.id, JSON.stringify(hit));
+  check('search: the skill prompt and its tag are not searchable text', store.search('PROMPTBODY').length === 0 && store.search('skill_request').length === 0, '');
+  check('the list shows the readable title', (store.list()[0]?.title || '') === 'Research skill: axolotl habitats', store.list()[0]?.title);
+  fs.rmSync(dir, { recursive: true, force: true });
+  check('en.json has the skill label strings', en['skill.label'] === '{title} skill: {input}' && en['skill.label.bare'] === '{title} skill', '');
+  check('the chat shows a cut-off skill tag as words too (renderer/skills.js)', /skillText\?\.\(text\)/.test(read('src/renderer/skills.js')), '');
+}
+
 // ---- wiring
 const page = read('src/renderer/chat-page.html');
 const core = read('src/renderer/chat-core.js');

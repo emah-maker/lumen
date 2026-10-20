@@ -8,6 +8,8 @@
 // Used by features/chat-store.js autoTitle; test/sidebar-ux2-units.js.
 
 const TITLE_CHARS = 60;
+// A skill's message (<skill_request ...>) as the words the user sees: "Research skill: what they typed" (renderer/step-labels.js, already loaded).
+const skillText = (s) => (String(s).includes('skill_request') ? require('../renderer/step-labels').skillText(s) : String(s));
 const TRIVIAL = /^(?:hi+|hello|hey|heya|yo|sup|hola|howdy|thanks?|thank you|thx|ok(?:ay)?|test(?:ing)?|[.?]+)(?:\s+(?:there|again|claude|lumen))?[\s!.?,]*$/i;
 const LEAD_IN = /^(?:(?:hey|hi|hello|yo)\b[,!.]?\s+|(?:please|pls|kindly)\b,?\s+|(?:can|could|would|will) you(?: please| kindly)?,?\s+|i (?:want|need|would like|'d like|wanna) (?:you )?to\s+|help me(?: to)?\s+|let's\s+)+/i;
 const PAGE_REF = /\b(?:this|the|current) (?:page|tab|site|website|article|video|doc|document|paper|thread|post|pdf)\b/i;
@@ -61,7 +63,7 @@ function userText(blocks) {
 }
 const userTextOf = remembered((joined) => cleanBlocks(joined.split('\u0000')));
 function cleanBlocks(texts) {
-  return texts.map((b) => String(b)
+  return texts.map((b) => skillText(b)
     .replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/g, '')
     .replace(/<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g, '')
     .replace(/<attached_files>[\s\S]*?<\/attached_files>\s*/g, '') // [uploads] the names and refs of attached files
@@ -71,8 +73,7 @@ function cleanBlocks(texts) {
     // Any other block Lumen adds (its tags are lower_case_with_underscores), closed or cut off, is never a title.
     .replace(/<(?!skill_request\b)([a-z]+_[a-z_]*)\b[^>]*>[\s\S]*?<\/\1>\s*/g, '')
     .replace(/<(?!skill_request\b)[a-z]+_[a-z_]*\b[^>]*(?:>[\s\S]*)?$/g, '')
-    // A skill's message (features/skills.js) is titled by the skill and what was typed after it, not its prompt.
-    .replace(/<skill_request name="[^"]*" title="([^"]*)" input="([^"]*)">[\s\S]*?<\/skill_request>\s*/g, (_m, title, input) => `${title}${input ? `: ${input}` : ''} `)).join(' ').replace(/\s+/g, ' ').trim();
+    ).join(' ').replace(/\s+/g, ' ').trim();
 }
 
 function autoTitle(snapshot) {
@@ -104,7 +105,7 @@ function autoTitle(snapshot) {
 // A title saved earlier, shown now: markup that leaked into it (a cut-off "<screen_capture id=...") is removed. '' when nothing real is left.
 const DIRTY = /<\/?[a-z]+_[a-z_]*|\[screenshot removed/;
 function cleanSaved(title) {
-  const t = String(title ?? '');
+  const t = skillText(title ?? '');
   if (!DIRTY.test(t)) return t;
   return t.replace(/<[a-z]+_[a-z_]*\b[^>]*(?:>[\s\S]*)?$/, '').replace(/<\/?[a-z]+_[a-z_]*>/g, '').replace(/\[screenshot removed by the user\]/g, '').replace(/\s+/g, ' ').trim();
 }
