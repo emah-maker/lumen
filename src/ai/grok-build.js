@@ -560,17 +560,28 @@ function isLumenTool(name, input, terminal = true) {
 // is known: Grok sends a tool's whole input as one input_json_delta, then content_block_stop, and a
 // use_tool whose input never parses counts as not Lumen's. The finished `assistant` message is
 // checked again, for a block the partial events missed.
-function toolWatch({ terminal = true } = {}) {
-  const open = new Map(); // content block index -> { json } for a use_tool still being streamed
-  const judge = (name, input) => (isLumenTool(name, input, terminal) ? null : name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80));
+// spawn: the caller can answer a spawn_subagent request itself (agent.js hands it to Lumen's own helpers), so the watch waits for
+// that call's input (its task) before reporting it; the function's .spawned() then returns the input (null: never readable).
+function toolWatch({ terminal = true, spawn = false } = {}) {
+  const open = new Map(); // content block index -> { json, spawn } for a use_tool (or, with spawn, a spawn_subagent) still being streamed
+  let spawned = null;
+  const judge = (name, input) => {
+    if (spawn && name === 'spawn_subagent') { if (input && typeof input === 'object') spawned = input; return 'spawn_subagent'; }
+    return isLumenTool(name, input, terminal) ? null : name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80);
+  };
   const parse = (json) => { try { return JSON.parse(json); } catch { return undefined; } };
-  return (msg) => {
+  const watch = (msg) => {
     if (msg.type === 'stream_event') {
       const e = msg.event || {};
       const b = e.content_block;
       if (e.type === 'message_start') open.clear();
       else if (e.type === 'content_block_start' && /tool_use$/.test(b?.type || '')) {
         if (b.type !== 'tool_use') return judge(b.name || b.type);
+        if (spawn && b.name === 'spawn_subagent') {
+          if (b.input && Object.keys(b.input).length) return judge(b.name, b.input);
+          open.set(e.index, { json: '', spawn: true });
+          return null;
+        }
         if (b.name !== 'use_tool') return judge(b.name);
         if (b.input?.tool_name) return judge('use_tool', b.input);
         open.set(e.index, { json: '' });
@@ -578,10 +589,11 @@ function toolWatch({ terminal = true } = {}) {
         const block = open.get(e.index);
         block.json += e.delta.partial_json || '';
         const input = parse(block.json);
-        if (input !== undefined) { open.delete(e.index); return judge('use_tool', input); }
+        if (input !== undefined) { open.delete(e.index); return judge(block.spawn ? 'spawn_subagent' : 'use_tool', input); }
       } else if (e.type === 'content_block_stop' && open.has(e.index)) {
+        const block = open.get(e.index);
         open.delete(e.index);
-        return judge('use_tool', null);
+        return judge(block.spawn ? 'spawn_subagent' : 'use_tool', null);
       }
     } else if (msg.type === 'assistant') {
       for (const b of msg.message?.content || []) {
@@ -590,6 +602,21 @@ function toolWatch({ terminal = true } = {}) {
     }
     return null;
   };
+  watch.spawned = () => spawned;
+  return watch;
+}
+
+// A spawn_subagent input (prompt, description) as the jobs Lumen's helpers take: [{ task, urls }], or null when it names nothing.
+function spawnJobs(input) {
+  const task = [input?.description, input?.prompt].map((v) => String(v ?? '').trim()).filter(Boolean).join(': ').slice(0, 2000);
+  return task ? [{ task, urls: [] }] : null;
+}
+
+// The error for a run stopped on a tool that isn't Lumen's. A spawn_subagent gets its own words: Grok's subagents run outside
+// Lumen's approvals (their tool use isn't covered by Lumen's gate), so Lumen never lets them start; it can run the job with its own helpers.
+function offToolText(offTool) {
+  if (offTool === 'spawn_subagent') return 'Lumen stopped Grok Build: it tried to start one of its own helper agents. Those would work outside Lumen\'s approval checks, so Lumen doesn\'t allow them. Lumen\'s own helpers can do the same job once you add an AI key in Settings > AI (Anthropic, OpenAI or Google); or turn on "Give Grok Build full access to this computer" there if you want Grok\'s own helpers.';
+  return `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.`;
 }
 
 // Shares the user's sign-in, and only that, with Lumen's GROK_HOME (see the file header): a hard
@@ -893,14 +920,16 @@ class GrokBuildEngine {
     try { this.kill(child); } catch { /* already gone */ }
   }
 
-  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
-    fullAccess = fullAccess === true && !this.background; // [full access] never for a background task
+  async run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '', routeSubagents = false }) {
+    fullAccess = fullAccess === true && !this.background;
+    routeSubagents = routeSubagents === true && !this.background;
+    // (routeSubagents: agent.js runs a spawn_subagent job with Lumen's helpers and sends the answer back; never for a background task) // [full access] never for a background task
     // [keep connected] Settings > AI > Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
     // long-lived `grok agent stdio` process answers (full access and a chosen effort get a process of their own kind, see
     // grok-warm.js). It returns null when it can't take this message (setting off, images, a start that failed before
     // anything was sent): then the one-process-per-message run below does.
     if (this.keepWarm) {
-      const warm = this.background || workFolder ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, fullAccess, effort });
+      const warm = this.background || workFolder ? null : await this.keepWarm.run({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, fullAccess, effort, routeSubagents });
       if (warm) return warm;
       this.keepWarm.drop(sessionId); // a kept process must not hold a stale copy of a session this run is about to extend
     }
@@ -911,7 +940,7 @@ class GrokBuildEngine {
     // ends; the last run there to end copies a refreshed token back.
     const releaseAuth = holdAuth(userGrokHome(), this.home);
     try {
-      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder });
+      return await this.runReady(ready, { prompt, images, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder, routeSubagents });
     } finally {
       // Not awaited: the reply doesn't wait on it (the next link does). A process still going down (the turn was answered on its
       // `result` line, see attempt) may refresh the token as it ends, so the copy-back comes only after it has gone.
@@ -920,7 +949,7 @@ class GrokBuildEngine {
     }
   }
 
-  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
+  async runReady({ bin, gate }, { prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '', routeSubagents = false }) {
     if (!bin) {
       emit({ type: 'error', text: `Grok Build isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -931,7 +960,7 @@ class GrokBuildEngine {
     const promptFile = path.join(dir, `prompt-${crypto.randomBytes(9).toString('hex')}.json`);
     await fs.promises.writeFile(promptFile, promptBlocks(prompt, capImages(images, emit)), { mode: 0o600 });
     if (workFolder) { try { if (!(await fs.promises.stat(workFolder)).isDirectory()) workFolder = ''; } catch { workFolder = ''; } }
-    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder };
+    const args = { bin, gate, home, dir, promptFile, resume, systemPrompt, model, maxTurns, signal, emit, runAgent, scope, shownModel, fullAccess, quietExpired, effort, workFolder, routeSubagents };
     try {
       // A chat's first message waits for Lumen's tools (see "LUMEN'S TOOLS ON THE FIRST MESSAGE" in
       // the file header): if the model starts answering before Lumen's tools are connected, that
@@ -950,7 +979,7 @@ class GrokBuildEngine {
   // says lumen was connected for the model call (or, lacking that line, until lumenReady); if it
   // wasn't, or the model starts a reply or a tool call first, the process is stopped and
   // { retry: true } comes back instead.
-  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '' }) {
+  async attempt({ bin, gate, home, dir, promptFile, sessionId, resume, systemPrompt, model, maxTurns, signal, emit, waitForLumen, runAgent = null, scope = null, shownModel = null, fullAccess = false, quietExpired = false, effort = '', workFolder = '', routeSubagents = false }) {
     if (signal.aborted) return { text: '', sessionId, stopped: true }; // Stop came before the spawn: Grok never runs
     // The last message's process is still going down (see exitLater): it may hold the session's files, so it is gone before this one starts.
     if (this.exits.size) { await Promise.all([...this.exits]); if (signal.aborted) return { text: '', sessionId, stopped: true }; }
@@ -1006,7 +1035,7 @@ class GrokBuildEngine {
     let buffer = '';
     // Lumen's own tool check (see the file header): the first tool call that isn't Lumen's ends the
     // run and the process tree at once, and nothing after it reaches the sidebar.
-    const watch = this.watch && !fullAccess ? toolWatch({ terminal: !this.background }) : () => null; // [full access] Grok's own tools are expected
+    const watch = this.watch && !fullAccess ? toolWatch({ terminal: !this.background, spawn: routeSubagents }) : () => null; // [full access] Grok's own tools are expected
     let offTool = null;
     // Lumen's gate must have seen this turn's UserPromptSubmit before the model says anything: that
     // proves Grok loaded the hooks, so every tool call of the turn goes through Lumen first. A Grok
@@ -1129,7 +1158,8 @@ class GrokBuildEngine {
     if (offTool) {
       // The session is dropped (sessionId null) so the next message starts a new one instead of
       // resuming a conversation that just reached for another tool.
-      emit({ type: 'error', text: `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
+      if (offTool === 'spawn_subagent' && routeSubagents) { const jobs = spawnJobs(watch.spawned?.()); if (jobs) return { text, sessionId: null, subagent: { tasks: jobs } }; }
+      emit({ type: 'error', text: offToolText(offTool) });
       return { text, sessionId: null, failed: true };
     }
     if (unguarded) {
@@ -1170,4 +1200,4 @@ GrokBuildEngine.prototype.imageRoots = function imageRoots() { return this.dir ?
 // [full access] Grok saves a picture its image tools make in its own session folder (<GROK_HOME>/sessions/...): Lumen's grok-home, or the user's ~/.grok. (agent.js enginePictures also requires it to be written during the run.)
 GrokBuildEngine.prototype.freshRoots = function freshRoots() { return [os.homedir(), this.home, userGrokHome()].filter(Boolean); };
 
-module.exports = { imageToolPaths, notPrefixed, PRE_TOOL_MATCHER, grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
+module.exports = { imageToolPaths, notPrefixed, PRE_TOOL_MATCHER, grokAccountOf, shareAuth, holdAuth, authStats, GrokBuildEngine, findGrok, buildArgs, argsBase, buildEnv, gateScript, GATE_FILE, ARGS_BASE, BUILTIN_TOOLS, DENIED, DEFAULT_MAX_TURNS, userGrokHome, ARGS_FULL, FULL_WATCHDOG_MS, isLumenTool, toolWatch, spawnJobs, offToolText, mcpWait, grokConfig, grokHomeFor, linkAuth, settleAuth, linkAuthAsync, settleAuthAsync, writeIfChanged, promptBlocks, describeFailure, killTree, INSTALL_HINT, parseGrokModels, FALLBACK_MODELS, modelsFallback, servedModel, modelNotice, capImages, modelInfoFrom, readModelInfo, grokUsage };
