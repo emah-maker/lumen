@@ -509,6 +509,21 @@ class CodexEngine {
     let text = '';
     let conversation = sessionId;
     let usage = null;
+    let thread = null; // [context] the thread's own figures for this run (codex-usage.js contextOf)
+    let compacted = false;
+    const startedAt = Date.now() - 1000;
+    let liveAt = 0;
+    // [context] While the reply streams: Codex's log gets a token_count per model call, so the meter moves with the work
+    // (exec itself prints usage only once, at the end). At most one small read of the log's tail every 1.5 s.
+    const live = () => {
+      if (!conversation || Date.now() - liveAt < 1500) return;
+      liveAt = Date.now();
+      try {
+        const file = codexUsage.findRollout(home, conversation);
+        const ctx = file && codexUsage.contextOf(codexUsage.threadStats(file), { startedAt });
+        if (ctx) emit({ type: 'codex_context', ...ctx });
+      } catch { /* the meter just waits for the end */ }
+    };
     let completed = false;
     let failedMsg = null; // turn.failed's message
     let lastError = null; // the latest `error` event (a retry notice until turn.failed says it is final)
@@ -533,11 +548,14 @@ class CodexEngine {
         shown.set(ev.id, ev.text.length);
         text += delta;
         emit({ type: 'text', text: delta });
+        live();
       } else if (ev.kind === 'thinking') emit({ type: 'thinking', text: ev.text });
       else if (ev.kind === 'item') {
         const bad = offItemOf(ev.item, { fullAccess });
         if (bad) { offItem = bad; this.kill(child); }
         else if (ev.phase === 'completed') {
+          if (/compaction|compacted/i.test(String(ev.item?.type || ''))) { compacted = true; emit({ type: 'codex_compacted' }); }
+          live();
           for (const f of itemImagePaths(ev.item)) if (imagePaths.length < 20 && !imagePaths.includes(f)) imagePaths.push(f);
           if (/^file_?change$/i.test(String(ev.item?.type || ''))) for (const c of (Array.isArray(ev.item.changes) ? ev.item.changes : []).slice(0, 20)) if (typeof c?.path === 'string' && writtenPaths.length < 60 && !writtenPaths.includes(c.path)) writtenPaths.push(c.path);
         }
@@ -579,6 +597,12 @@ class CodexEngine {
     if (this.active?.tag === tag) this.active = null;
     gate.close(tag);
 
+    // [context] What the thread's log says now: the last model call (the context in use), the thread's cumulative total, the window.
+    try {
+      const file = conversation ? codexUsage.findRollout(home, conversation) : null;
+      thread = file ? codexUsage.contextOf(codexUsage.threadStats(file), { startedAt }) : null;
+      if (thread && compacted) thread.compacted = true;
+    } catch { /* no log: agent.js estimates */ }
     // The plan's windows as Codex logged them for this run (numbers only), for the Usage panel.
     let rateLimit = null;
     try { rateLimit = codexUsage.scanSessions({ home, days: 1, maxFiles: 2 }).limits || null; } catch { /* no log */ }
@@ -586,12 +610,12 @@ class CodexEngine {
 
     if (offItem) {
       emit({ type: 'error', text: `Lumen stopped Codex: it used something that isn't one of Lumen's browser tools (${offItem}). Codex should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
-      return { text, sessionId: null, failed: true, usage, rateLimit };
+      return { text, sessionId: null, failed: true, usage, rateLimit, thread, usageIsTotal: true };
     }
-    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, model: served, imagePaths, writtenPaths };
+    if (signal.aborted) return { text, sessionId: conversation, stopped: true, usage, rateLimit, thread, usageIsTotal: true, model: served, imagePaths, writtenPaths };
     if (stalled) {
       emit({ type: 'error', text: `Codex stopped responding for ${Math.round(watchdogMs / 1000)} seconds, so Lumen ended it. Send your message again to pick up where it left off.` });
-      return { text, sessionId: conversation, failed: true, usage, rateLimit };
+      return { text, sessionId: conversation, failed: true, usage, rateLimit, thread, usageIsTotal: true };
     }
     if (code === 'ENOENT') {
       this.spec = undefined;
@@ -600,7 +624,7 @@ class CodexEngine {
     }
     if (completed && !failedMsg && (code === 0 || code === null)) {
       this.signedOut = false;
-      return { text, sessionId: conversation, usage, rateLimit, model: served, imagePaths, writtenPaths };
+      return { text, sessionId: conversation, usage, rateLimit, thread, usageIsTotal: true, model: served, imagePaths, writtenPaths };
     }
     const failText = failedMsg || lastError || stderr || '';
     // A resumed thread Codex no longer has: forget it so the next message starts a new one (handed the conversation).
@@ -612,7 +636,7 @@ class CodexEngine {
     const failure = describeFailure(failText, code, { fullAccess });
     if (/not signed in/.test(failure.text)) { this.signedOut = true; this.statusCache = null; }
     emit({ type: 'error', ...failure });
-    return { text, sessionId: conversation, failed: true, usage, rateLimit, planLimit: codexUsage.limitMessage(failText), model: served };
+    return { text, sessionId: conversation, failed: true, usage, rateLimit, thread, usageIsTotal: true, planLimit: codexUsage.limitMessage(failText), model: served };
   }
 
   // Lumen quits: the temp folders of every run started here go now (their processes were just killed).

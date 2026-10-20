@@ -3112,6 +3112,8 @@ class Agent {
     if (settings.gbSession && (settings.gbDir || '') !== gbDir) { delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen; }
     settings.gbDir = gbDir;
     const resume = Boolean(settings.gbSession);
+    // [context] A new session (first message, a model switch, a compaction that dropped the old one) holds none of what the meter last showed.
+    if (!resume && settings.context) { delete settings.context; emit({ type: 'context', context: null }); }
     const picked = engineModel(settings.model);
     // Switched to Grok Build mid-chat (or its session is gone): hand it the conversation so far, same as claudeCodeTurn.
     const handoff = () => {
@@ -3144,10 +3146,33 @@ class Agent {
       workFolder: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('grokbuild', this.browser.effort?.('grokbuild')), // Settings → AI → AI providers
       shownModel: settings.gbShown || null, // a new served model is announced at the top of the reply
+      routeSubagents: !fullAccess && this.subagentsOn(), // [subagents] spawn_subagent is answered by Lumen's own helpers (below), never by Grok's
       signal,
       emit,
     });
     let out = await runGrok(first, settings.gbSession || crypto.randomUUID(), resume);
+    // Grok asked for a subagent of its own. Its subagents would run outside Lumen's approvals, so Lumen runs the job with its own
+    // read-only helpers (delegate) and carries on in a new Grok session that is handed the helpers' answer. Twice at most per message.
+    let lead = '';
+    for (let rounds = 0; out.subagent && !signal.aborted; rounds++) {
+      const helperModel = rounds < 2 ? this.grokHelperModel() : null;
+      if (!helperModel) { emit({ type: 'error', text: require('./grok-build').offToolText('spawn_subagent') }); out = { text: out.text, sessionId: null, failed: true }; break; }
+      lead += (lead && out.text ? '\n\n' : '') + (out.text || '');
+      let answers;
+      try {
+        emit({ type: 'notice', text: 'Grok Build asked for a helper agent, so Lumen is running the job with its own helpers.' });
+        answers = await this.delegate({ tasks: out.subagent.tasks }, { model: helperModel });
+      } catch (err) {
+        if (signal.aborted) throw err;
+        emit({ type: 'error', text: `Lumen's helpers couldn't do the job Grok Build asked for: ${String(err?.message || err).slice(0, 300)}` });
+        out = { text: '', sessionId: null, failed: true };
+        break;
+      }
+      const again = handoff();
+      const note = `<helper_results>\nYou asked for a subagent; Lumen ran that job with its own read-only helpers (web reading and search only, no files or terminal) and this is what they found. Carry on from it; do not call spawn_subagent.\n\n${String(answers).slice(0, 12000)}\n</helper_results>\n\n`;
+      out = await runGrok({ ...again, text: note + again.text }, crypto.randomUUID(), false);
+    }
+    if (lead && out.text !== undefined) out = { ...out, text: [lead, out.text].filter(Boolean).join('\n\n') };
     if (out.expired && !signal.aborted) {
       // [chat history] Grok no longer has this chat's session: a new one starts at once, handed the conversation so far.
       delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen;
@@ -3188,6 +3213,8 @@ class Agent {
     if (settings.agySession && Boolean(settings.agyFull) !== fullAccess) { delete settings.agySession; delete settings.agyModel; }
     settings.agyFull = fullAccess;
     const resume = Boolean(settings.agySession);
+    // [context] A new session (first message, a model switch, a compaction that dropped the old one) holds none of what the meter last showed.
+    if (!resume && settings.context) { delete settings.context; emit({ type: 'context', context: null }); }
     const picked = engineModel(settings.model);
     let text = resume ? interruptedNote(messages) + prompt : prompt;
     let historyImages = [];
@@ -3281,6 +3308,24 @@ ${prompt}` : prompt), historyImages: [] };
     emit({ type: 'turn_start' });
     const engine = this.engineFor('codex');
     const startedAt = Date.now() - 2000; // (see enginePictures)
+    const systemText = systemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess });
+    // [context] The meter moves as soon as the message is sent: what the thread held before (a new thread: nothing) plus what Lumen sends now
+    // (its instructions, the page and tab text, files and the handed-over chat: all in the prompt), by the usual 4 characters a token; Codex's own
+    // figure replaces it while the reply streams and at its end (codexContext below).
+    const sentTokens = compactLib.estimateTokens(String(first.text || '').length + systemText.length);
+    if (!resume) { delete settings.cxTotal; if (settings.context) delete settings.context; }
+    const startTokens = (resume ? settings.context?.tokens || 0 : 0) + sentTokens;
+    let served = picked === 'default' ? null : picked; // the model that answers: Codex's log names it when the pick was the default
+    const codexName = () => { try { return served ? require('./codex').pretty(served) : ''; } catch { return ''; } };
+    const codexContext = (c) => {
+      if (c.slug) served = c.slug;
+      recordContext(messages, { tokens: c.tokens, window: c.window, model: settings.model, name: codexName(), estimated: Boolean(c.estimated) }, emit);
+    };
+    recordContext(messages, { tokens: startTokens, window: resume ? settings.context?.window : 0, model: settings.model, name: codexName(), estimated: true }, emit);
+    const codexEmit = (event) => { // (the engine's own events about the thread's figures: never shown as such)
+      if (event?.type === 'codex_context') codexContext(event);
+      else if (event?.type !== 'codex_compacted') emit(event);
+    };
     const runCodex = (input, sessionId, again) => engine.run({
       scope: taskScope.getStore(), // [parallel CLI chats] see claudeCodeTurn
       prompt: input.text,
@@ -3288,12 +3333,12 @@ ${prompt}` : prompt), historyImages: [] };
       sessionId,
       quietExpired: again, // a resumed thread Codex no longer has comes back { expired } without an error: see below
       model: picked, // 'default' or a Codex model id
-      systemPrompt: systemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
+      systemPrompt: systemText,
       fullAccess,
       workDir: projectFolders.workFolderOf(settings), // [work folder]
       effort: effortLib.clean('codex', this.browser.effort?.('codex')), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
-      emit,
+      emit: codexEmit,
     });
     let out = await runCodex(first, settings.cxSession || null, resume);
     if (out.expired && !signal.aborted) {
@@ -3302,9 +3347,22 @@ ${prompt}` : prompt), historyImages: [] };
       out = await runCodex(handoff(), null, false);
     }
     recordUsage(messages, { model: settings.model, cost: 0 }, emit);
-    const logged = this.reportUsage('codex', { usage: out.usage, rateLimit: out.rateLimit, model: picked === 'default' ? null : picked, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
+    // [usage] Codex's totals are the THREAD's, cumulative (a tool loop's context counted once per model call, every earlier turn again on
+    // a resumed thread): this turn's tokens are the growth since the last turn's total (codex-usage.js turnDelta). A kept app-server
+    // process reports per-turn sums already (usageIsTotal is not set).
+    const th = out.thread || null;
+    const cxUsage = require('./codex-usage');
+    const sameThread = out.sessionId && settings.cxTotal?.id === out.sessionId;
+    let turnTokens = out.usage || null;
+    if (th?.total && out.usageIsTotal) turnTokens = cxUsage.turnDelta(th.total, sameThread ? settings.cxTotal.total : null);
+    if (th?.total && out.sessionId) settings.cxTotal = { id: out.sessionId, total: th.total };
+    const logged = this.reportUsage('codex', { usage: turnTokens ? { ...turnTokens, ...(th ? { contextTokens: th.tokens, contextWindow: th.window || 0 } : {}) } : null, rateLimit: out.rateLimit, model: served, limit: out.planLimit || null, ok: !out.failed && !out.stopped });
     if (logged?.notice) emit({ type: 'notice', text: logged.notice });
-    { const u = out.usage; const tokens = u ? (u.inputTokens || 0) + (u.cacheReadTokens || 0) + (u.cacheWriteTokens || 0) : 0; if (tokens > 0) recordContext(messages, { tokens, model: settings.model, estimated: true }, emit); } // [context] Codex reports no window: chat-usage.js windowFor knows its usual one
+    // [context] The context now: Codex's last model call (its input plus output, the window it reported); with no figure, the estimate
+    // so far plus the reply. A compaction Codex ran by itself is said in the chat.
+    if (th) codexContext(th);
+    else if (!out.failed) recordContext(messages, { tokens: startTokens + compactLib.estimateTokens(String(out.text || '').length), window: settings.context?.window, model: settings.model, name: codexName(), estimated: true }, emit);
+    if (th?.compacted) emit({ type: 'notice', text: `Codex compacted this conversation to make room (it now holds about ${shortCount(th.tokens)} tokens).` });
     let caughtUp = false;
     if (out.sessionId === null) { delete settings.cxSession; delete settings.cxModel; }
     else if (!out.failed && (!out.stopped || out.text)) { settings.cxSession = out.sessionId; settings.cxModel = settings.model; caughtUp = true; }
@@ -4211,15 +4269,24 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/notes]
 
-  async delegate(input) {
+  // The model Lumen's helpers use when the chat's own engine has no API of its own (Grok Build asking for a subagent): the cheap model of
+  // the first provider that has a key. null when none does.
+  grokHelperModel() {
+    for (const [provider, model] of [['anthropic', DEFAULT_MODEL], ['openai', 'openai:gpt-5.6'], ['gemini', 'gemini:gemini-3.8-pro']]) {
+      if (this.getKey(provider)) return subagents.helperModel(model, 'auto');
+    }
+    return null;
+  }
+
+  async delegate(input, { model } = {}) {
     const scope = taskScope.getStore();
     const gate = scope?.gate;
     const emit = gate?.emit || (() => {});
     const signal = gate?.signal || new AbortController().signal;
     const chat = scope?.chat || null;
     const { tasks, dropped } = subagents.cleanTasks(input);
-    const own = chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
-    const cheap = subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
+    const own = model || chat?.settings?.model || this.getOptions().model || DEFAULT_MODEL;
+    const cheap = model ? own : subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto');
     const used = { model: cheap };
     const turn = this.helperTurn({ chat, emit, signal, own, used });
     const taint = gate?.run ? Boolean(taintHolder(gate.run)?.tainted) : false;
