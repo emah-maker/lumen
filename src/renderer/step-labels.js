@@ -317,7 +317,21 @@
     return Object.keys(out).length ? out : null;
   }
 
-  const api = { skillText, hasSkill, create, summarizeCommand, surfaceOf, compactInput, redact, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
+  // The line for read_urls: each site once ("Reading 2 pages on youtube.com in the background"), never the same host twice.
+  const readUrlsLabel = (urls, signedIn = false) => {
+    const list = (Array.isArray(urls) ? urls : []).map((u) => hostOf(String(u || ''))).filter(Boolean);
+    const hosts = [...new Set(list)];
+    const tail = signedIn ? ' (signed in, if you allow it)' : '';
+    if (!hosts.length) return `Reading pages in the background${tail}`;
+    if (hosts.length === 1) return `Reading ${list.length > 1 ? `${list.length} pages on ` : ''}${hosts[0]} in the background${tail}`;
+    const shown = hosts.length > 3 ? `${hosts.slice(0, 2).join(', ')} and ${hosts.length - 2} more sites` : hosts.join(', ');
+    return `Reading ${shown} in the background${tail}`;
+  };
+  // Surface of a step that has none of its own (the card it starts): a web search or page read is "web" (the Browser look, no preview), any other tool "tool".
+  const WEBISH = /^(?:(?:mcp__lumen__)?(?:web_search|read_urls|find_sources|read_pdf|video_overview|video_frames)|WebSearch|WebFetch)$/;
+  const weakSurfaceOf = (name) => (WEBISH.test(String(name || '')) ? 'web' : 'tool');
+
+  const api = { skillText, hasSkill, create, summarizeCommand, surfaceOf, weakSurfaceOf, readUrlsLabel, compactInput, redact, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
   if (typeof module === 'object' && module.exports) {
     // Node: the English strings (main's labels for the saved chat; the units).
     const table = require('../locales/en.json');

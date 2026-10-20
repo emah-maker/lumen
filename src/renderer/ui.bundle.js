@@ -4593,12 +4593,44 @@ function ask(text, images = [], tabs = null, screen, opts = null) {
 
 const ACTING_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'open_tab', 'close_tab', 'switch_tab', 'go_back', 'go_forward', 'reload', 'run_script', 'group_tabs', 'ungroup_tabs', 'hover', 'scroll']);
 
-function settleThinking() {
-  const box = turn?.thinking?.parentElement;
-  if (!box || !turn.thinkingSince || box.dataset.settled) return;
-  box.dataset.settled = '1';
-  box.firstChild.textContent = t('chat.thoughtFor', { n: Math.max(1, Math.round((Date.now() - turn.thinkingSince) / 1000)) });
+
+
+
+function thinkingRow(seg) {
+  if (seg.row) return seg.row;
+  const details = document.createElement('details');
+  details.className = 'thinking';
+  details.innerHTML = '<summary></summary><div></div>';
+  details.firstChild.textContent = t('chat.thinking');
+  seg.row = details;
+  seg.div = details.querySelector('div');
+  if (!window.stepUI?.bare(turn, details)) appendToTurn(details);
+  return details;
 }
+function thinkingEvent(text) {
+  const seg = turn.seg || (turn.seg = { texts: [], ms: 0, since: 0, row: null, div: null });
+  if (!seg.since) { seg.since = Date.now(); seg.texts.push(''); }
+  const chunk = String(text || '');
+  if (chunk.trim() || seg.texts.some((s) => s.trim())) {
+    const last = seg.texts.length - 1;
+    const first = !seg.texts[last].trim() && chunk.trim() && seg.texts.slice(0, last).some((s) => s.trim());
+    thinkingRow(seg);
+    if (first) seg.div.textContent += '\n\n';
+  }
+  seg.texts[seg.texts.length - 1] += chunk;
+  if (seg.div && chunk) seg.div.textContent += chunk;
+}
+
+function settleThinking() {
+  const seg = turn?.seg;
+  if (!seg || !seg.since) return;
+  seg.ms += Date.now() - seg.since;
+  seg.since = 0;
+  const secs = Math.round(seg.ms / 1000);
+  if (!seg.row && secs < 1) return;
+  thinkingRow(seg).firstChild.textContent = t('chat.thoughtFor', { n: Math.max(1, secs) });
+}
+function endThinking() { settleThinking(); if (turn) turn.seg = null; }
 
 
 let lastAsk = null;
@@ -4775,7 +4807,7 @@ function beginTurn() {
   working.className = 'working';
   working.setAttribute('role', 'status');
   working.setAttribute('aria-label', t('chat.thinking'));
-  turn = { text: null, textSource: '', thinking: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
+  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
   setRunning(true);
 }
 
@@ -5008,6 +5040,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; }
 
+  if (event.type === 'card_files' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.filesMade(finishedRun.turn, event.files); return; }
   if (event.type === 'thumb' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.thumb(finishedRun.turn, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId);
@@ -5024,23 +5057,14 @@ window.assistant.onEvent((event) => {
       turn.text = null;
       if (event.type === 'text_block') window.stepUI?.endCard(turn);
       turn.textSource = '';
-      turn.thinking = null;
       break;
     case 'thinking': {
-      if (!turn.thinking) {
-        const details = document.createElement('details');
-        details.className = 'thinking';
-        details.innerHTML = '<summary></summary><div></div>';
-        details.firstChild.textContent = t('chat.thinking');
-        turn.thinking = appendToTurn(details).querySelector('div');
-        turn.thinkingSince = Date.now();
-      }
-      turn.thinking.textContent += event.text;
+      thinkingEvent(event.text);
       moveWorkingToEnd();
       break;
     }
     case 'image': {
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream();
       turn.text = null;
@@ -5054,7 +5078,7 @@ window.assistant.onEvent((event) => {
     }
     case 'file': {
       if (!window.aiFiles || !event.file) break;
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream();
       turn.text = null;
@@ -5069,7 +5093,7 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'text': {
-      settleThinking();
+      endThinking();
       if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
@@ -5078,10 +5102,10 @@ window.assistant.onEvent((event) => {
     case 'retry':
 
       turn.text?.remove();
-      turn.thinking?.closest('details')?.remove();
+      turn.seg?.row?.remove();
+      turn.seg = null;
       turn.text = null;
       turn.textSource = '';
-      turn.thinking = null;
       break;
     case 'tool': {
       settleThinking();
@@ -5091,6 +5115,7 @@ window.assistant.onEvent((event) => {
       const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
       turn.lastSaid = null;
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
+      turn.seg = null;
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
       if (!event.id) step.className = 'step done';
       if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') }));
@@ -5103,11 +5128,11 @@ window.assistant.onEvent((event) => {
       break;
     }
     case 'desktop_card': {
-      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { settleThinking(); break; }
+      if (window.stepUI?.desktop(turn, event, { messages, append: appendToTurn, runId })) { endThinking(); break; }
       const drawn = window.desktopCard?.update(event);
       if (!drawn) break;
       if (drawn.created) {
-        settleThinking();
+        endThinking();
         finishReply(turn.text, turn.textSource);
         endStream();
         turn.text = null;
@@ -5146,6 +5171,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'card_files':
+      window.stepUI?.filesMade(turn, event.files);
+      break;
     case 'thumb':
       window.stepUI?.thumb(turn, event);
       break;
@@ -5159,7 +5187,7 @@ window.assistant.onEvent((event) => {
       showHelperCard(event);
       break;
     case 'plan': {
-      settleThinking();
+      endThinking();
       finishReply(turn.text, turn.textSource);
       endStream();
       turn.text = null;
@@ -5287,6 +5315,7 @@ window.assistant.onEvent((event) => {
 
 function finishTurn(event, { early }) {
   settleThinking();
+  dropEmptyBubbles();
   finishReply(turn.text, turn.textSource, { latest: true });
 
   if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
@@ -5357,6 +5386,15 @@ function queuedToDraft() {
 
 
 
+
+function dropEmptyBubbles() {
+  for (const b of messages.querySelectorAll(':scope > .msg.assistant:not(.reply-actions-only):not(.gen-pics):not(.ai-files):not(.desktop-cards)')) {
+    if (b === turn?.text && turn.textSource?.trim()) continue;
+    if (b.textContent.trim() || b.querySelector('img, svg, video, canvas, button, table, hr, figure, math, pre')) continue;
+    if (b === turn?.text) { turn.text = null; turn.textSource = ''; }
+    b.remove();
+  }
+}
 function lateDone(event) {
   const { bubble } = earlyEnded;
   earlyEnded = null;

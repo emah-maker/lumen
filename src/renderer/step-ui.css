@@ -122,3 +122,19 @@
 .act-card { position: relative; }
 .pref-lite .act-card { animation: none; }
 @media (prefers-reduced-motion: reduce) { .act-card[data-state="working"] .act-icon, .act-card[data-state="approval"] .act-icon { animation: none; } }
+/* The files the AI made: a name that opens the file, "Show in folder" beside it. */
+.act-files { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; }
+.act-files[hidden] { display: none; }
+.act-file { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.act-filelink, .act-fileshow { all: unset; box-sizing: border-box; cursor: pointer; min-width: 0; }
+.act-filelink { color: var(--accent-text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.act-filelink:hover, .act-filelink:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+.act-fileshow { color: var(--muted); font-size: 11px; }
+.act-fileshow:hover, .act-fileshow:focus-visible { color: var(--text); text-decoration: underline; }
+.act-filenote, .act-filemore { color: var(--muted); font-size: 11px; }
+.act-steplink { margin-left: 8px; font-size: 11px; flex: none; }
+/* A card starts compact (header, status line, steps). Its preview opens smoothly when a frame arrives, so the lines below it glide down instead of jumping. */
+@keyframes act-shot-in { from { opacity: 0; max-height: 0; margin-bottom: -10px; } to { opacity: 1; max-height: 230px; margin-bottom: 0; } }
+.act-shot:not([hidden]), .act-shot2:not([hidden]) { animation: act-shot-in var(--t-smooth, 240ms) var(--spring-smooth, ease-out); }
+.pref-lite .act-shot, .pref-lite .act-shot2 { animation: none; }
+@media (prefers-reduced-motion: reduce) { .act-shot:not([hidden]), .act-shot2:not([hidden]) { animation: none; } }
