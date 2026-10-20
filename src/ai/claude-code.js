@@ -243,7 +243,7 @@ let settingsNoticeShown = false; // the suggestion is shown once per Lumen run
 // (claimStep, features/ai-agents.js mcpCallTool). A call that arrives sooner gets its usual row.
 const EARLY_STEP_MS = 300;
 const EARLY_LABELS = { navigate: 'Opening a page', open_tab: 'Opening a tab', click: 'Clicking', click_at: 'Clicking', type_text: 'Typing', press_key: 'Pressing a key', fill_form: 'Filling in a form', batch: 'Running steps', run_macro: 'Running a macro', read_page: 'Reading the page', find: 'Searching the page', web_search: 'Searching the web', find_sources: 'Searching scholarly sources', read_urls: 'Reading pages', screenshot: 'Taking a screenshot', video_overview: 'Looking over the video', video_frames: 'Looking at video frames', run_script: 'Running a script on the page', verify_changes: 'Checking the edits', get_console: 'Reading the console', get_network: 'Reading requests', handle_dialog: 'Answering a dialog', wait_for: 'Waiting', analyze_posts: 'Comparing posts', annotate: 'Drawing on the page' };
-const earlyLabel = (name) => EARLY_LABELS[name] || 'Using a tool'; // (never the raw tool name)
+const earlyLabel = (name) => EARLY_LABELS[name] || stepLabels.defaults.generic(name, {}); // (the tool's name in plain words, never the raw name)
 
 // [full access] A step row for one of the CLI's own tools (Bash, file edits, another MCP server's tool).
 // They run inside the CLI, not through Lumen's MCP server, so their rows come from the stream instead.
@@ -265,8 +265,8 @@ function builtinLabel(name, input = {}) {
   if (n === 'Task' || n === 'Agent') return input.description ? `Subagent: ${clip(input.description, 60)}` : 'Running a subagent';
   if (n === 'Skill') return `Using the ${clip(input.skill || input.command, 40)} skill`;
   const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
-  if (mcp) return `Using ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}`;
-  return stepLabels.en('step.tool'); // (never the raw tool name)
+  if (mcp && mcp[1] !== 'lumen') return `Using ${mcp[1]}: ${mcp[2].replace(/_/g, ' ')}`;
+  return stepLabels.defaults.generic(n, input); // (the name in plain words and its main argument)
 }
 const isLumenTool = (name) => /^mcp__lumen__/.test(String(name || ''));
 // [full access] The message as typed when it is a slash command ("/goal ship it", "/context"), else null.

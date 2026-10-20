@@ -1328,6 +1328,8 @@ function annotateChip(step) {
   }
 }
 
+// A step whose tool has no line above: its name in plain words and its main argument (renderer/step-labels.js generic), else "Using a tool".
+const unknownLabel = (event) => { try { return window.stepLabels?.defaults?.generic(event.name, event.input || {}) || t('step.tool'); } catch { return t('step.tool'); } };
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
   screenshot: () => t('tool.screenshot'),
@@ -1553,7 +1555,7 @@ window.assistant.onEvent((event) => {
       settleThinking(); // (it thought, then acted: "Thought for 3s", not "Thinking" for ever)
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
-      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {}); // (never a raw tool name)
       const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
       turn.lastSaid = null; // (words before a step: that step's live line in the card, not a bubble)
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
@@ -1588,7 +1590,7 @@ window.assistant.onEvent((event) => {
     case 'tool_update': { // a step shown early (its input still streaming) gets its real label
       const step = turn.steps.get(event.id);
       if (!step) break;
-      const fallback = (TOOL_LABELS[event.name] || (() => t('step.tool')))(event.input || {}); // (never a raw tool name)
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {}); // (never a raw tool name)
       if (window.stepUI) window.stepUI.update(turn, step, { ...event, label: event.label || fallback }); else if (event.label) { step.firstChild.textContent = event.label; step.title = event.label; }
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
       break;
