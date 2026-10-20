@@ -91,7 +91,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
       return JSON.stringify({ title: g?.querySelector('.group-title')?.textContent, ids, opts, hide: document.getElementById('pref-hideAiTabs')?.getAttribute('aria-label'), when: document.getElementById('pref-closeAiTabs')?.getAttribute('aria-label'), front: document.getElementById('pref-aiStayOnMyTab')?.getAttribute('aria-label') });
     })()`);
     const r = JSON.parse(rows || '{}');
-    check('settings: the AI tabs group has Hide, When the AI finishes and Bring to front and Keep AI tabs I click on, together', r.title === 'AI tabs' && JSON.stringify(r.ids) === JSON.stringify(['pref-hideAiTabs', 'pref-aiStayOnMyTab', 'pref-closeAiTabs', 'pref-keepViewedAiTabs']), rows);
+    check('settings: the AI tabs group has Group, Hide, When the AI finishes and Bring to front and Keep AI tabs I click on, together', r.title === 'AI tabs' && JSON.stringify(r.ids) === JSON.stringify(['pref-groupAiTabs', 'pref-hideAiTabs', 'pref-aiStayOnMyTab', 'pref-closeAiTabs', 'pref-keepViewedAiTabs']), rows);
     check('settings: When the AI finishes offers Leave open / Ask / Close and keeps the stored values', JSON.stringify(r.opts) === JSON.stringify(['off=Leave open', 'ask=Ask', 'always=Close']) && r.when === 'When the AI finishes', rows);
     check('settings: the row labels use the one phrase', r.hide === 'Hide AI tabs' && /tabs the AI opened/.test(r.front || ''), rows);
     check('settings: Hide AI tabs starts off', (await inTab("document.getElementById('pref-hideAiTabs').checked")) === false && (await prefs()).hideAiTabs !== true);

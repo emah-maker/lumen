@@ -195,6 +195,7 @@ const DEFAULTS = {
   codexKeepConnected: true, // [ai] each Codex chat keeps its own `codex app-server` process between messages (features/codex-warm.js); ~80 MB each while it waits
   grokKeepIdleMinutes: 15, // [ai] an idle kept Grok Build process ends after this many minutes; 0: only when its chat goes
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
+  groupAiTabs: true, // [ai] tabs the AI opens join one folded "AI tabs" group in their window (main.js joinAiGroup); research tabs keep their own "AI: <query>" groups
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
   agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
