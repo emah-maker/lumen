@@ -8,6 +8,7 @@ const REPO = 'https://github.com/emah-maker/lumen';
 // page id -> { title, file in the repo }. The order is the sidebar's.
 const PAGES = {
   readme: { title: 'User guide', file: 'README.md' },
+  install: { title: 'Install and update', file: 'docs/install.md' },
   architecture: { title: 'Architecture', file: 'docs/architecture.md' },
   'auto-model': { title: 'Auto model', file: 'docs/auto-model.md' },
   'local-models': { title: 'Local models', file: 'docs/local-models.md' },
