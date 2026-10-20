@@ -131,10 +131,6 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     check('name claim: a later client with the same name is asked again, never let in by name', events.prompts.length === 2);
     ext.answer(events.prompts[1].prompt.id, 'deny');
     check('...and refused when denied', /not allowed/.test((await next) || ''));
-    check('name claim: a token-less client named like a token app is refused outright, without a prompt', /can’t call itself/.test((await ext.admit(session({ clientName: 'Fake App' }), {})) || '') && /can’t call itself/.test((await ext.admit(session({ clientName: 'fake app' }), {})) || '') && events.prompts.length === 2);
-    for (const label of ['Claude Desktop', 'Cursor', 'VS Code', 'Claude Code']) {
-      check(`name claim: "${label}" is refused for a token-less client`, /can’t call itself/.test((await ext.admit(session({ clientName: label }), {})) || ''));
-    }
     check('...but a token app of that name is fine (the proof decides)', (await ext.admit(session({ clientName: 'whatever', client: real.app.id }), {})) === null);
     // the same trust only by the shared mcp-token: nothing runs without the user's Allow
     const bare = session({ clientName: 'Sneaky' });
@@ -157,6 +153,44 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     check('a second initialize does not move the session to another app or double-count it', twice.externalId === id1 && ext.connectedCount() === 2 - 0 + (ext.list().find((x) => x.name === 'Legacy Agent')?.connected ? 1 : 0) - 1 + 0 || ext.list().find((x) => x.id === id1).connected === 1, ext.connectedCount());
     ext.detach(s);
     check('an unverified client leaves the list when its session ends', !ext.list().some((x) => x.name === 'Legacy Agent'));
+  }
+  // ---------- a token-less client with a name that belongs to an app set up in Lumen: not refused, but never that app
+  {
+    const { ext, events, file } = make();
+    ext.setPolicy(() => 'ask');
+    const real = ext.add({ name: 'Fake App', app: 'claude-desktop' });
+    const asks = async (clientName, decision) => {
+      const before = events.prompts.length;
+      const s = session({ clientName });
+      const p = ext.admit(s, {});
+      await new Promise((r) => setImmediate(r));
+      const shown = events.prompts.slice(before).map((e) => e.prompt.name);
+      for (const e of events.prompts.slice(before)) ext.answer(e.prompt.id, decision);
+      return { s, shown, verdict: await p };
+    };
+    const a = await asks('Fake App', 'allow');
+    check('name claim: a token-less client named like a token app is asked about as "Fake App (no token)", not refused', a.verdict === null && a.shown.join() === 'Fake App (no token)', JSON.stringify(a.shown));
+    const rec = ext.list().find((x) => x.id === a.s.externalId);
+    check('...it is an unverified client with its own record, never the token app, and still always asks before it acts', rec && rec.id !== real.app.id && rec.unverified === true && rec.name === 'Fake App (no token)' && a.s.clientName === 'Fake App (no token)' && ext.beginCall(a.s).ask === true);
+    check('...and nothing about it is saved', !fs.readFileSync(file, 'utf8').includes('(no token)'));
+    for (const label of ['Claude Desktop', 'Cursor', 'VS Code', 'Claude Code']) {
+      const r = await asks(label, 'allow');
+      check(`name claim: "${label}" connects as "${label} (no token)" after the user's Allow`, r.verdict === null && r.shown.join() === `${label} (no token)` && r.s.clientName === `${label} (no token)`, JSON.stringify(r.shown));
+    }
+    for (const name of ['Claude​ Desktop', 'Claude‮ Desktop', 'Ｃursor', 'VS Code', 'Claude﻿ Code', ' fake   app ', 'CLAUDE DESKTOP', 'Cl­aude Desktop']) {
+      const r = await asks(name, 'allow');
+      check(`name normalization: ${JSON.stringify(name)} is still a reserved name (labelled "(no token)")`, r.verdict === null && r.s.clientName.endsWith(' (no token)'), r.s.clientName);
+    }
+    const d = await asks('fake app', 'deny');
+    check('...and Deny still refuses it (the normal "not allowed" answer)', /not allowed/.test(d.verdict || ''));
+    const again = session({ clientName: 'Claude Code' });
+    const p0 = ext.admit(again, {}); await new Promise((r) => setImmediate(r)); for (const e of events.prompts.slice(-1)) ext.answer(e.prompt.id, 'allow'); await p0;
+    again.clientName = 'Claude Code';
+    check('a second initialize with the same name is fine; as another name it is refused', (await ext.admit(again, {})) === null && again.clientName === 'Claude Code (no token)' && (again.clientName = 'Cursor', /can’t change the name/.test((await ext.admit(again, {})) || '')));
+    const withToken = session({ clientName: 'Fake App', client: real.app.id });
+    check('with the right token it is the token app, with its name', (await ext.admit(withToken, {})) === null && withToken.externalId === real.app.id && withToken.clientName === 'Fake App');
+    check('with a wrong token it is refused before it starts (identify)', ext.identify({ client: real.app.id, nonce, proof: proofFor('lmn_000000000000_' + '0'.repeat(48)).lumenClientProof }) === false);
+    ext.revoke(real.app.id);
   }
   {
     const { ext, events, c } = make();
@@ -187,8 +221,6 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     check('a token app\'s name is always its record\'s, whatever a later initialize says', tokenApp.clientName === 'Fake App');
 
     // (4) names are normalized before the reserved-name check
-    const variants = ['Claude\u200b Desktop', 'Claude\u202e Desktop', '\uff23ursor', 'VS\u00a0Code', 'Claude\ufeff Code', ' fake   app ', 'CLAUDE DESKTOP', 'Cl\u00adaude Desktop'];
-    for (const name of variants) check(`name normalization: ${JSON.stringify(name)} is still a reserved name`, /can’t call itself/.test((await ext.admit(session({ clientName: name }), {})) || ''));
     check('...and a name of only invisible characters gets a plain label, not an empty one', cleanName('\u200b\u202e') === '');
 
     // (2) an Allow after "Require a token" went on is refused
@@ -333,7 +365,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
   // ---------- the MCP server's hooks, over the real channel with a fake client
   {
     const userData = tmp();
-    const { ext, events } = make();
+    const { ext, events } = make({ tokenDir: path.join(userData, 'external-app-tokens') });
     ext.setPolicy(() => 'ask');
     const made = ext.add({ name: 'Fake App' });
     ext.add({ name: 'Second App' });
@@ -421,8 +453,12 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     const renamed = await init(legacy, 'Claude Desktop');
     check('over the real channel, a second initialize as another name is refused and the app keeps its name', /can’t change the name/.test(renamed.error?.message || '') && ext.list().some((x) => x.name === 'Legacy Agent') && !ext.list().some((x) => x.name === 'Claude Desktop'), JSON.stringify(renamed));
     const claim = await connect(undefined);
-    const claimed = await init(claim, 'claude-code');
-    check('a token-less client calling itself Claude Code (or any app set up in Lumen) is refused, with no prompt', /can’t call itself/.test(claimed.error?.message || ''), JSON.stringify(claimed));
+    const claimedInit = init(claim, 'Claude Code');
+    await new Promise((r2) => setTimeout(r2, 100));
+    check('a token-less client calling itself Claude Code is asked about as "Claude Code (no token)", not refused', events.prompts.some((p) => p.prompt.name === 'Claude Code (no token)'));
+    ext.answer(events.prompts.find((p) => p.prompt.name === 'Claude Code (no token)').prompt.id, 'allow');
+    const claimed = await claimedInit;
+    check('...and after Allow it connects, as an unverified client with no app privileges', claimed.result?.serverInfo?.name === 'lumen' && ext.list().some((x) => x.name === 'Claude Code (no token)' && x.unverified), JSON.stringify(claimed));
     const skip = await connect(undefined);
     const skipped = await call(skip);
     check('a client that skips initialize gets no tools', skipped.result?.isError === true && /not been allowed/.test(skipped.result.content[0].text), JSON.stringify(skipped));
@@ -437,6 +473,35 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     check('Lumen\'s own engine session is never asked about or counted', ei.result?.serverInfo?.name === 'lumen' && ec.result?.isError === false && !events.prompts.some((p) => p.prompt.name === 'claude-code'), JSON.stringify(ei));
     const engineWithToken = await connect(clientToken.make().token, { engine: 'claude-code-2' });
     check('an engine session is not judged by a client token (a revoked app\'s token in its environment cannot make Lumen\'s own engine fail)', engineWithToken.authed === 'ok', engineWithToken.authed);
+    // the real bridge program (root mcp.js) with NO token in its environment: the name it gives is no credential
+    {
+      ext.add({ name: 'Bridge App' });
+      const promptsBefore = events.prompts.length;
+      const runBridge = (clientName, extraEnv = {}) => new Promise((resolve) => {
+        const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_USERDATA: userData, ...extraEnv };
+        delete env.LUMEN_CLIENT_TOKEN; if (!('LUMEN_CLIENT_TOKEN_FILE' in extraEnv)) delete env.LUMEN_CLIENT_TOKEN_FILE;
+        const child = require('child_process').spawn(process.execPath, [path.join(__dirname, '..', 'mcp.js')], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+        let out = ''; let err = ''; let done = false;
+        const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve({ ...v, out, err, kill: () => { try { child.kill(); } catch {} } }); };
+        const timer = setTimeout(() => finish({ timeout: true }), 15000);
+        child.stdout.on('data', (d) => { out += d; if (out.includes('"id":1')) setTimeout(() => finish({ replied: true }), 100); });
+        child.stderr.on('data', (d) => { err += d; });
+        child.on('exit', () => finish({ exited: true }));
+        child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: clientName } } }) + String.fromCharCode(10));
+      });
+      const spoof = runBridge('Bridge App');
+      await new Promise((r2) => setTimeout(r2, 1500));
+      const asked = events.prompts.slice(promptsBefore).find((p) => p.prompt.name === 'Bridge App (no token)');
+      check('a spawned bridge with no token that calls itself "Bridge App" is asked about as "Bridge App (no token)" and is not that app', Boolean(asked) && ext.list().find((x) => x.name === 'Bridge App').connected === 0);
+      if (asked) ext.answer(asked.prompt.id, 'allow');
+      const spoofed = await spoof;
+      check('after Allow it connects, but as the unverified client, never the app', spoofed.replied === true && /"serverInfo"/.test(spoofed.out) && ext.list().find((x) => x.name === 'Bridge App').connected === 0 && ext.list().some((x) => x.name === 'Bridge App (no token)' && x.unverified), JSON.stringify({ out: spoofed.out.slice(0, 200), err: spoofed.err.slice(0, 200) }));
+      spoofed.kill();
+      await new Promise((r2) => setTimeout(r2, 200));
+      const bogus = path.join(userData, 'bogus.token'); fs.writeFileSync(bogus, 'lmn_' + '0'.repeat(12) + '_' + '0'.repeat(48));
+      const wrong = await runBridge('Bridge App', { LUMEN_CLIENT_TOKEN_FILE: bogus });
+      check('a bridge with a wrong token is refused', wrong.exited === true && /refused/.test(wrong.err) && !/"serverInfo"/.test(wrong.out), JSON.stringify({ out: wrong.out.slice(0, 200), err: wrong.err.slice(0, 200) }));
+    }
     server.disconnectAll(); server.close();
   }
 

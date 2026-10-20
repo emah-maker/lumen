@@ -9,7 +9,7 @@
 //    (LUMEN_CLIENT_TOKEN_FILE) and never holds the secret: nothing to commit by mistake.
 //  - Token-less clients (an older setup, or any program that knows the shared mcp-token) are "unverified": the name they give is only a
 //    label. With "Require a token for every app" on they are refused. Otherwise each connection waits for the user's Allow, which lasts
-//    that session only, is never stored, and always asks before it acts. A name that is a token app's or a built-in app's is refused.
+//    that session only, is never stored, and always asks before it acts. A name that is a token app's or a built-in app's still connects (a real Claude Code often sends no token), but only as "<name> (no token)", an unverified client with none of that app's standing.
 //  - Visibility: `state()` lists the apps working now (a call is running) or paused, for the toolbar pill. Stop ends the app's
 //    calls and connections; Take over pauses it (its calls are refused, with the reason) until Resume.
 //  - "Finished" notice: once an app's calls have stopped for RUN_QUIET_MS after it worked, `onFinished(app)` fires once.
@@ -96,6 +96,8 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   }
   // A name a token-less client may not use: it would pass for an app the user set up (or for one they know).
   const claimed = (name) => { const n = nameKey(name); return n && (Object.entries(APPS).some(([k, l]) => k !== 'other' && l.toLowerCase() === n) || records.some((r) => r.secret && r.name.toLowerCase() === n)); };
+  // What a token-less client is called: its own name, or, when that is a token app's or a built-in app's name, that name marked "(no token)" so it never passes for the app.
+  const unverifiedName = (name) => { let n = cleanName(name); while (claimed(n)) n = `${n} (no token)`; return n; };
   function revoke(id) {
     const rec = byId(id);
     if (!rec) return false;
@@ -147,7 +149,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
       const rec = byId(session.externalId);
       const asked = session.clientName;
       if (rec) session.clientName = rec.name;
-      if (rec && !rec.secret && (claimed(asked) || nameKey(asked) !== nameKey(rec.name))) return 'An app can’t change the name it connected with.';
+      if (rec && !rec.secret && nameKey(unverifiedName(asked)) !== nameKey(rec.name)) return 'An app can’t change the name it connected with.';
       return null;
     }
     if (session.pendingPrompt) return 'This connection is already waiting for the user’s answer in Lumen.';
@@ -159,8 +161,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     const policy = prefs.policy();
     if (policy === 'open') return null;
     if (policy === 'require') return NEEDS_TOKEN;
-    const name = cleanName(session.clientName);
-    if (claimed(name)) return `An app without a token can’t call itself “${name}”: that is the name of an app set up in Lumen. Give it its own token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    const name = unverifiedName(session.clientName); // a name that belongs to an app set up in Lumen is not refused: it connects as an ordinary unverified client, labelled “… (no token)”, with none of that app's standing
     if (queue.length >= MAX_QUEUED) return 'Too many apps are waiting for the user’s answer in Lumen. Try again later.';
     session.pendingPrompt = true;
     let verdict;
