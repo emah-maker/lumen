@@ -13,7 +13,6 @@ const docx = require('../src/word/docx');
 const { createWord } = require('../src/word');
 const { createWordCard, pageLines, pageAround } = require('../src/word/card');
 const { createWordHost } = require('../src/word/com');
-const { createClient } = require('../src/desktop/client');
 const { createZipReader } = require('../src/features/pptx');
 const { Agent, requestFor, validateInput, EXTERNAL_TOOLS, DEFAULT_MODEL } = require('../src/ai/agent');
 const planMode = require('../src/ai/plan-mode');
@@ -79,7 +78,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('hands-off: a changing Word action is refused when the user does not let the AI act, reading still works', /name === 'word' && WORD_ACTING\.has/.test(ag) && new Agent({ handsOff: () => true }).handsOffCheck !== undefined);
     let msg = null;
     try { new Agent({ handsOff: () => true, bypassPermissions: () => false }).handsOffCheck('word', { action: 'insert' }); } catch (e) { msg = e.message; }
-    let msg2 = 'none';
+    let msg2;
     try { new Agent({ handsOff: () => true }).handsOffCheck('word', { action: 'read' }); msg2 = null; } catch (e) { msg2 = e.message; }
     check('hands-off: insert is refused with the reason, read goes through', /Hands-off mode/.test(msg) && msg2 === null, J([msg, msg2]));
     check('approval: Word cards are "app" cards, which Bypass permissions never answers', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: true/.test(ag) && /action !== 'app' && !noBypass && this\.bypassOn\(\)/.test(ag));
