@@ -3515,6 +3515,9 @@ ${prompt}` : prompt), historyImages: [] };
       const cards = picked.slice(0, aiFiles.MAX_FILES).map(({ f, trusted }) => aiFiles.shared.add(f, trusted));
       for (const { f, trusted } of picked.slice(0, aiFiles.MAX_FILES)) if (trusted) this.browser.noteFile?.(f.path, 'ai'); // [files] a file the AI made goes on the Recent list
       const main = aiFiles.pickMain(cards);
+      // Every file the AI wrote (a note, a document, any type) is listed in the run's Files card, clickable (renderer/step-ui.js): no bubble of its own.
+      const listed = writtenFiles.filter((f) => !this.browser.aiOff?.(aiFiles.fileUrlOf(f.path))).slice(0, 12).map((f) => aiFiles.shared.add(f, true));
+      if (listed.length) emit({ type: 'card_files', files: listed });
       for (const card of cards) emit({ type: 'file', file: card, ...(main && card.id === main.id ? { main: true } : {}) });
       return cards.map((c) => ({ type: 'ai_file', path: c.path, trusted: c.trusted }));
     } catch { return []; }
@@ -4635,7 +4638,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
       if (name === 'click' && input.text) return `Clicking ${quote(input.text)}`;
       if (name === 'fill_form') return `Filling in ${input.fields.length} field${input.fields.length === 1 ? '' : 's'}${input.submit ? ' and submitting' : ''}`;
-      if (name === 'read_urls') return `Reading ${input.urls.map(hostOf).join(', ')} in the background${input.as_user === true ? ' (signed in, if you allow it)' : ''}`;
+      if (name === 'read_urls') return require('../renderer/step-labels').readUrlsLabel(input.urls.map(hostOf), input.as_user === true);
       if (name === 'run_script') return 'Running a script on the page';
       if (name === 'propose_plan') return 'Proposing a plan'; // [plan mode]
       if (name === 'verify_changes') return 'Checking what the edits changed';
