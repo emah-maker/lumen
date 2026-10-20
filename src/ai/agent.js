@@ -1182,7 +1182,7 @@ const clipTo = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 function slimTabRow(t) {
   const row = { id: t.id };
   if (t.title) row.title = clipTo(String(t.title), 60);
-  if (t.url) row.url = clipTo(String(t.url), 120);
+  if (typeof t.url === 'string') row.url = clipTo(t.url, 120); // a blank new tab keeps url "" so it reads as blank, not as missing
   for (const key of ['active', 'in_front', 'ai_off']) if (t[key]) row[key] = true;
   if (t.group) row.group = t.group;
   if (t.off_limits) row.off_limits = t.off_limits;
