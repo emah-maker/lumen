@@ -215,6 +215,7 @@ const DEFAULTS = {
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'always', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js). Always by default: a tab the user needs stays (the one in front, typed text, sound, keep:true)
+  keepViewedAiTabs: true, // [ai] a tab the AI opened stays open after it finishes if the user clicked it in the tab strip to look at it (main.js 'tab:switch'); off: it closes like any other
   dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
   dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
