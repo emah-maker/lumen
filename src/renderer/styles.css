@@ -365,23 +365,36 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab.selected:hover { background-color: color-mix(in srgb, var(--surface-raised) 75%, transparent); }
 /* The speaker sits after the title (Chrome), clear of where the ✕ shows: it holds still, so the
    pointer heading for it doesn't see it step aside as the tab lights up. */
-.tab-audio { margin-right: 18px; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
+.tab-audio { margin-right: calc(var(--hit-min) - 2px); transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; } /* (clear of the ✕, which is var(--hit-min) wide, 3px in from the edge) */
 .tab-inner:has(.tab-audio) .tab-title { --title-cut: 0px; }
 .tab.pinned .tab-audio { margin-right: 0; }
 /* A tab with a speaker needs room for icon, speaker and ✕ before any title fits: below about 96px it is icon-only like a narrow tab,
-   so the title isn't squeezed down to a single letter beside the speaker. */
+   so the title isn't squeezed down to a single letter beside the speaker. There the speaker (and the chat's spinner, if there is one)
+   stop being row items and become small badges on the icon's lower corners (the AI sparkle keeps the upper right), so nothing
+   is drawn over anything else and the icon never has to be hidden. The badge is the speaker: a click on it still mutes. */
 @container tab (max-width: 96px) {
-  .tab-inner:has(.tab-audio) { justify-content: center; gap: 2px; padding: 0 4px; }
-  .tab-inner:has(.tab-audio) .tab-title { display: none; }
+  .tab-inner:has(.tab-audio) { position: relative; justify-content: center; gap: 2px; padding: 0 4px; --fav-left: calc(50% - 8px); }
+  .tab.active .tab-inner:has(.tab-audio) { --fav-left: calc(50% - 21px); } /* (icon + gap + ✕ are centred as a row) */
+  .tab-inner:has(.tab-audio) .tab-title, .tab-inner:has(.tab-audio) .tab-off-mark { display: none; }
   .tab:not(.active) .tab-inner:has(.tab-audio) .tab-close { display: none; }
   .tab.active .tab-inner:has(.tab-audio) .tab-close { position: static; margin: 0; }
-  .tab .tab-audio { margin-right: 0; }
-  .tab.active .tab-inner:has(.tab-audio) .tab-favicon { display: none; }
+  .tab .tab-audio, .tab.pinned .tab-audio { position: absolute; z-index: 2; left: calc(var(--fav-left) - 3px); top: calc(50% - 2px); width: 13px; height: 13px; margin: 0; border-radius: 50%; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+  .tab .tab-audio svg { width: 10px; height: 10px; }
+  .tab-inner:has(.tab-audio) .tab-chat-mark { position: absolute; z-index: 2; left: calc(var(--fav-left) + 11px); top: calc(50% - 1px); width: 11px; height: 11px; margin: 0; border-radius: 50%; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+  .tab-inner:has(.tab-audio) .tab-chat-mark svg { width: 11px; height: 11px; }
 }
-@container tab (max-width: 72px) {
-  .tab .tab-audio { margin-right: 0; } /* the ✕ is in the row here (active) or hidden */
-  .tab.active .tab-inner:has(.tab-audio) .tab-favicon { display: none; } /* no room for all three */
+/* A tab whose chat is working carries a 12px mark beside the icon: below about 88px that leaves a title only a letter or two wide ("L…"), so it is icon-only
+   like a narrow tab (the title is in the hover card and the tab's name). */
+@container tab (max-width: 88px) {
+  .tab:not([data-chat=""]) .tab-inner { justify-content: center; gap: 2px; padding: 0 4px; }
+  .tab:not([data-chat=""]) .tab-title { display: none; }
+  .tab:not([data-chat=""]):not(.active) .tab-close { display: none; }
+  .tab.active:not([data-chat=""]) .tab-close { position: static; margin: 0; }
+  .tab:not([data-chat=""]) .tab-chat-mark { margin-left: 0; }
 }
+/* Icons-only side tabs have no ✕ (it is away until the list opens out), so the icon stays centred. */
+.side-tabs.collapsed:not(.peek) .tabs.side .tab .tab-close { display: none; }
+.side-tabs.collapsed:not(.peek) .tabs.side .tab.active .tab-inner:has(.tab-audio) { --fav-left: calc(50% - 8px); }
 /* After closing with ✕, tabs keep their widths until the pointer leaves the strip (app.js), then widen. */
 .tabs.reflowing .tab { transition: flex-basis var(--t-smooth) var(--spring-smooth), background-color var(--t-fast) ease-out, color var(--t-fast) ease-out; }
 

@@ -67,7 +67,7 @@ const CHAT_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'notes:act', // (notes) "Add to notes" under a reply (main.js; features/notes-hub.js)
   'memory:list', 'memory:undo', 'memory:forget', // (memory) the "Remembered" row in the chat and /memory
-  'settings:get', 'settings:set-model', 'openrouter:models',
+  'settings:get', 'settings:set-model', 'settings:set-effort', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', 'skills:offer-save', 'skills:offer-update', // the "/" menu and the save / update cards (features/skills.js)
