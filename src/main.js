@@ -277,7 +277,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -4596,6 +4596,7 @@ function tabMenuTemplate(id) {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
     { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
+    ...projectMenuItems(tab), // [project workspace] Add to project
     { type: 'separator' },
     ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
     { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
@@ -5630,20 +5631,41 @@ let chatId = null; // the open chat
 const temporaryChats = new Set();
 // [projects] A chat's project (features/chat-store.js) puts its instructions in the chat's system prompt (ai/project-instructions.js).
 const pendingProject = new Map(); // chat id -> project id: a new chat started inside a project, recorded when it is first saved
+const projectForChat = (id) => { try { const pid = pendingProject.get(id); return pid ? chats().projects().find((p) => p.id === pid) || null : chats().projectOf(id); } catch { return null; } };
+// [project workspace] What goes to the AI for a project's chat, in the context block (never the fixed system prompt, which has no room): the
+// instructions (4,000 characters at most) and the index of the project's files and pinned pages (2,500 at most: ai/project-context.js);
+// the AI reads the rest with the project_files tool.
+const projectAllows = (messages, what) => { const d = projectForChat(chatIdOfMessages(messages))?.defaults; return what === 'connectors' ? d?.connectors !== false : what === 'mcp' ? d?.mcp !== false : true; };
 const projectBlockFor = (id) => {
   try {
-    const pid = pendingProject.get(id);
-    return require('./ai/project-instructions').block(pid ? chats().projects().find((p) => p.id === pid) : chats().projectOf(id));
+    const project = projectForChat(id);
+    if (!project) return '';
+    const files = projectFiles().list(project.id);
+    const index = files.length || project.links?.length ? require('./ai/project-context').block({ files, links: project.links || [] }) : '';
+    return [require('./ai/project-instructions').block(project), index].filter(Boolean).join('\n\n');
   } catch { return ''; }
 };
+// The chat's project as its settings carry it: the context block, the id (memory saved in the chat belongs to the project), whether the
+// project_files tool is offered (the project has files or pinned pages), and the folder the chat works in.
+function projectSettingsFor(id) {
+  const out = {};
+  try {
+    const project = projectForChat(id);
+    const block = projectBlockFor(id);
+    if (block) out.projectInstructions = block;
+    if (project) { out.projectId = project.id; if (project.links?.length || projectFiles().list(project.id).length) out.projectTools = true; }
+    const work = projectWorkFolderFor(id); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
+    if (work) out.projectWorkFolder = work;
+  } catch { /* no project settings: the chat goes on as any other */ }
+  return out;
+}
+const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder'];
 // The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
 function syncProjectInstructions() {
   const settings = agent.messages.settings;
   if (!settings) return;
-  const block = projectBlockFor(chatId);
-  if (block) settings.projectInstructions = block; else delete settings.projectInstructions;
-  const work = projectWorkFolderFor(chatId); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
-  if (work) settings.projectWorkFolder = work; else delete settings.projectWorkFolder;
+  for (const key of PROJECT_SETTING_KEYS) delete settings[key];
+  Object.assign(settings, projectSettingsFor(chatId));
 }
 function keepPendingProject(id) {
   const pid = pendingProject.get(id);
@@ -5829,11 +5851,16 @@ function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
 
 // `live`: the chat is still running (it was left mid-reply): the sidebar picks the run up, with any
 // approval card it waits on.
+// [project workspace] The chat header's chip (the project's name), and the project's plan default for an empty chat.
+function projectChipFor(id) {
+  const p = projectForChat(id);
+  return p ? { project: { id: p.id, name: p.name, ...(p.defaults?.plan ? { plan: true } : {}) } } : {};
+}
 function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
     : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply } : null;
-  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), effort: agent.openEffort(), ...(live ? { live } : {}) };
+  return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), effort: agent.openEffort(), ...projectChipFor(chatId), ...(live ? { live } : {}) };
 }
 
 // ---------- [background chats] the sidebar AI working on its own (features/chat-runs.js)
@@ -8795,7 +8822,16 @@ const agent = new Agent({
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
   },
   notes: { store: () => notesStore(), changed: () => pushNotes() }, // [notes] the notes tool (ai/notes.js)
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), projectInstructions: projectBlockFor(chatId), projectWorkFolder: projectWorkFolderFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
+  projects: { // [project workspace] the project_files tool's data for a chat, and which tools its project allows
+    files: async (messages) => {
+      const project = projectForChat(chatIdOfMessages(messages));
+      if (!project) return null;
+      const store = projectFiles();
+      return { files: store.list(project.id), links: project.links || [], readText: (f) => store.readText(project.id, f.id), readImage: (f) => store.readImage(project.id, f.id) };
+    },
+    allows: projectAllows,
+  },
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -11023,7 +11059,43 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
   pushAttention();
   return withFolderState(out);
 });
-ipcMain.handle('chats:project-delete', (_e, id) => { const ok = chats().removeProject(String(id)); if (ok) { for (const [chat, pid] of pendingProject) if (pid === String(id)) pendingProject.delete(chat); syncProjectInstructions(); } return ok; }); // (its folder, and the files in it, are never touched)
+// [project workspace] Deleting a project can be undone for a while (the page's toast): the project, its chats' membership, its memory and its
+// files all wait; once the time is over the files go. (A project's folder on disk, and what is in it, is never touched.)
+const PROJECT_UNDO_MS = 12000;
+const pendingProjectDeletes = new Map(); // project id -> { snapshot, memory, timer }
+function finishProjectDelete(id) {
+  const held = pendingProjectDeletes.get(id);
+  if (!held) return;
+  clearTimeout(held.timer);
+  pendingProjectDeletes.delete(id);
+  projectFiles().removeProject(id).catch(() => {});
+}
+ipcMain.handle('chats:project-delete', (_e, id) => {
+  id = String(id);
+  const snapshot = chats().projectSnapshot(id);
+  const ok = chats().removeProject(id);
+  if (!ok) return false;
+  for (const [chat, pid] of pendingProject) if (pid === id) pendingProject.delete(chat);
+  let gone = [];
+  try { gone = memory().dropProject(id); memoryEdited(); } catch { /* memory off or unreadable: nothing to drop */ }
+  finishProjectDelete(id); // (a second delete of a restored one: the first timer is over)
+  pendingProjectDeletes.set(id, { snapshot, memory: gone, timer: setTimeout(() => finishProjectDelete(id), PROJECT_UNDO_MS) });
+  syncProjectInstructions();
+  pushAttention();
+  return ok;
+});
+ipcMain.handle('chats:project-undo', (_e, id) => {
+  id = String(id);
+  const held = pendingProjectDeletes.get(id);
+  if (!held) return null;
+  if (!chats().restoreProject(held.snapshot)) return null;
+  clearTimeout(held.timer);
+  pendingProjectDeletes.delete(id);
+  try { memory().restoreEntries(held.memory); memoryEdited(); } catch { /* the memory could not be put back */ }
+  syncProjectInstructions();
+  pushAttention();
+  return projectById(id);
+});
 ipcMain.handle('chats:project-set', (_e, id, projectId) => {
   const before = [[String(id), projectIdOf(String(id))]];
   const ok = chats().setProject(String(id), projectId ? String(projectId) : null);
@@ -11068,7 +11140,11 @@ ipcMain.handle('chats:new-in-project', (event, projectId) => {
   if (!chats().projects().some((p) => p.id === String(projectId))) return null;
   startNewChat(event);
   pendingProject.set(chatId, String(projectId));
+  // [project workspace] The project's default model starts this chat (only this chat: the saved pick of every other chat is not changed).
+  const want = projectById(String(projectId))?.defaults?.model;
+  if (want) { try { if (effectiveModel(want) === want) { agent.setModel(want); shownPick = want; announceModelIfChanged(); } } catch { /* the saved pick stays */ } }
   syncProjectInstructions();
+  chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); // (the other views now know the chat's project)
   return chatView();
 });
 // [project folders] The folder picker of the project editor ("Use an existing folder…").
@@ -11138,6 +11214,121 @@ ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
     }
   } catch (err) { return { ok: false, reason: 'error', message: String(err?.message || err).slice(0, 200) }; }
 });
+// ---------- [project workspace] files, pinned pages, memory and settings of a project (ai/project-context.js, features/project-files.js)
+let projectFilesStore = null;
+function projectFiles() {
+  if (projectFilesStore) return projectFilesStore;
+  projectFilesStore = require('./features/project-files').createProjectFilesStore({
+    dir: path.join(app.getPath('userData'), 'project-files'),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+    available: () => safeStorage.isEncryptionAvailable(),
+  });
+  // Folders of projects that are gone (Lumen quit inside a delete's Undo time) are removed, a while after the first use.
+  setTimeout(() => { try { projectFilesStore.purgeOrphans(new Set([...chats().projects().map((p) => p.id), ...pendingProjectDeletes.keys()])).catch(() => {}); } catch { /* next time */ } }, 8000).unref?.();
+  return projectFilesStore;
+}
+const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
+const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); };
+// Everything the project page shows about one project.
+ipcMain.handle('chats:project-get', async (_e, id) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const store = projectFiles();
+  let memoryEntries = [];
+  try { memoryEntries = memory().list().filter((e) => e.project === p.id).sort((a, b) => b.updated - a.updated); } catch { /* memory unreadable */ }
+  return { project: withFolderState(p), files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+});
+// Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
+// text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.
+ipcMain.handle('chats:project-files-add', async (_e, id, list) => {
+  const p = projectById(String(id));
+  if (!p || !Array.isArray(list)) return null;
+  const store = projectFiles();
+  const results = [];
+  let total = 0;
+  for (const item of list.slice(0, 20)) {
+    const bytes = item?.bytes ? Buffer.from(item.bytes) : null;
+    total += bytes ? bytes.length : 0;
+    if (!bytes || total > 200 * 1024 * 1024) { results.push({ ok: false, name: String(item?.name || 'file').slice(0, 120), error: 'This file could not be read.' }); continue; }
+    results.push(await store.add(p.id, { name: String(item.name || 'file'), bytes }));
+    await new Promise((resolve) => setImmediate(resolve)); // (a PDF is read on this thread: the window gets a turn between files)
+  }
+  projectChanged();
+  return { results, files: store.list(p.id), totals: store.totals(p.id) };
+});
+ipcMain.handle('chats:project-file-remove', async (_e, id, fileId) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  try { await projectFiles().remove(p.id, String(fileId)); } catch { return null; }
+  projectChanged();
+  return { files: projectFiles().list(p.id), totals: projectFiles().totals(p.id) };
+});
+// Search inside one project: its files' text (and its pinned pages' titles). The chats are searched by chats:search.
+ipcMain.handle('chats:project-search', async (_e, id, query) => {
+  const p = projectById(String(id));
+  const q = String(query ?? '').trim().slice(0, 200);
+  if (!p || !q) return [];
+  const ctx = require('./ai/project-context');
+  return ctx.search(await projectFiles().texts(p.id), q, { max: 12 });
+});
+// A pinned page: { add: { url, title } } or { remove: url }. http and https addresses only. Answers the project, or null.
+ipcMain.handle('chats:project-link', (_e, id, change) => {
+  const p = projectById(String(id));
+  if (!p || !change || typeof change !== 'object') return null;
+  let links = (p.links || []).map((l) => ({ ...l }));
+  if (change.remove) links = links.filter((l) => l.url !== String(change.remove));
+  else if (change.add) {
+    if (links.length >= 25) return { error: 'full' };
+    links.push({ url: String(change.add.url || '').slice(0, 2000), title: String(change.add.title || '').slice(0, 200) });
+  }
+  const out = chats().saveProject({ id: p.id, name: p.name, links });
+  if (out && change.add && !out.links?.some((l) => l.url.startsWith(String(change.add.url).split('#')[0]))) return { error: 'invalid' };
+  if (out) projectChanged();
+  return out && withFolderState(out);
+});
+// "Add this tab to the project": from the chat's + menu (the open chat's project, else the one named) and from a tab's menu. The tab is the one the sender
+// looks at (the chat page: the tab it works with). Answers { ok, project, title } or { ok: false, reason }.
+function addTabToProject(tab, projectId) {
+  const p = projectById(String(projectId || ''));
+  if (!p) return { ok: false, reason: 'no-project' };
+  const url = tab ? tabUrl(tab) : '';
+  if (!isWebUrl(url) || tab.isolated) return { ok: false, reason: 'not-web' };
+  const title = (alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '') || '';
+  if ((p.links || []).some((l) => l.url === String(new URL(url).href.replace(/#.*$/, '')))) return { ok: true, project: p, title, already: true };
+  if ((p.links || []).length >= 25) return { ok: false, reason: 'full' };
+  const out = chats().saveProject({ id: p.id, name: p.name, links: [...(p.links || []), { url, title }] });
+  if (!out) return { ok: false, reason: 'failed' };
+  projectChanged();
+  return { ok: true, project: out, title };
+}
+ipcMain.handle('chats:project-add-tab', (event, projectId) => {
+  const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
+  return addTabToProject(tab, projectId || projectIdOf(chatId));
+});
+// A project's own memory (Settings → AI and agents → Memory lists everything; this is the project's part).
+ipcMain.handle('chats:project-memory-forget', (_e, id, entryId) => {
+  try { const e = memory().list().find((x) => x.id === String(entryId) && x.project === String(id)); if (!e) return false; memory().forget(e.id); memoryEdited(); return true; } catch { return false; }
+});
+// A project's settings (its defaults): the model a new chat starts with, plan first, and the user's connectors and MCP tools in its chats.
+ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const d = defaults && typeof defaults === 'object' ? defaults : {};
+  const out = chats().saveProject({ id: p.id, name: p.name, defaults: { model: String(d.model || '').slice(0, 120), plan: d.plan === true, connectors: d.connectors !== false, mcp: d.mcp !== false } });
+  if (out) projectChanged();
+  return out && withFolderState(out);
+});
+// Tab menu → Add to project: one entry per project (the 20 most recent).
+const projectMenuItems = (tab) => {
+  try {
+    const list = chats().projects().slice().sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0)).slice(0, 20);
+    if (!list.length) return [];
+    const url = tabUrl(tab);
+    return [{ label: t('menu.addToProject'), enabled: isWebUrl(url) && !tab.isolated, submenu: list.map((p) => ({ label: menuLabel(p.name, 60), click: () => { const r = addTabToProject(tab, p.id); toast(r.ok ? t(r.already ? 'menu.projectAlready' : 'menu.projectAdded', { name: menuLabel(p.name, 40) }) : t('menu.projectAddFailed')); } })) }];
+  } catch { return []; }
+};
+if (TEST) global.__projectWorkspace = { info: (id) => { const t = allTabsEverywhere().find((x) => x.id === id); return t ? { url: tabUrl(t), alive: alive(t), iso: !!t.isolated } : null; }, files: () => projectFiles(), blockFor: (id) => projectBlockFor(id), settingsFor: (id) => projectSettingsFor(id), addTab: (tabId, pid) => addTabToProject(allTabsEverywhere().find((x) => x.id === tabId), pid), menuItems: (tabId) => projectMenuItems(allTabsEverywhere().find((x) => x.id === tabId)).map((i) => ({ label: i.label, enabled: i.enabled !== false, items: (i.submenu || []).map((s) => s.label) })), pendingDeletes: () => [...pendingProjectDeletes.keys()], memoryEntries: () => memory().list(), tools: (id) => (agent.messages.settings?.projectTools === true), chatSettings: () => ({ projectId: agent.messages.settings?.projectId || null, projectTools: agent.messages.settings?.projectTools === true }) };
 // [work folder] The open chat's own working folder (chats outside a project, or a project chat that works elsewhere): get / pick / set / clear / open.
 // Answers { ok, info: { path, shown, source, missing } | null }. A drive root or the home folder needs `confirmed` (reason 'root' | 'home').
 ipcMain.handle('chats:work-folder', async (event, action, arg, confirmed) => {
@@ -11272,8 +11463,8 @@ function memorySearchChats(query, exclude) {
     return { id: h.id, title: c?.title || '', date: c?.updated ? new Date(c.updated).toISOString().slice(0, 10) : '', snippet: h.snippet };
   });
 }
-require('./ai/agent').setMemorySource({ on: memoryOn, text: () => memory().block() });
-const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated) });
+require('./ai/agent').setMemorySource({ on: memoryOn, text: (project) => memory().block({ project: project || null }) }); // ([project workspace] a project's chats also see what was saved for it)
+const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated).map((e) => (e.project ? { ...e, projectName: projectById(e.project)?.name || '' } : e)) });
 const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
 // The chat's row and /memory (the sidebar and the chat page).
 ipcMain.handle('memory:list', () => memoryView());
@@ -11306,13 +11497,15 @@ function syncService() {
       widgets: () => P.widgets({ read: readSettings, write: (patch) => writeSettings({ ...readSettings(), ...patch }), refresh: () => { try { refreshNewTabs(); } catch { /* not set up yet */ } } }),
       history: () => P.history({ map: () => history, ready: async () => { await historyReady; return historyLoaded; }, save: saveHistorySoon, bump: () => { historyVersion++; }, isWorthImporting: (u) => importer.isWorthImporting(u) }),
       chats: () => P.chats({ store: chats(), busy: (id) => id === chatId || chatRuns.has(id) }),
+      projects: () => P.projects({ store: chats(), removed: (id) => { projectFiles().removeProject(id).catch(() => {}); } }), // [project workspace] the text and settings of projects
+      'project-files': () => P.projectFiles({ store: projectFiles(), projectIds: () => chats().projects().map((p) => p.id) }), // their files' text, up to a size
       passwords: () => P.passwords({ vault: passwords().vault, unavailable: () => passwords().unavailable() || (readSettings().savePasswords === true ? null : 'off') }),
     }[kind]?.()),
     onApplied: (kinds) => {
       try {
         if (kinds.includes('bookmarks')) { sendTabs(); managers.pushBookmarks(); }
         if (kinds.includes('history')) historyVersion++;
-        if (kinds.includes('chats')) pushAttention();
+        if (kinds.includes('chats')) { pushAttention(); syncProjectInstructions(); } // ([project workspace] a project's text or files came in)
         if (kinds.includes('settings')) { settingsBackend.pushUiPrefs(); refreshNewTabs(); }
         if (kinds.includes('widgets')) { refreshNewTabs(); for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); }
       } catch { /* a window is closing */ }
@@ -12027,7 +12220,8 @@ ipcMain.handle('settings:set-key', (_e, key) => {
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
-  connectorTools: () => connectorsFacade.defs(), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools)
+  connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
+  projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
