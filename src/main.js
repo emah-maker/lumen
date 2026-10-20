@@ -11983,6 +11983,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
   connectorTools: () => connectorsFacade.defs(), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools)
+  helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)

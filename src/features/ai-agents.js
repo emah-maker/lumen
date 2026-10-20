@@ -370,7 +370,12 @@ function setupAiAgents(deps) {
   // [connectors] The connector tool (the user's connected accounts) is offered only to a run Lumen itself started and still owns: its per-run
   // random tag (mcp config / bearer token Lumen writes into that run's own temp config) is what proves it. An outside client has no such tag,
   // so it never sees the tool and is refused if it names it. A background task's run is left out too (nobody there to confirm a write).
-  const runTools = (session) => (session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)) ? deps.connectorTools?.() || [] : []);
+  // [cli helpers] The same runs are offered delegate where their engine has no subagent of its own that passes Lumen's approvals (agent.js cliHelperToolDefs).
+  const runTools = (session) => {
+    if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
+    const owner = engineForSession(session);
+    return [...(deps.connectorTools?.() || []), ...(deps.helperTools?.(owner?.kind, owner) || [])];
+  };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
   // own, so its MCP token file is never another chat's).
