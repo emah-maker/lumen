@@ -112,7 +112,8 @@
       try {
         const env = /^\s*\\begin\{/.test(tex);
         const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, ''));
-        const src = display === 'inline' && !env ? `\\displaystyle ${clean}` : clean;
+        const lone = display === false && new RegExp('^\\s*-?\\\\frac\\{[^{}]*\\}\\{[^{}]*\\}\\s*$').test(tex);
+        const src = (display === 'inline' || lone) && !env ? `\\displaystyle ${clean}` : clean;
         const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
         if (display === true) return `<div class="math-block">${html}</div>`;
 
@@ -543,8 +544,43 @@
     return `<div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
 
-  function render(source) {
-    const { text, maths } = liftMath(liftRawSvg(String(source ?? '')));
+
+
+
+
+  const FRAC_PROTECT = /(`+[^`\n]*`+|\[[^\]\n]*\]\([^)\n]*\)|<[^>\n]+>|(?:https?:\/\/|www\.)\S+|\d+)/;
+  const FRAC = /(^|[^\w./\\:@#$%&*+=~<>-])([-−]?)(\d{1,4})\/(\d{1,4})(?![\w/\\@%]|-\w|[.,:]\d)/g;
+  const FRAC_NOT = new Set(['24/7', '24/365', '9/11', '3/11', '1/1']);
+  const FRAC_LABEL = /\b(?:page|pages|pp?|slide|slides|step|steps|question|q|chapter|ch|section|sec|part|item|figure|fig|table|problem|vol|volume|no|number|episode|ep|lesson|unit|week|day|round|game|set|rank|score)\.?\s*#?\s*$/i;
+  function fractionize(text, maths) {
+    let fence = '';
+    return String(text).split('\n').map((line) => {
+      const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) { if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = ''; return line; }
+      if (f) { fence = f[1]; return line; }
+      return line.split(FRAC_PROTECT).map((part, k) => {
+        if (k % 2) return part;
+        return part.replace(FRAC, (all, lead, sign, n, d, at) => {
+          const num = Number(n);
+          const den = Number(d);
+          const before = part.slice(0, at + lead.length);
+          if (!den || !num || num === den || FRAC_NOT.has(`${n}/${d}`) || /^[-−]/.test(lead)) return all;
+          if (sign && !/(^|[\s([{,;:])$/.test(before)) return all;
+          if (num >= 1 && num <= 12 && den >= 13 && den <= 31 && den !== 16) return all;
+          if (FRAC_LABEL.test(before)) return all;
+          maths.push({ tex: `${sign ? '-' : ''}\\frac{${n}}{${d}}`, display: 'inline' });
+          return `${lead}${maths.length - 1}`;
+        });
+      }).join('');
+    }).join('\n');
+  }
+
+
+  function render(source, opts) {
+    const lifted = liftMath(liftRawSvg(String(source ?? '')));
+    const { maths } = lifted;
+    const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
+    const text = stack ? fractionize(lifted.text, maths) : lifted.text;
     return dropMath(renderText(text, maths), maths);
   }
 
@@ -805,7 +841,7 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, fractionize, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();
 ;
 // ---- usage-bars.js
@@ -14239,6 +14275,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
+
 (() => {
   const slash = window.slashCommands;
   const newChat = document.getElementById('new-chat');
@@ -14477,6 +14514,22 @@ $('agent-stop')?.addEventListener('click', () => {
       open.onclick = () => window.lumenPrefs?.openSettingsPage('memory');
       box.append(' ', open);
       note(box);
+      return { ok: true };
+    },
+  });
+  slash.register({
+    name: 'fractions',
+    label: tr('slash.fractions', 'Prefer fractions'),
+    description: tr('slash.fractions.description', 'Turn Prefer fractions on or off: /fractions on. The AI writes exact fractions, not decimals, in new chats.'),
+    hint: tr('slash.fractions.hint', 'on or off, then press Enter'),
+    takesInput: true,
+    async run({ input }) {
+      const api = window.assistant?.preferFractions;
+      if (!api) return { ok: false, message: tr('slash.fractions.none', 'Prefer fractions is in Settings → AI and agents.') };
+      const word = String(input || '').trim().toLowerCase();
+      if (word !== 'on' && word !== 'off') return { ok: false, message: tr('slash.fractions.usage', 'Type /fractions on or /fractions off.') };
+      const now = await api(word === 'on');
+      notice(now ? tr('slash.fractions.on', 'Prefer fractions is on. New chats write exact fractions (stacked), not decimals.') : tr('slash.fractions.off', 'Prefer fractions is off.'));
       return { ok: true };
     },
   });
@@ -15255,6 +15308,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode }));
     if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers !== false }));
     if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
+    if ('preferFractions' in p) window.lumenPreferFractions = p.preferFractions === true;
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };
