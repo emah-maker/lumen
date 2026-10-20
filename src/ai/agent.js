@@ -1183,7 +1183,7 @@ const clipTo = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 function slimTabRow(t) {
   const row = { id: t.id };
   if (t.title) row.title = clipTo(String(t.title), 60);
-  if (t.url) row.url = clipTo(String(t.url), 120);
+  if (typeof t.url === 'string') row.url = clipTo(t.url, 120); // a blank new tab keeps url "" so it reads as blank, not as missing
   for (const key of ['active', 'in_front', 'ai_off']) if (t[key]) row[key] = true;
   if (t.group) row.group = t.group;
   if (t.off_limits) row.off_limits = t.off_limits;
@@ -2508,7 +2508,8 @@ class Agent {
 
     // [generated images] "draw a cat", "/image a cat": made by the model's own image API when it has one, otherwise said.
     // [image routing] A request that points at something with nothing to read (no readable tab, attachment or earlier message): asked once.
-    if (needsContext && !images.length && !wanted.length && !attachedFiles && !page && !this.skillRun && !this.hasConversation(messages) && !this.tabHasContent(tab)) {
+    // (Not on the chat page: it has no tab of its own, the user's other tabs and downloads are still there to read, so the model goes and looks.)
+    if (needsContext && extra.fromPage !== true && !images.length && !wanted.length && !attachedFiles && !page && !this.skillRun && !this.hasConversation(messages) && !this.tabHasContent(tab)) {
       const text = imageRouter.noContextAsk({ tab: this.noContextTabLabel(tab) });
       emit({ type: 'turn_start' });
       emit({ type: 'text', text });
