@@ -141,7 +141,7 @@ const SEND_LONG = `(async () => {
 
     // ---- the + menu: opens, arrow keys, Escape, and the rows keep working
     await ui.click('#composer-plus');
-    let m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, expanded: document.getElementById('composer-plus').getAttribute('aria-expanded'), rows: [...document.querySelectorAll('#composer-menu [role^="menuitem"]')].map((e) => e.id) }));
+    let m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, expanded: document.getElementById('composer-plus').getAttribute('aria-expanded'), rows: [...document.querySelectorAll('#composer-menu [role^="menuitem"]')].filter((e) => !e.hidden).map((e) => e.id) }));
     check('+ opens a menu with Screenshot, Attach files and Plan', m.open && m.expanded === 'true' && m.rows.join() === 'screen-btn,attach,plan-chip', JSON.stringify(m));
     await ui.keyboard.press('Escape');
     m = await ui.evaluate(() => ({ open: !document.getElementById('composer-menu').hidden, focus: document.activeElement.id }));
@@ -238,7 +238,7 @@ const SEND_LONG = `(async () => {
     const lcPage = await inPage(LONG_CHAT);
     check('long chat (chat page): opaque composer, and the last message ends above it (idle and with six lines typed)', Boolean(lcPage) && lcPage.alpha === 255 && lcPage.greeting === false && lcPage.count >= 10 && sentPage >= 10 && lcPage.gapIdle >= 0 && lcPage.gapTyped >= 0, JSON.stringify(lcPage));
     const rows = await inPage(`[...document.querySelectorAll('#composer-menu [role^="menuitem"]')].map((e) => e.id).join() + '|' + Boolean(document.getElementById('send-more'))`);
-    check('chat page: the + menu has Attach files and Plan (no screenshot row there), and no background chevron', rows === 'attach,plan-chip|false', rows);
+    check('chat page: the + menu has Attach files and Plan (no screenshot row there), and no background chevron ("Add this tab to the project" is there too, but only shown inside a project)', rows === 'attach,plan-chip|false', rows);
     await inPage(`document.getElementById('composer-plus').click()`);
     const open = await inPage(`!document.getElementById('composer-menu').hidden`);
     check('chat page: + opens its menu', open === true, open);
