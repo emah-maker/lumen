@@ -16,7 +16,7 @@
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/emah-maker/lumen/releases).
+Download the latest build from [Releases](https://github.com/emah-maker/lumen/releases). Each release lists which file is for which computer; the [install guide](docs/install.md) walks through it step by step.
 
 | Computer | File |
 |---|---|
@@ -360,6 +360,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 
 ## Documentation
 
+- [Install and update](docs/install.md): which file to download, installing on Windows and Mac, first launch, how updates work, and troubleshooting
 - [Architecture](docs/architecture.md): processes, the UI and tabs, the AI and its approvals, outside agents, updates
 - [Let other apps use Lumen](docs/external-apps.md): set up Claude Desktop, Cursor, VS Code and Claude Code with a token each, and watch, stop or revoke them
 - [Connectors](docs/connectors.md): let the AI use Canvas, Gmail, Google Calendar, GitHub, Todoist and Notion once you connect them, what each can read and do (including the writes it asks you to allow), and where the secrets go

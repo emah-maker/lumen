@@ -102,7 +102,7 @@ process.stdin.on('data', async (d) => {
   ui.on('close', () => console.log('UI CLOSED', stderr.join('').slice(-1500)));
   ui.on('pageerror', (e) => errors.push(e.message));
   await ui.waitForSelector('.tab');
-  await app.evaluate(() => { global.__settings.backend.set('sidebarNewChat', false); global.__settings.backend.set('graphicsMode', 'full'); }); // (Light, which an integrated GPU picks on its own, refreshes only on navigation: covered below)
+  await app.evaluate(() => { global.__settings.backend.set('sidebarNewChat', false); global.__settings.backend.set('graphicsMode', 'full'); global.__settings.backend.set('closeAiTabs', 'off'); }); // (closeAiTabs off: the card's hide/show switch below needs the AI's tab still open; the close itself is close-ai-tabs.js) (Light, which an integrated GPU picks on its own, refreshes only on navigation: covered below)
 
   // ---- the fake Claude API client: scripted steps per request, narration first, a pause in the 'wait' tool
   await app.evaluate(() => {
