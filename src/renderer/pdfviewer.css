@@ -16,7 +16,8 @@ button[disabled] { opacity: 0.4; }
 #bar a.button { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
 button.primary { background: var(--accent-deep); color: var(--on-accent); }
 #pageNumber { width: 3.2em; text-align: center; font-variant-numeric: tabular-nums; }
-#pageCount { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+#pageCount { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 5.5ch; } /* room for "/ 1234" from the start, so the page count arriving does not move the toolbar */
+#zoom { width: 9.5em; } /* one width for every choice, so "Fit width" turning into a custom "137%" does not move the toolbar */
 #findBar { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: var(--bg); border-bottom: 1px solid var(--hairline); z-index: 3; }
 #findBar[hidden], #message[hidden], #password[hidden] { display: none; }
 #findInput { width: 260px; }
@@ -25,6 +26,8 @@ button.primary { background: var(--accent-deep); color: var(--on-accent); }
 #stage { position: relative; flex: 1; min-height: 0; }
 #viewerContainer { position: absolute; inset: 0; overflow: auto; outline: none; background: var(--stage); }
 .pdfViewer { padding: 8px 0 24px; }
+/* The pages stay unseen until the opening zoom is applied: pdf.js lays them out at a first scale and then at "Fit width", and a page seen at both is a layout shift. */
+#viewer:not(.sized) { visibility: hidden; }
 .pdfViewer .page { margin: 12px auto; border: 0; box-shadow: var(--page-shadow); background-clip: content-box; background-color: var(--on-accent); }
 .pdfViewer .page .loadingIcon { position: absolute; inset: 0; display: block; }
 .pdfViewer .page .loadingIcon::after { content: ""; position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px; border: 2px solid rgba(0, 0, 0, 0.15); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
