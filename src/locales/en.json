@@ -2235,6 +2235,8 @@
   "context.strip.estimated": "Context ~{used} / {total}",
   "context.more": "Click for the breakdown (/context).",
   "context.compact": "Type /compact to summarize the chat and free up room, or click for the breakdown.",
+  "context.auto": "This AI compacts the chat by itself when it fills up. New chat starts fresh.",
+  "context.model": "Model: {model}.",
   "usage.grok.budget": "Budget {percent}%",
   "usage.grok.budget.of": "{used} of {limit} {period}",
   "usage.grok.budget.title": "Your Grok budget for {period} is {percent}% used ({used} of {limit}). It counts only Lumen's own Grok use.",
