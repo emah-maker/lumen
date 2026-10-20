@@ -290,6 +290,7 @@ const UI_ONLY_IPC = new Set([
   'notes:act', // [notes] the Notes panel and the "Add to notes" buttons (features/notes-hub.js; the chat page has it too: CHAT_IPC)
   'research:get', 'research:add-page', 'research:update', 'research:remove', 'research:pin', 'research:pin-selection', 'research:unpin', 'research:cite', 'research:open', // the research board
   'agent:helpers', // [subagents] on/off (the chat page has it too: CHAT_IPC)
+  'agent:prefer-fractions', // [prefer fractions] /fractions on|off (the chat page has it too: CHAT_IPC)
   'agent:helper-stop', // the Stop button on a helper card in the chat (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
@@ -8789,7 +8790,7 @@ const agent = new Agent({
     },
     allows: projectAllows,
   },
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -11752,6 +11753,15 @@ ipcMain.handle('agent:helpers', (_e, on) => {
     try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
   }
   return readSettings().aiSubagents !== false;
+});
+
+// [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.
+ipcMain.handle('agent:prefer-fractions', (_e, on) => {
+  if (typeof on === 'boolean') {
+    writeSettings({ ...readSettings(), aiPreferFractions: on });
+    try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
+  }
+  return readSettings().aiPreferFractions === true;
 });
 
 // [acting helpers] A helper card's Stop button: stops that helper only (agent.js stopHelper; Stop in the chat stops them all).

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
+
 ## 0.5.60 (2026-10-20)
 
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.

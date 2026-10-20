@@ -176,7 +176,7 @@ const has = (list, p) => list.some((x) => same(x, p));
   // ---- the instruction side
   {
     const sys = systemFor({ model: 'claude-sonnet-4-5' });
-    check('the shared prompt says Lumen is the browser: show what you make, never "open it in a browser"', /Lumen is the user's browser/.test(sys) && /never tell them to open a file in a browser/.test(sys) && /small diagrams inline/.test(sys));
+    check('the shared prompt says Lumen is the browser: show what you make, never "open it in a browser"', /Show what you make in Lumen/.test(sys) && /never tell them to open a file in a browser/.test(sys) && /small diagrams inline/.test(sys));
     const note = /never tell them to open it in a browser/;
     check('every full-access note says the file is shown from its full path', note.test(grokBuildNote(null, { fullAccess: true, home: root })) && note.test(antigravityNote(null, new Date(), { fullAccess: true, home: root })) && note.test(codexNote(null, new Date(), { fullAccess: true, home: root })) && note.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'ai', 'agent.js'), 'utf8').match(/CLAUDE_CODE_FULL_NOTE = `[\s\S]*?`;/)[0]));
     check('open_tab says it takes a file the AI wrote', /you wrote/.test(require('../src/ai/agent').EXTERNAL_TOOLS.find((t) => t.name === 'open_tab').description));
