@@ -11,7 +11,32 @@
 // Strings come from locales/en.json through `t` (the UI's window.t; in Node the English table).
 (function (root) {
   const MAX = 70;
-  const clip = (v, n = MAX) => { const s = String(v ?? '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
+  // A skill's message is wrapped for the model in <skill_request name=".." title=".." input="..">prompt</skill_request> (features/skills.js).
+  // None of that is for the user: wherever a message becomes a label, title, preview or search text it goes through skillText, which
+  // reads it as "Research skill: what you typed". Complete, cut off ("<skill_request name="research" …") or stray: never raw.
+  const SKILL_TAG = /<skill_request\b([^>]*)(?:>[\s\S]*?<\/skill_request>|>[\s\S]*$|$)|<\/skill_request>/gi;
+  const decodeEntities = (s) => String(s).replace(/&#(\d+);/g, (_m, n) => String.fromCharCode(Number(n)));
+  const attrOf = (attrs, k) => { const m = new RegExp(`\\b${k}="([^"]*)${k === 'input' ? '' : '"'}`).exec(attrs); return m ? decodeEntities(m[1]).trim() : ''; };
+  const hasSkill = (v) => typeof v === 'string' && v.includes('skill_request');
+  // { title, input } of one tag's attributes; the title falls back to the skill's name ("research-notes" -> "Research notes").
+  function skillParts(attrs) {
+    const name = attrOf(attrs, 'name').replace(/[-_]+/g, ' ');
+    const title = attrOf(attrs, 'title') || (name ? name.charAt(0).toUpperCase() + name.slice(1) : '');
+    return { title, input: attrOf(attrs, 'input') };
+  }
+  // The text with each skill message replaced by "Title skill: input" (t: the UI's translator; English when none).
+  function skillText(text, t, form = 'label') {
+    const s = String(text ?? '');
+    if (!hasSkill(s)) return s;
+    const tr = t || (typeof root.t === 'function' && root.t) || api.en || ((k, v) => (k === 'skill.label' ? v.title + ' skill: ' + v.input : v.title + ' skill'));
+    return s.replace(SKILL_TAG, (_m, attrs = '') => {
+      const { title, input } = skillParts(attrs);
+      if (form === 'task') return input || title; // a card's subtitle: what was asked, not the skill's name
+      if (!title) return input;
+      return input ? tr('skill.label', { title, input }) : tr('skill.label.bare', { title });
+    }).replace(/\s+/g, ' ').trim();
+  }
+  const clip = (v, n = MAX) => { const s = skillText(v ?? '', null).replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
   // The last piece of a path, either slash; a url keeps its host.
   const base = (p) => { const s = String(p || '').replace(/[\\/]+$/, ''); return s.slice(Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\')) + 1); };
   const dirOf = (p) => { const s = String(p || '').replace(/[\\/]+$/, ''); const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\')); return i > 0 ? s.slice(0, i) : ''; };
@@ -247,7 +272,7 @@
 
     // The user's request in about four words: "Can you please find the lab TA on Canvas?" -> "Find lab TA".
     L.taskName = (text) => {
-      let s = String(text || '').replace(/https?:\/\/\S+/g, '').replace(/[\r\n]+/g, ' ').trim();
+      let s = skillText(text || '', null, 'task').replace(/https?:\/\/\S+/g, '').replace(/[\r\n]+/g, ' ').trim();
       s = s.replace(/^(?:hey|hi|hello|ok|okay|so|and|then|now)[,\s]+/i, '').replace(/^(?:please[,\s]+)?(?:can|could|would|will)\s+you\s+(?:please\s+)?/i, '').replace(/^(?:i\s+(?:want|need|would like)\s+you\s+to|i'd like you to|i want to|i need to|let's|lets|go ahead and|please)\s+/i, '');
       const stop = new Set(['a', 'an', 'the', 'my', 'me', 'some', 'this', 'that', 'these', 'those', 'all']);
       let ws = s.replace(/[?!.,;:]+$/g, '').split(/\s+/).filter((w) => w && !stop.has(w.toLowerCase()));
@@ -306,7 +331,7 @@
   const WEBISH = /^(?:(?:mcp__lumen__)?(?:web_search|read_urls|find_sources|read_pdf|video_overview|video_frames)|WebSearch|WebFetch)$/;
   const weakSurfaceOf = (name) => (WEBISH.test(String(name || '')) ? 'web' : 'tool');
 
-  const api = { create, summarizeCommand, surfaceOf, weakSurfaceOf, readUrlsLabel, compactInput, redact, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
+  const api = { skillText, hasSkill, create, summarizeCommand, surfaceOf, weakSurfaceOf, readUrlsLabel, compactInput, redact, clip, base, dirOf, hostOf, SHELL, FILES, BROWSER, bare };
   if (typeof module === 'object' && module.exports) {
     // Node: the English strings (main's labels for the saved chat; the units).
     const table = require('../locales/en.json');

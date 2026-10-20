@@ -298,8 +298,31 @@ function setPillText(key, shortKey, name) {
 }
 
 // "Search every OpenRouter model": offered at the end of the list whenever OpenRouter is connected.
+// The chat's own reasoning effort ('' = Auto), kept by main with the chat (settings:set-effort). The model menu shows it as an "Effort"
+// row with the levels the picked model takes (main lists them per model: data-efforts), and as a quiet suffix on the button.
+let chatEffort = '';
+const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+// The open chat changed (another chat, a new one): the picker shows that chat's own effort. (undefined: no word on it, left as it is.)
+function followChatEffort(level) {
+  if (typeof level !== 'string' || level === chatEffort) return;
+  chatEffort = level;
+  $('model').pickerSync?.();
+}
+window.followChatEffort = followChatEffort;
+const effortLevels = () => (($('model').selectedOptions[0]?.dataset.efforts) || '').split(',').filter(Boolean);
 const modelPicker = window.lumenPicker($('model'), {
   recentKey: 'model',
+  effort: {
+    levels: effortLevels,
+    // A level the picked model doesn't take shows (and is sent) as the nearest one it does, as main resolves it (ai/effort.js pick).
+    value: () => {
+      const levels = effortLevels();
+      if (!chatEffort || !levels.length || levels.includes(chatEffort)) return chatEffort;
+      const at = EFFORT_ORDER.indexOf(chatEffort);
+      return levels.reduce((best, l) => (Math.abs(EFFORT_ORDER.indexOf(l) - at) < Math.abs(EFFORT_ORDER.indexOf(best) - at) ? l : best), levels[0]);
+    },
+    set: (level) => { chatEffort = level; window.assistant.setEffort?.(level)?.catch?.(() => {}); },
+  },
   onMore: () => openModelSearch(), // "More models…" opens the catalog; it is never the select's value, even for a frame
   // (The OpenRouter group has its own "More models…" row; a search adds a way to look the words up there too.)
   extra: (q) => (q && modelGroups.has('openrouter:__more') ? [{ label: t('models.searchFor', { q }), detail: t('models.more.detail'), run: (text) => openModelSearch(text) }] : []),
@@ -316,6 +339,7 @@ async function loadModels() {
   const select = $('model');
   const picker = select.closest('.model-picker');
   modelReady = Boolean(s.model);
+  chatEffort = s.effort || '';
   if (picker) picker.hidden = !modelReady; // nothing connected: no picker, not an empty one
   const groups = new Map();
   for (const m of s.models) {
@@ -334,6 +358,7 @@ async function loadModels() {
     if (m.title) option.title = m.title;
     if (m.more) option.dataset.more = '1';
     if (m.lastUsed) option.dataset.lastUsed = m.lastUsed; // Auto's last choice, shown as "last used: …" (never as Auto's name)
+    if (m.efforts?.length) option.dataset.efforts = m.efforts.join(','); // the levels this model takes (ai/effort.js offered)
     if (m.auto) option.dataset.auto = '1'; // Auto, or a provider's own Auto: the model is chosen per message
     groups.get(m.group).append(option);
   }
@@ -2826,6 +2851,7 @@ function applySync(view) {
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   window.chatFolders?.refresh(view?.workFolder); // [work folder] the composer's folder chip follows the chat
+  followChatEffort(view?.effort); // the chat's own reasoning effort follows the chat
   chatHost.chatChanged?.();
 }
 window.assistant.onSync?.(({ view } = {}) => applySync(view));
@@ -3052,6 +3078,7 @@ function clearChatView({ keepBox = false } = {}) {
 }
 $('new-chat').onclick = () => {
   window.assistant.reset();
+  followChatEffort(''); // a new chat starts on Auto
   clearChatView();
   window.planModeUI?.chatShown(null, false); // [plan mode] a new chat starts as Settings says
   window.chatList?.refreshUsage('');

@@ -131,17 +131,33 @@
     if (!texLike(tex)) return -1;
     if (e < lineEnd) {
       const wholeLine = atLineStart && !s.slice(e + 2, lineEnd).trim();
-      return wholeLine || !/^\s/.test(tex) ? e : -1;
+      // "so $$ x^2 \; $$ here": spaces inside are fine when it is plainly TeX (a command, a sub- or superscript), not a price tier.
+      return wholeLine || !/^\s/.test(tex) || /\\[A-Za-z]|[_^]/.test(tex) ? e : -1;
     }
-    const opener = s.slice(i + 2, lineEnd);
-    return atLineStart && !opener.trim() && !/\n\s*\n/.test(tex) ? e : -1;
+    if (!atLineStart || /\n\s*\n/.test(tex)) return -1;
+    if (!s.slice(i + 2, lineEnd).trim()) return e;
+    // "$$a = b \\" on the opening line, the rest and the closing $$ on the lines after: it closes at the end of a line.
+    const closeEnd = s.indexOf('\n', e) === -1 ? s.length : s.indexOf('\n', e);
+    return !s.slice(e + 2, closeEnd).trim() ? e : -1;
   }
+  // A formula cut off before its closing delimiter (a reply that was interrupted, or ended inside one): what is there is
+  // closed so it can still be typeset, rather than shown as raw "$$…". A dangling backslash is dropped, open braces closed.
+  function closePartial(tex) {
+    let t = String(tex).replace(/\s+$/, '');
+    const slashes = /\\*$/.exec(t)[0].length;
+    if (slashes % 2) t = t.slice(0, -1);
+    let depth = 0;
+    for (let k = 0; k < t.length; k++) { if (t[k] === '\\') k++; else if (t[k] === '{') depth++; else if (t[k] === '}' && depth > 0) depth--; }
+    return t + '}'.repeat(depth);
+  }
+  // Where an unclosed display formula that starts at i stops: the next blank line, or the end of the text.
+  const partialEnd = (s, i) => { const b = s.slice(i).search(/\n[ \t]*\n/); return b === -1 ? s.length : i + b; };
   const URL_START = /^https?:\/\//;
   // Scans `source` for math. Returns the text with tokens in its place, the formulas, and `open`: where a formula
   // starts that has not closed yet (a reply still streaming), or -1. Code (fenced and `inline`) and web addresses
   // are left alone. A display formula on a line of its own stays on that line (with its indent: inside a list item,
   // it belongs to that item).
-  function liftMath(source) {
+  function liftMath(source, { closeOpen = false } = {}) {
     source = source.replace(/[\uE000\uE001]/g, '');
     const maths = [];
     let out = '';
@@ -188,7 +204,13 @@
       if (source.startsWith('$$', i)) {
         const e = displayDollarEnd(source, i, onlySpaceBefore(i));
         if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
-        else if (open === -1 && onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1 && !/\n\s*\n/.test(source.slice(i)) && !source.slice(i + 2, (source.indexOf('\n', i) + 1 || source.length + 1) - 1).trim()) open = i;
+        else if (onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1) {
+          const stop = partialEnd(source, i);
+          const tex = source.slice(i + 2, stop);
+          // Still being written (or cut off): a streaming reply waits for it; a finished one shows what there is of it.
+          if (texLike(tex) && closeOpen) m = { tex: closePartial(tex), end: stop, display: true };
+          else if (open === -1 && !closeOpen && stop === source.length && (texLike(tex) || !tex.trim())) open = i;
+        }
         if (!m) { out += '$$'; i += 2; continue; }
       } else if (source.startsWith('\\[', i)) {
         const e = source.indexOf('\\]', i + 2);
@@ -196,6 +218,7 @@
         // "\[1\]": a citation in escaped brackets, not math.
         if (e !== -1 && /^[\d\s,–-]+$/.test(tex)) { out += `[${tex}]`; i = e + 2; continue; }
         if (e > i + 2 && !/\n\s*\n/.test(tex)) m = { tex, end: e + 2, display: true };
+        else if (e === -1 && closeOpen && onlySpaceBefore(i) && texLike(source.slice(i + 2, partialEnd(source, i)))) { const stop = partialEnd(source, i); m = { tex: closePartial(source.slice(i + 2, stop)), end: stop, display: true }; }
         else if (e === -1 && open === -1 && source.length - i < 300) open = i;
       } else if (source.startsWith('\\(', i)) {
         const e = source.indexOf('\\)', i + 2);
@@ -533,7 +556,7 @@
 
   // opts.fractions: stack plain a/b (default: the Prefer fractions setting, window.lumenPreferFractions, kept by ui-prefs.js).
   function render(source, opts) {
-    const lifted = liftMath(liftRawSvg(String(source ?? '')));
+    const lifted = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
     const { maths } = lifted;
     const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
     const text = stack ? fractionize(lifted.text, maths) : lifted.text;
