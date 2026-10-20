@@ -212,7 +212,7 @@
     let label = '';
     if (card.surface === 'browser' && card.tab && !card.siteMode) label = tr('card.openPreview');
     else if (card.surface === 'app' && card.app) label = tr('desktopcard.open');
-    else if (card.surface !== 'browser' && card.file) label = tr(card.file.canTab || card.file.canSystem ? 'card.openFile' : 'card.showFolder');
+    // (a files card has no button: each file in it is a link that opens it)
     card.btn.hidden = !label;
     if (label && card.btn.textContent !== label) { card.btn.textContent = label; card.btn.title = card.surface === 'browser' ? tr('card.openPreview.title') : ''; }
     const appLive = card.surface === 'app' && card.app && (card.app.status === 'working' || card.app.status === 'paused');

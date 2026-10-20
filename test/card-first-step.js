@@ -85,7 +85,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
   // ---- the Files card: every file the AI wrote opens from it
   const files = await ui.evaluate(async () => {
-    const host = document.createElement('div'); document.getElementById('messages').replaceChildren(host);
+    const host = document.createElement('div'); for (const n of [...document.getElementById('messages').children]) if (n.id !== 'empty') n.remove(); document.getElementById('messages').append(host);
     const turn = {}; const o = { messages: host, append: (n) => host.append(n), task: 'Write a handoff', runId: 1 };
     const w = (p, label) => window.stepUI.add(turn, { name: 'Write', id: p, input: { file_path: p }, label }, o);
     w('Ai/HANDOFF.md', 'Writing HANDOFF.md'); w('tools/run.ps1', 'Writing run.ps1'); w('old.md', 'Writing old.md');
@@ -125,7 +125,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     await app.evaluate(({ BrowserWindow }, e) => { const w = BrowserWindow.getAllWindows().find((x) => /index\.html/.test(x.webContents.getURL())) || BrowserWindow.getAllWindows()[0]; w.webContents.send('agent:event', e); }, { ...ev, runId });
   };
   const start = async (text) => {
-    await ui.evaluate(() => { document.getElementById('messages').replaceChildren(); });
+    await ui.evaluate(() => { for (const n of [...document.getElementById('messages').children]) if (n.id !== 'empty') n.remove(); }); // (the empty-chat block lives in #messages and stays)
     await app.evaluate(() => { global.__fake.gate = new Promise((r) => { global.__fake.release = r; }); });
     await ui.fill('#prompt', text);
     await ui.press('#prompt', 'Enter');
