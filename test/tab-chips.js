@@ -177,7 +177,7 @@ const J = (v) => JSON.stringify(v);
   await ui.reload();
   await ui.waitForSelector('.tab');
   await ui.evaluate(() => { if (document.getElementById('toggle-sidebar').getAttribute('aria-pressed') !== 'true') document.getElementById('toggle-sidebar').click(); });
-  const restored = await waitFor(async () => { const c = await chipsIn('#messages .msg.assistant'); return c.length >= 3 && c.some((x) => x.key.startsWith(`${A}@`) || x.key === String(A)) && c; }, 15000);
+  const restored = await waitFor(async () => { const c = await chipsIn('#messages .msg.assistant'); return c.length >= 3 && c.some((x) => (x.key.startsWith(`${A}@`) || x.key === String(A)) && !x.closed) && c; }, 15000); // (a chip first shows what the saved chat kept, as closed, until main answers which tabs are open: wait for that answer)
   const rA = (restored || []).find((c) => c.key.startsWith(`${A}`));
   const rB = (restored || []).find((c) => c.key.startsWith(`${B}`));
   check('a reopened chat draws its chips again (live tab: its title)', rA && /alpha/.test(rA.title) && rA.closed === false, J(restored));
