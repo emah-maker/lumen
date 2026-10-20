@@ -3150,11 +3150,25 @@ function buildSystem(card) {
 
 async function buildExtensions(card) {
   const list = h('div', { class: 'list', id: 'extensions-list' });
-  const render = (items) => list.replaceChildren(...(items.length ? items.map((e) => h('div', { class: 'item' },
+  let shownItems = [];
+  // One "Show in toolbar" switch per extension, the same pins as the puzzle button's menu. They apply while the toolbar shows only the pinned ones.
+  const pinSwitch = (e) => {
+    const only = st.prefs.extensionsToolbar === 'pinned';
+    const input = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `Show ${e.name} in the toolbar`, checked: e.pinned || st.prefs.extensionsToolbar === 'all' });
+    input.disabled = !e.button || !only;
+    if (!e.button) input.title = 'This extension has no toolbar button.';
+    input.addEventListener('change', async () => render(await S.pinExtension(e.id, input.checked)));
+    return h('label', { class: 'ext-pin' }, h('span', { text: 'Show in toolbar' }), input);
+  };
+  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.map((e) => h('div', { class: 'item' },
     h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.description ? ` · ${e.description}` : ''}` })),
+    e.button ? pinSwitch(e) : null,
     e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
     h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })))
-    : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))]));
+    : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))])); };
+  card.append(select('extensionsToolbar', 'Show extensions in the toolbar', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.',
+    [['pinned', 'Only the ones I pin'], ['all', 'All of them'], ['none', 'Hide all']]));
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'extensionsToolbar') render(shownItems); });
   render(await S.extensions());
   card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused here; remove one to turn it off.', list,
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
@@ -3501,7 +3515,7 @@ async function init() {
   mount('ai-more', 'macros', tr('settings.section.macros', 'Macros'), 'Saved step lists you run from the menu, a shortcut or the chat.', 'automation record replay steps shortcut script');
   mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
   mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
-  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
+  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [

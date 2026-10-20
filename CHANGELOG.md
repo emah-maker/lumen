@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Pin the extensions you want in the toolbar, and keep the rest under a puzzle button.** The puzzle button (now named Extensions) lists every installed extension; click one there and its popup opens under the button, and a Pin to toolbar list in the same menu pins or unpins each one. The extensions you already have stay in the toolbar, in their current order. An extension you install later starts in the toolbar while fewer than three are pinned; after that it starts in the menu. Drag a pinned icon, or press Alt+Left or Alt+Right on it, to reorder, and Lumen remembers the order. A small dot on the puzzle button means an extension that is not in the toolbar has a badge to show. Settings → Extensions has **Show extensions in the toolbar** (only the ones you pin, all of them, or hide all: no extension buttons and no puzzle button, while the extensions keep running and stay listed in Settings and in ⋯ → Extensions) and a Show in toolbar switch for each extension.
+
 ## 0.5.60 (2026-10-20)
 
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.

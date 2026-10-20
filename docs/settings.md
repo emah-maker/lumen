@@ -164,6 +164,8 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
 | Show the AI read-only button in the address bar | `showAiOffButton` | on | The shield in the address bar that keeps the AI from acting on a tab (it can still read it). Hidden on Lumen's own pages either way; the tab menu has the same choice, and a tab already kept off keeps its shield so you can turn it back on. |
+| Show extensions in the toolbar | `extensionsToolbar` | `pinned` | `pinned` (only the extensions you pin have a button; the rest are listed under the puzzle button, as in Chrome), `all` (every extension has a button) or `none` (no extension buttons and no puzzle button; extensions keep running and stay listed in Settings → Extensions and the ⋯ menu). |
+| Pinned extensions | `extensionPins` | all you had | The extensions pinned to the toolbar, left to right, and the ones that have had their first choice: `{ order: [ids], seen: [ids], migrated }`. Every extension installed when this was added starts pinned, in its current order (`migrated` records that); one installed later starts pinned while fewer than three are pinned; after that it starts in the puzzle button's menu. Changed with the pin switches in Settings → Extensions, the puzzle menu, ⋯ → Extensions, or by dragging (or Alt+Left / Alt+Right) in the toolbar; not set directly. |
 | Tab layout | `tabLayout` | top | Top puts the tabs across the top of the window; Side lists them down the left (favicon and title, pinned tabs first, groups you can fold). Right-clicking the empty part of the tab strip switches too. |
 | Side tabs: icons only | `sideTabsCollapsed` | off | Shrinks the side list to icons; it opens out while the pointer is over it. |
 | Side tab list width | `sideTabsWidth` | 240 | How wide the side list is (160 to 420 pixels). Drag its right edge to change it; Lumen remembers it. |
@@ -327,7 +329,7 @@ In Settings → AI and agents → Routines. See [Routines](routines.md#triggers)
 
 ## Extensions
 
-Lists the Chrome Web Store extensions you installed, with **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch.
+Lists the Chrome Web Store extensions you installed, each with a **Show in toolbar** switch (the same pin as the puzzle button's menu), **Options** and **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch. **Show extensions in the toolbar** chooses between only the ones you pin, all of them, or none: with none, the extension buttons and the puzzle button are gone, and the extensions still run.
 
 ## Reset settings
 

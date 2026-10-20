@@ -31,3 +31,6 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
+.pref-no-extensions browser-action-list, .pref-no-extensions #actions-overflow { display: none !important; } /* Settings → Extensions → Hide all: the extensions still run */
+#actions-overflow { position: relative; }
+#actions-overflow.has-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: var(--r-pill); background: var(--accent); box-shadow: 0 0 0 2px var(--bg); } /* an extension that is not in the toolbar has a badge */

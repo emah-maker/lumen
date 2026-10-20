@@ -545,6 +545,8 @@ contextBridge.exposeInMainWorld('lumenPrefs', {
   openSettingsPage: (section) => ipcRenderer.send('settings-page:open', section),
   get: () => ipcRenderer.invoke('prefs:ui'),
   onChange: on('prefs:ui'),
+  syncExtensionPins: () => ipcRenderer.invoke('ext:pins-sync'),
+  setExtensionOrder: (ids) => ipcRenderer.invoke('ext:pins-order', ids),
 });
 
 contextBridge.exposeInMainWorld('lumenUpdates', {
