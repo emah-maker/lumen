@@ -156,6 +156,30 @@ const has = (list, p) => list.some((x) => same(x, p));
     check('a reply that is only a file still shows', transcriptFor([{ role: 'assistant', content: [{ type: 'ai_file', path: plain, trusted: true }] }]).length === 1);
   }
 
+  // ---- a reopened chat: the files a turn wrote come back as links of its Files card (meta.written holds paths only)
+  {
+    const branches = require('../src/features/chat-branches');
+    const script = path.join(docs, 'run.ps1');
+    fs.writeFileSync(script, 'Write-Host hi');
+    const missing = path.join(docs, 'vanished.md');
+    const stored = branches.cleanMeta({ written: [plain, script, missing, plain, 42, '', 'relative/x.md', '\\\\server\\share\\a.md', page + '\0'], thinking: 'x' });
+    check('the stored list is paths only, de-duplicated and bounded', Array.isArray(stored.written) && stored.written.every((p) => typeof p === 'string') && stored.written.filter((p) => p === plain).length === 1, JSON.stringify(stored));
+    check('at most 12 written files are kept', branches.cleanMeta({ written: Array.from({ length: 40 }, (_, i) => path.join(docs, i + '.md')) }).written.length === 12);
+    check('nothing written: no field', branches.cleanMeta({ written: [] }) === null && branches.cleanMeta({ written: 'x' }) === null);
+    const round = branches.hydrateMessages(JSON.parse(JSON.stringify(branches.serializeMessages([{ role: 'assistant', content: 'x' }], (m) => ({ ...m }) ).map((m) => ({ ...m, meta: stored })))), (m) => m);
+    check('the list survives saving and loading the chat', JSON.stringify(branches.getMeta(round[0])?.written) === JSON.stringify(stored.written), JSON.stringify(branches.getMeta(round[0])));
+    const rows = aiFiles.restoreWritten(stored.written);
+    const byName = Object.fromEntries(rows.map((r) => [r.name, r]));
+    check('each recorded file is a row of the registry (trusted, an id main made)', rows.length === 3 && rows.every((r) => r.trusted && aiFiles.shared.get(r.id)?.path === r.path), JSON.stringify(rows.map((r) => r.name)));
+    check('a script is a row that is shown in its folder only', byName['run.ps1']?.canTab === false && byName['run.ps1']?.canSystem === false);
+    check('a file deleted since still has its row (clicking says it is gone)', byName['vanished.md'] && byName['vanished.md'].size === 0 && aiFiles.shared.get(byName['vanished.md'].id));
+    check('paths that are not local files (relative, network, device) get no row', aiFiles.restoreWritten(['relative/x.md', '\\\\server\\share\\a.md', 'C:\\x\\con.txt', 'C:\\x\\a.md:stream'], { platform: 'win32' }).length === 0);
+    const items = transcriptFor([{ role: 'user', content: 'write it' }, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], meta: { written: [plain, missing] } }]);
+    check('transcriptFor gives the reply its written rows', items.find((i) => i.role === 'assistant')?.written?.length === 2 && items.find((i) => i.role === 'assistant').written.every((r) => typeof r.id === 'string' && r.name), JSON.stringify(items.find((i) => i.role === 'assistant')));
+    check('a reply with no written files has no field', !transcriptFor([{ role: 'assistant', content: [{ type: 'text', text: 'x' }] }])[0].written);
+    fs.rmSync(script, { force: true });
+  }
+
   // ---- open_tab: only a file the AI wrote in this chat, no approval; anything else keeps the old rules
   {
     const agent = new Agent({ aiOff: () => false }, () => null);

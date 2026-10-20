@@ -14,6 +14,7 @@ const THINKING_CHARS = 20000;
 const MAX_TOOLS = 60;
 const LABEL_CHARS = 200;
 const INPUT_CHARS = 1500; // a step's input is kept (to name it again, and to show its command) only when it is small (step-labels.js compactInput bounds it)
+const MAX_WRITTEN = 12; // [activity cards] files listed in a turn's Files card (agent.js engineFiles lists the same number)
 const THUMB_CHARS = 90000; // [activity cards] the last frame of the tab, a small JPEG as base64 (about 60 KB)
 
 const newId = () => crypto.randomBytes(6).toString('hex');
@@ -51,6 +52,7 @@ function cleanMeta(raw) {
   }
   if (Array.isArray(raw.touched)) { const ids = [...new Set(raw.touched.filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9))].slice(0, 24); if (ids.length) out.touched = ids; } // [activity cards] the tabs the turn used
   if (raw.cards === true) out.cards = true;
+  if (Array.isArray(raw.written)) { const paths = [...new Set(raw.written.filter((p) => typeof p === 'string' && p && p.length <= 500 && !p.includes('\0')))].slice(0, MAX_WRITTEN); if (paths.length) out.written = paths; } // [activity cards] the files the AI wrote in the turn (paths only; main checks them again when the chat is opened and when one is clicked)
   if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };
   if (raw.auto && typeof raw.auto === 'object' && typeof raw.auto.label === 'string') out.auto = { label: raw.auto.label.slice(0, 120), ...(typeof raw.auto.reason === 'string' ? { reason: raw.auto.reason.slice(0, 300) } : {}) };
