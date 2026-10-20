@@ -2390,6 +2390,7 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .tab-ref-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
 .tab-ref-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-ref.closed { background: transparent; color: var(--muted); }
+.tab-ref.closed .tab-ref-icon img { opacity: .6; filter: grayscale(1); }
 .tab-ref.closed .tab-ref-title { text-decoration: line-through; text-decoration-color: var(--faint); }
 .tab-ref[aria-disabled="true"] { cursor: default; }
 .tab-ref[aria-disabled="true"]:hover { background: transparent; }
