@@ -67,7 +67,7 @@ function runParallel() {
         const name = queue.shift();
         active++;
         const started = Date.now();
-        const tmp = suiteTmp(name, { sweep: false });
+        const tmp = suiteTmp(name);
         const child = spawn(process.execPath, [path.join(TEST_DIR, `${name}.js`)], { env: tmp.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
         let out = '';
         let error = null;

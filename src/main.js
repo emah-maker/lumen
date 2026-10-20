@@ -1556,10 +1556,16 @@ async function setupExtensions() {
   });
   extensions.on('browser-action-popup-created', (popup) => {
     const place = popup.updatePosition.bind(popup);
+    const sizeIt = popup.setSize.bind(popup);
+    let wanted = null; // the size the page asked for, in DIPs
+    popup.setSize = (rect) => { sizeIt(rect); const v = popup.browserWindow; wanted = v && !v.isDestroyed() ? { width: v.getBounds().width, height: v.getBounds().height } : null; };
     popup.updatePosition = () => {
       place();
       const view = popup.browserWindow;
       if (!view || view.isDestroyed() || !win || win.isDestroyed()) return;
+      // Moving the popup to a screen with another scale (Lumen on a 150% monitor, the popup first made on a 100% one) keeps its pixels, not its DIPs: it came out 2/3 size and clipped. Ask for its size again, now that it is on the right screen.
+      const now = view.getBounds();
+      if (wanted && (now.width !== wanted.width || now.height !== wanted.height)) view.setBounds({ ...now, ...wanted });
       const b = view.getBounds();
       const w = win.getBounds();
       const x = Math.max(w.x + 8, Math.min(b.x, w.x + w.width - b.width - 8));
@@ -5299,11 +5305,23 @@ function popupFailPage(wc) {
     wc.loadURL(certWarning || `${ERROR_URL}?${new URLSearchParams({ url: failedUrl, code: String(code), desc: description })}`).catch(() => {});
   });
 }
-function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null, behind = false) {
+// [ai manners] popup windows an AI tab's page opened (window.open with a size, a sign-in popup): window -> { chatId, runId, touched }.
+// They are not tabs, but they are the AI's too: aiTabsClose closes them with the run's tabs, unless the user focused one or typed in it.
+const aiPopups = new Map();
+function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null, behind = false, aiBy = null) {
   behind = behind || manners.isAiTab(openerTab); // [ai manners] a window an AI tab's page opened comes up behind the user's window, never over it
   const child = new BrowserWindow({ ...windowOrder.independent(options), ...popupWindowOptions(), ...(behind ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
   const wc = child.webContents;
   if (behind) showBehind(child);
+  const by = aiBy || (manners.isAiTab(openerTab) ? openerTab.openedBy : null);
+  if (by) {
+    const mark = { chatId: by.chatId ?? null, runId: by.runId ?? null, touched: false };
+    aiPopups.set(child, mark);
+    const settle = Date.now() + 1500; // (showing it behind may focus it for a moment)
+    child.on('focus', () => { if (Date.now() > settle) mark.touched = true; });
+    wc.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && !manners.isAgentInput(wc)) mark.touched = true; });
+    child.once('closed', () => aiPopups.delete(child));
+  }
   popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc); // before anything loads
   if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
@@ -5327,7 +5345,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!popupLimit.allow()) return { action: 'deny' };
     if (!isWebUrl(url) && url !== 'about:blank') return { action: 'deny' };
-    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url, null, behind) };
+    if (disposition === 'new-window') return { action: 'allow', outlivesOpener: true, overrideBrowserWindowOptions: popupWindowOptions(), createWindow: (o) => popupWindow(o, noIdentity, partition, url, null, behind, aiPopups.get(child) || null) };
     const byAi = manners.isAiTab(openerTab); // [ai manners] a link from a window an AI tab's page opened is the AI's too: behind the user's tab, and kept out of the strip when hiding is on
     withWindow(curRec, () => openTab(url, { background: disposition === 'background-tab' || byAi, partition, ...(byAi ? { openedBy: { chatId: openerTab.openedBy.chatId, runId: openerTab.openedBy.runId } } : {}) })); // a research tab's popup keeps to its session
     return { action: 'deny' };
@@ -6405,8 +6423,23 @@ function keepTab(rec, tab) {
   withWindow(rec, () => sendTabs());
   return { kept: true };
 }
+// The popup windows the AI's pages opened for this run / chat (all of them with neither): not one the user focused or typed in, nor one holding
+// typed text or a download. Closed outright (a window has no Undo).
+async function aiPopupsClose({ runId = null, chatId = null } = {}) {
+  for (const [child, mark] of [...aiPopups]) {
+    if (child.isDestroyed()) { aiPopups.delete(child); continue; }
+    if ((runId != null && mark.runId !== runId) || (chatId != null && mark.chatId !== chatId) || mark.touched) continue;
+    const wc = child.webContents;
+    if (downloads.list.some((d) => d.state === 'progressing' && d.contents === wc)) continue;
+    if ((await unsavedInputState(wc)) === 'yes') continue;
+    if (child.isDestroyed() || mark.touched) continue;
+    aiPopups.delete(child);
+    try { child.close(); } catch { /* gone */ }
+  }
+}
 async function aiTabsClose(selector = {}, { auto = false } = {}) {
   const picked = aiTabSelect({ ...selector, auto });
+  const popups = aiPopupsClose(selector).catch(() => {});
   const busyBefore = aiTabSelect({ ...selector, auto, busy: true }).length; // [ai manners] tabs a run is still working in: kept, and the toast says "Kept 1 tab the AI is still using"
   const results = await Promise.all(picked.map(async ({ rec, tab }) => {
     if (alive(tab) && downloads.list.some((d) => d.state === 'progressing' && d.contents === tab.view.webContents)) return keepTab(rec, tab); // (a download in progress is the user's: closing the tab could cancel it)
@@ -6416,6 +6449,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     const item = { url: tabUrl(tab), partition: tab.isolated || null, rec, groupId: tab.groupId || null };
     return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
   }));
+  await popups;
   const items = results.filter((r) => r.item).map((r) => r.item);
   const token = items.length ? ++aiCloseSeq : 0;
   if (token) {
@@ -6628,6 +6662,9 @@ function restoreSession(entry = null) {
     for (const more of saved.more.slice(0, 9)) createWindow({ restore: more });
     enterWindow(first);
   }
+  // [ai manners] After a crash or power cut (not a normal quit: those tabs stay marked, as tested) a run that was cut short left its tabs marked in the saved session: with Close they go now, the way they would have
+  // when the run ended (not the tab in front, one marked keep, one a chat lives in).
+  if (!entry && crashRecovery.crashed() && readSettings().closeAiTabs === 'always') setTimeout(() => { aiTabsClose({}, { auto: true }).catch(() => {}); }, 3000);
 }
 
 function restoreTabsFrom(saved) {
@@ -8176,7 +8213,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     else {
       const items = agent.transcript();
       if (ui()) shownChat.set(ui(), chatId);
-      if (items.length) ui()?.send('agent:history', { items });
+      // (with the chat's id: the sidebar must know which chat it shows, or its draft and what it keeps per chat go under no chat)
+      if (items.length) ui()?.send('agent:history', { items, chatId });
+      else if (ui()) pushChatView(ui());
     }
     uiReady = true;
     perf.mark('uiReady');

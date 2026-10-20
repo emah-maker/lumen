@@ -59,7 +59,6 @@ const fakeModel = (app) => app.evaluate(() => {
     const emptyShown = () => ui.evaluate(() => !document.getElementById('empty').hidden);
     const stored = () => app.evaluate(() => global.__chats.store().list().length);
     const ask = async (text) => { await ui.fill('#prompt', text); await ui.press('#prompt', 'Enter'); };
-    const finished = () => waitFor(() => ui.evaluate(() => !document.body.classList.contains('running') && document.querySelectorAll('.msg.assistant').length > 0 && !document.querySelector('#send.stop, #send[data-state="stop"]')), 10000);
     const historyTitles = async () => {
       await ui.click('#chat-history');
       await waitFor(() => ui.evaluate(() => !document.getElementById('chat-list').hidden));

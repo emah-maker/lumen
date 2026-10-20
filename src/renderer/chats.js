@@ -124,5 +124,5 @@
 
   // openChat(id): a notification was clicked (app.js), or a message moves back to the last chat
   // (chat-core.js askOnNewTopic). The chat already open stays as it is. True when that chat is open.
-  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat: async (id) => { if (!id) return false; const { current } = await api.list(); return id === current ? true : openChat(id); } };
+  window.chatList = { refreshUsage, refreshOpen: () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); }, open: openPanel, close: closePanel, openChat: async (id) => { if (!id) return false; const { current } = await api.list(); return id === current ? true : openChat(id); } };
 })();

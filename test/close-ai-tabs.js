@@ -54,7 +54,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-closeai-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'aiclose-probe-'));
   const shots = process.env.CLOSE_AI_TABS_SHOTS || '';
   if (shots) fs.mkdirSync(shots, { recursive: true });
   let app = await launch(profile);
