@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.60 (2026-10-20)
+
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.
 
 - **A chat that finishes or needs your OK while you are on another tab now says so in Lumen.** macOS shows no banner for the app in front, so the system notification Lumen sent went unseen when you were in Lumen on a different tab. In that case the tab strip now shows a toast ("AI finished: …", "AI needs your OK") with **Open chat**, which goes where a click on the system notification would: the tab the AI worked in, with the chat open. In another app you still get the system notification. Same switches as before (Tasks → Settings). Tests: `test/notify-click.js`.
