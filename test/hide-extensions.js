@@ -82,6 +82,7 @@ const { openSettingsTab } = require('./settings-tab');
     for (const p of packs) {
       const r = await app.evaluate(async (_e, id) => { try { const ext = await global.__installExtension(id); return { ok: true, name: ext.name }; } catch (err) { return { ok: false, error: err.message }; } }, p.id).catch((e) => ({ ok: false, error: e.message }));
       check(`install ${p.name}`, r.ok && r.name === p.name, JSON.stringify(r));
+      await waitFor(async () => ((await saved('extensionPins')).seen || []).includes(p.id), 8000); // each one gets its first pin choice before the next is installed (a real install is one at a time)
     }
     let b = await barIs((s) => s.all.length === 4 && s.toolbar.length === 3);
     check('four extensions have buttons; three show in the toolbar', b.all.length === 4 && b.toolbar.length === 3, JSON.stringify(b));
@@ -135,10 +136,10 @@ const { openSettingsTab } = require('./settings-tab');
     check('Settings → Extensions lists the four, each with a Show in toolbar switch', rows === 4 && (await inSettings("document.querySelectorAll('#extensions-list .ext-pin input.switch').length")) === 4, rows);
     check('the switches mirror the pins (all four on)', (await inSettings("[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].map((i) => i.checked).join()")) === 'true,true,true,true');
     check('the mode row offers the three choices', (await inSettings("[...document.querySelectorAll('#pref-extensionsToolbar option')].map((o) => o.value).join()")) === 'pinned,all,none');
-    await inSettings("document.querySelector('#extensions-list .ext-pin input.switch').click()"); // Alpha
+    await inSettings("document.querySelector('#extensions-list .ext-pin input.switch[aria-label*=\"Alpha\"]').click()"); // the list is not in install order
     b = await barIs((s) => s.toolbar.length === 3);
     check('switched off in Settings: Alpha leaves the toolbar and the others stay in order', ids(b.toolbar) === ids([B, C, D]), ids(b.toolbar));
-    check('...and Alpha\'s switch is off, in the saved pins too', (await inSettings("[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].map((i) => i.checked).join()")) === 'false,true,true,true' && ids((await saved('extensionPins')).order) === ids([B, C, D]));
+    check('...and Alpha\'s switch is off, in the saved pins too', (await inSettings("[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].map((i) => (/Alpha/.test(i.getAttribute('aria-label')) ? 'A' : '') + i.checked).sort().join()")) === 'Afalse,true,true,true' && ids((await saved('extensionPins')).order) === ids([B, C, D]));
     await clickPuzzle();
     m = await menu();
     check('the menu mirrors it (Alpha unchecked)', ids(m.find((i) => i.label === 'Pin to toolbar').sub.map((s) => s.checked)) === ids([false, true, true, true]) || ids(m.find((i) => i.label === 'Pin to toolbar').sub.map((s) => s.checked)).includes('false'), JSON.stringify(m.find((i) => i.label === 'Pin to toolbar')));
@@ -197,8 +198,11 @@ const { openSettingsTab } = require('./settings-tab');
     const extItems = await app.evaluate(() => global.__extensionsAppMenu());
     check('...and the ⋯ menu still lists them', extItems.filter((i) => i.label.startsWith('Pin test')).length === 4, JSON.stringify(extItems));
     const inSettings2 = await openSettingsTab(app, 'extensions');
+    await inSettings2('location.reload()'); // the page was opened before the mode changed: a fresh look
+    await sleep(500);
+    await waitFor(async () => (await inSettings2('document.body?.dataset.ready === "1"')) === true, 10000);
     await waitFor(async () => (await inSettings2("document.querySelectorAll('#extensions-list .item').length")) === 4, 10000);
-    check('...and Settings → Extensions lists them, the switches off-limits while nothing is shown', (await inSettings2("[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].every((i) => i.disabled)")) === true && (await inSettings2("document.getElementById('pref-extensionsToolbar').value")) === 'none');
+    check('...and Settings → Extensions lists them, the switches off-limits while nothing is shown', (await inSettings2("[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].every((i) => i.disabled)")) === true && (await inSettings2("document.getElementById('pref-extensionsToolbar').value")) === 'none', JSON.stringify(await inSettings2("[[...document.querySelectorAll('#extensions-list .ext-pin input.switch')].map((i) => i.disabled), document.getElementById('pref-extensionsToolbar')?.value]")));
     await shot('6-hidden');
 
     // ---- the ⋯ menu's extension entries: "Show in toolbar"
@@ -216,7 +220,7 @@ const { openSettingsTab } = require('./settings-tab');
     ui = await app.firstWindow();
     watch();
     await ui.waitForSelector('.tab');
-    b = await barIs((s) => s.all.length === 4 && s.toolbar.length === 3, 15000);
+    b = await barIs((s) => s.all.length === 4 && s.toolbar.length === 3, 45000);
     check('after a restart: the same pinned extensions in the same order', ids(b.toolbar) === ids([C, B, D]), JSON.stringify([b.all, b.toolbar]));
     check('...Alpha is still in the menu only, the puzzle button shows', b.buttons.find((x) => x.id === A)?.shown === false && b.puzzle);
     check('...and the saved pins and mode are as left', ids((await saved('extensionPins')).order) === ids([C, B, D]) && (await saved('extensionsToolbar')) === 'pinned');

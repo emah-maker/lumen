@@ -1129,7 +1129,14 @@ function create(deps) {
   const syncExtensionPins = async () => {
     const cur = prefs().extensionPins;
     if (!cur.migrated && !extensionsReady) return cur;
-    await savePins(pinsCore().reconcile(cur, installedExtensions().filter(hasAction).map((e) => e.id), extensionsReady));
+    const ids = installedExtensions().filter(hasAction).map((e) => e.id);
+    const seen = Array.isArray(cur.seen) ? cur.seen : [];
+    if (ids.every((id) => seen.includes(id))) { // nothing new: the rules file stays unloaded (startup module budget)
+      if (cur.migrated || !extensionsReady) return cur;
+      await savePins({ order: cur.order, seen, migrated: true });
+      return prefs().extensionPins;
+    }
+    await savePins(pinsCore().reconcile(cur, ids, extensionsReady));
     return prefs().extensionPins;
   };
   const extensionsLoaded = () => { extensionsReady = true; return syncExtensionPins(); }; // [extensions] migration: every extension installed before this version starts pinned, in its current order
