@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 - **The context meter for Codex chats now shows what is really in the window.** It used to add up Codex's running totals every turn, so it overshot (and the Usage panel counted each turn's earlier turns again). It now shows the size of Codex's last request out of the window Codex itself reports for the model, moves while the reply is being written, drops when Codex compacts the chat (and the chat says so), starts over for a new chat or a model switch, and names the model in its tooltip. A Codex reply with no usage figure shows an estimate instead of a stale or empty meter. Grok Build and Antigravity chats no longer keep the old figure when a new session starts.
 
 ## 0.5.60 (2026-10-20)
