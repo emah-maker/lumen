@@ -22,6 +22,7 @@
       ai: {
         ...S.ai,
         get: via('ai.get', S.ai.get),
+        searchEngines: S.ai.searchEngines ? via('ai.searchEngines', S.ai.searchEngines) : S.ai.searchEngines,
         mcpInfo: via('ai.mcpInfo', S.ai.mcpInfo),
         automationInfo: via('ai.automationInfo', S.ai.automationInfo),
         isDefaultBrowser: S.ai.isDefaultBrowser ? (...args) => (args[0]?.cached && fresh('ai.isDefaultBrowser')) || S.ai.isDefaultBrowser(...args) : S.ai.isDefaultBrowser,
@@ -34,6 +35,7 @@
   if (S.strings) prefetch('strings', () => S.strings());
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
+    if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines()); // (asked first and small: General's Search engine row needs only this, so the page does not wait for the larger ai.get behind it)
     prefetch('ai.get', () => S.ai.get());
     S.ai.onModelsUpdated?.(stop); // the model changed elsewhere (the sidebar) in this first moment: the answer fetched at load is stale, and the page's own refresh must read afresh
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));

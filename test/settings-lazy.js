@@ -28,6 +28,11 @@ const SAMPLER = `(() => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
   const app = await electron.launch({ args: [root], env: env(tmpProfile()) });
+  // Closing a Settings tab that holds unsaved changes raises a "Leave site?" dialog that Lumen answers itself. With no listener Playwright answers it too, a moment later,
+  // gets "No dialog is showing" and ends the run on that unhandled error: a listener takes the dialog, and its late answer is ignored.
+  const swallowDialogs = (p) => p.on('dialog', (d) => { d.dismiss().catch(() => {}); });
+  app.on('window', swallowDialogs);
+  for (const p of app.windows()) swallowDialogs(p);
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
@@ -41,7 +46,7 @@ const SAMPLER = `(() => {
     const waitIn = async (id, code, ms = 15000) => { const end = Date.now() + ms; while (Date.now() < end) { if ((await run(id, code)) === true) return true; await sleep(40); } return false; };
     const closeSettings = async (id) => {
       await app.evaluate((_e, i) => global.__closeTabInteractive(i), id);
-      for (let i = 0; i < 100 && (await app.evaluate(() => global.__settings.tabs().length)) > 0; i++) await sleep(50);
+      for (let i = 0; i < 100 && (await app.evaluate(() => global.__settings.tabs().filter((t) => t.settings).length)) > 0; i++) await sleep(50); // (the Settings tabs: the browser's own first tab is always there, so waiting for none at all cost 5 s a link)
     };
 
     // ---- every link, opened fresh

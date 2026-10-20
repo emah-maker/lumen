@@ -3079,12 +3079,15 @@ function createWidgets(deps) {
   }
 
   // An engine (or the desktop Apple Music app) changed what it is playing, as main.js heard: the status cards look again at once.
+  // Resolves once every status card has looked again (callers need not wait; tests do).
   function engineChanged() {
+    const looks = [];
     for (const w of list()) {
       if (!((w.type === 'applemusic' && w.mode !== 'web') || (w.type === 'spotify' && w.mode === 'status'))) continue;
       // A change that comes right after another look is not dropped: it is looked at again a moment later.
-      refresh(w, { force: true }).then((ran) => { if (!ran) setTimeout(() => refresh(w, { force: true }).catch(() => {}), 110); }, () => {});
+      looks.push(refresh(w, { force: true }).then((ran) => (ran ? true : new Promise((done) => { setTimeout(() => refresh(w, { force: true }).then(done, () => done(false)), 110); })), () => false));
     }
+    return Promise.all(looks);
   }
 
   // The AI status card shows live facts (chats working, tabs the AI opened, a limit that ended), so main.js says when

@@ -24,6 +24,7 @@
       ai: {
         ...S.ai,
         get: via('ai.get', S.ai.get),
+        searchEngines: S.ai.searchEngines ? via('ai.searchEngines', S.ai.searchEngines) : S.ai.searchEngines,
         mcpInfo: via('ai.mcpInfo', S.ai.mcpInfo),
         automationInfo: via('ai.automationInfo', S.ai.automationInfo),
         isDefaultBrowser: S.ai.isDefaultBrowser ? (...args) => (args[0]?.cached && fresh('ai.isDefaultBrowser')) || S.ai.isDefaultBrowser(...args) : S.ai.isDefaultBrowser,
@@ -36,6 +37,7 @@
   if (S.strings) prefetch('strings', () => S.strings());
   prefetch('downloads', () => S.downloads());
   if (S.ai) {
+    if (S.ai.searchEngines) prefetch('ai.searchEngines', () => S.ai.searchEngines());
     prefetch('ai.get', () => S.ai.get());
     S.ai.onModelsUpdated?.(stop);
     if (S.ai.isDefaultBrowser) prefetch('ai.isDefaultBrowser', () => S.ai.isDefaultBrowser({ cached: true }));
@@ -2129,6 +2131,7 @@ function buildUnloading(slot) {
   document.addEventListener('visibilitychange', loop);
   window.addEventListener('lumen-pref', () => { if (statusRow.offsetParent) poll(true); });
   poll(true);
+  setTimeout(loop, 1000);
 
   const resetResult = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   const reset = h('button', {
@@ -6178,7 +6181,7 @@ function alertLine(host, text) {
 }
 
 async function buildSearch(card) {
-  const ai = await S.ai.get();
+  const ai = await S.ai.searchEngines();
   const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
   card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));
@@ -6218,6 +6221,8 @@ function buildStartup(card) {
 }
 
 async function buildPrivacy(card) {
+  const passwordsAsked = S.passwords.state();
+  passwordsAsked.catch(() => {});
 
   const range = h('select', { id: 'clear-range', 'aria-label': 'Time range' },
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
@@ -6259,7 +6264,7 @@ async function buildPrivacy(card) {
   );
 
 
-  await buildPasswords(card);
+  await buildPasswords(card, passwordsAsked);
   buildPasskeys(card);
 
 
@@ -6383,9 +6388,9 @@ function buildPasskeys(card) {
   card.group(tr('settings.passkeys.group', 'Passkeys')).append(r);
 }
 
-async function buildPasswords(card) {
+async function buildPasswords(card, asked) {
   const P = S.passwords;
-  let pw = await P.state();
+  let pw = await (asked || P.state());
   const WHY = {
     unavailable: 'Your system’s secure storage (the Keychain on macOS, data protection on Windows) isn’t available, so Lumen can’t keep passwords safely. Saving passwords stays off.',
     'basic-text': 'No system keyring (GNOME Keyring or KWallet) was found, so Lumen can’t keep passwords safely. Saving passwords stays off.',
@@ -7278,14 +7283,14 @@ function guessView() {
   const sub = slots.get(id);
   if (sub?.isSub) return { cat: sub.cat, sub: id };
   if (categories.has(id)) return { cat: id, sub: null };
-  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus };
   return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
 }
 let routeSeq = 0;
 function route() {
   const seq = ++routeSeq;
   const r = resolveRoute();
-  const need = neededBuilds(view).filter((sid) => !isBuilt(sid));
+  const need = neededBuilds(view, r.focus).filter((sid) => !isBuilt(sid));
   if (!need.length) finishRoute(r);
   else Promise.all(need.map(buildOne)).then(() => { if (seq === routeSeq) finishRoute(r); });
 }
@@ -7411,10 +7416,13 @@ async function init() {
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-  neededBuilds = (v) => {
+
+
+  const LATE = new Set(['focus', 'sync']);
+  neededBuilds = (v, want) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
-    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat) && (!LATE.has(sid) || want === sid));
   };
 
 
@@ -7472,7 +7480,7 @@ async function init() {
   const wanted = guessView();
   const hash = location.hash.slice(1);
   const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub;
-  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted).map(buildOne));
+  await Promise.all(unknown ? BUILDS.map(([sid]) => buildOne(sid)) : neededBuilds(wanted, wanted.focus).map(buildOne));
   performance.mark('settings:ai-built');
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 4), { passive: true });
   window.addEventListener('resize', fitSoon);
