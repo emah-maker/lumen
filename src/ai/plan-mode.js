@@ -10,13 +10,14 @@
   // scroll, an outside MCP tool, a connector...) is refused with PLAN_REFUSAL. An allowlist, so a tool added later is refused until
   // someone decides it only reads. batch is allowed because each of its steps is checked on its own (agent.js allowStep);
   // delegate because its helpers only read (ai/subagents.js HELPER_TOOLS).
-  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+  const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
   const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']); // [desktop apps] the desktop tool's reading actions
   const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
   const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };
 
   // null when `name` may run while planning, else the refusal text.
   function planToolError(name, input = {}) {
+    if (name === 'word') return ['list', 'read'].includes(String(input?.action || '')) ? null : PLAN_REFUSAL; // [word] reading only
     if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
     return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
   }

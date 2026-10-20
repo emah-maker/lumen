@@ -74,6 +74,15 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       temporary: () => ipcRenderer.invoke('chats:temporary'),
       saveProject: (project) => ipcRenderer.invoke('chats:project-save', project),
       removeProject: (id) => ipcRenderer.invoke('chats:project-delete', id),
+      restoreProject: (id) => ipcRenderer.invoke('chats:project-undo', id), // [project workspace] Undo of a delete
+      project: (id) => ipcRenderer.invoke('chats:project-get', id), // everything the project page shows
+      projectFilesAdd: (id, files) => ipcRenderer.invoke('chats:project-files-add', id, files), // [{ name, bytes }]
+      projectFileRemove: (id, fileId) => ipcRenderer.invoke('chats:project-file-remove', id, fileId),
+      projectSearch: (id, query) => ipcRenderer.invoke('chats:project-search', id, query),
+      projectLink: (id, change) => ipcRenderer.invoke('chats:project-link', id, change), // { add: { url, title } } | { remove: url }
+      projectAddTab: (id) => ipcRenderer.invoke('chats:project-add-tab', id), // the tab the chat works with
+      projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),
+      projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
       moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),
@@ -112,6 +121,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) }, // the "New in Lumen" card (renderer/offer-card.js)
     getSettings: () => ipcRenderer.invoke('settings:get'),
     setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
+    setEffort: (level) => ipcRenderer.invoke('settings:set-effort', level),
     onModelsUpdated: on('models-updated'), // the model was picked elsewhere (sidebar, Settings, another window): the page's picker follows at once
     openRouterModels: () => ipcRenderer.invoke('openrouter:models'),
     // Page only

@@ -610,7 +610,34 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   // `folderCreated` (Lumen made it: it may offer to rename it with the project), `mirror` (false: chats are not written as Markdown there;
   // unset means on) and `workFolder` (where the AI works, instead of `folder`).
   const cleanPath = (v) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 1000);
-  function saveProject({ id, name, instructions, folder, folderCreated, mirror, workFolder } = {}) {
+  // [project workspace] `links` (pinned pages: [{ url, title }], http(s) only, up to MAX_LINKS) and `defaults` ({ model, plan, connectors,
+  // mcp }: what a new chat in the project starts with, and which of the user's connected tools its chats may use; unset = as everywhere).
+  const MAX_LINKS = 25;
+  const cleanLinks = (list) => {
+    const seen = new Set();
+    const out = [];
+    for (const l of Array.isArray(list) ? list : []) {
+      let url;
+      try { const u = new URL(String(l?.url ?? '').trim()); if (!/^https?:$/.test(u.protocol)) continue; u.hash = ''; url = u.href; } catch { continue; }
+      if (url.length > 2000 || seen.has(url)) continue;
+      seen.add(url);
+      out.push({ url, title: cleanText(l?.title, 120).replace(/\s+/g, ' '), added: Number(l?.added) || now() });
+      if (out.length >= MAX_LINKS) break;
+    }
+    return out;
+  };
+  const cleanDefaults = (d) => {
+    const out = {};
+    if (d && typeof d === 'object') {
+      const model = cleanText(d.model, 120);
+      if (model) out.model = model;
+      if (d.plan === true) out.plan = true;
+      if (d.connectors === false) out.connectors = false;
+      if (d.mcp === false) out.mcp = false;
+    }
+    return out;
+  };
+  function saveProject({ id, name, instructions, folder, folderCreated, mirror, workFolder, links, defaults } = {}) {
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -627,6 +654,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (folderCreated !== undefined) { if (folderCreated && project.folder) project.folderCreated = true; else delete project.folderCreated; }
     if (mirror !== undefined) { if (mirror === false) project.mirror = false; else delete project.mirror; }
     if (workFolder !== undefined) { const w = cleanPath(workFolder); if (w) project.workFolder = w; else delete project.workFolder; }
+    if (links !== undefined) { const l = cleanLinks(links); if (l.length) project.links = l; else delete project.links; }
+    if (defaults !== undefined) { const d = cleanDefaults(defaults); if (Object.keys(d).length) project.defaults = d; else delete project.defaults; }
+    project.updated = now();
     writeIndex();
     return { ...project };
   }
@@ -636,6 +666,43 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     idx.projects = idx.projects.filter((p) => p.id !== id);
     if (!idx.projects.length) delete idx.projects;
     for (const c of idx.chats) if (c.project === id) delete c.project;
+    writeIndex();
+    return true;
+  }
+  // [sync] A project from another computer: its id kept, its text fields set (name, instructions, links, defaults). Where this computer keeps the
+  // project's folder, Markdown copies and working folder is not synced and stays as it is. False for a bad id, a full list or a degraded index.
+  function adoptProject(fields) {
+    const idx = readIndex();
+    const clean = cleanText(fields?.name, MAX_NAME).replace(/\s+/g, ' ');
+    if (idx.degraded || !ID_RE.test(String(fields?.id)) || !clean) return false;
+    let project = projectById(fields.id);
+    if (!project) {
+      if (projectList().length >= MAX_PROJECTS) return false;
+      project = { id: fields.id, name: clean, instructions: '', created: Number(fields.created) > 0 ? Math.round(Number(fields.created)) : now() };
+      (idx.projects ||= []).push(project);
+    }
+    project.name = clean;
+    project.instructions = cleanText(fields.instructions, MAX_INSTRUCTIONS);
+    const links = cleanLinks(fields.links);
+    if (links.length) project.links = links; else delete project.links;
+    const defaults = cleanDefaults(fields.defaults);
+    if (Object.keys(defaults).length) project.defaults = defaults; else delete project.defaults;
+    writeIndexSoon(0);
+    return true;
+  }
+  // [project workspace] Delete with Undo: what removeProject() will clear, so restoreProject() can put it back. null for an unknown project.
+  function projectSnapshot(id) {
+    const project = projectById(id);
+    return project ? { project: JSON.parse(JSON.stringify(project)), chats: readIndex().chats.filter((c) => c.project === id).map((c) => c.id) } : null;
+  }
+  // The project comes back under its own id with the chats that were in it (a chat moved to another project meanwhile stays there).
+  // False when the id is taken again, the list is full or the index can't be written.
+  function restoreProject(snapshot) {
+    const idx = readIndex();
+    const p = snapshot?.project;
+    if (idx.degraded || !p || !ID_RE.test(p.id) || projectById(p.id) || projectList().length >= MAX_PROJECTS) return false;
+    (idx.projects ||= []).push(p);
+    for (const cid of Array.isArray(snapshot.chats) ? snapshot.chats : []) { const entry = entryOf(cid); if (entry && !entry.trashed && !effectiveProject(entry)) entry.project = p.id; }
     writeIndex();
     return true;
   }
@@ -709,6 +776,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // Every message of yours is saved with the context Lumen added around it (<browser_state>, a file list...): whole tagged blocks
   // come out first, so search sees what you typed (cleanSaved alone would cut the message at the first tag).
+  // A skill's message searches as what the user typed ("Research skill: cats"), not its prompt or its tag.
+  const skillWords = (s) => (s.includes('skill_request') ? require('../renderer/step-labels').skillText(s) : s);
   const WRAPPED = /<([a-z]+_[a-z_]+)\b[^>]*>[\s\S]*?<\/\1>\s*/g;
   // What was said in a chat, for search (never tool results or attached page text), cut at a sane size.
   const SEARCH_CHARS = 200000;
@@ -719,7 +788,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : [];
       for (const b of blocks) {
         if (b?.type !== 'text' || typeof b.text !== 'string') continue;
-        const t = (m.role === 'user' ? cleanSaved(b.text.replace(WRAPPED, '')) : b.text).replace(/\s+/g, ' ').trim();
+        const t = (m.role === 'user' ? cleanSaved(skillWords(b.text).replace(WRAPPED, '')) : b.text).replace(/\s+/g, ' ').trim();
         if (!t) continue;
         parts.push(t);
         if ((n += t.length) > SEARCH_CHARS) return parts.join('\n').slice(0, SEARCH_CHARS);
@@ -785,6 +854,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (meta.renamed && cleanTitle(meta.title)) { entry.title = cleanTitle(meta.title); entry.renamed = true; }
     if (meta.pinned) entry.pinned = true; else delete entry.pinned;
     if (meta.archived) entry.archived = true; else delete entry.archived;
+    if (typeof meta.project === 'string' && ID_RE.test(meta.project)) entry.project = meta.project; else if (meta.project !== undefined) delete entry.project; // [sync] (a project that has not arrived yet counts once it has: effectiveProject)
     delete entry.autoArchived;
     delete entry.trashed;
     writeIndexSoon(0);
@@ -829,7 +899,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
-  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

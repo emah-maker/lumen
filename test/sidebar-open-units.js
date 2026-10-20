@@ -37,8 +37,13 @@ check('app.js: a run waiting for an OK counts as an intent', /dataset\.attention
 check('app.js: a notification, a chat to show and the "Ask AI" routes open the sidebar with showSidebar(true), never the toggle', /onOpenChat\?\.\(async[\s\S]*?showSidebar\(true\)/.test(app) && /needSidebar = \(\) => \{[^}]*showSidebar\(true\)/.test(app));
 check('tasks and research panels open the sidebar without a new chat', /showSidebarFor/.test(read('src/renderer/tasks.js')) && /showSidebarFor/.test(read('src/renderer/research.js')) && /window\.showSidebarFor = /.test(app));
 check('app.js: before a new chat is considered, main is asked which chat of this tab works / waits / is unread, and that chat is taken', app.indexOf('sidebarTarget') > 0 && app.indexOf('sidebarTarget') < app.indexOf('chatTakeView') && app.indexOf('chatTakeView') < app.indexOf('busy: Boolean(target)'));
-check('main.js answers chat:sidebar-target for the front tab of a window (its chat, or the run working in it), preload asks it', read('src/main.js').includes("ipcMain.handle('chat:sidebar-target'") && read('src/preload/preload.js').includes("ipcRenderer.invoke('chat:sidebar-target')"));
+check('main.js answers chat:sidebar-target for the front tab of a window (its chat, or the run working in it), preload asks it', read('src/main.js').includes("ipcMain.handle('chat:sidebar-target'") && read('src/preload/preload.js').includes("ipcRenderer.invoke('chat:sidebar-target'"));
 check('index.src.html loads sidebar-open.js before app.js', (() => { const h = read('src/renderer/index.src.html'); return h.indexOf('sidebar-open.js') > 0 && h.indexOf('sidebar-open.js') < h.indexOf('src="app.js"'); })());
+
+// Ask AI starts a new chat even over a working or unread one: main only keeps a run that waits for an OK, and the other entry points start new chats
+check('app.js asks main only about a run waiting for an OK (approvalOnly), so a working or unread chat does not hold the button', /sidebarTarget\?\.\(\{ approvalOnly: true \}\)/.test(app) && /approvalOnly === true\) return null/.test(read('src/main.js')) && /approvalOnly === true/.test(read('src/preload/preload.js')));
+check('"Ask AI about this" and the command bar ask in a new chat unless the open one is empty (askInFreshChat)', /onAskSelection\(\(text\) => \{[\s\S]*?askInFreshChat\(/.test(app) && /cmdbar:ask'[\s\S]*?askInFreshChat\(text\)/.test(app) && /function askInFreshChat\(text\) \{\s*if \(!\$\('empty'\)\.hidden\) \$\('new-chat'\)\.click\(\);/.test(read('src/renderer/chat-core.js')));
+check('the new-tab page\'s Ask AI with nothing typed opens the chat page on a new chat (fresh)', /fresh: true/.test(read('src/features/chat-page.js')) && /first\?\.fresh/.test(read('src/renderer/chat-page.js')));
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

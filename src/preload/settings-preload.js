@@ -122,6 +122,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearSite: call('prefs:clear-site'),
     extensions: call('prefs:extensions'),
     removeExtension: call('prefs:remove-extension'),
+    pinExtension: call('prefs:extension-pin'),
     extensionOptions: call('prefs:extension-options'),
     openUrl: call('prefs:open-url'),
     reset: call('prefs:reset'),

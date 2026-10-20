@@ -128,6 +128,7 @@ These are set from the sidebar rather than the settings page:
 |---|---|---|---|
 | Ask before acting on a new site | `askBeforeActing` | on | Off means the sidebar AI may act on any site without an approval card (the bolt menu's **Auto-allow actions**). Outside agents (MCP) are asked unless they work in their own window. |
 | Files the AI may always see | `aiSharedFiles` | none | Files on this computer you chose **Allow always for this file** for, on the card that asks before the AI looks at a file you are asking about ("what does this say?"): their addresses. Added only from that card, removed in Settings → AI → **Files on this computer the AI can see**. **Turn off AI here** for local files overrides it. |
+| Let the AI use Microsoft Word | `aiWordControl` | on | The AI can read and write Word documents directly: Word's own automation on Windows, and `.docx` files without Word. Every change to a document asks first, saving shows the file first, hands-off mode refuses changes, and nothing starts until the AI is asked to work with a document. A card in the chat shows the document live. See [docs/word.md](word.md). |
 | Let the AI use other apps on this computer | `aiDesktopControl` | off | Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time, after you allow each one. A banner shows it working; Esc held stops it. Passwords, security prompts, password managers, banking, system settings and Lumen itself are never available. On macOS it also needs Accessibility (and Screen Recording for pictures) in System Settings → Privacy & Security. See [docs/desktop-apps.md](desktop-apps.md). |
 | Also allow terminals | `aiDesktopTerminals` | off | Lets the AI use Command Prompt, PowerShell and Windows Terminal (Terminal, iTerm, Warp, Ghostty and others on macOS) once the switch above is on. A terminal can run anything on this computer. |
 | Apps the AI can use | `aiDesktopApps` | none | The apps you chose Always for. Added only from the approval card; Revoke removes one. |
@@ -165,6 +166,8 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Font size | `fontSize` | `16` | `9`, `12`, `16`, `20` or `24` px. Applies to new tabs. |
 | Show bookmark button | `showBookmarkButton` | on | The star in the address bar. Ctrl+D bookmarks either way. |
 | Show the AI read-only button in the address bar | `showAiOffButton` | on | The shield in the address bar that keeps the AI from acting on a tab (it can still read it). Hidden on Lumen's own pages either way; the tab menu has the same choice, and a tab already kept off keeps its shield so you can turn it back on. |
+| Show extensions in the toolbar | `extensionsToolbar` | `pinned` | `pinned` (only the extensions you pin have a button; the rest are listed under the puzzle button, as in Chrome), `all` (every extension has a button) or `none` (no extension buttons and no puzzle button; extensions keep running and stay listed in Settings → Extensions and the ⋯ menu). |
+| Pinned extensions | `extensionPins` | all you had | The extensions pinned to the toolbar, left to right, and the ones that have had their first choice: `{ order: [ids], seen: [ids], migrated }`. Every extension installed when this was added starts pinned, in its current order (`migrated` records that); one installed later starts pinned while fewer than three are pinned; after that it starts in the puzzle button's menu. Changed with the pin switches in Settings → Extensions, the puzzle menu, ⋯ → Extensions, or by dragging (or Alt+Left / Alt+Right) in the toolbar; not set directly. |
 | Tab layout | `tabLayout` | top | Top puts the tabs across the top of the window; Side lists them down the left (favicon and title, pinned tabs first, groups you can fold). Right-clicking the empty part of the tab strip switches too. |
 | Side tabs: icons only | `sideTabsCollapsed` | off | Shrinks the side list to icons; it opens out while the pointer is over it. |
 | Side tab list width | `sideTabsWidth` | 240 | How wide the side list is (160 to 420 pixels). Drag its right edge to change it; Lumen remembers it. |
@@ -328,7 +331,7 @@ In Settings → AI and agents → Routines. See [Routines](routines.md#triggers)
 
 ## Extensions
 
-Lists the Chrome Web Store extensions you installed, with **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch.
+Lists the Chrome Web Store extensions you installed, each with a **Show in toolbar** switch (the same pin as the puzzle button's menu), **Options** and **Remove** (deletes the extension and its data) and a link to the Chrome Web Store. Electron can't pause an extension, so there is no on/off switch. **Show extensions in the toolbar** chooses between only the ones you pin, all of them, or none: with none, the extension buttons and the puzzle button are gone, and the extensions still run.
 
 ## Reset settings
 

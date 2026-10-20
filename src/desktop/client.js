@@ -15,11 +15,11 @@ const CALL_MS = 20e3;
 
 // The script as a real file in the temp folder (a .ps1 inside the packaged app cannot be run in place, and -EncodedCommand has a
 // length limit this script is over). Named by its content, so an update writes a new file and a running helper is never changed.
-function scriptFile({ read = (p) => fs.readFileSync(p), write = fs.writeFileSync, mkdir = fs.mkdirSync, exists = fs.existsSync, tmp = os.tmpdir() } = {}) {
-  const body = read(SCRIPT);
+function scriptFile({ read = (p) => fs.readFileSync(p), write = fs.writeFileSync, mkdir = fs.mkdirSync, exists = fs.existsSync, tmp = os.tmpdir(), script = SCRIPT, name = 'uia' } = {}) { // (script/name: another helper, e.g. src/word)
+  const body = read(script);
   const hash = require('crypto').createHash('sha1').update(body).digest('hex').slice(0, 10);
   const dir = path.join(tmp, 'lumen-desktop');
-  const file = path.join(dir, `uia-${hash}.ps1`);
+  const file = path.join(dir, `${name}-${hash}.ps1`);
   // An existing file is reused only when its content is exactly the script (a planted or damaged file is written over, never run).
   let same = false;
   if (exists(file)) { try { same = Buffer.compare(Buffer.from(read(file)), Buffer.from(body)) === 0; } catch { same = false; } }

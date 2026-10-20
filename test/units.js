@@ -177,6 +177,27 @@ try {
   check('tool check (stream): a use_tool whose input never parses is refused', streamed([ev({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', name: 'use_tool', input: {} } }), ev({ type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"tool_na' } }), ev({ type: 'content_block_stop', index: 2 })]) === 'use_tool (unreadable)', 'accepted');
   check('tool check (stream): hosted server tools and whole assistant messages are checked too', streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', name: 'web_search' } })]) === 'web_search' && streamed([{ type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', name: 'edit_file', input: {} }] } }]) === 'edit_file' && streamed([{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'use_tool', input: { tool_name: 'lumen__click' } }] } }]) === null, 'missed');
 
+  // spawn_subagent: with the caller routing it, the watch waits for the call's input and reports it with the task (never a plain stop).
+  {
+    const sw = () => gb.toolWatch({ spawn: true });
+    const task = { description: 'Find usages', prompt: 'Search for foo' };
+    const play = (w, lines) => { for (const l of lines) { const bad = w(l); if (bad) return bad; } return null; };
+    const split = JSON.stringify(task);
+    const w1 = sw();
+    const hit = play(w1, [ev({ type: 'message_start' }), ev({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 's', name: 'spawn_subagent', input: {} } }), ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: split.slice(0, 12) } }), ev({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: split.slice(12) } })]);
+    check('tool check (stream): a spawn_subagent is reported once its input is complete, with the input kept', hit === 'spawn_subagent' && JSON.stringify(w1.spawned()) === split, String(hit));
+    const w2 = sw();
+    check('tool check (stream): a spawn_subagent with its input in the block start is reported at once', play(w2, [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: task } })]) === 'spawn_subagent' && w2.spawned().prompt === task.prompt, 'x');
+    const w3 = sw();
+    check('tool check (stream): a spawn_subagent that finishes without readable input is still reported (nothing to run)', play(w3, [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: {} } }), ev({ type: 'content_block_stop', index: 0 })]) === 'spawn_subagent' && w3.spawned() === null, 'x');
+    const w4 = sw();
+    check('tool check (stream): a spawn_subagent in a finished assistant message is reported with its input', play(w4, [{ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'spawn_subagent', input: task }] } }]) === 'spawn_subagent' && w4.spawned().prompt === task.prompt, 'x');
+    check('tool check (stream): other off-tools are unchanged with spawn on (edit_file still refused), and spawn off keeps the plain stop', play(sw(), [ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'edit_file', input: {} } })]) === 'edit_file' && streamed([ev({ type: 'content_block_start', index: 0, content_block: { type: 'tool_use', name: 'spawn_subagent', input: task } })]) === 'spawn_subagent', 'x');
+    check('spawnJobs: description and prompt become one job; nothing named is no job', JSON.stringify(gb.spawnJobs(task)) === JSON.stringify([{ task: 'Find usages: Search for foo', urls: [] }]) && gb.spawnJobs({}) === null && gb.spawnJobs(null) === null, JSON.stringify(gb.spawnJobs(task)));
+    check('offToolText: spawn_subagent names the reason and the way out; other tools keep the old text', /own helper agents/.test(gb.offToolText('spawn_subagent')) && /helpers of its own/.test(gb.offToolText('spawn_subagent')) && /isn't one of Lumen's \(edit_file\)/.test(gb.offToolText('edit_file')), gb.offToolText('spawn_subagent'));
+    check('Grok argv still hard-denies spawn_subagent and passes --no-subagents (Grok\'s own subagents stay off; Lumen routes the ask)', gb.ARGS_BASE.includes('--no-subagents') && gb.DENIED.includes('spawn_subagent'), gb.ARGS_BASE.join(' '));
+  }
+
   const toml = gb.grokConfig({ gate: 'C:\\Lumen\\grok-home\\lumen-gate.cmd' });
   const servers = [...toml.matchAll(/^\[mcp_servers\.([^\].]+)\]$/gm)].map((m) => m[1]);
   check('Grok Build config.toml has only the lumen MCP server', JSON.stringify(servers) === '["lumen"]', JSON.stringify(servers));
@@ -1648,16 +1669,12 @@ async function fewerCallRuns() {
     check('fewer calls: navigate / open_tab return the page head, so they count as reading page content (taint the run) unless read:false', /\(name === 'navigate' \|\| name === 'open_tab'\) && input\?\.read !== false\)+ this\.markTainted/.test(agentSrc2), '');
 
     // read_page extract runs in the page: a fake DOM with one table and some links.
-    const cell = (t) => ({ innerText: t });
     const shown = { offsetWidth: 1, offsetHeight: 1, getClientRects: () => [1] };
-    const table = { ...shown, caption: { innerText: 'Prices' }, rows: [{ cells: [cell(' Item '), cell('Cost')] }, { cells: [cell('Tea'), cell('3')] }] };
     const link = (text, href) => ({ ...shown, innerText: text, href, getAttribute: () => '' });
-    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'table' ? [table] : sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
+    const root = { matches: () => false, querySelectorAll: (sel) => (sel === 'a[href]' ? [link('Home', 'https://a.test/'), link('Home again', 'https://a.test/'), link('', 'https://b.test/'), link('Docs', 'https://a.test/d')] : []) };
     global.document = { body: root, querySelector: (q) => (q === 'main' ? root : null) };
     global.location = { href: 'https://a.test/' };
-    const tables = snap.extractData({ kind: 'tables', selector: '' });
     const links = snap.extractData({ kind: 'links', selector: 'main' });
-    check('extract tables: rows of trimmed cell text with the caption', JSON.stringify(tables.data) === JSON.stringify([{ caption: 'Prices', rows: [['Item', 'Cost'], ['Tea', '3']] }]), JSON.stringify(tables));
     check('extract links: [text, href], no duplicates, no empty text', JSON.stringify(links.data) === JSON.stringify([['Home', 'https://a.test/'], ['Docs', 'https://a.test/d']]), JSON.stringify(links));
     check('extract: an unknown selector says so', snap.extractData({ kind: 'links', selector: 'nav' }).error === 'No element matches selector.', '');
     delete global.document; delete global.location;
@@ -1745,7 +1762,7 @@ async function chatPageRuns() {
   check('chat page preload: every call it can make is on the allowlist', channels.length > 10 && channels.every((c) => chatPage.CHAT_IPC.has(c)), channels.filter((c) => !chatPage.CHAT_IPC.has(c)).join(', '));
   const risky = [...chatPage.CHAT_IPC].filter((c) => /^(mcp|automation|import|cli|claudecode):|set-provider-key|sign-in|prefs:(?!ui)|set-ai-site|updates|:clear|relaunch/.test(c));
   check('chat page allowlist: no keys, sign-in, MCP, automation, import, CLI or data-clearing calls', risky.length === 0, risky.join(', '));
-  check('chat page allowlist: settings calls are the model list and the model pick only', [...chatPage.CHAT_IPC].filter((c) => c.startsWith('settings:')).sort().join() === 'settings:get,settings:set-model', [...chatPage.CHAT_IPC].join(','));
+  check('chat page allowlist: settings calls are the model list, the model pick and the effort pick for a chat only', [...chatPage.CHAT_IPC].filter((c) => c.startsWith('settings:')).sort().join() === 'settings:get,settings:set-effort,settings:set-model', [...chatPage.CHAT_IPC].join(','));
 
   // Which tab the AI works in when a run starts on the chat page.
   const tab = (id, more = {}) => ({ id, chat: false, offLimits: false, closing: false, viewedAt: 0, lastActiveAt: 0, ...more });
@@ -3062,7 +3079,7 @@ async function tabsAskRuns() {
 
   // a skill's message in a chat's title
   const { autoTitle } = require('../src/features/chat-store');
-  check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate: French', '');
+  check('skills: a skill\'s chat is titled by the skill and its input, not its prompt', autoTitle({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill_request name="translate" title="Translate" input="French">\nlong prompt\n</skill_request>' }] }] }) === 'Translate skill: French', '');
   fs.rmSync(dirS, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 })();
 

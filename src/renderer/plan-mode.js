@@ -60,7 +60,7 @@
   function chatShown(view, sameChat) {
     if (sameChat) { remember(); return; }
     const id = view?.id || null;
-    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && window.lumenPlanModeDefault === true;
+    on = id && byChat.has(id) ? byChat.get(id) : !(view?.items?.length || view?.live) && (window.lumenPlanModeDefault === true || view?.project?.plan === true); // ([project workspace] a project can start its chats in plan mode)
     render();
   }
 

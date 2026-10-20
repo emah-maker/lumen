@@ -458,6 +458,7 @@ async function buildAi(card) {
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
     toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')), // [desktop apps]
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
+    toggle('aiWordControl', tr('settings.ai.wordControl', 'Let the AI use Microsoft Word'), tr('settings.ai.wordControlDesc', 'The AI can read and write Word documents directly (Windows, with Word installed; a .docx file can be read and added to without Word). It asks before it changes a document and shows the file before it saves. Nothing starts until you ask it to work with a document.')), // [word]
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -3151,11 +3152,25 @@ function buildSystem(card) {
 
 async function buildExtensions(card) {
   const list = h('div', { class: 'list', id: 'extensions-list' });
-  const render = (items) => list.replaceChildren(...(items.length ? items.map((e) => h('div', { class: 'item' },
+  let shownItems = [];
+  // One "Show in toolbar" switch per extension, the same pins as the puzzle button's menu. They apply while the toolbar shows only the pinned ones.
+  const pinSwitch = (e) => {
+    const only = st.prefs.extensionsToolbar === 'pinned';
+    const input = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `Show ${e.name} in the toolbar`, checked: e.pinned || st.prefs.extensionsToolbar === 'all' });
+    input.disabled = !e.button || !only;
+    if (!e.button) input.title = 'This extension has no toolbar button.';
+    input.addEventListener('change', async () => render(await S.pinExtension(e.id, input.checked)));
+    return h('label', { class: 'ext-pin' }, h('span', { text: 'Show in toolbar' }), input);
+  };
+  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.map((e) => h('div', { class: 'item' },
     h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.description ? ` · ${e.description}` : ''}` })),
+    e.button ? pinSwitch(e) : null,
     e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
     h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })))
-    : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))]));
+    : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))])); };
+  card.append(select('extensionsToolbar', 'Show extensions in the toolbar', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.',
+    [['pinned', 'Only the ones I pin'], ['all', 'All of them'], ['none', 'Hide all']]));
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'extensionsToolbar') render(shownItems); });
   render(await S.extensions());
   card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused here; remove one to turn it off.', list,
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
@@ -3502,7 +3517,7 @@ async function init() {
   mount('ai-more', 'macros', tr('settings.section.macros', 'Macros'), 'Saved step lists you run from the menu, a shortcut or the chat.', 'automation record replay steps shortcut script');
   mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
   mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
-  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options');
+  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle');
   mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
   mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
   const BUILDS = [

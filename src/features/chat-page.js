@@ -62,12 +62,12 @@ const routineHelpers = {
 const CHAT_IPC = new Set([
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'tabs:hide-ai', 'agent:ask', 'agent:stop', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agent:auto-allow', 'agent:permission-mode', 'agent:helpers', 'agent:prefer-fractions', 'agent:helper-stop', 'agent:undo', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'desktop:open', 'desktop:control',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'notes:act', // (notes) "Add to notes" under a reply (main.js; features/notes-hub.js)
   'memory:list', 'memory:undo', 'memory:forget', // (memory) the "Remembered" row in the chat and /memory
-  'settings:get', 'settings:set-model', 'openrouter:models',
+  'settings:get', 'settings:set-model', 'settings:set-effort', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', 'skills:offer-save', 'skills:offer-update', // the "/" menu and the save / update cards (features/skills.js)
@@ -249,6 +249,7 @@ function create(deps) {
     const text = String(draft || '').slice(0, 20000);
     const pictures = Array.isArray(images) ? images.slice(0, 10) : []; // (main already checked them: newtab-ai:ask cleans what the page sent)
     if (id != null && (text.trim() || pictures.length)) drafts.set(id, { text, send: Boolean(send), images: pictures });
+    else if (id != null) drafts.set(id, { text: '', send: false, images: [], fresh: true }); // plain Ask AI: the page opens on a new chat, not the last one (an empty open chat is reused)
     deps.ui()?.send('chat:sidebar', false); // as open() does: the page has the whole conversation
     return id;
   }
@@ -288,7 +289,7 @@ function create(deps) {
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
       const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), fresh: Boolean(carried?.fresh), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });

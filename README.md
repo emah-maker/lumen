@@ -372,11 +372,13 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Sign in with GitHub](docs/github-signin.md): one sign-in for the GitHub card and the GitHub connector (a one-time code, or the GitHub CLI), what it asks for, and how a maintainer registers the OAuth App
 - [Screen recording](docs/screen-recording.md): record a tab, a screen or a window to a .webm file, with the tab's sound and your microphone if you want it
 - [Custom widgets](docs/custom-widgets.md): the recipe format for your own new-tab cards, with examples
+- [The AI working in Word](docs/word.md): reads and edits Word documents directly (Windows), or `.docx` files without Word, with an approval for every change and a live card in the chat
 - [The AI using other apps](docs/desktop-apps.md): Word, File Explorer, Finder and more on Windows and macOS: per-app approval, what is never available, the banner and Stop
 - [Skills](docs/skills.md): saved instructions you run with `/`, SKILL.md folders shared with Claude Code and other agents, skills the AI uses on its own, and the opt-in offers to save and improve them
 - [Sync through a folder](docs/sync.md): keep bookmarks, history, chats, widgets and settings the same on your computers through a cloud-drive folder, encrypted with a passphrase only you know, with no Lumen server
 - [Notes](docs/notes.md): the sidebar notepad, adding from a reply or a page, asking the AI about a note, and where notes are kept
 - [Memory](docs/memory.md): what the AI remembers about you between chats, how it decides, Search past chats, and where to see and delete it
+- [Projects](docs/projects.md): files, pages and memory the AI works from in a project's chats
 - [AI activity](docs/mission-control.md): lumen://tasks, one page with what waits for you, what runs, what is scheduled and what finished, across chats, tasks, routines and outside agents
 - [Focus mode](docs/focus.md): block distracting sites for a homework session, the ten-minute "I need this for school" pass, ending it with a hold, schedules in words, and the focus log
 - [Routines](docs/routines.md): requests the AI repeats on a schedule, from a local web link or when new email arrives, when they run, and what they may do (all of them, with templates, quiet hours and web links, in Settings → AI and agents → Routines)

@@ -177,7 +177,7 @@ function history({ map, ready, save, bump = () => {}, isWorthImporting = () => t
 
 // ---------- chats ----------
 // One shard (file) per chat, so a long chat never rewrites the others. A record is the chat's saved messages and the few list fields
-// (title if the person renamed it, pinned, archived, dates). Projects are not synced. A chat that is open or running here waits.
+// (title if the person renamed it, pinned, archived, dates, its project). Projects go in their own records (below). A chat that is open or running here waits.
 const MAX_CHAT_BYTES = 24 * 1024 * 1024;
 function chats({ store, busy = () => false, maxBytes = MAX_CHAT_BYTES }) {
   const bit = (v) => (v ? 1 : 0);
@@ -190,13 +190,13 @@ function chats({ store, busy = () => false, maxBytes = MAX_CHAT_BYTES }) {
       const out = new Map();
       for (const c of store.list()) {
         if (c.missing || c.trashed) continue;
-        const sig = [c.updated, c.created, c.msgs, c.sig, c.title, bit(c.renamed), bit(c.pinned), bit(c.archived)].join('|');
+        const sig = [c.updated, c.created, c.msgs, c.sig, c.title, bit(c.renamed), bit(c.pinned), bit(c.archived), c.project || ''].join('|');
         out.set(c.id, {
           sig,
           async read() {
             const snapshot = await store.loadAsync(c.id);
             if (!snapshot) return undefined;
-            const value = { meta: { title: c.renamed ? c.title : '', renamed: Boolean(c.renamed), created: c.created, updated: c.updated, pinned: Boolean(c.pinned), archived: Boolean(c.archived) }, snapshot };
+            const value = { meta: { title: c.renamed ? c.title : '', renamed: Boolean(c.renamed), created: c.created, updated: c.updated, pinned: Boolean(c.pinned), archived: Boolean(c.archived), ...(c.project ? { project: c.project } : {}) }, snapshot };
             return JSON.stringify(value).length > maxBytes ? undefined : value;
           },
         });
@@ -211,6 +211,76 @@ function chats({ store, busy = () => false, maxBytes = MAX_CHAT_BYTES }) {
         if (deleted) { if (store.has(key)) store.trash(key); continue; }
         if (!value?.snapshot || !Array.isArray(value.snapshot.messages) || !value.snapshot.messages.length) continue;
         if (!store.adopt(key, value.snapshot, value.meta || {})) held.push(key);
+      }
+      return held;
+    },
+  };
+}
+
+// ---------- projects ----------
+// A chat project's text and settings: name, instructions, pinned pages and defaults. NOT where this computer keeps the project's folder
+// (a path on one computer), and not the memory saved in it. A project removed on another computer is removed here (its chats stay).
+function projects({ store, removed = () => {} }) {
+  return {
+    name: 'projects',
+    guard: true,
+    scan() {
+      if (!store.usable()) throw new SyncError('unavailable', 'Projects cannot be read right now');
+      const out = new Map();
+      for (const p of store.projects()) out.set(p.id, { value: { name: p.name, instructions: p.instructions || '', created: p.created || 0, ...(p.links ? { links: p.links.map((l) => ({ url: l.url, title: l.title || '' })) } : {}), ...(p.defaults ? { defaults: p.defaults } : {}) } });
+      return out;
+    },
+    has: (id) => store.projects().some((p) => p.id === id),
+    apply(changes) {
+      const held = [];
+      for (const { key, value, deleted } of changes) {
+        if (deleted) { if (store.removeProject(key)) removed(key); continue; }
+        if (!value || typeof value.name !== 'string') continue;
+        if (!store.adoptProject({ id: key, ...value })) held.push(key);
+      }
+      return held;
+    },
+  };
+}
+
+// ---------- project files ----------
+// The text of the files in a project (the AI's knowledge), one shard per file, only up to a size: a larger file stays on the computer it was
+// added on (the project page there says so). Like everything here they travel only inside the passphrase-encrypted sync files.
+function projectFiles({ store, projectIds, maxChars = 400000 }) {
+  const keyOf = (pid, fid) => `${pid}-${fid}`;
+  const split = (key) => { const m = /^([a-f0-9]{16})-([a-f0-9]{12})$/.exec(String(key)); return m ? [m[1], m[2]] : null; };
+  return {
+    name: 'project-files',
+    guard: true,
+    shardOf: (key) => `project-files-${key}`,
+    scan() {
+      const out = new Map();
+      for (const pid of projectIds()) {
+        for (const f of store.list(pid)) {
+          if ((f.chars || 0) > maxChars || (f.kind === 'image' && (f.size || 0) > 1024 * 1024)) continue;
+          out.set(keyOf(pid, f.id), {
+            sig: [f.name, f.kind, f.size, f.chars, f.added].join('|'),
+            async read() {
+              const value = { meta: { name: f.name, kind: f.kind, size: f.size, summary: f.summary || '', added: f.added, ...(f.cut ? { cut: true } : {}) } };
+              if (f.kind === 'image') { const image = await store.readImage(pid, f.id); if (!image) return undefined; value.image = image; } else value.text = await store.readText(pid, f.id);
+              return value;
+            },
+          });
+        }
+      }
+      return out;
+    },
+    has(key) { const k = split(key); return Boolean(k && store.list(k[0]).some((f) => f.id === k[1])); },
+    async apply(changes) {
+      const held = [];
+      for (const { key, value, deleted } of changes) {
+        const k = split(key);
+        if (!k) continue;
+        if (!projectIds().includes(k[0])) { if (!deleted) held.push(key); continue; } // (its project has not arrived yet)
+        if (deleted) { await store.remove(k[0], k[1]).catch(() => {}); continue; }
+        if (!value?.meta) continue;
+        const r = await store.add(k[0], { id: k[1], name: value.meta.name, kind: value.meta.kind, size: value.meta.size, added: value.meta.added, text: value.text, image: value.image });
+        if (!r.ok && !/up to|holds as much/.test(r.error || '')) held.push(key);
       }
       return held;
     },
@@ -249,4 +319,4 @@ function passwords({ vault, unavailable }) {
   };
 }
 
-module.exports = { bookmarks, settings, widgets, history, chats, passwords, scrub, SETTING_KEYS, DIRECT_SETTINGS, SECRETISH, MAX_CHAT_BYTES };
+module.exports = { bookmarks, settings, widgets, history, chats, projects, projectFiles, passwords, scrub, SETTING_KEYS, DIRECT_SETTINGS, SECRETISH, MAX_CHAT_BYTES };

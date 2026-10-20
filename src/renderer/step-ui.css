@@ -34,6 +34,8 @@
    step-ui.js capSize() lowers the cap on a display with a scale above 1, so a picture is never stretched past its pixels. */
 .act-shot { position: relative; width: 100%; max-width: 340px; align-self: flex-start; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; cursor: pointer; }
 .act-thumb { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.act-shot[data-tab-closed="1"] .act-thumb { filter: grayscale(.6) brightness(.85); }
+.act-shot[data-tab-closed="1"]::after { content: attr(data-closed-label); position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border); font-size: 11px; line-height: 1.4; pointer-events: none; }
 .act-shot:not([data-mode="frame"]) .act-thumb { visibility: hidden; }
 .act-site { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; gap: 8px; padding: 0 12px; color: var(--muted); font-size: 12px; background: var(--bg); }
 .act-shot[data-mode="site"] .act-site { display: flex; }
@@ -56,6 +58,22 @@
 .act-shot2 { width: 100%; max-width: 340px; align-self: flex-start; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; }
 .act-shot2[hidden], .act-card[data-surface="browser"] > .act-shot2 { display: none; }
 .act-thumb2 { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
+.act-thumb2[hidden] { display: none; }
+/* A Word card without Word's window: the paragraphs around the last change, as a small page. */
+.act-page { box-sizing: border-box; width: 100%; height: 100%; overflow: hidden; padding: 10px 14px; background: var(--surface, var(--bg)); color: var(--text); font: 11px/1.4 Georgia, 'Times New Roman', serif; }
+.act-page[hidden] { display: none; }
+.act-pg { padding: 1px 4px; margin: 1px 0; border-radius: 3px; overflow-wrap: anywhere; }
+.act-pg-h1 { font: 700 14px/1.3 var(--font, system-ui, sans-serif); margin-top: 4px; }
+.act-pg-h2 { font: 700 12.5px/1.3 var(--font, system-ui, sans-serif); margin-top: 3px; }
+.act-pg-h3 { font: 600 11.5px/1.3 var(--font, system-ui, sans-serif); }
+.act-pg-li { padding-left: 16px; position: relative; }
+.act-pg-li::before { content: '\2022'; position: absolute; left: 5px; }
+.act-pg-tr { font: 10.5px/1.35 var(--font, system-ui, sans-serif); border: 1px solid var(--border); background: color-mix(in srgb, var(--border) 18%, transparent); }
+.act-pg.hl { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.act-wordchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 8px 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, transparent); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.act-wordchip:hover { background: var(--accent-soft); }
+.act-wordchip svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.act-wordchip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .act-say { max-width: 340px; color: var(--muted); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .act-say[hidden] { display: none; }
 .act-resume, .act-stop { flex: 0 0 auto; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }

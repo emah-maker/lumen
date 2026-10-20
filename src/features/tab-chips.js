@@ -14,6 +14,7 @@ const parseKey = (key) => {
   const m = /^(\d{1,9})(?:@([0-9a-f]{8}))?$/.exec(String(key ?? ''));
   return m ? { id: Number(m[1]), s: m[2] || '' } : null;
 };
+const icon = (f) => (typeof f === 'string' && /^(https?:|lumen-favicon:|file:|data:image[/])/i.test(f) && f.length <= 2000 ? f : null); // a saved chat's icon address
 const isWeb = (url) => /^https?:\/\//i.test(String(url || '')) && String(url).length <= 4000;
 
 // deps: { closed (a Map of id -> { t, u }), lookup(id) -> { title, url, favicon, sleeping } | null (a tab that is open, in any window),
@@ -32,10 +33,10 @@ function create(deps) {
       const live = deps.lookup(ref.id);
       if (live) return { state: 'open', title: String(live.title || ''), url: String(live.url || ''), favicon: live.favicon || null, sleeping: Boolean(live.sleeping), reopen: false };
       const seen = closed.get(ref.id);
-      if (seen) return { state: 'closed', title: seen.t, url: seen.u, favicon: null, reopen: isWeb(seen.u) };
+      if (seen) return { state: 'closed', title: seen.t, url: seen.u, favicon: seen.f || null, reopen: isWeb(seen.u) };
     }
     const kept = snap && typeof snap === 'object' ? snap : null;
-    if (kept && (kept.t || kept.u)) return { state: 'closed', title: String(kept.t || ''), url: String(kept.u || ''), favicon: null, reopen: isWeb(kept.u) };
+    if (kept && (kept.t || kept.u)) return { state: 'closed', title: String(kept.t || ''), url: String(kept.u || ''), favicon: icon(kept.f), reopen: isWeb(kept.u) };
     return { state: 'gone', title: '', url: '', favicon: null, reopen: false };
   }
   const signature = (info) => `${info.state}|${info.title}|${info.url}|${info.favicon || ''}|${info.reopen ? 1 : 0}`;
@@ -98,7 +99,7 @@ function create(deps) {
   function snapshot(id) { // { t, u, s } for a saved chat: the tab as it is, or as it was when it closed
     const info = describe(String(id));
     if (info.state === 'gone') return null;
-    return { t: info.title.slice(0, 200), u: info.url.slice(0, 1000), s: BOOT };
+    return { t: info.title.slice(0, 200), u: info.url.slice(0, 1000), ...(icon(info.favicon) ? { f: info.favicon } : {}), s: BOOT };
   }
   return { describe, infos, watch, changed, open, forget, snapshot, watching: () => watchers.size };
 }
