@@ -252,7 +252,7 @@ function threadStats(file, io = {}) {
         let obj;
         try { obj = JSON.parse(line); } catch { continue; }
         if (isCall) { const ev = fromRolloutLine(obj); if (ev && (ev.last || ev.total)) { call = ev; callAt = i; } }
-        if (isModel && obj.type === 'turn_context' && typeof obj.payload?.model === 'string' && /^[\w.:\/-]{1,80}$/.test(obj.payload.model)) model = obj.payload.model;
+        if (isModel && obj.type === 'turn_context' && typeof obj.payload?.model === 'string' && /^[\w.:/-]{1,80}$/.test(obj.payload.model)) model = obj.payload.model;
         if (isCompact && (obj.type === 'compacted' || obj.payload?.type === 'context_compacted')) compaction = { at: Date.parse(obj.timestamp) || null, index: i, chars: line.length };
       }
       if (call || compaction) {

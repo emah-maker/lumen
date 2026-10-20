@@ -149,7 +149,6 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
   fs.mkdirSync(userHome, { recursive: true });
   fs.mkdirSync(tmp, { recursive: true });
   fs.writeFileSync(path.join(userHome, 'auth.json'), '{"fake":1}');
-  const chatHome = cx.chatHomeFor(userData, 'chat-9');
 
   // Two exec runs of one chat: the second resumes the thread. exec's turn.completed carries the thread's CUMULATIVE total each time.
   const runTurn = async (n, { prompt, resumeId, rollout, events }) => {

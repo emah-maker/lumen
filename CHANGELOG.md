@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The context meter for Codex chats now shows what is really in the window.** It used to add up Codex's running totals every turn, so it overshot (and the Usage panel counted each turn's earlier turns again). It now shows the size of Codex's last request out of the window Codex itself reports for the model, moves while the reply is being written, drops when Codex compacts the chat (and the chat says so), starts over for a new chat or a model switch, and names the model in its tooltip. A Codex reply with no usage figure shows an estimate instead of a stale or empty meter. Grok Build and Antigravity chats no longer keep the old figure when a new session starts.
+
 ## 0.5.60 (2026-10-20)
 
 - **Each release page now says which file to download, and there is an install guide.** The GitHub release lists every file with what it is for (the Windows installer and zip, the Mac disk images for Apple silicon and Intel, and the files only the updater uses), followed by what changed in that version. The new [Install and update](docs/install.md) guide covers installing on Windows and Mac, first launch, updates and troubleshooting. `scripts/release-notes.js` writes the release text from the CHANGELOG; tests: `test/release-notes-units.js`.
