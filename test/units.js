@@ -1745,7 +1745,7 @@ async function chatPageRuns() {
   check('chat page preload: every call it can make is on the allowlist', channels.length > 10 && channels.every((c) => chatPage.CHAT_IPC.has(c)), channels.filter((c) => !chatPage.CHAT_IPC.has(c)).join(', '));
   const risky = [...chatPage.CHAT_IPC].filter((c) => /^(mcp|automation|import|cli|claudecode):|set-provider-key|sign-in|prefs:(?!ui)|set-ai-site|updates|:clear|relaunch/.test(c));
   check('chat page allowlist: no keys, sign-in, MCP, automation, import, CLI or data-clearing calls', risky.length === 0, risky.join(', '));
-  check('chat page allowlist: settings calls are the model list, the model pick and the chat's effort pick only', [...chatPage.CHAT_IPC].filter((c) => c.startsWith('settings:')).sort().join() === 'settings:get,settings:set-effort,settings:set-model', [...chatPage.CHAT_IPC].join(','));
+  check('chat page allowlist: settings calls are the model list, the model pick and the effort pick for a chat only', [...chatPage.CHAT_IPC].filter((c) => c.startsWith('settings:')).sort().join() === 'settings:get,settings:set-effort,settings:set-model', [...chatPage.CHAT_IPC].join(','));
 
   // Which tab the AI works in when a run starts on the chat page.
   const tab = (id, more = {}) => ({ id, chat: false, offLimits: false, closing: false, viewedAt: 0, lastActiveAt: 0, ...more });
