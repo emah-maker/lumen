@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
+
 ## 0.5.59 (2026-10-19)
 
 - **Test suites that guard the browser are steady again, and Settings' Search engine row loads faster.** Several suites raced the page (cards still sliding, a search before every section was built, a dialog answered twice, a Page unloading list that never refreshed in a page that draws no frames) and now wait for what they measure; the Page unloading lists now also refresh from a timer. On General, Focus mode and Sync (rows far below the first screen) are built a moment after the page shows instead of before it, and the Search engine row asks for just the list of engines instead of the whole AI state.

@@ -717,6 +717,7 @@ contextBridge.exposeInMainWorld('assistant', {
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode),
   helpers: (on) => ipcRenderer.invoke('agent:helpers', on),
+  preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on),
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setModel: (id) => ipcRenderer.invoke('settings:set-model', id),
