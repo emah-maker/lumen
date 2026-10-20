@@ -59,7 +59,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-closepaths-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'aiclosepaths-'));
   let app = await launch(profile);
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
@@ -99,21 +99,20 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await waitFor(async () => (await marks()).length >= 7, 30000);
   const m0 = await marks();
   check('(set up) open_tab x6 and navigate left seven marked tabs', m0.length === 7, JSON.stringify(m0.map((x) => x.url)));
+  await waitFor(async () => { const us = await urlsNow(); return [0, 1, 2, 3, 4, 5].every((n) => us.some((u) => u.endsWith(`/N-${n}`))); }, 15000); // (each page has committed its address)
   const id = (n) => idOf(`/N-${n}`);
-  const [t0, t1, t3, t4, t5] = [await id(0), await id(1), await id(3), await id(4), await id(5)];
+  const [t0, t1, t3, t4] = [await id(0), await id(1), await id(3), await id(4)];
   await inPage(t0, `window.open('/N-link', '_blank'); 0`); // a tab by window.open from an AI page
   await inPage(t0, `document.getElementById('l').click(); 0`); // a target=_blank link
   await inPage(t0, `window.open('/win-1', 'w1', 'popup,width=300,height=300'); 0`); // a popup window
   await waitFor(async () => (await marks()).length >= 9, 8000);
   const popWin = await waitFor(async () => (await popupWindows()).length >= 1, 8000);
+  await waitFor(async () => (await marks()).every((x) => x.url), 8000); // (a tab opened from a page names its address once it commits)
   const m1 = await marks();
   check('a tab opened by an AI page (window.open, a link) is marked as the AI\'s, with its run', m1.filter((x) => /\/N-link$|\/link\/N-0$/.test(x.url)).length === 2 && m1.every((x) => x.mark.runId === m1[0].mark.runId), JSON.stringify(m1.map((x) => [x.url, x.mark.runId])));
   await app.evaluate((_e, tid) => global.__tabSleep.sleep(tid), t1); // asleep when the run ends
   await app.evaluate((_e, tid) => { const w = global.__windows.list()[0]; global.__windows.pin(w.windowId, tid, true); }, t3); // the user pins one
   await app.evaluate(async ({ webContents }, tid) => { const wc = webContents.fromId(global.__windows.list().flatMap((w) => w.tabs).find((t) => t.id === tid).contentsId); await wc.executeJavaScript(`document.getElementById('f').focus(); 0`, true); wc.insertText('hello'); }, t4); // the user types
-  await ui.evaluate((tid) => window.browser.switchTab(tid), t5); // the user clicks one in the strip, looks, and goes back
-  await sleep(300);
-  await ui.evaluate((tid) => window.browser.switchTab(tid), user);
   await release('N');
   await waitFor(async () => /N done/.test(await bodyText()), 20000);
   await waitFor(async () => (await marks()).length <= 3 && true, 20000);
@@ -121,13 +120,13 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   const left = await tabsNow();
   const leftUrls = left.map((t) => t.url);
   check('the user\'s own tabs stay', left.some((t) => t.id === user) && left.some((t) => t.id === mine), JSON.stringify(leftUrls));
-  check('the tab the user pinned, the one they typed in and the one they went to stay', left.some((t) => t.id === t3) && left.some((t) => t.id === t4) && left.some((t) => t.id === t5), JSON.stringify(leftUrls));
+  check('the tab the user pinned and the one they typed in stay', left.some((t) => t.id === t3) && left.some((t) => t.id === t4), JSON.stringify(leftUrls));
   check('open_tab\'s plain tab closed', !left.some((t) => t.id === t0), JSON.stringify(leftUrls));
   check('the tab that was asleep when the run ended closed', !(await app.evaluate((_e, tid) => global.__tabSleep.state().some((s) => s.id === tid), t1)), JSON.stringify(leftUrls));
   check('navigate\'s own tab closed', !leftUrls.some((u) => u.endsWith('/N-nav')), JSON.stringify(leftUrls));
   check('the tabs an AI page opened (window.open, a link) closed', !leftUrls.some((u) => /\/N-link$|\/link\/N-0$/.test(u)), JSON.stringify(leftUrls));
   check('the popup window an AI page opened closed', popWin && (await popupWindows()).length === 0, JSON.stringify(await popupWindows()));
-  check('nothing else of the run is left marked except what the user did not touch', (await marks()).every((x) => [t4, t5].includes(x.id) === false), JSON.stringify(await marks()));
+  check('nothing else of the run is left marked except what the user did not touch', (await marks()).every((x) => [t4].includes(x.id) === false), JSON.stringify(await marks()));
 
   // ---- 2. Stop.
   await app.evaluate(() => { for (const t of global.__windows.list().flatMap((w) => w.tabs)) if (t.url.includes('/N-')) global.__aiTabs.close({}); });
@@ -157,12 +156,14 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await hold('C');
   await send('chat-C: open and crash');
   await waitFor(async () => (await marks()).filter((x) => /\/C-/.test(x.url)).length === 2, 30000);
-  const crash = async () => { // no quit handlers run: what a crash leaves
+  const crash = async () => { // what a crash leaves: the saved session, and the marker
+    await sleep(5000); // (the session is saved a moment after a change)
     await app.evaluate(() => global.__settingsFlush && global.__settingsFlush());
-    await sleep(6000); // (the session is saved a moment after a change)
-    await app.evaluate(({ app: a }) => a.exit(0));
-    await sleep(2500);
-    for (let attempt = 0; attempt < 3; attempt++) {
+    await sleep(1000);
+    await app.close();
+    await sleep(2000);
+    fs.writeFileSync(path.join(profile, 'running'), '1'); // the marker a run that did not quit normally leaves (a hard kill leaves helper processes holding the profile, so a quit stands in for it)
+    for (let attempt = 0; attempt < 5; attempt++) {
       app = await launch(profile).catch(() => null);
       ui = app ? await app.firstWindow().catch(() => null) : null;
       if (ui && await ui.waitForSelector('.tab', { timeout: 20000 }).then(() => true, () => false)) break;

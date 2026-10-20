@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Close every tab and popup the AI opened.** Pop-up windows a page opened for the AI (a sign-in popup, a window.open) now close with the rest of the run's tabs, a run that was cut short by a crash is cleaned up the next time Lumen starts when Close is on.
+
 - **New setting: Prefer fractions.** Turn it on in Settings > AI (or type /fractions on in the chat) and the AI writes exact values as fractions, 4/3 instead of 1.333, and keeps √ and π as they are. Fractions are drawn stacked, with the top number over a bar over the bottom one, and a plain 3/4 in an answer is stacked too (dates, paths, units and code are left alone). Numbers you give it stay as you gave them, and decimals you ask for stay decimals. It applies to new chats and works with every model and engine. Off by default.
 
 ## 0.5.60 (2026-10-20)

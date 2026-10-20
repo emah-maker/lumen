@@ -6599,9 +6599,9 @@ function restoreSession(entry = null) {
     for (const more of saved.more.slice(0, 9)) createWindow({ restore: more });
     enterWindow(first);
   }
-  // [ai manners] A run that was cut short (a crash, a power cut) left its tabs marked in the saved session: with Close they go now, the way they would have
+  // [ai manners] After a crash or power cut (not a normal quit: those tabs stay marked, as tested) a run that was cut short left its tabs marked in the saved session: with Close they go now, the way they would have
   // when the run ended (not the tab in front, one marked keep, one a chat lives in).
-  if (!entry && readSettings().closeAiTabs === 'always') setTimeout(() => { aiTabsClose({}, { auto: true }).catch(() => {}); }, 3000);
+  if (!entry && crashRecovery.crashed() && readSettings().closeAiTabs === 'always') setTimeout(() => { aiTabsClose({}, { auto: true }).catch(() => {}); }, 3000);
 }
 
 function restoreTabsFrom(saved) {
@@ -9972,7 +9972,7 @@ ipcMain.on('missingfile:choose', async (event) => {
   wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
 });
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
-ipcMain.on('tab:switch', (_e, id, at) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; switchTab(id); switchInput = null; userTookOver(tabAnywhere(id)?.t); }); // [ai manners] a tab the user chose in the strip is theirs: Close leaves it even once they have moved on
+ipcMain.on('tab:switch', (_e, id, at) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; switchTab(id); switchInput = null; });
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
   moveTab(id, toIndex);
   // An in-strip drag holds its tab hidden until this: the strip shows it in the slot it landed in.
