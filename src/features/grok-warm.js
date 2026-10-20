@@ -326,7 +326,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
 
   // One message through the chat's kept process. Resolves grok-build.js run()'s result, or null when this message must go
   // through a headless run instead (nothing was sent to Grok then).
-  async function run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, quietExpired = false, fullAccess = false, effort = '' }) {
+  async function run({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, signal, emit, runAgent = null, scope = null, shownModel = null, quietExpired = false, fullAccess = false, effort = '', routeSubagents = false }) {
     if (!enabled()) { disposeAll(); return null; }
     if (images.length) { stats.fallbacks++; return null; } // `grok agent` takes no images
     fullAccess = fullAccess === true;
@@ -350,7 +350,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       stats.fallbacks++;
       return null;
     }
-    const out = await turn(p, { prompt, sessionId: p.sessionId, resume, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired });
+    const out = await turn(p, { prompt, sessionId: p.sessionId, resume, model, maxTurns, signal, emit, runAgent, scope, shownModel, quietExpired, routeSubagents });
     p.busy = false;
     if (out.keep && live(p)) idleLater(p, idleMs());
     else dispose(p, { now: true });
@@ -367,7 +367,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   }
 
   // The turn itself (session/prompt), mapped to the result a headless run gives. keep: whether the process may stay.
-  async function turn(p, { prompt, sessionId, resume, model, maxTurns, signal, emit, runAgent, scope = null, shownModel, quietExpired = false }) {
+  async function turn(p, { prompt, sessionId, resume, model, maxTurns, signal, emit, runAgent, scope = null, shownModel, quietExpired = false, routeSubagents = false }) {
     const { gate, tag } = p;
     gate.rearm(tag); // this message must arm the gate again (its own UserPromptSubmit)
     if (p.turns === 0) { try { engine.onFresh?.({ sessionId, resume }); } catch {} }
@@ -382,6 +382,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     let text = '';
     let lastKind = '';
     let offTool = null;
+    let spawned = null;
     let unguarded = false;
     let capped = false;
     let toolCalls = 0;
@@ -436,6 +437,8 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
           toolCalls++;
           if (toolCalls > cap) { capped = true; stopTurn(); return; }
         }
+        // spawn_subagent, with the caller routing it (agent.js): take its task and stop here; the caller runs it with Lumen's own helpers.
+        if (routeSubagents && !p.full && name === 'spawn_subagent' && input) { offTool = name; spawned = input; kill(); return; }
         // A tool that isn't Lumen's and actually ran (not one the gate or Grok refused): stop, as toolWatch would. (Full access: Grok's own tools are expected.)
         if (!p.full && /^(in_progress|completed)$/.test(String(u.status || '')) && !gb.isLumenTool(name, input, true)) {
           offTool = name === 'use_tool' ? `use_tool ${String(input?.tool_name || '(unreadable)').slice(0, 80)}` : String(name || 'unnamed tool').slice(0, 80);
@@ -458,7 +461,8 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     const meta = res.result?._meta || {};
     const served = gb.servedModel({ init: meta.modelId || p.model });
     if (offTool) {
-      emit({ type: 'error', text: `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.` });
+      if (spawned) { const jobs = gb.spawnJobs(spawned); if (jobs) return { text, sessionId: null, subagent: { tasks: jobs }, keep: false }; }
+      emit({ type: 'error', text: gb.offToolText(offTool) });
       return { text, sessionId: null, failed: true, keep: false };
     }
     if (unguarded) {

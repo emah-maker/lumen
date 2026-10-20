@@ -509,6 +509,32 @@ const fakeGate = {
       check('sign-in lock: released when the kept processes end', await until(() => gb.authStats(engine.home).runs === 0), JSON.stringify(gb.authStats(engine.home)));
     }
 
+    // ---- spawn_subagent: Grok's own subagents never start (their tool use would skip Lumen's gate); with routeSubagents the run hands
+    // the task back (out.subagent) so agent.js can run it with Lumen's own helpers; without it, a useful stop message
+    {
+      const task = { description: 'Find usages', prompt: 'Search the repo for foo' };
+      const headlessSpawn = (out) => {
+        out({ type: 'stream_event', event: { type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 's1', name: 'spawn_subagent', input: {} } } });
+        out({ type: 'stream_event', event: { type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: JSON.stringify(task) } } });
+        out({ type: 'stream_event', event: { type: 'content_block_stop', index: 1 } });
+      };
+      const via = async (route, warm) => {
+        const s = setup({ on: warm });
+        if (warm) s.fake.script.prompt = (rec, p, end, update) => { update(p.sessionId, { sessionUpdate: 'tool_call', toolCallId: 's1', title: 'spawn_subagent', status: 'in_progress', rawInput: task, _meta: { 'x.ai/tool': { name: 'spawn_subagent' } } }); };
+        else s.fake.script.headless = headlessSpawn;
+        const events = [];
+        const out = await s.engine.run({ prompt: 'go', images: [], sessionId: 'sp-' + Math.random(), resume: false, systemPrompt: 'SYS', model: 'default', maxTurns: 0, routeSubagents: route, signal: new AbortController().signal, emit: (e) => events.push(e) });
+        return { out, events };
+      };
+      for (const warm of [false, true]) {
+        const label = warm ? 'kept process' : 'headless';
+        const routed = await via(true, warm);
+        check(`spawn_subagent (${label}), routed: the task is handed back, nothing is reported as an error, the session is dropped`, routed.out.subagent?.tasks?.[0]?.task === 'Find usages: Search the repo for foo' && !routed.out.failed && routed.out.sessionId === null && !routed.events.some((e) => e.type === 'error'), JSON.stringify(routed));
+        const plain = await via(false, warm);
+        check(`spawn_subagent (${label}), not routed: the run stops with a message that says what to do`, plain.out.failed === true && !plain.out.subagent && plain.events.some((e) => e.type === 'error' && /own helper agents/.test(e.text) && /Settings > AI/.test(e.text)), JSON.stringify(plain.events));
+      }
+    }
+
     // ---- pure helpers
     {
       const r = warmLib.resultOf({ modelId: 'grok-4.7', usage: { inputTokens: 1000, cachedReadTokens: 800, outputTokens: 7, modelCalls: 2, costUsdTicks: 1e8 } });
