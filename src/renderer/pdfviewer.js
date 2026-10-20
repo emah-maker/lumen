@@ -157,6 +157,7 @@ async function open() {
     return;
   }
   say('');
+  setTimeout(() => $('viewer').classList.add('sized'), 4000); // (never hidden for good, whatever happens to the first size)
   docOpened(doc);
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
@@ -190,6 +191,7 @@ function refresh() {
     viewer.currentScaleValue = zoomValue;
     if (page) viewer.currentPageNumber = page;
     showScale();
+    $('viewer').classList.add('sized');
   } else if (sizedAt !== `${w}x${h}` && ['page-width', 'page-fit', 'auto'].includes(String(viewer.currentScaleValue))) {
     const fit = viewer.currentScaleValue;
     viewer.currentScaleValue = fit; // (the fit scale is worked out again for the new size)
