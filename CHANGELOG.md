@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI sidebar now keeps each chat as you left it when you switch tabs or chats.** Switching to another tab and back used to throw the conversation to the bottom, drop the pictures and "@" tab chips waiting in the box (or carry the pictures into the other tab's chat), fold the step cards you had opened, and leave the open chat list marking the wrong chat. After a restart the sidebar also did not know which chat it showed, so the draft you had typed was lost. Now each chat keeps its place in the conversation, its unsent text, pictures, tab chips and Plan first setting, and its open step cards while you are elsewhere (in memory: a restart keeps the text only). The chat list, Notes and the other panels belong to the window, so they stay open when the tab changes and the chat list marks the chat of the tab in front. New test: `test/sidebar-tab-state.js`.
 - **A chat that finishes or needs your OK while you are on another tab now says so in Lumen.** macOS shows no banner for the app in front, so the system notification Lumen sent went unseen when you were in Lumen on a different tab. In that case the tab strip now shows a toast ("AI finished: …", "AI needs your OK") with **Open chat**, which goes where a click on the system notification would: the tab the AI worked in, with the chat open. In another app you still get the system notification. Same switches as before (Tasks → Settings). Tests: `test/notify-click.js`.
 
 ## 0.5.59 (2026-10-19)

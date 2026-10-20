@@ -3782,6 +3782,79 @@ const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: promp
 prompt.addEventListener('blur', () => saveDraft());
 window.addEventListener('pagehide', () => saveDraft());
 window.addEventListener('beforeunload', () => saveDraft());
+
+
+
+
+const viewStash = new Map();
+const STASH_MAX = 60;
+let pendingView = null;
+const stashKey = (id) => (id ? String(id) : 'new');
+const foldables = () => [...messages.querySelectorAll('details, .step[data-more]')].reverse();
+function stashView(id) {
+  const kept = { attachments: attachments.slice(), chips: window.tabsAsk?.snapshot?.() || null };
+  if (!lazyItems && !pendingView && messages.clientHeight > 0 && messages.querySelector('.msg')) {
+    const fromBottom = Math.round(messages.scrollHeight - messages.scrollTop - messages.clientHeight);
+    if (fromBottom > 48) kept.fromBottom = fromBottom;
+    const open = [];
+    foldables().forEach((el, i) => { if (el.tagName === 'DETAILS' ? el.open : el.getAttribute('aria-expanded') === 'true') open.push(i); });
+    if (open.length) kept.open = open;
+  }
+  if (!kept.attachments.length && !kept.chips && kept.fromBottom === undefined && !kept.open) return;
+  const key = stashKey(id);
+  viewStash.delete(key);
+  viewStash.set(key, kept);
+  while (viewStash.size > STASH_MAX) viewStash.delete(viewStash.keys().next().value);
+}
+function stashRename(from, to) {
+  const k = stashKey(from);
+  const v = viewStash.get(k);
+  if (!v || !to) return;
+  viewStash.delete(k);
+  if (!viewStash.has(stashKey(to))) viewStash.set(stashKey(to), v);
+}
+
+function takeStash() {
+  const key = stashKey(shownChatId);
+  const kept = viewStash.get(key);
+  if (!kept) return;
+  viewStash.delete(key);
+  if (kept.attachments?.length) attachments = [...kept.attachments, ...attachments].slice(0, MAX_ATTACH);
+  if (kept.chips) window.tabsAsk?.restore?.(kept.chips);
+  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, open: kept.open || null };
+}
+
+
+let pendingOpen = null;
+function reopenCards() {
+  const p = pendingOpen;
+  if (!p) return;
+  if (Date.now() > p.until || !p.idx.length) { pendingOpen = null; return; }
+  const all = foldables();
+  p.idx = p.idx.filter((i) => {
+    const el = all[i];
+    if (!el) return true;
+    if (el.tagName === 'DETAILS') el.open = true;
+    else if (el.getAttribute('aria-expanded') !== 'true') el.click();
+    return false;
+  });
+}
+new MutationObserver(() => { if (pendingOpen) reopenCards(); }).observe(messages, { childList: true, subtree: true });
+function applyView() {
+  const p = pendingView;
+  if (!p) return true;
+  if (viewHidden() || !messages.clientHeight) return false;
+  if (p.open) { pendingOpen = { idx: p.open, until: Date.now() + 4000 }; p.open = null; reopenCards(); }
+  if (p.fromBottom > 0) {
+    const want = messages.scrollHeight - messages.clientHeight - p.fromBottom;
+    if (want < 0) { messages.scrollTop = 0; return false; }
+    stuck = false;
+    messages.scrollTop = want;
+    jump.hidden = false;
+  }
+  pendingView = null;
+  return true;
+}
 function restoreDraft() {
   draftHold = false;
   const d = drafts?.get(shownChatId);
@@ -3790,14 +3863,17 @@ function restoreDraft() {
     prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
     pastes = d.pastes.slice();
   }
+  takeStash();
   autosize();
   renderAttachments();
   renderScreenBtn();
+  if (pendingView && !lazyItems) applyView();
 }
 
 function nameChat(id) {
   if (!id || shownChatId) return;
   drafts?.rename(null, id);
+  stashRename(null, id);
   shownChatId = id;
 
   if (!prompt.value && !pastes.length) restoreDraft();
@@ -3829,6 +3905,7 @@ jump.addEventListener('click', () => {
   jump.hidden = true;
 });
 messages.after(jump);
+for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true });
 messages.addEventListener('scroll', () => {
   if (Date.now() - jumping < 700) { stuck = true; return; }
   stuck = atBottom();
@@ -5842,6 +5919,7 @@ function showHistory(items, loaded = false) {
   restoring = true;
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom();
+  if (pendingView) applyView();
 }
 
 
@@ -5888,9 +5966,10 @@ function drawEarlier(older, newest) {
     messages.insertBefore(fragment, first || null);
     const atTop = top <= 1;
     messages.scrollTop = atTop ? 0 : top + (messages.scrollHeight - before);
+    const waiting = pendingView ? !applyView() : false;
     if (replyEntries.length) below = replyEntries[0];
     end = start;
-    if (end > 0) { if (atTop) { cancel(); handle = setTimeout(step, 0); } else later(); }
+    if (end > 0) { if (atTop || waiting) { cancel(); handle = setTimeout(step, 0); } else later(); }
   };
 
   const later = () => { cancel(); handle = typeof requestIdleCallback === 'function' ? requestIdleCallback(() => step(true), { timeout: 400 }) : setTimeout(() => step(true), 50); };
@@ -6060,7 +6139,7 @@ window.assistant.onRunStart?.(({ text, runId: id, images, files, chatId: chat } 
 const viewHidden = () => document.body.classList.contains('sidebar-hidden') && !document.body.classList.contains('chat-full');
 new MutationObserver(() => { if (!viewHidden()) flushLazyHistory(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 function flushLazyHistory() {
-  if (!lazyItems) return;
+  if (!lazyItems) { if (pendingView) applyView(); return; }
   const items = lazyItems;
   lazyItems = null;
   showHistory(items);
@@ -6072,13 +6151,13 @@ function applySync(view) {
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   clearChatView({ keepBox: sameChat });
-  if (sameChat && unnamed) drafts?.rename(null, view.id);
+  if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownChatId = view?.id || null;
   window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
-  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) drafts?.rename(emptyOwner, view.id);
+  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
   if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined;
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
 
@@ -6089,6 +6168,7 @@ function applySync(view) {
   resumeLive(view?.live);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view);
+  window.chatList?.refreshOpen?.();
   window.chatFolders?.refresh(view?.workFolder);
   chatHost.chatChanged?.();
 }
@@ -6283,6 +6363,10 @@ function clearChatView({ keepBox = false } = {}) {
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId;
     saveDraft();
+    stashView(shownChatId);
+    pendingView = null;
+    pendingOpen = null;
+    attachments = [];
     draftHold = true;
     prompt.value = '';
     pastes = [];
@@ -6914,7 +6998,15 @@ function startChat() {
     confirmEl.replaceChildren();
   }
 
-  window.tabsAsk = { take, askAll, describeSent, reset, chips: () => chips.map((c) => ({ ...c })), open: () => update() };
+
+  const snapshot = () => (chips.length || confirmedAll ? { chips: chips.map((c) => ({ ...c })), confirmedAll } : null);
+  function restore(saved) {
+    chips = Array.isArray(saved?.chips) ? saved.chips.map((c) => ({ ...c })) : [];
+    confirmedAll = Boolean(saved?.confirmedAll);
+    renderChips();
+  }
+
+  window.tabsAsk = { take, askAll, describeSent, reset, snapshot, restore, chips: () => chips.map((c) => ({ ...c })), open: () => update() };
   renderChips();
 })();
 ;
@@ -11390,7 +11482,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
 
 
-  window.chatList = { refreshUsage, open: openPanel, close: closePanel, openChat: async (id) => { if (!id) return false; const { current } = await api.list(); return id === current ? true : openChat(id); } };
+  window.chatList = { refreshUsage, refreshOpen: () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); }, open: openPanel, close: closePanel, openChat: async (id) => { if (!id) return false; const { current } = await api.list(); return id === current ? true : openChat(id); } };
 })();
 ;
 // ---- tasks.js
