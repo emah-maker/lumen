@@ -27,8 +27,8 @@ const SECRET_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.c
 const SECRET_FILE = /^(\.env(\..+)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|keychain-db))$/i;
 const ENV_EXAMPLE = /^\.env\.(example|sample|template)$/i;
 
-// The folder names the model may use as a shorthand: "desktop", "downloads", ...
-const NAMED = { desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents', pictures: 'Pictures', movies: 'Movies', videos: 'Videos', music: 'Music', home: '' };
+// The folder names the model may use as a shorthand: "desktop", "downloads", ... ("phone": the phone inbox, features/phone-inbox.js)
+const NAMED = { desktop: 'Desktop', downloads: 'Downloads', phone: 'Downloads/From phone', documents: 'Documents', pictures: 'Pictures', movies: 'Movies', videos: 'Videos', music: 'Music', home: '' };
 
 // An absolute, normalized path for what the model wrote: "~/Desktop/a.png", "/Users/me/a.png", "file:///Users/me/a.png",
 // "Desktop/a.png" or "desktop" (relative ones are under the home folder). Throws on anything else.

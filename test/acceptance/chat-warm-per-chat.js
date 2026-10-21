@@ -26,6 +26,18 @@ async function claudeSuite() {
   const A = chat(model);
   const B = chat(model);
 
+  // ---- [parallel chats] a second message for a chat whose engine is still busy gets an engine of its own, never the busy one
+  {
+    const first = H.agent.engines.lease('claudecode', 'chat-dup');
+    const second = H.agent.engines.lease('claudecode', 'chat-dup');
+    check('a chat\'s second lease while its first holds is another engine (two turns never share one engine)', Boolean(first && second && first.engine !== second.engine && pool().engineOf('chat-dup') === first.engine), '');
+    second.release(); first.release();
+    const third = H.agent.engines.lease('claudecode', 'chat-dup');
+    check('...and once free, the chat gets its own warm engine back', third.engine === first.engine, '');
+    third.release();
+    pool().drop('chat-dup');
+  }
+
   // ---- two chats at once, then a second message in each, again at once
   const a1 = send(A, 'RUN-WA1 HOLD-WA1 first', 1, as('chat-A'));
   const b1 = send(B, 'RUN-WB1 HOLD-WB1 first', 2, as('chat-B'));

@@ -4388,6 +4388,7 @@ async function buildAi(card) {
   card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
 
   card.group(tr('settings.ai.groupAiTabs', 'AI tabs')).append(
+    toggle('groupAiTabs', tr('settings.ai.foldAiTabs', 'Group tabs the AI opens'), tr('settings.ai.foldAiTabsDesc', 'Puts every tab the AI opens in a window into one folded "AI tabs" group, so the tab strip gets one label instead of a row of tabs. Click the label to unfold it. A tab you start using leaves the group. Research tabs keep their own "AI: …" groups.'), undefined, { fallback: true }),
     toggle('hideAiTabs', tr('settings.ai.hideAiTabs', 'Hide AI tabs'), tr('settings.ai.hideAiTabsDesc', 'Leaves the tabs the AI opened out of the tab strip, in every window. They stay open; the one you are on and one playing sound stay shown. A tab that needs you (an approval, a dialog, an error) shows as "needs you" so it is never lost.')),
     toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Bring tabs the AI opened to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab it opened to the front when it has a page to show you. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close (the default) closes them as soon as the AI is done, with Undo, but keeps the tab you are looking at, one playing sound, one holding text you typed, and one the AI said you still need. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
@@ -6696,7 +6697,13 @@ function buildTelegram(slot) {
   channel.querySelector('.text').append(stateNote);
   const tokenRow = stackRow(tr('settings.telegram.token', 'Bot token'), tr('settings.telegram.tokenDesc', ''), botNote, tokenControls);
   const pairRow = stackRow(tr('settings.telegram.pairing', 'Paired chat'), tr('settings.telegram.pairingDesc', ''), pairNote, pairControls);
-  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), tokenRow, pairRow);
+
+  const inboxNote = status('telegram-inbox');
+  const files = toggle('telegramFiles', tr('settings.telegram.files', 'Save photos and files I send to the bot'), tr('settings.telegram.filesDesc', ''), null, { fallback: true });
+  files.querySelector('.text').append(inboxNote);
+  files.querySelector('.controls')?.prepend(h('button', { id: 'telegram-show-inbox', text: tr('settings.telegram.showInbox', 'Show in Finder'), onclick: () => S.ai.telegram.showInbox().catch(() => {}) }));
+  later(() => S.ai.telegram.status()).then((s) => { if (s?.inboxDir) inboxNote.textContent = tr('settings.telegram.inbox', 'Phone inbox: {dir}', { dir: s.inboxDir }); }).catch(() => {});
+  page.append(channel, toggle('telegramSignedIn', tr('settings.telegram.signedIn', 'Use my sign-ins in these tasks'), tr('settings.telegram.signedInDesc', '')), withKeywords(files, 'photo picture image file upload transfer send phone inbox airdrop'), tokenRow, pairRow);
   later(refresh);
 }
 

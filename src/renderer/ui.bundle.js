@@ -4424,6 +4424,8 @@ window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, not
     });
     renderAttachments();
   }
+  const phoneBtn = $('from-phone');
+  if (phoneBtn) phoneBtn.onclick = () => window.browser?.phoneWifi?.();
 }
 
 prompt.addEventListener('paste', async (e) => {
@@ -4508,7 +4510,7 @@ function sendNow(entry) {
   if (!running) return;
   for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
   if (turn) turn.interrupted = true;
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
 }
 function sendQueued() {
 
@@ -5199,7 +5201,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.();
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, denyLabel: event.denyLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -5353,7 +5355,7 @@ function finishTurn(event, { early }) {
 const STOP_WAIT_MS = 2000;
 let stopTimer = null;
 function stopReply() {
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
   if (!running) return;
   if (turn) turn.stopRequested = true;
   const mine = runId;
@@ -5788,7 +5790,7 @@ function showHelperCard(e) {
 function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways });
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle });
@@ -5939,7 +5941,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector' && note !== 'close') { e.preventDefault(); answer(true); }
     else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); }
   });
   actions.append(...[deny, always, allow].filter(Boolean));
@@ -6535,7 +6537,7 @@ async function askOnNewTopic(text, images, tabs) {
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
   back.onclick = async () => {
     back.disabled = true;
-    if (running) window.assistant.stop();
+    if (running) window.assistant.stop(shownChatId || undefined);
 
     const current = await window.assistant.chats.list().then((r) => r.current).catch(() => null);
     if (current && current !== previous) await window.assistant.chats.remove(current).catch(() => {});
@@ -10016,7 +10018,7 @@ const showGpuNote = (info) => {
 window.browser.onGpuNote?.(showGpuNote);
 window.lumenPrefs?.get().then((p) => { if (p?.safeDrawing) showGpuNote({ kind: 'safe' }); }).catch(() => {});
 
-window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo, chatNote }) => {
+window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo, chatNote, phoneNote }) => {
   document.querySelector('.organize-note')?.remove();
   const note = Object.assign(document.createElement('div'), { className: 'organize-note', role: 'status' });
   const words = Object.assign(document.createElement('span'), { className: 'organize-note-text', textContent: text });
@@ -10058,7 +10060,7 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     setTimeout(() => { if (note.isConnected) { summary(); summary.fit?.(); } }, 200);
   }
   if (undo) {
-    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
+    note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (phoneNote) window.browser.phoneNoteAction?.(phoneNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
   }
   organizeBtn.after(note);
   setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000);
@@ -11181,10 +11183,12 @@ document.addEventListener('cmdbar:ask', (e) => {
 });
 
 
-window.lumenFiles?.on('attach-file', async ({ name, type, data }) => {
+
+window.lumenFiles?.on('attach-file', async ({ name, type, data, text }) => {
   showSidebar(true);
   try {
     await addFiles([new File([data], String(name || 'file'), { type: String(type || '') })]);
+    if (typeof text === 'string' && text.trim() && !prompt.value.trim()) { prompt.value = text.trim(); prompt.dispatchEvent(new Event('input', { bubbles: true })); }
     prompt.focus();
   } catch {  }
 });
