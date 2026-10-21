@@ -1,11 +1,11 @@
 // Whether the AI sidebar is open, per tab (main.js "[sidebar per tab]", renderer/app.js showSidebar).
 //
-// Opening the sidebar in one tab leaves every other tab as it was. Tabs that share a session (they are bound to the
-// same chat: features/tab-chats.js) share the open state: opening it in one opens it in the others, closing closes all.
-// The sidebar's width is not part of this: it stays one setting for the window.
+// Opening the sidebar in one tab leaves every other tab as it was, whatever chat each shows (main.js passes only a split
+// view's other side as a sharer, so the two halves of a pair open and close together). The sidebar's width is not part of
+// this: it stays one setting for the window.
 //
-//   set(tab, open, sharers)    the user (or the app, for that tab) opened or closed the sidebar there; the tabs that
-//                              share its chat get the same answer. Returns the tab ids written.
+//   set(tab, open, sharers)    the user (or the app, for that tab) opened or closed the sidebar there; the sharers get
+//                              the same answer. Returns the tab ids written.
 //   isOpen(tab, sharers)       the state the tab shows. A tab that shares a chat shows the newest answer given to it
 //                              or to any tab it shares with, so a tab that joins a chat later takes the chat's state
 //                              and a tab that leaves one keeps what it last showed.

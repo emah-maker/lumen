@@ -14,6 +14,11 @@
 //   answered through the runner's approve(), the same call as the Tasks panel. Unanswered, the task's usual timeout
 //   denies them. Nothing here allows anything by itself.
 // - Polling stops when the setting is off, the token is removed, or Telegram rejects the token; errors back off.
+// - [phone files] A photo or file from the owner (telegramFiles, on by default) is downloaded (getFile, at most 20 MB, the
+//   Bot API's cap) and handed to deps.inbox.save (features/phone-inbox.js); its caption goes with it and is never run.
+//   A message that is only a link, or "/open <url>", opens a tab (deps.openUrl) instead of starting a task.
+// - [phone files] sendToChat sends a link or a file (sendDocument, at most 50 MB) to the owner's chat. Only the user's own
+//   clicks call it (main.js Send to phone): no AI tool reaches it.
 // Pure apart from deps (fetch is injected: test/telegram-units.js runs it against a fake Bot API).
 const crypto = require('crypto');
 
@@ -31,6 +36,10 @@ const BACKOFF = { base: 2000, max: 5 * 60000 };
 const CARD_CAPS = { task: 80, title: 200, host: 200, query: 300, args: 1000 }; // raw characters, before MarkdownV2 escaping (at most doubles them): a card stays under 4096
 const ACTIVE = new Set(['queued', 'running', 'waiting-approval']);
 const TOKEN_RE = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
+const MAX_IN_BYTES = 20 * 1024 * 1024; // [phone files] the Bot API's getFile download cap
+const MAX_OUT_BYTES = 50 * 1024 * 1024; // [phone files] ...and its sendDocument upload cap
+const FILE_KINDS = ['document', 'video', 'audio', 'voice', 'video_note', 'animation'];
+const KIND_EXT = { photo: '.jpg', video: '.mp4', audio: '.mp3', voice: '.ogg', video_note: '.mp4', animation: '.mp4' };
 
 const validToken = (token) => TOKEN_RE.test(String(token || '').trim());
 
@@ -78,6 +87,37 @@ function backoffDelay(failures, retryAfter) {
   return Math.min(BACKOFF.max, BACKOFF.base * 2 ** Math.max(0, failures - 1));
 }
 
+// [phone files] The file a message carries: { fileId, name, mime, size, kind }, or null. A photo is the largest size
+// Telegram made (photos are compressed; a file sent "as a file" comes as a document with its own name).
+function fileOf(msg) {
+  if (!msg || typeof msg !== 'object') return null;
+  const d = new Date((Number(msg.date) || 0) * 1000);
+  const two = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}.${two(d.getMinutes())}.${two(d.getSeconds())}`; // local time, as a screenshot is named
+  if (Array.isArray(msg.photo) && msg.photo.length) {
+    const big = msg.photo.reduce((a, b) => ((b?.width || 0) * (b?.height || 0) > (a?.width || 0) * (a?.height || 0) ? b : a));
+    if (!big?.file_id) return null;
+    return { fileId: String(big.file_id), name: `Photo ${stamp}.jpg`, mime: 'image/jpeg', size: Number(big.file_size) || 0, kind: 'photo' };
+  }
+  for (const kind of FILE_KINDS) {
+    const f = msg[kind];
+    if (!f?.file_id) continue;
+    const label = kind === 'document' ? 'File' : kind === 'video_note' ? 'Video' : kind[0].toUpperCase() + kind.slice(1);
+    const name = String(f.file_name || '').trim() || `${label} ${stamp}${KIND_EXT[kind] || ''}`;
+    return { fileId: String(f.file_id), name, mime: String(f.mime_type || ''), size: Number(f.file_size) || 0, kind };
+  }
+  return null;
+}
+
+// [phone files] A message that is one http(s) link and nothing else: the URL, or null.
+function isBareUrl(text) {
+  const s = String(text || '').trim();
+  if (!s || /\s/.test(s)) return null;
+  let u;
+  try { u = new URL(s); } catch { return null; }
+  return u.protocol === 'http:' || u.protocol === 'https:' ? u.href : null;
+}
+
 const newPairCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, '0');
 const sameCode = (a, b) => { const x = Buffer.from(String(a)); const y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
@@ -90,7 +130,8 @@ function parseCallback(data) {
 
 // deps: { fetch(url, init) -> Response, readSettings, writeSettings, getToken() -> string|null, setToken(token|null),
 //         canEncrypt(), isOnline?(), t(key, params), now?(), sleep?(ms, signal), pollTimeout? (seconds),
-//         tasks: { create(spec), stop(id), approve(id, approvalId, choice), find(id), subscribe(fn), approvalWaitMin() } }
+//         tasks: { create(spec), stop(id), approve(id, approvalId, choice), find(id), subscribe(fn), approvalWaitMin() },
+//         inbox?: { save({ name, mime, data, caption }) -> { name, ... } }, onFile?(saved, caption), openUrl?(url) }
 // Settings: telegramChannel (on/off), telegramSignedIn (tasks use the user's sign-ins); settings.telegram holds
 // { bot: { id, username }, owner: { id, name }, offset }, which only this file writes.
 function create(deps) {
@@ -117,6 +158,7 @@ function create(deps) {
   const tg = () => { const v = deps.readSettings().telegram; return v && typeof v === 'object' ? v : {}; };
   const saveTg = (patch) => deps.writeSettings({ ...deps.readSettings(), telegram: { ...tg(), ...patch } });
   const enabled = () => deps.readSettings().telegramChannel === true;
+  const filesOn = () => deps.readSettings().telegramFiles !== false && Boolean(deps.inbox);
   const ownerId = () => (Number.isSafeInteger(tg().owner?.id) ? tg().owner.id : null);
   const log = (what, err) => console.error(`[lumen] telegram: ${what}:`, scrub(err?.message || err, deps.getToken()));
 
@@ -132,7 +174,8 @@ function create(deps) {
     try {
       let res;
       try {
-        res = await deps.fetch(`${API}/bot${key}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(params), signal: controller.signal });
+        const form = typeof FormData !== 'undefined' && params instanceof FormData; // [phone files] sendDocument: multipart
+        res = await deps.fetch(`${API}/bot${key}/${method}`, { method: 'POST', ...(form ? { body: params } : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(params) }), signal: controller.signal });
       } catch (err) {
         throw new Error(scrub(err?.message || err, key)); // offline, DNS, timeout: no status
       }
@@ -148,6 +191,28 @@ function create(deps) {
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
+    }
+  }
+
+  // [phone files] A file's bytes from Telegram's file server (the path getFile gave). Stops past `max` bytes.
+  async function download(filePath, max = MAX_IN_BYTES) {
+    const key = deps.getToken();
+    if (!key) throw new Error('No bot token.');
+    if (!/^[\w./-]{1,256}$/.test(String(filePath)) || String(filePath).includes('..')) throw new Error('Telegram gave an odd file path.');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120000);
+    timer.unref?.();
+    try {
+      let res;
+      try { res = await deps.fetch(`${API}/file/bot${key}/${filePath}`, { method: 'GET', signal: controller.signal }); } catch (err) { throw new Error(scrub(err?.message || err, key)); }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const size = Number(res.headers?.get?.('content-length')) || 0;
+      if (size > max) throw Object.assign(new Error('Too big.'), { tooBig: true });
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > max) throw Object.assign(new Error('Too big.'), { tooBig: true });
+      return buf;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -217,10 +282,18 @@ function create(deps) {
     const chatId = msg.chat.id;
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
     if (isForwarded(msg)) return send(chatId, t('telegram.reply.forwarded'));
+    const file = fileOf(msg);
+    if (file && filesOn()) return receiveFile(chatId, file, typeof msg.caption === 'string' ? msg.caption.trim() : '');
     if (!text) return send(chatId, t('telegram.reply.textOnly'));
+    const link = isBareUrl(text);
+    if (link && deps.openUrl) return openLink(chatId, link);
     const command = parseCommand(text, tg().bot?.username);
     if (command) {
       if (command.cmd === 'help' || command.cmd === 'start') return send(chatId, t('telegram.reply.help'));
+      if (command.cmd === 'open' && deps.openUrl) {
+        const url = isBareUrl(command.arg);
+        return url ? openLink(chatId, url) : send(chatId, t('telegram.reply.openBad'));
+      }
       if (command.cmd === 'pair') return pairingActive() ? tryPair(msg, command.arg) : send(chatId, t('telegram.reply.alreadyPaired'));
       if (command.cmd === 'status') {
         const list = activeOurs();
@@ -248,6 +321,53 @@ function create(deps) {
     while (ours.size > 50) ours.delete(ours.keys().next().value);
     return send(chatId, t('telegram.reply.working'));
   }
+
+  // [phone files] A photo or file from the owner: into the phone inbox, then a short reply. The caption is kept with it
+  // (Lumen offers it in the composer); it is never run as a request.
+  async function receiveFile(chatId, f, caption) {
+    if (f.size > MAX_IN_BYTES) return send(chatId, t('telegram.reply.fileTooBig', { name: f.name }));
+    let saved;
+    try {
+      const info = await call('getFile', { file_id: f.fileId });
+      if (Number(info?.file_size) > MAX_IN_BYTES) return send(chatId, t('telegram.reply.fileTooBig', { name: f.name }));
+      const data = await download(info?.file_path);
+      saved = deps.inbox.save({ name: f.name, mime: f.mime, data, caption });
+    } catch (err) {
+      if (err?.tooBig || /file is too big/i.test(String(err?.message))) return send(chatId, t('telegram.reply.fileTooBig', { name: f.name }));
+      log('could not save a file', err);
+      return send(chatId, t('telegram.reply.fileFailed', { error: scrub(String(err?.message || err), deps.getToken()).slice(0, 200) }));
+    }
+    try { deps.onFile?.(saved, caption); } catch (err) { log('could not show a file', err); }
+    return send(chatId, t('telegram.reply.fileSaved', { name: saved.name }));
+  }
+
+  async function openLink(chatId, url) {
+    try { await deps.openUrl(url); } catch (err) { return send(chatId, t('telegram.reply.couldNot', { error: String(err?.message || err).slice(0, 300) })); }
+    return send(chatId, t('telegram.reply.opened'));
+  }
+
+  // [phone files] Send to phone: a link ({ text }) or a file ({ file: { name, data, mime } }) to the paired chat.
+  async function sendToChat({ text, file } = {}) {
+    const owner = ownerId();
+    if (!enabled() || !deps.getToken()) throw new Error(t('telegram.error.off'));
+    if (owner === null) throw new Error(t('telegram.error.notPaired'));
+    if (file) {
+      const buf = Buffer.isBuffer(file.data) ? file.data : Buffer.from(file.data || []);
+      if (!buf.length) throw new Error(t('telegram.error.emptyFile'));
+      if (buf.length > MAX_OUT_BYTES) throw new Error(t('telegram.error.sendTooBig'));
+      const form = new FormData();
+      form.append('chat_id', String(owner));
+      form.append('document', new Blob([buf], { type: String(file.mime || 'application/octet-stream') }), String(file.name || 'file'));
+      try { await call('sendDocument', form, { timeoutMs: 180000 }); } catch (err) { throw new Error(t('telegram.error.sendFailed', { error: err.message })); }
+      return { ok: true };
+    }
+    const body = String(text || '').trim();
+    if (!body) throw new Error(t('telegram.error.emptyFile'));
+    const sent = await send(owner, body);
+    if (!sent) throw new Error(t('telegram.error.sendFailed', { error: '' }));
+    return { ok: true };
+  }
+  const paired = () => enabled() && Boolean(deps.getToken()) && ownerId() !== null;
 
   async function onCallback(q) {
     const answer = (text) => call('answerCallbackQuery', { callback_query_id: q.id, text }).catch((err) => log('could not answer a button', err));
@@ -406,6 +526,8 @@ function create(deps) {
     return {
       enabled: enabled(),
       signedIn: deps.readSettings().telegramSignedIn === true,
+      files: deps.readSettings().telegramFiles !== false,
+      inboxDir: deps.inbox?.dir || '',
       hasToken: Boolean(deps.getToken()),
       canEncrypt: deps.canEncrypt(),
       bot: s.bot?.username ? { username: s.bot.username } : null,
@@ -479,10 +601,10 @@ function create(deps) {
   }
 
   return {
-    refresh, shutdown, register, status, setToken, startPairing, cancelPairing, unpair, removeBot,
+    refresh, shutdown, register, status, setToken, startPairing, cancelPairing, unpair, removeBot, sendToChat, paired,
     // Test hooks (test/telegram-units.js)
     pollOnce, handleUpdate, onTaskEvent, settled: () => sendChain, running: () => Boolean(loop), pairCode: () => pair?.code || null,
   };
 }
 
-module.exports = { create, validToken, scrub, escapeMarkdownV2, splitMessage, parseCommand, backoffDelay, callbackData, parseCallback, newPairCode, MAX_TEXT, PAIR_TRIES, PAIR_TRIES_ALL, STALE_S };
+module.exports = { create, validToken, scrub, escapeMarkdownV2, splitMessage, parseCommand, backoffDelay, callbackData, parseCallback, newPairCode, fileOf, isBareUrl, MAX_TEXT, MAX_IN_BYTES, MAX_OUT_BYTES, PAIR_TRIES, PAIR_TRIES_ALL, STALE_S };

@@ -60,6 +60,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   let app = await launch(profile);
   check('(set up) When the AI finishes is Close by default', (await app.evaluate(() => global.__settings.backend.prefs().closeAiTabs)) === 'always');
   await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  await app.evaluate(() => global.__settings.backend.set('groupAiTabs', false)); // (the AI's tabs loose in the strip, where these steps look at them; the folded group is ai-tab-group.js)
   await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'off')); // steps 1-7 are about the Close button under the reply (Leave open); step 8 is the default
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');

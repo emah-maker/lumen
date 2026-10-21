@@ -1001,6 +1001,8 @@ window.chatAttachments = { count: () => attachments.length, max: MAX_ATTACH, not
     });
     renderAttachments(); // (the tooltip states the limit)
   }
+  const phoneBtn = $('from-phone'); // [phone wifi] a QR for the phone; what it sends comes into this composer when the sheet closes
+  if (phoneBtn) phoneBtn.onclick = () => window.browser?.phoneWifi?.();
 }
 
 prompt.addEventListener('paste', async (e) => {
@@ -1085,7 +1087,7 @@ function sendNow(entry) {
   if (!running) return; // (the reply ended meanwhile: the line moves on by itself)
   for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
   if (turn) turn.interrupted = true;
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
 }
 function sendQueued() {
   // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
@@ -1930,7 +1932,7 @@ function finishTurn(event, { early }) {
 const STOP_WAIT_MS = 2000;
 let stopTimer = null;
 function stopReply() {
-  window.assistant.stop();
+  window.assistant.stop(shownChatId || undefined);
   if (!running) return;
   if (turn) turn.stopRequested = true;
   const mine = runId;
@@ -3112,7 +3114,7 @@ async function askOnNewTopic(text, images, tabs) {
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
   back.onclick = async () => {
     back.disabled = true;
-    if (running) window.assistant.stop();
+    if (running) window.assistant.stop(shownChatId || undefined);
     // The chat just started for it goes (it holds only this message), then the last one opens.
     const current = await window.assistant.chats.list().then((r) => r.current).catch(() => null);
     if (current && current !== previous) await window.assistant.chats.remove(current).catch(() => {});
