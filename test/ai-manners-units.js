@@ -106,7 +106,10 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       check(`tool layer: ${name} on the user's tab is refused before any card (ensureAllowed)`, /Hands-off mode is on/.test(msg || ''), msg);
     }
     check('tool layer: execute refuses it too (a batch step or a direct call never skips the check)', /Hands-off mode is on/.test(await refused(() => inTab(1, () => agent.execute('click', { element_id: 1 }))) || ''));
-    check('tool layer: close_tab of the user\'s tab is refused', /Hands-off mode is on/.test(await refused(() => inTab(1, () => ask('close_tab', { tab_id: 1 }))) || ''));
+    { const was = agent.askApproval; let cards = 0; agent.askApproval = async () => { cards++; return false; }; // [close guard] not refused outright: the user is asked, and Keep leaves the tab
+      const msg = await refused(() => inTab(1, () => ask('close_tab', { tab_id: 1 })));
+      check('tool layer: close_tab of the user\'s tab asks the user (a card), and Keep says it stays open', cards === 1 && /chose to keep/.test(msg || '') && /NOT closed/.test(msg || ''), msg);
+      agent.askApproval = was; }
     check('tool layer: close_tab of a tab the AI opened is not', (await refused(() => inTab(1, () => ask('close_tab', { tab_id: 2 })))) === null);
     check('tool layer: reading the user\'s tab still works', (await refused(() => inTab(1, () => ask('read_page')))) === null && (await refused(() => inTab(1, () => ask('find', { text: 'x' })))) === null);
     check('tool layer: acting in a tab the AI opened is allowed', (await refused(() => inTab(2, () => ask('click', { element_id: 1 })))) === null && (await refused(() => inTab(2, () => ask('type_text', { element_id: 1, text: 'x' })))) === null);
