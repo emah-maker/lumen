@@ -65,7 +65,7 @@ check('markup: the column comes before the page area in the row', html.indexOf('
 check('markup: scripts load after app.js (and the core before it)', (() => { const a = html.indexOf('src="app.js"'); const c = html.indexOf('src="side-tabs-core.js"'); const s = html.indexOf('src="side-tabs.js"'); return a < c && c < s; })());
 check('markup: the stylesheet is listed', html.includes('href="side-tabs.css"'));
 const bundleJs = read('src/renderer/ui.bundle.js');
-check('bundle: the side list is in ui.bundle.js and its stylesheet in ui.bundle.css (rebuild with scripts/bundle-renderer.js)', bundleJs.includes('sideTabsCore') && bundleJs.includes('window.sideTabs') && read('src/renderer/ui.bundle.css').includes('.side-tabs'));
+check('bundle: the side list is in ui.bundle.js and its stylesheet in ui.bundle.css (rebuild with scripts/build/bundle-renderer.js)', bundleJs.includes('sideTabsCore') && bundleJs.includes('window.sideTabs') && read('src/renderer/ui.bundle.css').includes('.side-tabs'));
 const prefs = read('src/renderer/ui-prefs.js');
 check('ui prefs: the setting reaches the list through an event', prefs.includes("'tabLayout' in p") && prefs.includes('lumen:side-tabs') && read('src/renderer/side-tabs.js').includes('lumen:side-tabs'));
 const be = read('src/settings/settings-backend.js');

@@ -8,7 +8,7 @@ Lumen is a Chromium (Electron) browser with an AI sidebar. Plain CommonJS, no bu
 - Run Electron suites with `LUMEN_TEST_BACKGROUND=1` so test windows stay invisible and never take focus from a Lumen that is in use.
 - `npm run lint` (ESLint) must pass with no errors.
 - Main moves fast: `git fetch` and branch from a fresh `origin/main`. One topic per branch and PR.
-- Land a PR with `node scripts/land.js <pr>` and cut a release with `node scripts/release.js patch`; both take `--dry-run` (docs/releasing.md).
+- Land a PR with `node scripts/release/land.js <pr>` and cut a release with `node scripts/release/release.js patch`; both take `--dry-run` (docs/releasing.md).
 
 ## Docs: every change brings its documentation
 
@@ -19,9 +19,9 @@ A change isn't done until the docs say what it does. Before you finish a change 
 3. **Something a user can see or do**: describe it in the README section for that area. If it needs more than a paragraph, write `docs/<topic>.md` and link it from the README's **Documentation** list.
 4. **New `docs/*.md` page**: list it in `PAGES` in `site/docs.js` and add a card under Documentation in `site/index.html` (the GitHub Pages site renders the repo's Markdown, so nothing else needs copying). Notable features can also get a card in the site's feature grid.
 5. **Data that leaves the computer, or privacy behavior**: update `PRIVACY.md`.
-6. **Tests**: add or update one with every change (`test/<area>-units.js` for logic; a real-window suite registered in `scripts/test-all.js` for behavior).
+6. **Tests**: add or update one with every change (`test/<area>-units.js` for logic; a real-window suite registered in `scripts/test/test-all.js` for behavior).
 
-`node scripts/check-docs.js` checks points 1, 2 and 4 against `origin/main`, and reminds about 3. It also runs as a Claude Code Stop hook (`.claude/settings.json`): if a turn ends with `src/` changes the docs don't cover, you are sent back once with the list. Either fix the docs or say why a point doesn't apply (an internal refactor needs no README text). `test/docs-units.js` fails CI when a new setting has no row in `docs/settings.md`.
+`node scripts/build/check-docs.js` checks points 1, 2 and 4 against `origin/main`, and reminds about 3. It also runs as a Claude Code Stop hook (`.claude/settings.json`): if a turn ends with `src/` changes the docs don't cover, you are sent back once with the list. Either fix the docs or say why a point doesn't apply (an internal refactor needs no README text). `test/docs-units.js` fails CI when a new setting has no row in `docs/settings.md`.
 
 ## Writing style
 

@@ -1,7 +1,7 @@
 // Tab chips (real window): when the AI names a tab the chat shows a chip with its icon and title; a click switches to that tab; the title follows
 // the page; a closed tab reads as closed and opens again; a chip never comes from page text or from your own message; a reopened chat draws
 // the chips again. Hidden windows (LUMEN_TEST_BACKGROUND=1), a throwaway profile, a fake Claude API client, pages on 127.0.0.1 only. Run it under the lock:
-//   node scripts/e2e-lock.js run --owner tab-chips -- timeout 600 node test/tab-chips.js
+//   node scripts/test/e2e-lock.js run --owner tab-chips -- timeout 600 node test/tab-chips.js
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');

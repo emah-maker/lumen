@@ -21,7 +21,7 @@ const tree = (dir) => { const out = []; const walk = (d) => { for (const n of ls
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 600)}`}`); };
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-profile-'));
-  const docs = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-docs-')); // (outside the profile: Lumen's own profile is never a work folder. Named without "lumen-": a test run's temp sweep, scripts/test-tmp.js, removes those)
+  const docs = fs.mkdtempSync(path.join(os.tmpdir(), 'pf-e2e-docs-')); // (outside the profile: Lumen's own profile is never a work folder. Named without "lumen-": a test run's temp sweep, scripts/test/test-tmp.js, removes those)
   const app = await electron.launch({
     args: [path.join(__dirname, '..')],
     env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },

@@ -2,10 +2,10 @@
 const fs = require('fs');
 const path = require('path');
 
-// Lumen.exe is Electron's unmodified binary (scripts/build.js), so its own icon is Electron's: every
+// Lumen.exe is Electron's unmodified binary (scripts/build/build.js), so its own icon is Electron's: every
 // place Windows shows Lumen's icon has to be pointed at an .ico instead. The app's own assets/icon.ico
 // first: every build and every update ships it at the same place. The icon.ico that
-// scripts/install-windows.ps1 puts next to the exe is not in the release zip, so an update's swap
+// scripts/build/install-windows.ps1 puts next to the exe is not in the release zip, so an update's swap
 // deleted it and left the shortcuts pointing at nothing (Windows then shows the exe's, Electron's).
 // The installed Lumen, not the stock electron binary with app.isPackaged made true (test/hardening.js does that to check a
 // packaged run ignores test switches): only the real exe may write the user's registry, shortcuts and taskbar entries.
@@ -96,7 +96,7 @@ const shortcutDirs = (app) => [
   ...(process.env.ProgramData ? [path.join(process.env.ProgramData, 'Microsoft', 'Windows', 'Start Menu', 'Programs')] : []),
 ];
 
-// `Lumen.exe --install-shortcuts` (run by scripts/install-windows.ps1) writes Desktop and
+// `Lumen.exe --install-shortcuts` (run by scripts/build/install-windows.ps1) writes Desktop and
 // Start menu shortcuts carrying the app ID and icon, then exits.
 function installShortcuts(app, shell, appId) {
   const exe = process.execPath;

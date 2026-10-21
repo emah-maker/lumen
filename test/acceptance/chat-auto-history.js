@@ -1,4 +1,4 @@
-// ACCEPTANCE (chat history on Claude Code Auto). Run alone: node scripts/test-acceptance.js chat-auto-history
+// ACCEPTANCE (chat history on Claude Code Auto). Run alone: node scripts/test/test-acceptance.js chat-auto-history
 //
 // "Sometimes the chat history disappears on Claude Auto": a multi-turn chat on 'claudecode:auto', where Auto picks another
 // model between messages ("hi" -> a hard question -> "thanks"), must never reach the CLI as a stranger. The fake CLI keeps a

@@ -3,7 +3,7 @@
 // the slot); long text is cut with an ellipsis; the time is at the right; nothing is rotated or stacked. Checked at the sidebar's default and minimum
 // width, light and dark. Also: a tool with no line of its own is named in plain words, never "Using a tool". Hidden window (LUMEN_TEST_BACKGROUND=1),
 // a throwaway profile, no network. Run under the lock:
-//   node scripts/e2e-lock.js run --owner steps-badges -- timeout 400 node test/step-rows.js
+//   node scripts/test/e2e-lock.js run --owner steps-badges -- timeout 400 node test/step-rows.js
 // Screenshots go to $STEP_ROWS_SHOTS when it is set.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');

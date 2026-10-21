@@ -1,4 +1,4 @@
-// Shared by test/chat-tab-speed.js and scripts/measure-chat-tabs.js: times how long a chat tab takes to become usable, in the real app
+// Shared by test/chat-tab-speed.js and scripts/measure/measure-chat-tabs.js: times how long a chat tab takes to become usable, in the real app
 // (hidden: LUMEN_TEST_BACKGROUND=1) on a throwaway profile holding a realistic chat history (test/_chat-seed.js).
 // "Usable" means the page is out of its boot state, the chat list has rendered, the open chat's messages are on screen
 // (when it has any) and the composer takes focus. Every number is milliseconds from the keypress or click (or, for a

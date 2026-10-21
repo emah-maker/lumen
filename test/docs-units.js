@@ -1,4 +1,4 @@
-// [docs] The documentation keeps up with the code (CLAUDE.md, "Docs"; scripts/check-docs.js is the same check for a
+// [docs] The documentation keeps up with the code (CLAUDE.md, "Docs"; scripts/build/check-docs.js is the same check for a
 // branch). Plain Node: every setting in DEFAULTS has a row in docs/settings.md, except the older ones listed below that
 // were undocumented when this test was added; and every docs page the site lists exists, and every site page is linked.
 const fs = require('fs');
@@ -41,7 +41,7 @@ const unlinked = ids.filter((id) => !['readme', 'changelog'].includes(id) && !in
 check('every docs-site page is linked from the site or the README', !unlinked.length, unlinked.join(', '));
 
 const claude = read('CLAUDE.md');
-check('CLAUDE.md carries the docs rule and names the checker', /## Docs/.test(claude) && claude.includes('scripts/check-docs.js'));
+check('CLAUDE.md carries the docs rule and names the checker', /## Docs/.test(claude) && claude.includes('scripts/build/check-docs.js'));
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

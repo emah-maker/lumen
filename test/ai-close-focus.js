@@ -2,7 +2,7 @@
 // features/ai-manners.js focusAfterAiClose); a tab YOU close keeps the normal rule (the neighbour). The chat's activity card keeps a closed
 // tab: its icon and title chip and the last frame, marked "closed", and the chip reopens it (renderer/step-ui.js, tab-ref.js, features/tab-chips.js).
 // Hidden windows (LUMEN_TEST_BACKGROUND=1), a throwaway profile, no network beyond 127.0.0.1. Run it under the lock:
-//   node scripts/e2e-lock.js run --owner ai-close-focus -- node test/ai-close-focus.js
+//   node scripts/test/e2e-lock.js run --owner ai-close-focus -- node test/ai-close-focus.js
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const http = require('http');

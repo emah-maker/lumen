@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: sidebar-unblock). Run alone: node scripts/test-acceptance.js chat-agent-windows
+// ACCEPTANCE (feature: sidebar-unblock). Run alone: node scripts/test/test-acceptance.js chat-agent-windows
 //
 // Outside agents (an MCP client such as the user's own Claude Code CLI) work in a Lumen window of their own, and that
 // must never get in the way of the sidebar's AI:

@@ -59,4 +59,4 @@ Status: FIXED here (round 1, or round 2 for the items that were left for later).
 
 Round 2 added checks to `test/newtab-states-ui.js` (Gmail label, one clear error line, greeting hours, Favorites hint, Ask AI setup prompt, Add widget outside Edit layout with groups, filter and the Todoist note, 24 px targets), `test/widget-edit-units.js` (grouping, filter, setup notes) and updated `test/home.js`, `test/widgets.js` and `test/gmail-ui.js`.
 
-`test/newtab-states-ui.js` (added to `scripts/test-all.js`): needs-setup heading and single Open Settings button for Todoist and GitHub, no "Updated" under Gmail's sign-in, Try again shows "Trying...", the edit tip is short, steps aside for the list and returns, and the x is 24 px.
+`test/newtab-states-ui.js` (added to `scripts/test/test-all.js`): needs-setup heading and single Open Settings button for Todoist and GitHub, no "Updated" under Gmail's sign-in, Try again shows "Trying...", the edit tip is short, steps aside for the list and returns, and the x is 24 px.

@@ -5,7 +5,7 @@
 //  - connected, the AI has ONE `connector` tool listing just those apps; a read returns the data with a readable step label and no card;
 //  - a write (add a task) always asks, with the details and no "Always allow", even with auto-allow on; deny sends nothing;
 //  - an outside MCP agent is offered no connector tool and is refused if it asks; Bypass permissions, agents that don't ask and hands-off mode never answer a write; disconnecting removes the token, the tool and the AI's way in.
-// Run it through the machine-wide lock: node scripts/e2e-lock.js run -- node test/connectors.js
+// Run it through the machine-wide lock: node scripts/test/e2e-lock.js run -- node test/connectors.js
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');

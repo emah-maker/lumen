@@ -96,7 +96,7 @@ const fetchImpl = async (url, { signal } = {}) => {
   return new Response(bodyOf(FILES.get(loc), mode, signal, () => { alive--; }, loc));
 };
 
-// (prefix: not claude-browser-test-*, which scripts/test-all.js sweeps from the shared temp folder when another run's suite ends)
+// (prefix: not claude-browser-test-*, which scripts/test/test-all.js sweeps from the shared temp folder when another run's suite ends)
 const tmpDirs = [];
 const newDir = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-unit-translate-dl-')); tmpDirs.push(d); return d; };
 const parts = (d) => fs.readdirSync(d).filter((n) => n.includes('.part'));

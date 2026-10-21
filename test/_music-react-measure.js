@@ -2,7 +2,7 @@
 // test tone playing. For each of: the feature off (the baseline), the full version, the reduced version (Visual effects: Light) and a reacting music card
 // alone, it reports over 12 seconds: the page's own frame cost (the time one frame of our code takes), the renderer's long tasks (over 50 ms) and the
 // main process's longest stall, and the CPU of Lumen's processes (the browser, the page's renderer, the GPU process) from app.getAppMetrics().
-// Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node scripts/e2e-lock.js run --owner x -- timeout 600 node test/_music-react-measure.js
+// Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node scripts/test/e2e-lock.js run --owner x -- timeout 600 node test/_music-react-measure.js
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');

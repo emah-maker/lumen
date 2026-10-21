@@ -1,8 +1,8 @@
-// The GitHub release body (scripts/release-notes.js): the version's CHANGELOG section, the download table naming every file
+// The GitHub release body (scripts/release/release-notes.js): the version's CHANGELOG section, the download table naming every file
 // release.yml publishes, and the link to the install guide.
 const fs = require('fs');
 const path = require('path');
-const { changelogSection, releaseNotes } = require('../scripts/release-notes');
+const { changelogSection, releaseNotes } = require('../scripts/release/release-notes');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };

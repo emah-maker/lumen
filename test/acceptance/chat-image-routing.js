@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: image-gen-routing). Run alone: node scripts/test-acceptance.js chat-image-routing
+// ACCEPTANCE (feature: image-gen-routing). Run alone: node scripts/test/test-acceptance.js chat-image-routing
 //
 // Any chat engine can get a picture made by another AI. The real Agent, ai-agents.js MCP entry and engines, with fake CLIs
 // (test/acceptance/chat-harness.js) and FAKE image providers (no network, no key, no real generation):

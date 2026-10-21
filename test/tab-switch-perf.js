@@ -1,6 +1,6 @@
 // Switching tabs stays fast on a long-lived profile (about 30 tabs, each with a chat of its own, the sidebar open, a PDF, a playing video,
 // a page with timers, a heavy page, pinned tabs and groups; the home widgets on), hidden (LUMEN_TEST_BACKGROUND, a fresh profile, a private TEMP).
-// The ceilings sit well above what this measures (scripts/measure-tab-switch.js prints the detail), so machine noise does not fail the run, but
+// The ceilings sit well above what this measures (scripts/measure/measure-tab-switch.js prints the detail), so machine noise does not fail the run, but
 // a switch that writes the chat and its index to disk, draws a whole long chat at once, or polls something does.
 //   - median and p95 switch latency (click and Ctrl+Tab), in main and in the UI;
 //   - the main process's event loop is never held up for long during 20 switches (the 8 ms interval method of test/perf-budget.js);

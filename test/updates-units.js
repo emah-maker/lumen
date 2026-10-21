@@ -397,7 +397,7 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   // ---- every string key the update screens ask for exists in en.json (ut() is updates.settings.*)
   const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
   // the main process's own dialog strings (features/updates.js asks deps.t for updates.* keys)
-  const mainSrc = fs.readFileSync(path.join(__dirname, '../src/features/updates.js'), 'utf8');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'updates.js'), 'utf8');
   const mainKeys = new Set([...mainSrc.matchAll(/(?<![\w.])tr\(\s*'([^']+)'/g)].map((m) => m[1]));
   const mainMissing = [...mainKeys].filter((k) => !(k in en));
   check(`locale keys: features/updates.js uses ${mainKeys.size} keys and all exist in en.json`, mainKeys.size > 0 && mainMissing.length === 0, mainMissing.join(', '));

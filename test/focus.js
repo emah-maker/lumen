@@ -6,7 +6,7 @@
 // - "I need this for school" opens the site (and is logged); End focus needs the whole ten-second hold, a script that skips the hold is refused;
 // - Settings → General → Focus mode lists and edits the sites and schedules, and takes a schedule in words;
 // - a schedule that covers now starts focus by itself; while it is on, the lists can't be edited.
-// Run through the lock with a hidden window: node scripts/e2e-lock.js run --owner focus-mode -- timeout 400 node test/focus.js
+// Run through the lock with a hidden window: node scripts/test/e2e-lock.js run --owner focus-mode -- timeout 400 node test/focus.js
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');

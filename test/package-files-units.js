@@ -4,7 +4,7 @@
 // top-level build.files into a file set of its own, so a platform `files` list became a second matcher without
 // the top-level filters or the default excludes, and the Mac app got the whole checkout (.git, test/, docs/...)
 // and codesign stopped on .git's read-only pack files. Windows-only koffi is dropped from the Mac app by
-// scripts/after-pack.js instead. No network, no Electron, no packaging.
+// scripts/release/after-pack.js instead. No network, no Electron, no packaging.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
@@ -16,7 +16,7 @@ const root = path.join(__dirname, '..');
 const { getConfig } = require('app-builder-lib/out/util/config/config.js');
 const { getMainFileMatchers, getNodeModuleFileMatcher } = require('app-builder-lib/out/fileMatcher.js');
 const { computeFileSets } = require('app-builder-lib/out/util/appFileCopier.js');
-const afterPack = require('../scripts/after-pack');
+const afterPack = require('../scripts/release/after-pack');
 
 // A checkout with everything that must stay out of the app next to what must go in.
 function fixture() {
@@ -25,7 +25,7 @@ function fixture() {
   fs.copyFileSync(path.join(root, 'package.json'), path.join(dir, 'package.json'));
   for (const rel of ['src/main.js', 'src/preload/webauthn-preload.js', 'src/renderer/slides-vector.js', 'src/renderer/vendor/emfjs.min.js', 'src/renderer/vendor/wmfjs.min.js', 'src/renderer/vendor/rtfjs-LICENSE.txt', 'mcp.js', 'CHANGELOG.md', 'LICENSE',
     '.git/HEAD', '.git/objects/pack/pack-1.idx', '.claude/worktrees/w/src/main.js', '.claude/settings.json',
-    'test/units.js', 'docs/index.md', 'scripts/build.js', 'site/index.html', '.github/workflows/release.yml',
+    'test/units.js', 'docs/index.md', 'scripts/build/build.js', 'site/index.html', '.github/workflows/release.yml',
     'README.md', 'package-lock.json', 'eslint.config.js', 'build/icon.png', 'dist/Lumen-Setup.exe',
     'node_modules/openai/index.js', 'node_modules/koffi/index.js']) put(rel);
   return dir;

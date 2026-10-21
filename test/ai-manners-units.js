@@ -471,8 +471,8 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
     const agents = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
     check('automation: the hook reads the setting and the tab\'s mark; tabs a client opens are the AI\'s', /handsOffVerdict: \(method, tabId\) =>/.test(agents) && /aiHandsOff === true/.test(agents) && /openedBy: \{\}/.test(agents));
-    const doc = fs.readFileSync(path.join(__dirname, '../docs/settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '../SECURITY.md'), 'utf8');
-    check('automation: documented in docs/settings.md, SECURITY.md and the changelog', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc) && /Automation server/.test(fs.readFileSync(path.join(__dirname, '../CHANGELOG.md'), 'utf8')));
+    const doc = fs.readFileSync(path.join(__dirname, '../docs/settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', 'SECURITY.md'), 'utf8');
+    check('automation: documented in docs/settings.md, SECURITY.md and the changelog', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc) && /Automation server/.test(fs.readFileSync(path.join(__dirname, '..', 'CHANGELOG.md'), 'utf8')));
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
     check('automation: the setting text says it covers the Automation server', /Automation server/.test(en['settings.ai.handsOffDesc']));
   }

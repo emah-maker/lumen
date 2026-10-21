@@ -20,7 +20,7 @@ Walked hidden on a throwaway profile with every AI hidden: no key, and `LUMEN_CL
 5. `src/ai/codex-locate.js`: a set `LUMEN_CODEX_BIN` is the only Codex there is, like the other engines.
 6. `docs/settings.md`.
 
-Tests: `test/first-run.js` (new, in `scripts/test-all.js`), a check in `test/codex-units.js`.
+Tests: `test/first-run.js` (new, in `scripts/test/test-all.js`), a check in `test/codex-units.js`.
 
 ## Checked and fine
 

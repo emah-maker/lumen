@@ -1,5 +1,5 @@
 // The Calendar card with several calendars (run on its own with `node test/calendar-multi-units.js`, or by
-// scripts/test-units.js): features/calendar-sources.js (cleaning the sources, merging, sorting, de-duplicating,
+// scripts/test/test-units.js): features/calendar-sources.js (cleaning the sources, merging, sorting, de-duplicating,
 // the list line), the connector end to end through createWidgets() against a fake fetch with ICS fixtures
 // (merged order and colours, one calendar failing, a calendar that was fine and is down now, old single-address
 // cards), the home page's form (features/widget-config.js) and the page files' rules. No Electron, no network.

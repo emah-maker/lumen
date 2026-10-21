@@ -1,10 +1,10 @@
-// Pure unit test for scripts/signing.js (which macOS signing path a build takes, and the
+// Pure unit test for scripts/release/signing.js (which macOS signing path a build takes, and the
 // electron-builder flags for it), the after-sign guard, the entitlements files, and that the Mac
 // update swap never touches a code signature. No Mac, certificate or network needed.
 const fs = require('fs');
 const path = require('path');
-const S = require('../scripts/signing');
-const AS = require('../scripts/after-sign');
+const S = require('../scripts/release/signing');
+const AS = require('../scripts/release/after-sign');
 const Z = require('../src/features/zip-update');
 
 let failures = 0;
@@ -42,7 +42,7 @@ check('env: a pre-imported keychain replaces the CSC_LINK import', kcEnv.CSC_KEY
 check('after-sign: only the ad-hoc identity is re-signed with the self-signed certificate', AS.isAdHocBuild('-') && !AS.isAdHocBuild(undefined) && !AS.isAdHocBuild('Developer ID Application: X (ABCDE12345)'), '');
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).build;
-check('package.json: the ad-hoc defaults stay (hardened runtime off), the identity comes from scripts/signing.js', pkg.mac.hardenedRuntime === false && pkg.mac.gatekeeperAssess === false && !('identity' in pkg.mac), JSON.stringify(pkg.mac));
+check('package.json: the ad-hoc defaults stay (hardened runtime off), the identity comes from scripts/release/signing.js', pkg.mac.hardenedRuntime === false && pkg.mac.gatekeeperAssess === false && !('identity' in pkg.mac), JSON.stringify(pkg.mac));
 check('package.json: afterPack (VMP) and afterSign are set, and the entitlements files exist', pkg.afterPack && pkg.afterSign && [pkg.mac.entitlements, pkg.mac.entitlementsInherit].every((f) => fs.existsSync(path.join(root, f))), '');
 check('package.json: camera and microphone usage strings for the macOS permission prompt', pkg.mac.extendInfo.NSCameraUsageDescription && pkg.mac.extendInfo.NSMicrophoneUsageDescription, '');
 

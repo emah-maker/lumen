@@ -31,7 +31,7 @@ Real-profile behaviours (the user's Spotify, Apple Music, Gmail and extension se
 
 ## 2. Performance
 
-`scripts/measure-perf.js` and a purpose-built script were run against v0.5.22 (a `git worktree` at the tag) and the current tree, alternating, three runs each; the median is shown, the first run of each is slower (cold disk cache).
+`scripts/measure/measure-perf.js` and a purpose-built script were run against v0.5.22 (a `git worktree` at the tag) and the current tree, alternating, three runs each; the median is shown, the first run of each is slower (cold disk cache).
 
 | Metric | 0.5.22 | 0.5.25 + this change |
 |---|---|---|

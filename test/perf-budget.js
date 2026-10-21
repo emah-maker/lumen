@@ -1,7 +1,7 @@
 // Guardrails for Lumen's startup cost and idle behaviour, on the app built from source: heavy modules
 // stay unloaded until used, main-process startup, the preload bundle and the browser UI's scripts stay
 // under generous ceilings, few timers run when idle, and Performance mode (features/performance.js)
-// behaves. Ceilings sit well above today's numbers (scripts/measure-perf.js prints them) so machine
+// behaves. Ceilings sit well above today's numbers (scripts/measure/measure-perf.js prints them) so machine
 // noise doesn't fail the run, but a new eager SDK, a polling loop or a big bundle does.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
@@ -82,7 +82,7 @@ const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idle
     const marks = await app.evaluate(() => global.__perf.marks());
     check('startup reached the UI', Number.isFinite(marks.uiReady), JSON.stringify(marks));
 
-    // What runs when nothing is asked of the app (scripts/measure-app-perf.js prints the long-lived-profile version of these): no spare chat
+    // What runs when nothing is asked of the app (scripts/measure/measure-app-perf.js prints the long-lived-profile version of these): no spare chat
     // page before a chat page has been used, no music engine page without a card for it, a handful of renderers, and little CPU and memory.
     const idleSet = await app.evaluate(({ app: a, webContents }) => ({
       spareChat: Boolean(global.__spareChat?.has?.()),
@@ -155,7 +155,7 @@ const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idle
     check('composer blur is off in Performance mode', blur === 'none', blur);
 
     // A new tab (the + button, with the spare new-tab page ready) shows in the strip and takes the address bar's focus within
-    // a loose bound, and the main process's event loop isn't blocked for long meanwhile (scripts/measure-newtab.js measures it in detail: ~10-30 ms).
+    // a loose bound, and the main process's event loop isn't blocked for long meanwhile (scripts/measure/measure-newtab.js measures it in detail: ~10-30 ms).
     await app.evaluate(() => global.__spareNewTab.enable());
     await new Promise((r) => setTimeout(r, 2500));
     await app.evaluate(() => { const lags = global.__ntLag = []; let last = Date.now(); global.__ntLagTimer = setInterval(() => { const n = Date.now(); lags.push(n - last - 10); last = n; }, 10); });

@@ -1,6 +1,6 @@
 // [software mode] Lumen without a GPU (started with --disable-gpu: Chromium draws and composites on the CPU), hidden (LUMEN_TEST_BACKGROUND), a fresh
 // profile, the user's new-tab settings (sunset, many large fast white particles, frosted widget cards). STRICT: the numbers are never loosened; if one is
-// noisy, fix the measurement (the rig waits for any other electron.exe to finish; take the machine lock first, see scripts/test-all.js).
+// noisy, fix the measurement (the rig waits for any other electron.exe to finish; take the machine lock first, see scripts/test/test-all.js).
 //   - Graphics: Automatic resolves to Light plus the software level (the UI and the new-tab page carry it)
 //   - no element of the browser UI or of the new-tab page has a backdrop-filter
 //   - the new-tab effect is one still frame: it draws no frame in 3 s

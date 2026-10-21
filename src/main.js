@@ -2368,7 +2368,7 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
 let newTabUsedAt = Date.now(); // when a new tab last took (or asked for) the spare: an unused one is dropped after spare-policy IDLE_MS
-let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure-app-perf.js)
+let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure/measure-app-perf.js)
 const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
 let spareForced = false; // tests: make one regardless of start-up state
 // One scheduler for the always-on housekeeping timers and one shared memory sample (features/scheduler.js). While every
@@ -4475,7 +4475,7 @@ function scheduleAiTopics() {
 
 // "Organize Tabs" (tab menu, Tab Groups, and the strip's button) is organizeTabs: the local organizer groups, and with "Use AI to
 // name and group topics" on a model only refines that result in place. It never proposes the groups itself.
-const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/capture-media.js call
+const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/measure/capture-media.js call
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {
   if (tabGroups.mergeGroups()) sendTabs();
@@ -8036,7 +8036,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
-      preload: path.join(__dirname, 'preload', 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/bundle-preload.js)
+      preload: path.join(__dirname, 'preload', 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/build/bundle-preload.js)
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,

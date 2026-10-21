@@ -2,7 +2,7 @@
 // status line showing that step, step list; no empty preview box), and a reply with no tools never has one. Thinking is one row per stretch of thinking
 // (times added, words in order), in the card's step list when the run uses tools; blank thinking gets no row; no empty bubble is left when the run ends.
 // Hidden window (LUMEN_TEST_BACKGROUND=1), a throwaway profile, a fake Claude client (no network). Run under the lock:
-//   node scripts/e2e-lock.js run --owner card-first-step -- timeout 400 node test/card-first-step.js
+//   node scripts/test/e2e-lock.js run --owner card-first-step -- timeout 400 node test/card-first-step.js
 // $CARD_FIRST_STEP_SHOTS = a folder for screenshots.
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');

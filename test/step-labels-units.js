@@ -50,7 +50,7 @@ for (const [cmd, want] of SCREENSHOT) eq(`screenshot: ${cmd.slice(0, 50).replace
 const MORE = [
   ['python script.py', 'Running script.py'],
   ['python3 -u C:/tools/convert.py --in a.pdf', 'Running convert.py'],
-  ['node scripts/build.js', 'Running build.js'],
+  ['node scripts/build/build.js', 'Running build.js'],
   ['npm test', 'Running tests'],
   ['npm run test:units', 'Running tests'],
   ['npm run lint', 'Checking code style'],

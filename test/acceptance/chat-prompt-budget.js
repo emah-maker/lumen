@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: slim-system-prompt). Run alone: node scripts/test-acceptance.js chat-prompt-budget
+// ACCEPTANCE (feature: slim-system-prompt). Run alone: node scripts/test/test-acceptance.js chat-prompt-budget
 //
 // What a Grok Build message costs before the user's own words: the system prompt Lumen passes with
 // --system-prompt-override (agent.js cliSystemPrompt: systemFor + grokBuildNote) plus Lumen's tool schemas as the MCP

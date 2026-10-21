@@ -4,7 +4,7 @@
 //   list_apps finds it; the first use asks; read_app shows the controls and leaves the password box out; type and click change the label;
 //   Revoke asks again; blocked apps are refused; the banner and Stop (test hook); the card's thumbnail updates; the helper starts in
 //   under a second and a call never stalls the main process for more than 20 ms.
-// Windows only. Run: node scripts/e2e-lock.js run -- node test/desktop-apps.js
+// Windows only. Run: node scripts/test/e2e-lock.js run -- node test/desktop-apps.js
 require('./_tmp-cleanup');
 if (process.platform !== 'win32') { console.log('SKIP  desktop apps run on Windows only'); process.exit(0); }
 const { _electron: electron } = require('playwright-core');

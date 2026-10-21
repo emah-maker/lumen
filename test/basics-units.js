@@ -204,7 +204,7 @@ const t = (key, vars) => String(en[key] ?? key).replace(/\{(\w+)\}/g, (w, n) => 
   // The strings that used to be written in English in the code go through t() now.
   const mainSrc = main;
   check('strings: the page menu\'s Save Page As and View Page Source are localized', !/label: 'Save page as…'|label: 'View page source'/.test(mainSrc), '');
-  check('strings: the video menu and spelling items are localized', !/'Picture in picture'|'Open video in new tab'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/features/page-tools.js'), 'utf8')) && !/'No spelling suggestions'|'Add to dictionary'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/settings/settings-backend.js'), 'utf8')), '');
+  check('strings: the video menu and spelling items are localized', !/'Picture in picture'|'Open video in new tab'/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'page-tools.js'), 'utf8')) && !/'No spelling suggestions'|'Add to dictionary'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/settings/settings-backend.js'), 'utf8')), '');
 
   console.log(failures ? `\n${failures} failed` : '\nall basics-units passed');
   process.exit(failures ? 1 : 0);

@@ -179,7 +179,7 @@ function finish() {
     process.exit(failures ? 1 : 0);
   }, 300);
 }
-// A suite must never hang CI: a hard stop well inside scripts/test-units.js's 120 s.
+// A suite must never hang CI: a hard stop well inside scripts/test/test-units.js's 120 s.
 const hardStop = (ms = 100000) => setTimeout(() => { console.log(`FAIL  suite timed out after ${ms / 1000}s`); failures++; finish(); }, ms).unref();
 
 module.exports = { FAKE_CODEX, aiAgents, settings, windows, AGENT_TAB, limits, quit, tmp, LOG, gate, live, agent, state, executed, chat, send, until, sleep, readLog, msgOf, release, textOf, errorsOf, lastAssistant, turnText, toolCall, check, finish, hardStop };

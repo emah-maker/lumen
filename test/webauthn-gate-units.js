@@ -2,7 +2,7 @@
 //  - 'hide' mode (hideWebAuthn, #195's behavior, kept as the fallback): no API, publicKey calls fail at once
 //  - 'native' mode (installPasskeys): navigator.credentials.create/get for publicKey go over a bridge (the preload's
 //    IPC) and come back as real-looking PublicKeyCredential objects; everything else reaches the browser untouched
-// plus the generated preload (scripts/bundle-webauthn-preload.js) and its registration in main.js.
+// plus the generated preload (scripts/build/bundle-webauthn-preload.js) and its registration in main.js.
 // No Electron, no window, no Windows.
 const fs = require('fs');
 const path = require('path');
@@ -167,9 +167,9 @@ const b64u = (b) => Buffer.from(b).toString('base64url');
   check('parseRequestOptionsFromJSON with bad base64url throws EncodingError', /EncodingError/.test(run(ctx, `try { PublicKeyCredential.parseRequestOptionsFromJSON({ challenge: '***' }); 'no' } catch (e) { e.name }`)), '');
 
   // ================= the generated preload, and its registration =================
-  const { bundle } = require('../scripts/bundle-webauthn-preload');
+  const { bundle } = require('../scripts/build/bundle-webauthn-preload');
   const pre2 = fs.readFileSync(path.join(__dirname, '..', 'src', 'preload', 'webauthn-preload.js'), 'utf8').replace(/\r\n/g, '\n');
-  check('preload/webauthn-preload.js is up to date (node scripts/bundle-webauthn-preload.js)', pre2 === bundle(), 'run the bundle script');
+  check('preload/webauthn-preload.js is up to date (node scripts/build/bundle-webauthn-preload.js)', pre2 === bundle(), 'run the bundle script');
   check('preload: hide is the fallback when the main process says nothing or anything fails', /mode && mode\.mode === 'native'/.test(pre2) && /catch \(err\)[\s\S]*func: hideWebAuthn/.test(pre2), '');
   check('preload: only electron is required (sandboxed)', (pre2.match(/require\(/g) || []).length === 1, '');
 

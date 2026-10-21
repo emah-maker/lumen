@@ -6,7 +6,7 @@
 //   - a lone switch makes exactly two setVisible calls (show the new, hide the old); a burst of ten makes at most four, and ends on the last tab;
 //   - the recorder carries the renderer priority, the idle time and the view calls.
 // A hidden window cannot show the Windows efficiency-mode effect itself (every tab of a test window counts as visible), so this proves the
-// calls and the limits; scripts/measure-real-switch.js (a visible window, run by hand) measures the effect.
+// calls and the limits; scripts/measure/measure-real-switch.js (a visible window, run by hand) measures the effect.
 require('./_tmp-cleanup');
 const rig = require('./_tab-switch-rig');
 

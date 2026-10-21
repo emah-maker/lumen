@@ -10,7 +10,7 @@
 //   cookie and storage work, and the cookie comes back on the frame's own POSTs, as in Chrome.
 //   Then: a link or window.open from the frame opens a tab for exactly that address.
 // Hidden window, throwaway profile. Run it under the lock:
-//   node scripts/e2e-lock.js run --owner me -- timeout 600 node test/iframe-post.js
+//   node scripts/test/e2e-lock.js run --owner me -- timeout 600 node test/iframe-post.js
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const http = require('http');

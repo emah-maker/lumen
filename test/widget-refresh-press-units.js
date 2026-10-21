@@ -1,5 +1,5 @@
 // A press of a card's Refresh (or Try again) always does a real refresh (run on its own with `node test/widget-refresh-press-units.js`, or by
-// scripts/test-units.js). Against a mocked Todoist API: a press right after a load is not dropped by the 15 s floor, a press during a run joins
+// scripts/test/test-units.js). Against a mocked Todoist API: a press right after a load is not dropped by the 15 s floor, a press during a run joins
 // it (one request, the card says it is refreshing until it ends), a press after an error or with an old answer showing asks again, a rate-limit
 // pause is shown instead of hiding the press, and a fetch or network reset that never answers still ends. The page's own timers (arg=auto)
 // keep the minimum interval. No Electron, no network.

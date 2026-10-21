@@ -1,4 +1,4 @@
-// The machine-wide Electron lock (scripts/e2e-lock.js). Plain Node, no Electron: a temp lock dir through LUMEN_E2E_LOCK_DIR.
+// The machine-wide Electron lock (scripts/test/e2e-lock.js). Plain Node, no Electron: a temp lock dir through LUMEN_E2E_LOCK_DIR.
 // Covers acquire/release, a second acquirer waiting, a stale lock (old and a dead owner pid) taken over, a live owner never robbed
 // even when old, and `run --` releasing after a failing command.
 const fs = require('fs');
@@ -13,7 +13,7 @@ const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-e2e-lock-test-'));
 const LOCK = path.join(base, 'lock');
 process.env.LUMEN_E2E_LOCK_DIR = LOCK;
 delete process.env.LUMEN_E2E_LOCK_HELD;
-const lock = require('../scripts/e2e-lock');
+const lock = require('../scripts/test/e2e-lock');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const old = () => { const t = new Date(Date.now() - 3 * 3600000); fs.utimesSync(LOCK, t, t); };
 const plant = (pid) => { fs.mkdirSync(LOCK); fs.writeFileSync(path.join(LOCK, 'owner'), `${pid} someone ${Math.floor(Date.now() / 1000)}\n`); };
@@ -31,7 +31,7 @@ const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); retu
   check('a second release is harmless', !fs.existsSync(LOCK));
 
   // a second acquirer waits until the first releases (the holder is a live child process)
-  const holder = spawn(process.execPath, ['-e', `process.env.LUMEN_E2E_LOCK_DIR=${JSON.stringify(LOCK)};const l=require(${JSON.stringify(path.join(__dirname, '..', 'scripts', 'e2e-lock.js'))});l.acquire({owner:'holder',pollMs:50}).then(()=>{console.log('held');process.stdin.on('data',()=>{l.release();process.exit(0);});});`], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const holder = spawn(process.execPath, ['-e', `process.env.LUMEN_E2E_LOCK_DIR=${JSON.stringify(LOCK)};const l=require(${JSON.stringify(path.join(__dirname, '..', 'scripts', 'test', 'e2e-lock.js'))});l.acquire({owner:'holder',pollMs:50}).then(()=>{console.log('held');process.stdin.on('data',()=>{l.release();process.exit(0);});});`], { stdio: ['pipe', 'pipe', 'inherit'] });
   await new Promise((r) => holder.stdout.once('data', r));
   let got = false;
   const waiter = lock.acquire({ owner: 'unit-b', waitMs: 30000, pollMs: 50 }).then(() => { got = true; });
@@ -78,7 +78,7 @@ const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); retu
   check('withLock releases when the function throws', threw && !fs.existsSync(LOCK));
 
   // CLI: run -- releases after a failing command, and returns its exit code; the child sees the lock held
-  const cli = path.join(__dirname, '..', 'scripts', 'e2e-lock.js');
+  const cli = path.join(__dirname, '..', 'scripts', 'test', 'e2e-lock.js');
   const env = { ...process.env, LUMEN_E2E_LOCK_DIR: LOCK };
   const probe = `const fs=require('fs');process.exit(fs.existsSync(process.env.LUMEN_E2E_LOCK_DIR+'/owner')?7:9)`;
   const r1 = spawnSync(process.execPath, [cli, 'run', '--owner', 'unit-cli', '--', process.execPath, '-e', probe], { env, encoding: 'utf8' });

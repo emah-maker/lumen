@@ -1,6 +1,6 @@
 // File-type icons on Windows (features/instance.js fixAssociationIcons, features/setup.js registrationIcon).
 // Lumen.exe is Electron's untouched binary (Smart App Control trusts it; an exe edited with rcedit is blocked, see
-// scripts/build.js), so its own icon resource is Electron's atom. Everything that shows Lumen's icon in Explorer
+// scripts/build/build.js), so its own icon resource is Electron's atom. Everything that shows Lumen's icon in Explorer
 // (PDF/HTML/SVG file icons, Default apps) must therefore name the shipped assets/icon.ico, never `Lumen.exe,0`.
 const assert = require('assert');
 const fs = require('fs');

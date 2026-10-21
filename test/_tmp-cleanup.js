@@ -2,7 +2,7 @@
 // with fs.mkdtemp* (throwaway Lumen profiles, fake CLI homes, ...) are removed when the process exits, whether the suite passed,
 // failed (process.exit) or threw. Without it a failing or interrupted run left them behind, and each profile's grok-home held
 // another hard link to the user's real ~/.grok/auth.json until NTFS's 1023-link limit broke Lumen's sign-in linking.
-// A killed suite (timeout) can't run this: scripts/test-tmp.js gives every suite its own TEMP folder and removes it afterwards.
+// A killed suite (timeout) can't run this: scripts/test/test-tmp.js gives every suite its own TEMP folder and removes it afterwards.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

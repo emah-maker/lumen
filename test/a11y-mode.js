@@ -72,7 +72,7 @@ addEventListener('resize', build);
     check('decide: nothing asked for -> leave it', pure.decide({ mode: 'auto', enabled: false, screenReader: false }) === null);
     check('decide: off -> []', JSON.stringify(pure.decide({ mode: 'off', enabled: true, screenReader: true })) === '[]');
     check('decide: on or a screen reader -> full', pure.decide({ mode: 'on', enabled: true, screenReader: false }) === 'full' && pure.decide({ mode: 'auto', enabled: true, screenReader: true }) === 'full');
-    check('the probe never runs on the main thread (execFile, hidden)', /execFile\('powershell\.exe'/.test(fs.readFileSync(path.join(__dirname, '../src/features/a11y-mode.js'), 'utf8')) && !/Sync\(/.test(fs.readFileSync(path.join(__dirname, '../src/features/a11y-mode.js'), 'utf8')));
+    check('the probe never runs on the main thread (execFile, hidden)', /execFile\('powershell\.exe'/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'a11y-mode.js'), 'utf8')) && !/Sync\(/.test(fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'a11y-mode.js'), 'utf8')));
   } finally {
     await app.close().catch(() => {});
     server.close();

@@ -5,7 +5,7 @@
 // narration is its live line, the approvals are small rows in it, and only the final answer is a bubble, under it)
 // and a Computer card for shell work. Sidebar and full-page chat both. Hidden windows (LUMEN_TEST_BACKGROUND=1), a throwaway profile,
 // a fake Claude API client and a fake `claude` CLI: no network beyond 127.0.0.1, never the real CLI. Run it under the lock:
-//   node scripts/e2e-lock.js run -- node test/step-labels.js
+//   node scripts/test/e2e-lock.js run -- node test/step-labels.js
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');

@@ -1,5 +1,5 @@
 // Network widgets that survive a bad minute (run on its own with `node test/widget-resilience-units.js`, or by
-// scripts/test-units.js): how a failed fetch is told apart (passing trouble vs a refusal vs a parse/size problem), the automatic
+// scripts/test/test-units.js): how a failed fetch is told apart (passing trouble vs a refusal vs a parse/size problem), the automatic
 // retries (2 s, 10 s, 30 s, then the card's normal schedule) with the last good answer kept on the card, the retry when the
 // machine comes back, a 186 KB calendar feed, and the Todoist card's new tricks (expanded list, add with a day on Today,
 // reschedule, the Today / Upcoming / Inbox switch, rollback on an error) against a mocked Todoist API. No Electron, no network.

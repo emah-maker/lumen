@@ -2,7 +2,7 @@
 // profile with a realistic history: 50 saved chats, the newest of 60 exchanges with long replies, Markdown, code blocks, tables, math and a
 // mermaid diagram in every fifth reply (test/_chat-seed.js). Every number runs from the keypress or click (or from starting the app) to
 // a usable page: out of its boot state, the chat list drawn, the open chat's messages on screen and the composer focused
-// (test/_chat-speed.js). scripts/measure-chat-tabs.js prints the same numbers.
+// (test/_chat-speed.js). scripts/measure/measure-chat-tabs.js prints the same numbers.
 //
 // The ceilings sit about two and a half times above what a developer machine measures, so noise does not fail a run, and below what the
 // page cost before this work (about 1.4 s for a new chat tab, 1.9 s to restore one, 0.5 s to open the long chat from the library):

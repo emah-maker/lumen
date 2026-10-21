@@ -103,7 +103,7 @@ check('step-time.js is loaded by the sidebar and the chat page', /step-time\.js/
 check('the Tasks empty text names the real button (») and not a "clock button"', !/clock/i.test(en['tasks.empty']) && /»/.test(en['tasks.empty']));
 check('"Open Tasks" notifications say where Tasks is now (the ⋯ menu)', /⋯ menu/.test(en['tasks.notify.interrupted']) && /⋯ menu/.test(en['tasks.notify.interruptedMany']));
 
-// the bundle is current with its sources (scripts/bundle-renderer.js), so what is tested is what ships
+// the bundle is current with its sources (scripts/build/bundle-renderer.js), so what is tested is what ships
 const bundled = read('src', 'renderer', 'ui.bundle.js');
 check('the shipped bundle has the new header code', /function showStepTime/.test(bundled) && /needsSignIn/.test(bundled) && /this chat: \{usage\}|chats\.usage\.line/.test(bundled));
 process.exit(failures ? 1 : 0);

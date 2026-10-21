@@ -4,7 +4,7 @@
 // thread: a 0.7 s freeze that landed on page loads at random, wherever the downloads happened to finish. The lists come from a stand-in
 // server on this machine (LUMEN_TEST_ADBLOCK_CDN: adblock-lists.js), held back until the monitor runs, so the build always falls inside
 // the measured window. Hidden window (LUMEN_TEST_BACKGROUND=1), a throwaway profile, no network beyond 127.0.0.1. Run it under the lock:
-//   node scripts/e2e-lock.js run -- node test/page-load-stall.js
+//   node scripts/test/e2e-lock.js run -- node test/page-load-stall.js
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const http = require('http');

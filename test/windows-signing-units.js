@@ -1,11 +1,11 @@
-// Pure unit test for the Windows signing groundwork in scripts/signing.js (Azure Artifact Signing
+// Pure unit test for the Windows signing groundwork in scripts/release/signing.js (Azure Artifact Signing
 // through electron-builder's win.azureSignOptions): nothing is signed unless every AZURE_* value is
 // set, the flags carry the right option names, and the unsigned build stays exactly as it was.
 // No Azure account, certificate or network needed.
 const fs = require('fs');
 const path = require('path');
-const S = require('../scripts/signing');
-const P = require('../scripts/after-pack');
+const S = require('../scripts/release/signing');
+const P = require('../scripts/release/after-pack');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };

@@ -3,12 +3,12 @@
 #   find it through latest.yml / latest-mac.yml (src/features/updates.js). The tag must match
 #   package.json's version: electron-builder names the files and writes the update info from it.
 # - Run manually (Actions -> Release -> Run workflow) to get the builds as workflow artifacts only; nothing is published.
-#   scripts/release.js does this on the release branch while the local checks run (the "preflight"): the unit suites and the
+#   scripts/release/release.js does this on the release branch while the local checks run (the "preflight"): the unit suites and the
 #   build both pass BEFORE the tag exists, so a failure there burns no version number. That run also records a manifest
 #   (lumen-manifest: the commit's tree and every file's SHA-256).
 # - On the tag, the plan job looks for such a preflight whose tree and version equal the tagged commit's (a squash merge has a
 #   new SHA but the same tree when main did not move). Found: publish skips the unit suites and the build, and publishes
-#   the preflight's artifacts after checking every checksum (scripts/release-reuse.js). Not found: units and build run here, in
+#   the preflight's artifacts after checking every checksum (scripts/release/release-reuse.js). Not found: units and build run here, in
 #   parallel, exactly as a build always did.
 name: Release
 
@@ -57,7 +57,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         # Any trouble finding one just means "build here": it never fails the run.
-        run: node scripts/release-reuse.js find >> "$GITHUB_OUTPUT" || echo "reuse_run=" >> "$GITHUB_OUTPUT"
+        run: node scripts/release/release-reuse.js find >> "$GITHUB_OUTPUT" || echo "reuse_run=" >> "$GITHUB_OUTPUT"
 
   # Every pure-node unit suite on the platform it ships for (CI runs them on Linux). Beside the build, not before it.
   units:
@@ -86,7 +86,7 @@ jobs:
       # Pure-logic suites (no window, no network): a broken updater or installer setting can't ship. Several at a time.
       - name: Unit tests
         shell: bash
-        run: node scripts/test-units.js --jobs 3
+        run: node scripts/test/test-units.js --jobs 3
 
   build:
     needs: plan
@@ -105,7 +105,7 @@ jobs:
     env:
       LUMEN_BUILD_DIR: ${{ github.workspace }}/dist
       # No certificate is picked up from the keychain on its own; a Developer ID build opts in through
-      # CSC_LINK (scripts/build.js turns discovery back on for it).
+      # CSC_LINK (scripts/build/build.js turns discovery back on for it).
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: node test/models.js && node test/adhd.js && node test/pagecontext.js && node test/providers.js && node test/import.js
 
-      # Widevine VMP signing (scripts/after-pack.js) needs a free castlabs EVS account. Add the
+      # Widevine VMP signing (scripts/release/after-pack.js) needs a free castlabs EVS account. Add the
       # repository secrets EVS_ACCOUNT_NAME and EVS_PASSWD to enable it; without them the build is
       # unsigned and production DRM (Netflix, Disney+, ...) may not play.
       - name: Set up Widevine VMP signing
@@ -163,7 +163,7 @@ jobs:
 
       # macOS signing is opt-in by secret (docs/mac-signing.md). With a Developer ID certificate the
       # app is signed with the hardened runtime, notarized and stapled; without one the build is
-      # ad-hoc / self-signed exactly as before. scripts/signing.js only tests that values are present;
+      # ad-hoc / self-signed exactly as before. scripts/release/signing.js only tests that values are present;
       # nothing is printed. The API key secret is the .p8 file's text: notarytool wants a path, so it
       # is written to a private temp file (removed in the last step) and only the path is exported.
       - name: Detect macOS signing
@@ -183,8 +183,8 @@ jobs:
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
         run: |
           set -e
-          node scripts/signing.js --github-output >> "$GITHUB_OUTPUT"
-          node scripts/signing.js
+          node scripts/release/signing.js --github-output >> "$GITHUB_OUTPUT"
+          node scripts/release/signing.js
           if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_KEY_ID" ] && [ -n "$APPLE_API_ISSUER" ]; then
             umask 077
             key="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
@@ -194,7 +194,7 @@ jobs:
 
       # Developer ID certificate -> a keychain of our own. electron-builder's own CSC_LINK import runs
       # `security set-key-partition-list` with the wrong password on current macOS runners and fails, so the
-      # .p12 is imported here (nothing is printed) and scripts/signing.js hands electron-builder the keychain
+      # .p12 is imported here (nothing is printed) and scripts/release/signing.js hands electron-builder the keychain
       # instead (LUMEN_KEYCHAIN). The keychain is deleted in the last step.
       - name: Import Developer ID certificate
         id: keychain
@@ -224,7 +224,7 @@ jobs:
       # Windows signing is opt-in by secret (docs/windows-signing.md): Azure Artifact Signing through
       # electron-builder. It needs the three AZURE_* secrets and the four AZURE_SIGNING_* variables;
       # without them (or with only some, which is warned about) the build is unsigned as before.
-      # scripts/signing.js only tests that values are present; nothing is printed.
+      # scripts/release/signing.js only tests that values are present; nothing is printed.
       - name: Detect Windows signing
         id: winsign
         if: matrix.platform == 'win'
@@ -239,8 +239,8 @@ jobs:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: |
           set -e
-          node scripts/signing.js --win --github-output >> "$GITHUB_OUTPUT"
-          node scripts/signing.js --win
+          node scripts/release/signing.js --win --github-output >> "$GITHUB_OUTPUT"
+          node scripts/release/signing.js --win
 
       - name: Build
         shell: bash
@@ -256,11 +256,11 @@ jobs:
           AZURE_SIGNING_PUBLISHER: ${{ matrix.platform == 'win' && steps.winsign.outputs.enabled == 'true' && vars.AZURE_SIGNING_PUBLISHER || '' }}
           EVS_ACCOUNT_NAME: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_ACCOUNT_NAME || '' }}
           EVS_PASSWD: ${{ steps.vmp.outputs.enabled == 'true' && secrets.EVS_PASSWD || '' }}
-          # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/after-sign.js).
+          # macOS: a stable self-signed identity keeps the Keychain's "Always Allow" across updates (scripts/release/after-sign.js).
           LUMEN_SIGN_P12: ${{ secrets.LUMEN_SIGN_P12 }}
           LUMEN_SIGN_PASSWORD: ${{ secrets.LUMEN_SIGN_PASSWORD }}
           LUMEN_KEYCHAIN: ${{ matrix.platform == 'mac' && steps.keychain.outputs.path || '' }}
-          # macOS Developer ID (mac job only; scripts/signing.js picks the mode from these). electron-builder
+          # macOS Developer ID (mac job only; scripts/release/signing.js picks the mode from these). electron-builder
           # imports the CSC_LINK .p12 into its own temporary keychain, signs, notarizes and staples.
           CSC_LINK: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && steps.sign.outputs.developer_id == 'true' && secrets.CSC_KEY_PASSWORD || '' }}
@@ -277,12 +277,12 @@ jobs:
           LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
           LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
           LUMEN_GOOGLE_VERIFIED: ${{ vars.LUMEN_GOOGLE_VERIFIED }} # '1' once Google has approved the built-in client's Gmail access
-        run: node scripts/build.js --${{ matrix.platform }} ${{ matrix.targets }}
+        run: node scripts/build/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml
         if: matrix.platform == 'win'
         shell: bash
-        run: node scripts/add-zip-to-latest.js
+        run: node scripts/release/add-zip-to-latest.js
 
       - name: List build output
         shell: bash
@@ -403,7 +403,7 @@ jobs:
           path: built/mac
 
       - name: Write the manifest
-        run: node scripts/release-reuse.js manifest --win built/win --mac built/mac --out release-manifest.json
+        run: node scripts/release/release-reuse.js manifest --win built/win --mac built/mac --out release-manifest.json
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -437,7 +437,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ needs.plan.outputs.reuse_run }}
-        run: node scripts/release-reuse.js fetch --run "$RUN_ID" --dir dist
+        run: node scripts/release/release-reuse.js fetch --run "$RUN_ID" --dir dist
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.plan.outputs.reuse_run == ''
@@ -445,9 +445,9 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # The release page's text: which file to download, the install guide, and this version's CHANGELOG section (scripts/release-notes.js).
+      # The release page's text: which file to download, the install guide, and this version's CHANGELOG section (scripts/release/release-notes.js).
       - name: Write the release notes
-        run: node scripts/release-notes.js "$GITHUB_REF_NAME" --out release-notes.md
+        run: node scripts/release/release-notes.js "$GITHUB_REF_NAME" --out release-notes.md
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:

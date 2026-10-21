@@ -14,7 +14,7 @@
 //
 // Both functions are serialized into the page's main world (contextBridge.executeInMainWorld), so each must be
 // self-contained. Pure (no Electron): test/webauthn-gate-units.js. preload/webauthn-preload.js is generated from this
-// file by scripts/bundle-webauthn-preload.js (a sandboxed preload can only require('electron')).
+// file by scripts/build/bundle-webauthn-preload.js (a sandboxed preload can only require('electron')).
 /* global window */ // serialized into pages and run there
 
 function hideWebAuthn() {

@@ -810,26 +810,26 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 
 // ---- The UI's sandboxed preload is a committed bundle; it must match preload.js and the library
 {
-  const { bundle, OUT } = require('../scripts/bundle-preload');
+  const { bundle, OUT } = require('../scripts/build/bundle-preload');
   const committed = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n') : '';
-  check('preload bundle: preload.bundle.js is up to date (run node scripts/bundle-preload.js)', committed === bundle(), `${committed.length} vs ${bundle().length} chars`);
+  check('preload bundle: preload.bundle.js is up to date (run node scripts/build/bundle-preload.js)', committed === bundle(), `${committed.length} vs ${bundle().length} chars`);
   const requires = [...committed.matchAll(/\brequire\((['"])([^'"]+)\1\)/g)].map((m) => m[2]).filter((id) => id !== 'electron' && id !== 'electron-chrome-extensions/browser-action');
   check('preload bundle: needs nothing a sandboxed preload can\'t load', requires.length === 0, requires.join(', '));
 }
 
 // ---- The main window's page is a committed bundle of index.src.html's scripts and stylesheets
 {
-  const out = require('../scripts/bundle-renderer').bundle();
+  const out = require('../scripts/build/bundle-renderer').bundle();
   const dir = path.join(__dirname, '../src/renderer');
   const committed = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n') : '');
-  check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
+  check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/build/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
   check('ui bundle: no inline script (the CSP allows none)', !/<script>/.test(out.html), '');
-  const set = require('../scripts/bundle-renderer').bundle('settings');
-  check('settings bundle: settings.html, settings.bundle.js and settings.bundle.css are up to date (run node scripts/bundle-renderer.js)', committed('settings.html') === set.html && committed('settings.bundle.js') === set.js && committed('settings.bundle.css') === set.css, '');
+  const set = require('../scripts/build/bundle-renderer').bundle('settings');
+  check('settings bundle: settings.html, settings.bundle.js and settings.bundle.css are up to date (run node scripts/build/bundle-renderer.js)', committed('settings.html') === set.html && committed('settings.bundle.js') === set.js && committed('settings.bundle.css') === set.css, '');
   check('settings bundle: no inline script (the CSP allows none)', !/<script>/.test(set.html), '');
 
   // JS comments are stripped from the bundles: only comments go, never text that looks like one.
-  const { stripJsComments } = require('../scripts/bundle-renderer');
+  const { stripJsComments } = require('../scripts/build/bundle-renderer');
   const acorn = require('acorn');
   const BT = '`';
   const strip = (c) => stripJsComments(c, 'case');
@@ -1073,7 +1073,7 @@ async function schedulerRuns() {
 }
 
 async function fuseChecks() {
-  const afterPack = require('../scripts/after-pack');
+  const afterPack = require('../scripts/release/after-pack');
   const { FuseV1Options, getCurrentFuseWire } = require('@electron/fuses');
   const mac = afterPack.fuses('darwin');
   check('fuses: macOS turns off NODE_OPTIONS and --inspect', mac && mac[FuseV1Options.EnableNodeOptionsEnvironmentVariable] === false && mac[FuseV1Options.EnableNodeCliInspectArguments] === false, JSON.stringify(mac));
@@ -1608,9 +1608,9 @@ async function pdfRuns() {
   check('read_pdf is a reading tool (it taints the run) with a tool definition', /READING_TOOLS = new Set\([^)]*'read_pdf'/.test(agentSrc) && /name: 'read_pdf'/.test(agentSrc), 'src/ai/agent.js');
 }
 
-// ---- macOS re-signing with Lumen's own certificate (scripts/after-sign.js)
+// ---- macOS re-signing with Lumen's own certificate (scripts/release/after-sign.js)
 {
-  const { identityHash } = require('../scripts/after-sign');
+  const { identityHash } = require('../scripts/release/after-sign');
   const hash = '5CBDFCED634205BA0AAF0B7C097B0A331A48D467';
   const good = `  1) ${hash} "Lumen Release Signing" (CSSMERR_TP_NOT_TRUSTED)\n     1 identities found\n`;
   check('after-sign: finds the Lumen identity by name, trusted or not', identityHash(good, 'Lumen Release Signing') === hash, String(identityHash(good, 'Lumen Release Signing')));

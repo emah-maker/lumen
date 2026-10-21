@@ -1,4 +1,4 @@
-// Shared by test/settings-open-perf.js and scripts/measure-settings-open.js: opens lumen://settings in a hidden app on a
+// Shared by test/settings-open-perf.js and scripts/measure/measure-settings-open.js: opens lumen://settings in a hidden app on a
 // realistic (long-used) profile and measures how long it takes, in milliseconds from the open call:
 //   paint   the visible category has its rows on screen (first rAF after they exist)
 //   filled  ...and nothing in it is still a "Loading" placeholder

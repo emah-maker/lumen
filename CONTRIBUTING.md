@@ -23,7 +23,7 @@ The suites are Playwright scripts that launch Lumen. Run them one at a time with
 
 - Tests use a throwaway profile: set `CLAUDE_BROWSER_TEST=1` and `CLAUDE_BROWSER_PROFILE=<empty temp folder>` (see `test/home.js`). Test mode only works when running from source, never in a packaged build.
 - Close other Lumen or Electron windows first. Some suites (`ui`, `tabstrip`, `downloads`) depend on window focus.
-- Add or update a test with every change. `test/units.js` or a new `test/<area>-units.js` is the place for logic that doesn't need a window: `scripts/test-units.js` picks the file up by name, so nothing needs registering.
+- Add or update a test with every change. `test/units.js` or a new `test/<area>-units.js` is the place for logic that doesn't need a window: `scripts/test/test-units.js` picks the file up by name, so nothing needs registering.
 
 ## Translations
 
@@ -43,7 +43,7 @@ New UI text goes into `src/locales/en.json`: use `t('key')` in `src/main.js` and
 - One topic per pull request, branched from `main`.
 - Keep commits focused, with messages that say what changed and why.
 - Describe what you tested in the pull request.
-- Bring the docs along: a CHANGELOG bullet, the README or a `docs/` page for anything users see, and a `docs/settings.md` row for a new setting. `node scripts/check-docs.js` checks the branch; the full list is in `CLAUDE.md` under "Docs".
+- Bring the docs along: a CHANGELOG bullet, the README or a `docs/` page for anything users see, and a `docs/settings.md` row for a new setting. `node scripts/build/check-docs.js` checks the branch; the full list is in `CLAUDE.md` under "Docs".
 - Match the style of the surrounding code: plain CommonJS, no build step, comments only where the reason isn't obvious.
 
 ## License

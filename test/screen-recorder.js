@@ -2,7 +2,7 @@
 // a local page that animates is started, paused, resumed and stopped; a non-empty .webm lands in the Downloads folder under a clear name, shows in the
 // downloads list as finished, and "Show in folder" is offered. The recorder's bar (its own small window) is invisible in the test run, a screen is
 // never captured (the screen picker is a native menu: not opened here), and the microphone is not touched.
-// Run (always under the lock): node scripts/e2e-lock.js run --owner screen-recording -- node test/screen-recorder.js
+// Run (always under the lock): node scripts/test/e2e-lock.js run --owner screen-recording -- node test/screen-recorder.js
 //   with LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');

@@ -1,4 +1,4 @@
-// Shared by test/tab-switch-perf.js and scripts/measure-tab-switch.js: a realistic, hidden Lumen to time tab switches in.
+// Shared by test/tab-switch-perf.js and scripts/measure/measure-tab-switch.js: a realistic, hidden Lumen to time tab switches in.
 // It builds a throwaway profile (50 saved chats, the home widgets on), starts the app off-screen (LUMEN_TEST_BACKGROUND), opens
 // about 30 local pages (a plain page, a heavy-DOM page, a page with a playing <video>, a page with timers, a PDF in the built-in
 // viewer), pins some, groups a few, and measures switches by clicking the tab (or Ctrl+Tab):

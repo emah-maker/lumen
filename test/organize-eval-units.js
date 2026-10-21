@@ -1,5 +1,5 @@
 // Organize quality gate and the progressive flow's order: the labelled sessions of test/fixtures/organize-eval.js must keep their
-// scores (scripts/eval-organize.js prints them), and the local groups are on screen before the route to a model is worked out.
+// scores (scripts/measure/eval-organize.js prints them), and the local groups are on screen before the route to a model is worked out.
 const run = require('./topics-sessions-run');
 const fixtures = require('./fixtures/organize-eval');
 const { sessions } = fixtures;
@@ -26,10 +26,10 @@ const check = (name, ok, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} 
   check('eval set: the first eight sessions average F1 0.92 or better', base.f1 / base.n >= 0.92, String(base.f1 / base.n));
   check('eval set: at most two tabs that should stay loose are grouped', total.wrong <= 2, String(total.wrong));
 
-  // The AI refine step, scored from its cached Haiku answers (scripts/eval-organize-ai.js --live makes them): a changed prompt or wire misses the cache and skips this.
+  // The AI refine step, scored from its cached Haiku answers (scripts/measure/eval-organize-ai.js --live makes them): a changed prompt or wire misses the cache and skips this.
   {
-    const ai = await require('../scripts/eval-organize-ai').main({ quiet: true });
-    if (ai.failed) console.log('ok   (refine answers not cached for this prompt: run scripts/eval-organize-ai.js --live to score it)');
+    const ai = await require('../scripts/measure/eval-organize-ai').main({ quiet: true });
+    if (ai.failed) console.log('ok   (refine answers not cached for this prompt: run scripts/measure/eval-organize-ai.js --live to score it)');
     else {
       check(`refine (cached answers): local+AI recall ${(ai.sum.ai.r / ai.n).toFixed(2)} beats local ${(ai.sum.local.r / ai.n).toFixed(2)}`, ai.sum.ai.r / ai.n >= ai.sum.local.r / ai.n + 0.15, JSON.stringify(ai.sum));
       check('refine (cached answers): the model keeps precision (average 0.95+) and F1 0.88+', ai.sum.ai.p / ai.n >= 0.95 && ai.sum.ai.f / ai.n >= 0.88, JSON.stringify(ai.sum));

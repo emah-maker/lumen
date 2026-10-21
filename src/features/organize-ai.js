@@ -5,7 +5,7 @@
 // When the local result is already clear, or the same tabs were organized before, no request is made.
 //
 // Pure logic: the tab list, the model and the clock are passed in, so test/units.js and
-// scripts/measure-organize.js run it against a fake model.
+// scripts/measure/measure-organize.js run it against a fake model.
 const crypto = require('crypto');
 const tg = require('../browser/tab-groups');
 const { AI_HINTS } = require('./topic-knowledge');
@@ -162,7 +162,7 @@ Principles:
 - Merge only pieces of one subject (a trip's flights and hotels, a course's notes and quizzes), never two subjects that merely share a field.
 - Names: 1 to 3 words, Title Case, a specific noun phrase for the subject ("Gene Editing", "Tokyo Trip", "Standing Desks", "Organic Chemistry"). Never a website, never generic ("Research", "Misc", "Tabs", "Group"), no emoji, no punctuation. Rename a group whose name is a category label, a stray word or a site ("Change", "Research", "Lab & bioinformatics", "Mail & notes" over unrelated tabs) or wrong for most of its tabs; keep a good name and any name the user chose. No years or dates in names.
 Example answer: {"n":[{"i":3,"s":"Standing Desks"}],"p":[{"t":14,"i":2}],"g":[{"s":"Gene Editing","t":[21,25]}],"m":[{"a":1,"b":5}]}`;
-// The prompt as it was before round 2 (PR #215), kept for scripts/eval-organize-ai.js to compare against.
+// The prompt as it was before round 2 (PR #215), kept for scripts/measure/eval-organize-ai.js to compare against.
 const REFINE_PROMPT_V1 = `Refine groups of browser tabs. g = groups: i id, n size, x current name, h hosts, k site hint, w top words, t sample [tabId, title]. u = ungrouped tabs by host: [tabId, title, description]. k = site hints of ungrouped tabs: {hint: [tabIds]}. A site hint means the site is nearly always that task (Canvas and Gradescope are School, Indeed is Job search): tabs with one hint, and tabs of one host, usually belong together or in the group with that hint or host, unless their titles are clearly different topics (two courses, two projects). Reply with JSON only, leaving out anything that is fine: n = [{i, s}] a better name (1-3 Title Case words, specific, never just a website) for groups whose name is vague or wrong; p = [{t, i}] put ungrouped tab t in group i when it clearly belongs there; g = [{s, t:[ids]}] a new group of 2+ ungrouped tabs about one topic, named s; m = [{a, b}] merge group b into group a when they are one topic (pieces of one trip, course, search or project are one topic). Leave a tab ungrouped rather than forcing it. Keep names a person chose. Use only the ids given. q = hosts to classify: h = [{s host, k}] for each, k what the site is nearly always used for (${AI_HINTS.join(', ')}), or none when it is used for many things or you do not know it (a university's own site is School).`;
 
 const intItems = (props) => ({ type: 'array', items: { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false } });

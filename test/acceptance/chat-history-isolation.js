@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: chat-history-fix). Run alone: node scripts/test-acceptance.js chat-history-isolation
+// ACCEPTANCE (feature: chat-history-fix). Run alone: node scripts/test/test-acceptance.js chat-history-isolation
 //
 // Each tab's chat resumes its OWN CLI session and hands over its OWN earlier turns, never another tab's: chat A's
 // follow-up goes to A's Claude Code / Grok Build session, B's to B's, the saved session ids stay per chat, and a chat

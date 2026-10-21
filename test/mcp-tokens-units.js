@@ -1,5 +1,5 @@
 // What Lumen's MCP tools cost an outside agent in tokens (plain Node: no Electron, no network). The numbers for typical outputs on real
-// pages come from scripts/mcp-token-report.js; this suite holds the shapes that keep them small:
+// pages come from scripts/measure/mcp-token-report.js; this suite holds the shapes that keep them small:
 //   - tools/list stays within its budget (the list is paid for in every session)
 //   - list_tabs rows carry only what is set, with a title and address cut to size
 //   - what follows navigate does not repeat the title and address navigate's own line already gave

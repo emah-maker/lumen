@@ -13,7 +13,7 @@
 //                      says why under the switch and has a Preview that animates a made-up beat; turning it off removes everything
 //   main process       no task over 20 ms while it all runs
 // Windows only (the listening is Windows' loopback): elsewhere the suite says so and passes.
-// Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/music-react.js (under scripts/e2e-lock.js, with a timeout).
+// Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/music-react.js (under scripts/test/e2e-lock.js, with a timeout).
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');

@@ -1,4 +1,4 @@
-// Shared by test/chat-tab-speed.js and scripts/measure-chat-tabs.js: fills a throwaway profile with a realistic chat history
+// Shared by test/chat-tab-speed.js and scripts/measure/measure-chat-tabs.js: fills a throwaway profile with a realistic chat history
 // (long messages, Markdown, code blocks, a mermaid diagram), written through the app's own chat store and OS-keychain encryption.
 // Call seed(profile, opts) with no app running; it starts a hidden Electron on that profile, saves the chats and quits.
 const { _electron: electron } = require('playwright-core');

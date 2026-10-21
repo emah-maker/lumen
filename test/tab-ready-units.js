@@ -95,7 +95,7 @@ check('under memory pressure the tab under the pointer is still ready (one tab, 
   const ui = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
   check('the strip reports hover and press on every tab but the one in front, not only sleeping ones', /el && !el\.classList\.contains\('active'\) \? Number\(el\.dataset\.id\)/.test(ui));
   const bundle = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'ui.bundle.js'), 'utf8');
-  check('the committed UI bundle has the same (run node scripts/bundle-renderer.js)', /el && !el\.classList\.contains\('active'\) \? Number\(el\.dataset\.id\)/.test(bundle));
+  check('the committed UI bundle has the same (run node scripts/build/bundle-renderer.js)', /el && !el\.classList\.contains\('active'\) \? Number\(el\.dataset\.id\)/.test(bundle));
   const backend = fs.readFileSync(path.join(__dirname, '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
   check('the setting is tabReadyRecent, default 3', /\n {2}tabReadyRecent: 3,/.test(backend));
   const mod = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'tab-ready.js'), 'utf8');

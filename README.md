@@ -332,15 +332,15 @@ Set `LUMEN_BUILD_DIR` to use a different folder. The installed Windows app lives
 
 Set `LUMEN_GOOGLE_CLIENT_ID` and `LUMEN_GOOGLE_CLIENT_SECRET` (a Google Cloud OAuth client of type Desktop app, with the Gmail API enabled) when building to include Lumen's own Google client, which gives the Gmail widget a one-click "Sign in with Google". The same variables work when running from source. Without them the Gmail widget's Advanced mode asks for the user's own Google Cloud client (the default mode needs neither). The release workflow reads them from repository secrets of the same names.
 
-The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar, shortcuts and the icons of the file types Lumen opens (HTML, PDF, SVG) use Lumen's icon at runtime (the installed Lumen points them at `icon.ico` on start). For a normal signed installer, sign the build with a trusted code-signing certificate.
+The Windows build ships the official Electron `.exe` byte for byte (`signAndEditExecutable: false`, `asar: false`, and Electron taken from node_modules), and `scripts/build/build.js` checks this after every build. Windows 11 Smart App Control blocks unsigned executables it doesn't recognise, and editing the exe (icon, version info, asar integrity) produces one. The untouched Electron binary is recognised, so it runs. The window, taskbar, shortcuts and the icons of the file types Lumen opens (HTML, PDF, SVG) use Lumen's icon at runtime (the installed Lumen points them at `icon.ico` on start). For a normal signed installer, sign the build with a trusted code-signing certificate.
 
-Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`src/features/updates.js`; the Windows zip is listed in `latest.yml` by `scripts/add-zip-to-latest.js`; the updater is electron-updater).
+Release installers are built by GitHub Actions (`.github/workflows/release.yml`) and attached to [Releases](https://github.com/emah-maker/lumen/releases) when a version tag (`v*`) is pushed. Manual runs of the workflow keep the builds as run artifacts instead. To ship an update: bump `version` in package.json (`npm version patch --no-git-tag-version`), commit and push, then tag that commit with the same version and push the tag (`git tag v0.2.5 && git push origin v0.2.5`). The workflow refuses a tag that doesn't match package.json. Next to the installers the release gets `latest.yml`, `latest-mac.yml` and `.blockmap` files, which installed copies read to find and verify the update (`src/features/updates.js`; the Windows zip is listed in `latest.yml` by `scripts/release/add-zip-to-latest.js`; the updater is electron-updater).
 
 ### DRM (Widevine)
 
 `electron` is castlabs' [ECS build](https://github.com/castlabs/electron-releases) (`electron-releases#v44.1.0+wvcus`), which adds a Widevine CDM that stock Electron doesn't have. On startup Lumen calls `components.whenReady()` (with a 10s timeout so a failed/offline CDM download never blocks the window opening) and logs `components.status()`; the CDM itself downloads on first run.
 
-That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed** by castlabs. An unsigned build still plays where a site accepts software Widevine (L3); services that require a VMP signature may refuse or downgrade. electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature, so Lumen re-signs during packaging (`scripts/after-pack.js`, Windows and macOS). It warns and carries on if signing isn't set up.
+That's enough for sites that accept the plain Widevine CDM. Production DRM providers (Netflix, Disney+, Spotify and others) also check that the binary is **VMP-signed** by castlabs. An unsigned build still plays where a site accepts software Widevine (L3); services that require a VMP signature may refuse or downgrade. electron-builder renames `electron.exe` to `Lumen.exe`, which invalidates the stock signature, so Lumen re-signs during packaging (`scripts/release/after-pack.js`, Windows and macOS). It warns and carries on if signing isn't set up.
 
 **Local builds:** sign up once for a free [castlabs EVS](https://github.com/castlabs/electron-releases/wiki/EVS) account; after that, `npm run dist` signs automatically:
 
@@ -355,7 +355,7 @@ To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
 
 ### Screenshots and GIFs
 
-The images in this README are captured from a throwaway profile by `node scripts/capture-media.js` (needs `ffmpeg` on PATH for the GIFs and the MP4; Windows only for the screen recording).
+The images in this README are captured from a throwaway profile by `node scripts/measure/capture-media.js` (needs `ffmpeg` on PATH for the GIFs and the MP4; Windows only for the screen recording).
 
 ## Report an issue
 
@@ -404,7 +404,7 @@ src/                    the app (package.json "main": src/main.js)
 ├── browser/            tab grouping (tab-groups.js), browser import, search engines, favicons, address-bar input, fetch
 ├── settings/           lumen://settings backend (settings-backend.js) and the atomic settings file (settings-file.js)
 ├── preload/            preloads for the UI, dialogs, downloads, history, suggestions and extensions
-│                       (preload.js is bundled into preload.bundle.js by scripts/bundle-preload.js)
+│                       (preload.js is bundled into preload.bundle.js by scripts/build/bundle-preload.js)
 ├── features/           split-out features, each a pure part tested in Node plus a create…() that main.js wires in
 ├── renderer/           the browser's own pages: toolbar and tab strip, sidebar, new-tab page and widgets, settings, history
 ├── locales/            UI strings (en.json), used through t()
@@ -412,14 +412,14 @@ src/                    the app (package.json "main": src/main.js)
 └── vendor/             third-party code shipped as is (Readability)
 mcp.js                  the MCP bridge's stable address (<app>/mcp.js in agents' configs); it starts src/automation/mcp.js
 test/                   Playwright suites, one file per area, and units.js / *-units.js / cli-json.js pure-logic checks (`npm run test:units`)
-scripts/                build, packaging hooks, test-all.js, test-units.js, bundle-preload.js, build-site.js, capture-media.js, measure-*.js
+scripts/                build/ (build, bundle, check), release/ (release, land, signing), test/ (test-all, test-units), measure/ (measure-*, profile-*, capture-media)
 docs/                   reference pages (below) and docs/media (the README's screenshots, not shipped)
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md
 ```
 
 `src/features/` in groups: **AI** (`ai-agents`, `background-*`, `chat-*`, `mission-control`, `organize-*`, `research-tabs`, `signed-in-sites`, `skills`, `usage`), **widgets** (`widgets` and `widget-*`, one `*-view.js` per kind), **privacy and security** (`adblock*`, `hide-activity`, `tracking-params`, `passwords`, `password-page`, `passkeys`, `webauthn-windows`, `private-*`, `safe-browsing`, `site-security`, `page-info`, `site-data`), **tabs and pages** (`tab-*`, `page-tools`, `pdf-*`, `translate`, `screenshot`, `qr`, `link-menu`, `site-zoom`), **app** (`sync-*` (sync through a folder), `updates`, `zip-update`, `whats-new`, `instance`, `dialogs`, `downloads`, `managers`, `i18n`, `performance`, `crash-recovery`, `shortcuts-help`).
 
-**Tests:** `npm test` runs the core suites (listed in `scripts/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `npm run test:units` runs every pure-node suite (`scripts/test-units.js`, no window), which CI runs on pull requests and the release build runs before packaging. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
+**Tests:** `npm test` runs the core suites (listed in `scripts/test/test-all.js`) one after another; `npm test -- widgets passwords` runs just those. `npm run test:units` runs every pure-node suite (`scripts/test/test-units.js`, no window), which CI runs on pull requests and the release build runs before packaging. `LUMEN_TEST_BACKGROUND=1 npm test` keeps every test window invisible and never takes focus, so you can keep using your own Lumen; the few checks that need real keyboard focus or macOS fullscreen then print SKIP. Suites that need the network, an API key or a signed-in CLI (`claudecode`, `grokgate`, `drm`, the `measure-*` scripts) are run by hand. `npm run lint` runs ESLint.
 
 ## License
 

@@ -1,13 +1,13 @@
-// The release tooling's pure parts (scripts/release-lib.js, merge-driver.js, setup-merge-drivers.js): the CHANGELOG and test-all.js merges
-// that scripts/land.js and the git merge drivers share, the CHANGELOG cut and version bump of scripts/release.js, the release-check suite list
+// The release tooling's pure parts (scripts/release/release-lib.js, merge-driver.js, setup-merge-drivers.js): the CHANGELOG and test-all.js merges
+// that scripts/release/land.js and the git merge drivers share, the CHANGELOG cut and version bump of scripts/release/release.js, the release-check suite list
 // derived from test-all.js and test/, and finding electron processes under the repo. Plain Node plus git in a temp repo; no Electron, no network.
 require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const lib = require('../scripts/release-lib');
-const { register } = require('../scripts/setup-merge-drivers');
+const lib = require('../scripts/release/release-lib');
+const { register } = require('../scripts/release/setup-merge-drivers');
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 600)}`}`); };
@@ -65,7 +65,7 @@ const REL = ['## 0.5.33 (2026-10-14)', '', '- **Old thing.** It was added.', '']
   check('cut: changelogSection reads the section back', lib.changelogSection(cut, '0.5.34').startsWith('- **A.** first'), lib.changelogSection(cut, '0.5.34'));
 }
 
-// ---- the suite list (scripts/test-all.js)
+// ---- the suite list (scripts/test/test-all.js)
 const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require('child_process');\n\nconst SUITES = [\n${names}\n];\n${tail}`;
 {
   const base = testAll("  'units', 'a-units', 'perf-budget',\n  'ui', 'tabs',");
@@ -84,9 +84,9 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
   const clash = lib.mergeSuiteList(base, testAll("  'units', 'a-units', 'perf-budget',\n  'ui', 'tabs', 'mine-ui',", 'one();\n'), testAll("  'units', 'a-units', 'perf-budget',\n  'ui', 'tabs', 'theirs-ui',", 'two();\n'));
   check('list: edits outside the list on both sides stop', !clash.ok, JSON.stringify(clash));
   check('list: CRLF in ours is kept', lib.mergeSuiteList(base.replace(/\n/g, '\r\n'), ours.replace(/\n/g, '\r\n'), theirs.replace(/\n/g, '\r\n')).text.includes("'ui', 'theirs-ui', 'tabs', 'mine-ui',\r\n];"));
-  const real = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-all.js'), 'utf8');
+  const real = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test', 'test-all.js'), 'utf8');
   const all = lib.readSuites(real);
-  check('list: readSuites finds the real scripts/test-all.js list', all.length > 100 && all[0] === 'units' && all.includes('perf-budget'), all.length);
+  check('list: readSuites finds the real scripts/test/test-all.js list', all.length > 100 && all[0] === 'units' && all.includes('perf-budget'), all.length);
 }
 
 // ---- deriving the release checks
@@ -97,9 +97,9 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
   check('derive: Electron suites come from test-all.js in order, perf-budget last, pure-node suites excluded', d.electron.join() === 'ui,tabs,perf-budget', d.electron.join());
   check('derive: a suite named in test-all.js with no file is reported, not run', d.missing.join() === 'gone', d.missing.join());
   check('derive: test files outside test-all.js that need a window or a key are listed as manual (no helpers, no units)', d.manual.join() === 'claudecode,manual-thing', d.manual.join());
-  check('derive: pure-node suites are recognised by name, as scripts/test-units.js does', ['units', 'cli-json', 'foo-units'].every(lib.isPlainSuite) && !lib.isPlainSuite('ui') && !lib.isPlainSuite('perf-budget'));
+  check('derive: pure-node suites are recognised by name, as scripts/test/test-units.js does', ['units', 'cli-json', 'foo-units'].every(lib.isPlainSuite) && !lib.isPlainSuite('ui') && !lib.isPlainSuite('perf-budget'));
   const dir = path.join(__dirname);
-  const real = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(dir, '..', 'scripts', 'test-all.js'), 'utf8')), files: fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
+  const real = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(dir, '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
   check('derive: on this repo, perf-budget is last and every Electron suite has a file', real.electron.length > 100 && real.electron[real.electron.length - 1] === 'perf-budget' && !real.missing.length, `${real.electron.length} electron, missing ${real.missing}`);
   check('derive: this suite is a pure-node one (so it never reaches the Electron list)', !real.electron.includes('release-tooling-units'));
 }
@@ -149,19 +149,19 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
     g('init', '-q', '-b', 'main');
     g('config', 'user.email', 't@example.com'); g('config', 'user.name', 't'); g('config', 'core.autocrlf', 'false'); g('config', 'commit.gpgsign', 'false');
     w('.gitattributes', 'CHANGELOG.md merge=lumen-changelog\nscripts/test-all.js merge=lumen-list\ngen.js merge=lumen-bundle\n');
-    register(repo, { script: path.join(__dirname, '..', 'scripts', 'merge-driver.js') });
+    register(repo, { script: path.join(__dirname, '..', 'scripts', 'release', 'merge-driver.js') });
     w('CHANGELOG.md', cl(['- **A.** first'], REL));
-    w('scripts/test-all.js', testAll("  'units', 'ui',"));
+    w('scripts/test/test-all.js', testAll("  'units', 'ui',"));
     w('gen.js', 'base\n');
     g('add', '.'); g('commit', '-qm', 'base');
     g('checkout', '-qb', 'feature');
     w('CHANGELOG.md', cl(['- **A.** first', '- **B.** branch'], REL));
-    w('scripts/test-all.js', testAll("  'units', 'ui', 'branch-ui',"));
+    w('scripts/test/test-all.js', testAll("  'units', 'ui', 'branch-ui',"));
     w('gen.js', 'branch\n');
     g('commit', '-qam', 'feature');
     g('checkout', '-q', 'main');
     w('CHANGELOG.md', cl(['- **A.** first', '- **C.** main'], REL));
-    w('scripts/test-all.js', testAll("  'units', 'ui', 'main-ui',"));
+    w('scripts/test/test-all.js', testAll("  'units', 'ui', 'main-ui',"));
     w('gen.js', 'main\n');
     g('commit', '-qam', 'main');
     g('checkout', '-q', 'feature');
@@ -169,7 +169,7 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
     const changelog = fs.readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8');
     check('drivers: git merge with both sides adding bullets and suites completes without conflicts', m.status === 0, m.stdout + m.stderr);
     check('drivers: CHANGELOG has both bullets and no markers', changelog.includes('**B.**') && changelog.includes('**C.**') && !/^<<<<<<<|^>>>>>>>/m.test(changelog), changelog);
-    check('drivers: test-all.js has both suites', lib.readSuites(fs.readFileSync(path.join(repo, 'scripts', 'test-all.js'), 'utf8')).join() === 'units,ui,main-ui,branch-ui' || lib.readSuites(fs.readFileSync(path.join(repo, 'scripts', 'test-all.js'), 'utf8')).join() === 'units,ui,branch-ui,main-ui', fs.readFileSync(path.join(repo, 'scripts', 'test-all.js'), 'utf8'));
+    check('drivers: test-all.js has both suites', lib.readSuites(fs.readFileSync(path.join(repo, 'scripts', 'test', 'test-all.js'), 'utf8')).join() === 'units,ui,main-ui,branch-ui' || lib.readSuites(fs.readFileSync(path.join(repo, 'scripts', 'test', 'test-all.js'), 'utf8')).join() === 'units,ui,branch-ui,main-ui', fs.readFileSync(path.join(repo, 'scripts', 'test', 'test-all.js'), 'utf8'));
     check('drivers: the generated file keeps our copy (land.js rebuilds it)', fs.readFileSync(path.join(repo, 'gen.js'), 'utf8') === 'branch\n');
 
     // a conflict inside a released section must stop, with ordinary markers
@@ -187,10 +187,10 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
 }
 
 // ---- gh retries and the checks-only preflight
-const sc = require('../scripts/ship-common');
+const sc = require('../scripts/release/ship-common');
 const rr = (status, stderr = '') => ({ status, stdout: '', stderr });
 check('retry: transient errors are recognised (GraphQL, 502/503/504, timeouts)', [rr(1, 'GraphQL: Something went wrong while executing your query'), rr(1, 'HTTP 502: Bad Gateway'), rr(1, 'HTTP 503'), rr(1, 'HTTP 504 gateway timeout'), rr(1, 'dial tcp: i/o timeout'), rr(1, 'read ECONNRESET')].every(sc.isTransient) && !sc.isTransient(rr(1, 'Pull request is not mergeable')) && !sc.isTransient(rr(0)));
-const relSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release.js'), 'utf8');
+const relSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release', 'release.js'), 'utf8');
 check('preflight: the Electron preflight runs only while the checks are still to run', /preflight\(main, opts, wt, !st \|\| !done\(st, 'checks'\)\)/.test(relSrc) && /if \(!withElectron\)/.test(relSrc));
 check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghRetry\(wt, \['pr', 'create'/.test(relSrc) && /ghRetry\(wt, \['pr', 'merge'/.test(relSrc) && /ghJsonRetry\(wt, \['release', 'view'/.test(relSrc));
 
@@ -228,7 +228,7 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   check('skip-ci: exactly the CHANGELOG cut and the version fields, with CI green on the base, may skip the wait', v0.skip === true, JSON.stringify(v0));
   const no = (label, patch, expect) => { const v = lib.ciSkipVerdict({ ...ok, ...patch }); check(`skip-ci: ${label} does not skip`, v.skip === false && (!expect || v.reasons.some((r) => expect.test(r))), JSON.stringify(v)); };
   no('a third changed file', { files: [...ok.files, 'src/main.js'] }, /src\/main\.js/);
-  no('a source file changed instead of the lockfile', { files: ['CHANGELOG.md', 'package.json', 'scripts/test-all.js'] }, /test-all/);
+  no('a source file changed instead of the lockfile', { files: ['CHANGELOG.md', 'package.json', 'scripts/test/test-all.js'] }, /test-all/);
   no('a dependency bumped in package.json', { head: { ...ok.head, package: pkg(V, { dependencies: { a: '2.0.0' } }) } }, /package\.json changes more/);
   no('a new script added in package.json', { head: { ...ok.head, package: pkg(V, { scripts: { x: 'y' } }) } }, /package\.json changes more/);
   no('a package.json whose version is not the release version', { head: { ...ok.head, package: pkg('0.5.50') } }, /package\.json changes more/);
@@ -282,8 +282,8 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   check('checksums: every file matching its recorded SHA-256 passes', lib.verifyChecksums(manifest, good).ok);
   check('checksums: a changed file, a missing file and an extra file are each caught', lib.verifyChecksums(manifest, { ...good, 'latest.yml': 'xx' }).problems.length === 1 && lib.verifyChecksums(manifest, { 'Lumen-Setup.exe': 'aa', 'latest.yml': 'bb' }).problems.some((p) => /missing/.test(p)) && lib.verifyChecksums(manifest, { ...good, 'evil.exe': 'zz' }).problems.some((p) => /not in the manifest/.test(p)));
 
-  // scripts/release-reuse.js end to end in a temp git repo: the manifest it writes, and the run it picks
-  const rr = require('../scripts/release-reuse');
+  // scripts/release/release-reuse.js end to end in a temp git repo: the manifest it writes, and the run it picks
+  const rr = require('../scripts/release/release-reuse');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-reuse-test-'));
   const git = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
   git('init', '-q'); git('config', 'user.email', 't@example.test'); git('config', 'user.name', 't'); git('config', 'commit.gpgsign', 'false');
@@ -342,7 +342,7 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   {
     // every Electron suite in test-all.js that binds a fixed port, uses the real clipboard or lists the machine's processes is marked, and the
     // known suites are among them: a new suite like that is caught here (and run alone by release.js) rather than flaking a release
-    const d = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-all.js'), 'utf8')), files: fs.readdirSync(__dirname).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
+    const d = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: fs.readdirSync(__dirname).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
     const marked = d.electron.filter((s) => lib.sharedResources(s, fs.readFileSync(path.join(__dirname, s + '.js'), 'utf8')).length);
     check('shared: the suites known to bind fixed ports (cdp, cdp-inproc, spotify-reconnect-ui) or use the real clipboard (images) are detected in the real tree', ['cdp', 'cdp-inproc', 'spotify-reconnect-ui', 'images', 'passkeys'].every((s) => marked.includes(s)) && marked.length < 40, marked.join());
     check('shared: shared-resource suites and perf-sensitive ones are different groups only by timing; every perf-sensitive name is a real suite or is simply absent', lib.PERF_SENSITIVE.every((s) => d.electron.includes(s)), lib.PERF_SENSITIVE.filter((s) => !d.electron.includes(s)).join());
@@ -356,11 +356,11 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
     check('select: nothing changed = just the core set', JSON.stringify(pick([]).names) === JSON.stringify(['smoke', 'perf-budget']) && !pick([]).full);
     check('select: a changed module brings the suites named like it and the ones that load it', JSON.stringify(pick(['src/features/spotify.js']).names) === JSON.stringify(['smoke', 'perf-budget', 'spotify-ui', 'spotify-reconnect-ui']) && pick(['src/features/notes.js']).names.includes('notes') && pick(['src/renderer/settings.js']).names.includes('settings-open-perf'), JSON.stringify(pick(['src/features/spotify.js'])));
     check('select: a changed test file selects that suite; CHANGELOG, docs and locale text select nothing', pick(['test/mcp.js']).names.includes('mcp') && JSON.stringify(pick(['CHANGELOG.md', 'docs/releasing.md', 'src/locales/en.json']).names) === JSON.stringify(['smoke', 'perf-budget']));
-    check('select: a build, dependency or workflow file means everything', pick(['package-lock.json']).full && pick(['.github/workflows/ci.yml']).full && pick(['scripts/build.js']).full && !pick(['scripts/release.js']).full);
+    check('select: a build, dependency or workflow file means everything', pick(['package-lock.json']).full && pick(['.github/workflows/ci.yml']).full && pick(['scripts/build/build.js']).full && !pick(['scripts/release/release.js']).full);
     check('select: names too short to be a stem are not matched by prefix; each suite has one reason', !pick(['src/main.js']).names.includes('mcp') && Object.keys(pick(['src/features/spotify.js']).reasons).length === pick(['src/features/spotify.js']).names.length);
   }
   // test-units.js --jobs: two real unit suites, one at a time and two at a time, give the same verdict and the same sorted summary
-  const tu = (...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'test-units.js'), ...a], { encoding: 'utf8', timeout: 120000 });
+  const tu = (...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'test', 'test-units.js'), ...a], { encoding: 'utf8', timeout: 120000 });
   const one = tu('zoom-steps-units', 'write-dedupe-units');
   const two = tu('--jobs', '2', 'zoom-steps-units', 'write-dedupe-units');
   const sum = (o) => o.stdout.split('=== summary')[1].replace(/\(\d+(\.\d+)?s\)/g, '').trim();
@@ -411,20 +411,20 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   check('resume: once the gate passed the preflight is never started again, nor anything before it', left('ci').join() === 'merge,tag,publish' && left('merge').join() === 'tag,publish' && left('tag').join() === 'publish' && left('publish').length === 0);
   check('resume: --no-preflight never adds it, --checks-only stops at the checks', !left('prepare', { noPreflight: true }).includes('preflight') && left('prepare', { checksOnly: true }).join() === 'checks' && left('none').join() === lib.STAGES.join());
   check('resume: every finished stage is skipped (a stage is done once the recorded one is at or past it)', lib.STAGES.every((s, i) => lib.STAGES.every((t, j) => lib.stageDone({ stage: s }, t) === (i >= j))));
-  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release', 'release.js'), 'utf8');
   check('resume: release.js starts the preflight right after prepare and again (idempotently) before the PR, and cancels it when the checks fail', /if \(!done\(st, 'preflight'\) && !opts\.noPreflight && !opts\.checksOnly\) \{ await startPreflight/.test(src) && /if \(!opts\.noPreflight && !done\(st, 'ci'\)\) await startPreflight/.test(src) && /await cancelPreflight\(wt, st\); throw err;/.test(src));
   check('resume: --only and --dry-run are still options of release.js', /a === '--only'/.test(src) && /a === '--dry-run'/.test(src) && /--resume/.test(src));
   // the dry run itself, when origin/main is here
   const root = path.join(__dirname, '..');
   const have = spawnSync('git', ['rev-parse', '-q', '--verify', 'origin/main'], { cwd: root, encoding: 'utf8' }).status === 0;
   if (have) {
-    const dry = (...a) => spawnSync(process.execPath, [path.join(root, 'scripts', 'release.js'), 'patch', '--dry-run', ...a], { cwd: root, encoding: 'utf8', timeout: 60000 });
+    const dry = (...a) => spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), 'patch', '--dry-run', ...a], { cwd: root, encoding: 'utf8', timeout: 60000 });
     const d = dry();
     const at = (re) => d.stdout.search(re);
     check('dry-run: prints the new plan (preflight before checks, the lanes, the retry policy) and changes nothing', d.status === 0 && at(/preflight: push release/) > 0 && at(/preflight: push release/) < at(/\| checks:/) && /checks lanes:/.test(d.stdout) && /retry up to 5 times/.test(d.stdout) && /nothing was fetched, created, stopped, pushed, dispatched or tagged/.test(d.stdout), d.stdout.slice(-600) + d.stderr);
     const dc = dry('--checks-only', '--serial-checks');
     check('dry-run: --checks-only --serial-checks plans no push and one lane', dc.status === 0 && !/pr: push/.test(dc.stdout) && /one after another/.test(dc.stdout) && /stop here/.test(dc.stdout), dc.stdout.slice(-400));
-    const dr = spawnSync(process.execPath, [path.join(root, 'scripts', 'release.js'), '--resume', '--dry-run'], { cwd: root, encoding: 'utf8', timeout: 60000 });
+    const dr = spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), '--resume', '--dry-run'], { cwd: root, encoding: 'utf8', timeout: 60000 });
     check('dry-run: --resume --dry-run runs and says what it would do', dr.status === 0 && /--resume/.test(dr.stdout), dr.stdout.slice(-300) + dr.stderr);
   } else console.log('SKIP  dry-run: no origin/main here');
 }
@@ -481,7 +481,7 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   const fakeGh = () => { polls++; return polls < 3 ? rr(1, 'dial tcp: i/o timeout') : { status: 0, stdout: JSON.stringify([{ status: 'completed', conclusion: 'success', workflowName: 'CI', url: 'u', databaseId: 1 }]), stderr: '' }; };
   const state = await sc.ciState('.', 'sha', { runner: fakeGh, nap: nap5 });
   check('net-retry: ciState rides out transient gh failures and reads the run', state.state === 'success' && polls === 3, JSON.stringify(state));
-  const land = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'land.js'), 'utf8');
+  const land = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'release', 'land.js'), 'utf8');
   check('net-retry: land.js fetches, pushes, views the PR and merges through the retry helpers, with the merged-already recheck', /gitRetry\(main, \['fetch'/.test(land) && /gitRetry\(wt, \['push'/.test(land) && /ghJsonRetry\(main, \['pr', 'view'/.test(land) && /ghRetry\(wt, \['pr', 'merge'/.test(land) && /recheck: merged/.test(land) && !/\bghJson\(/.test(land) && !/must\(git\([a-z]+, 'fetch'/.test(land) && !/must\(git\(wt, 'push'/.test(land));
   check('net-retry: release.js fetches, pushes the branch and the tag, lists remote tags and dispatches through the retry helpers', /gitRetry\(main, \['fetch'/.test(relSrc) && /gitRetry\(wt, \['push', '-q', '-u'/.test(relSrc) && /gitRetry\(wt, \['push', '-q', 'origin', tag\]/.test(relSrc) && /gitRetry\(main, \['ls-remote'/.test(relSrc) && /ghRetry\(wt, \['workflow', 'run'/.test(relSrc) && !/must\(git\((main|wt), '(fetch|push)'/.test(relSrc));
   console.log(failures ? `\n${failures} failed` : '\nall passed');

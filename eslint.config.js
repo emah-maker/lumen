@@ -3,7 +3,7 @@ const js = require('@eslint/js');
 const globals = require('globals');
 
 module.exports = [
-  // src/preload/preload.bundle.js is generated from preload.js (scripts/bundle-preload.js); lint the source.
+  // src/preload/preload.bundle.js is generated from preload.js (scripts/build/bundle-preload.js); lint the source.
   { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'src/preload/preload.bundle.js', 'src/renderer/ui.bundle.js', 'src/vendor/**', 'src/renderer/vendor/**', '_site/**'] },
   js.configs.recommended,
   {
@@ -18,7 +18,7 @@ module.exports = [
   },
   // Preloads run with Node's require but inside a page.
   { files: ['**/*preload.js'], languageOptions: { globals: { ...globals.browser } } },
-  // The GitHub Pages site (site/, built by scripts/build-site.js): plain browser scripts; marked and DOMPurify come from cdnjs.
+  // The GitHub Pages site (site/, built by scripts/build/build-site.js): plain browser scripts; marked and DOMPurify come from cdnjs.
   { files: ['site/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, marked: 'readonly', DOMPurify: 'readonly' } } },
   // Renderer pages load plain <script> files that share one global scope.
   {
@@ -79,7 +79,7 @@ module.exports = [
   { files: ['test/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
-    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],
+    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/measure/capture-media.js', 'scripts/measure/measure-newtab.js'],
     languageOptions: { globals: { ...globals.browser } },
     rules: { 'require-yield': 'off' },
   },

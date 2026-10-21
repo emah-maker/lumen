@@ -5,7 +5,7 @@
 //  - Settings → Widgets → GitHub has the same sign-in (code, who you are, Sign out) and no token field in sight except under Advanced;
 //  - the same sign-in set up the GitHub connector; the token appears in neither page nor in connectors.json;
 //  - a revoked token turns the card into "Sign in again"; Sign out in Settings takes the connector down with it.
-// Run hidden and under the lock: node scripts/e2e-lock.js run --owner <name> -- timeout 600 node test/github-signin.js
+// Run hidden and under the lock: node scripts/test/e2e-lock.js run --owner <name> -- timeout 600 node test/github-signin.js
 require('./_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');

@@ -1,4 +1,4 @@
-// A LIVE check of the Spotify card against a real Spotify account. It is NOT part of `npm test` (scripts/test-all.js does not list it) and does nothing
+// A LIVE check of the Spotify card against a real Spotify account. It is NOT part of `npm test` (scripts/test/test-all.js does not list it) and does nothing
 // unless LUMEN_LIVE_SPOTIFY=1 is set: it talks to the real open.spotify.com and plays real music (muted).
 //
 // It uses its own persistent profile, named by CLAUDE_BROWSER_PROFILE (required; never %APPDATA%\Lumen, which is refused), so the user signs in once and the
