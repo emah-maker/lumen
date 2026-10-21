@@ -64,7 +64,7 @@ function collect(node, blocks) {
 function* walk(node) { for (const c of node.children) { yield c; yield* walk(c); } }
 
 // -> { total, text, next, comments, commentCount, revisions } like Word's own read answer; offset and next count blocks (a table is one block).
-async function readDocx(buf, { offset = 0, budget = 9000 } = {}) {
+async function readDocx(buf, { offset = 0, budget = 6000 } = {}) {
   if (!Buffer.isBuffer(buf) || buf.length > MAX_DOCX_BYTES) throw new WordError('This Word file is too large to read here.');
   let zip;
   try { zip = createZipReader(buf, { maxBytes: MAX_INFLATED, root: 'word/document.xml' }); } catch (err) {

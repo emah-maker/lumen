@@ -117,7 +117,7 @@ function Clean-Cell([string]$s) { return ($s.Replace($CR, ' ').Replace($BEL, '')
 function Cmd-Read($req) {
   $d = Find-Doc $req
   $off = [int](Arg $req 'offset' 0)
-  $budget = [int](Arg $req 'budget' 9000)
+  $budget = [int](Arg $req 'budget' 6000)
   $n = [int]$d.Paragraphs.Count
   $out = New-Object System.Collections.ArrayList
   $used = 0

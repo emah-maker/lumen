@@ -10,8 +10,8 @@
 // were left out. Nothing about them reaches the model but that count.
 'use strict';
 
-const MAX_NODES = 160;
-const MAX_CHARS = 7000;
+const MAX_NODES = 120; // (was 160)
+const MAX_CHARS = 5000; // (was 7000)
 const MAX_NAME = 90;
 const MAX_VALUE = 160;
 

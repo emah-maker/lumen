@@ -441,6 +441,31 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('apps setting: any other value behaves as automatic', await (async () => { const r = makeRig({ mode: 'bogus', openAdds: true }); r.store.docs = []; await r.word.run({ action: 'read', path: real }, r.ctx); return !callsOf(r).includes('open'); })());
   }
 
+  // ---- tokens: what an edit and a read cost the AI
+  {
+    const r = makeRig({});
+    const out = [];
+    out.push(await r.word.run({ action: 'insert', doc: 'Report.docx', text: 'one two', at: 'after', heading: 'Results' }, r.ctx));
+    out.push(await r.word.run({ action: 'replace', doc: 'Report.docx', find: 'a', replace: 'b' }, r.ctx));
+    out.push(await r.word.run({ action: 'style', doc: 'Report.docx', find: 'a', bold: true }, r.ctx));
+    out.push(await r.word.run({ action: 'table', doc: 'Report.docx', rows: [['a', 'b'], ['c', 'd']] }, r.ctx));
+    out.push(await r.word.run({ action: 'comment', doc: 'Report.docx', find: 'a', text: 'note' }, r.ctx));
+    out.push(await r.word.run({ action: 'save', doc: 'Report.docx' }, r.ctx));
+    check('tokens: an edit or a save answers in one short line (under 200 characters) and never repeats the document', out.every((t) => t.length < 200 && !t.includes(String.fromCharCode(10)) && !/Intro/.test(t)), JSON.stringify(out.map((t) => t.length)));
+    const big = Array.from({ length: 400 }, (_, i) => `Paragraph ${i} ${'word '.repeat(30)}`).join(String.fromCharCode(10));
+    const rg = makeRig({ docs: [{ name: 'Big.docx', path: `C:${B}Docs${B}Big.docx`, active: true, saved: true, paragraphs: 400, text: big }] });
+    await rg.word.run({ action: 'read', doc: 'Big.docx' }, rg.ctx);
+    const asked = rg.store.calls.find((c) => c[0] === 'read')[1];
+    check('tokens: a read asks Word for at most 6000 characters (it was 9000); a long document is paged with offset', asked.budget === 6000, String(asked.budget));
+  }
+  const tree = require('../src/desktop/tree');
+  {
+    const kids = Array.from({ length: 400 }, (_, i) => ({ i: `e${i}`, t: 'Button', n: `Button number ${i} with a fairly long label to take space` }));
+    const pruned = tree.prune({ t: 'Window', n: 'App', c: kids });
+    const chars = pruned.lines.join(String.fromCharCode(10)).length;
+    check('tokens: a big app window reads as at most 120 items and 5000 characters (it was 160 and 7000)', pruned.shown <= 120 && chars <= 5200, `${pruned.shown} ${chars}`);
+  }
+
   // ---- the file route through the controller (no Word): reading, writing, approval, atomic write
   {
     const r = makeRig({ installed: false });

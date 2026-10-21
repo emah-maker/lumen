@@ -12,7 +12,7 @@
 const spec = require('./spec');
 
 const MAX_FILE = 100 * 1024 * 1024;
-const READ_BUDGET = 9000;
+const READ_BUDGET = 6000; // (characters of text per read; was 9000: a long document is paged with offset)
 
 // deps: settings { enabled() }, host (com.js shape), platform, fs, checkFile(path) -> real path (throws a plain sentence), checkTarget(path) (throws for a place the AI may not write),
 // docx (stand-in for ./docx), now, hooks
