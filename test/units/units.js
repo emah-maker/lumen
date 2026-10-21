@@ -2255,7 +2255,7 @@ async function inprocRuns() {
 // ---- Organize with AI: local first, the model refines (features/organize-ai.js, organize-learn.js)
 async function organizeAiRuns() {
   const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../../src/browser/tab-groups');
-  const oai = require(process.env.OAI_MODULE ? path.resolve(process.env.OAI_MODULE) : '../src/features/organize-ai');
+  const oai = require(process.env.OAI_MODULE ? path.resolve(process.env.OAI_MODULE) : '../../src/features/organize-ai');
   const learn = require('../../src/features/organize-learn');
   const { harness } = require('../helpers/topics-bench');
   const BASE = [

@@ -162,7 +162,7 @@ check('the notes tool is not offered to MCP clients or CLI engines', !agent.EXTE
 check('the notes tool schema names its actions', JSON.stringify(agent.NOTES_TOOL.input_schema.properties.action.enum) === JSON.stringify(['list', 'search', 'read', 'append', 'create']));
 
 const agentSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8');
-check('wiring: the tool runs through notesTool, is tab-free and has a step label', agentSrc.includes("case 'notes': return this.notesTool(input)") && /TAB_FREE_TOOLS = new Set\([^)]*'notes'/.test(agentSrc) && agentSrc.includes("if (name === 'notes') return require('../notes').stepLabel"));
+check('wiring: the tool runs through notesTool, is tab-free and has a step label', agentSrc.includes("case 'notes': return this.notesTool(input)") && /TAB_FREE_TOOLS = new Set\([^)]*'notes'/.test(agentSrc) && agentSrc.includes("if (name === 'notes') return require('./notes').stepLabel"));
 check('wiring: the tool is refused to outside agents', agentSrc.includes("scope.gate?.external) throw new Error('Unknown tool: notes')"));
 
 fs.rmSync(dir, { recursive: true, force: true });
