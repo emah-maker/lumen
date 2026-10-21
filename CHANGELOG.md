@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The tab strip's Hidden, Organize and tab-list buttons stay at the right edge.** They used to sit right after the last tab, so they moved every time a tab opened or closed. They are now pinned to the right of the strip, just left of the window's own buttons, with the window-drag space between them and the tabs; the + button still follows the tabs.
 - **Only the tab the AI is working in, and the tab you have open, show its spinner.** A chat you had used in several tabs put its working spinner (and its check mark or "!" afterwards) on every one of those tabs at once, though the AI works in one. Now the mark shows on the tab the AI is working in (or last worked in) and on the tab you have open with that chat; the others stay plain. If you start a new chat in the tab the AI was working in, the mark moves to the chat's home tab.
 - **Live previews of Word and other apps work again.** The chat's card for the AI working in Word, Excel or another program showed one picture at most, then stopped updating, once any web-page card had finished in that chat. The card now tells Lumen it is on screen for programs too, so their window keeps updating live while the AI works.
 
