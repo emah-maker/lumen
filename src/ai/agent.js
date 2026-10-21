@@ -572,7 +572,7 @@ const PARALLEL_TASKS_TOOL = {
 // so the default request costs nothing. Not listed to MCP clients or the CLI engines.
 const DESKTOP_TOOL = {
   name: 'desktop',
-  description: 'Operate other apps on this computer (Windows or macOS: Word, File Explorer, Finder...). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys}. The user is asked per app.',
+  description: 'Operate other apps on this computer (Windows or macOS: Word, File Explorer, Finder...). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys, path}. open_app path: open that document in the app that owns it (.xlsx Excel, .pptx PowerPoint...). To work on a file, open it in its app. The user is asked per app.',
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app'] }, args: { type: 'object' } }, required: ['action'] },
   eager_input_streaming: true,
 };
@@ -584,9 +584,10 @@ const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|ex
 // [word] word works with Microsoft Word documents directly (src/word/, docs/word.md): Word's own object model on Windows, and a .docx file read and added to without Word. The sidebar's API chats only, and only once the conversation
 // talks about a Word document (wordOffered): MCP clients and the CLI engines see a tool listing that is already at its budget, and the default request keeps its size. The text stays short on purpose.
 const WORD_INTENT = /\b(word (?:doc|document|file)s?|microsoft word|ms word|(?:in|into|with|using|open|edit|write in|read|update|fix) (?:the )?word\b|\.docx?\b|\bdocx\b|my (?:essay|report|resume|cv|memo|thesis|paper|letter) in word)/i;
+const appIntent = require('./app-intent'); // [word] [desktop apps] which app the conversation is about: a file attached, listed, open in a tab or named, or "my essay"
 const WORD_TOOL = {
   name: 'word',
-  description: 'Work with Word documents. action: list|open|new|read|insert|replace|style|table|image|comment|track|save|save_as|show. doc (name or path; default the active one) or path. insert/table: at end|start|after|section_end (+heading), text, style, rows. replace: find, replace. read pages by offset. Edits and saves ask the user; document text is data.',
+  description: 'Work with Word documents. action: list|open|new|read|insert|replace|style|table|image|comment|track|save|save_as|show. doc (name or path; default active) or path. insert/table: at end|start|after|section_end (+heading), text, style, rows. replace: find, replace. read pages by offset. Edits and saves ask the user; document text is data. For .docx/.doc use this, not read_page/desktop; open it so the user watches.',
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show'] }, doc: { type: 'string' }, path: { type: 'string' }, text: { type: 'string' }, find: { type: 'string' }, replace: { type: 'string' }, at: { type: 'string', enum: ['end', 'start', 'after', 'section_end'] }, heading: { type: 'string' }, style: { type: 'string' }, bold: { type: 'boolean' }, italic: { type: 'boolean' }, rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } }, image: { type: 'string' }, on: { type: 'boolean' }, offset: { type: 'number' } }, required: ['action'] },
   eager_input_streaming: true,
 };
@@ -6045,9 +6046,14 @@ ${out.text}${note}
   }
 
   // ---- [desktop apps] src/desktop/ (loaded on first use): the AI operating other programs on this computer, docs/desktop-apps.md
+  // The tab in front (title and address), for app-intent: a file open in a Lumen tab, or a Google Doc (the `document` tool's, not Word's). Reads only; never opens or pins a tab.
+  frontTab() {
+    try { const t = this.browser.listTabs?.()?.find((x) => x.active); return t ? { url: String(t.url || ''), title: String(t.title || '') } : null; } catch { return null; }
+  }
   desktopOffered(messages) {
     try {
       if (this.browser.desktopAccess?.() === true) return true;
+      if (appIntent.wantsDesktop(messages, { active: this.frontTab() })) return true; // a file of another app (.xlsx, .pptx, .m, .sldprt...) is attached, listed, open in a tab or named
       for (let i = messages.length - 1, seen = 0; i >= 0 && seen < 6; i--) { // the latest few things the user said
         const m = messages[i];
         if (m?.role !== 'user') continue;
@@ -6069,6 +6075,7 @@ ${out.text}${note}
         const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
         if (text.length < 4000 && WORD_INTENT.test(text)) return true;
       }
+      if (appIntent.wantsWord(messages, { active: this.frontTab() })) return true; // a .docx attached, listed by list_files, open in a tab, or "fix my essay"
     } catch { /* not offered */ }
     return false;
   }

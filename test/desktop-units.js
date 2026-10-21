@@ -621,7 +621,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('agent: it loads the policy lazily, only for a desktop step label', !/^const .*require\('\.\.\/desktop/m.test(read('src/ai/agent.js')));
     const helper = read('src/desktop/uia-helper.ps1');
     check('helper: password fields are reported with nothing else and refused for invoke / settext', /IsPassword\) \{ return @\{ pw = \$true \}/.test(helper) && /That is a password field\. The AI never uses these\./.test(helper) && /\$PWRE/.test(helper));
-    check('helper: nothing from a request is run as code; only an app that `resolve` found can be launched, with no arguments', !/Invoke-Expression|iex |\[scriptblock\]::Create|Start-Process -FilePath \$req|-ArgumentList/.test(helper) && /Start-Process -FilePath \$path$/m.test(helper.replace(/\r/g, '')));
+    check('helper: nothing from a request is run as code; only an app that `resolve` found can be launched, with no arguments but the one checked file (open_app path)', !/Invoke-Expression|iex |\[scriptblock\]::Create|Start-Process -FilePath \$req/.test(helper) && (helper.match(/-ArgumentList/g) || []).length === 1 && /Start-Process -FilePath \$path -ArgumentList \('"' \+ \$file\.Replace\('"', ''\) \+ '"'\)/.test(helper) && /Start-Process -FilePath \$path;/.test(helper) && /\$req\['file'\]/.test(helper));
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

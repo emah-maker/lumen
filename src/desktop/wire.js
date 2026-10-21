@@ -37,7 +37,7 @@ function wire({ electron, readSettings, writeSettings, stopRun, hidden = false, 
     openSettings: (url) => (/^x-apple\.systempreferences:com\.apple\.preference\.security\?Privacy_[A-Za-z]+$/.test(url) ? electron.shell.openExternal(url) : null),
   } : {};
   const exe = require('./platforms').backendFor(process.platform)?.lumenExe(process.execPath) || process.execPath;
-  controller = createDesktop({ settings, banner, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe }, ...mac });
+  controller = createDesktop({ settings, banner, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe }, profile: electron.app.getPath('userData'), ...mac });
   controller.banner = banner;
   controller.shortcut = shortcut;
   return { controller, settings };
