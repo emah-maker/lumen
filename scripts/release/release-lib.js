@@ -2,6 +2,8 @@
 // test-all.js merges, the CHANGELOG section cut, the version bump, and deriving the release-check suites. No I/O, so
 // test/units/release-tooling-units.js covers them all in plain node.
 
+const path = require('path');
+
 const toLf = (s) => s.replace(/\r\n/g, '\n');
 const nlOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
 const fromLf = (s, nl) => (nl === '\r\n' ? s.replace(/\n/g, '\r\n') : s);
@@ -461,36 +463,155 @@ function unitJobs({ cpus, withElectron, electronJobs: ej = 1 }) {
 // ----------------------------------------------------------------------------------------------------------- which suites a release runs
 
 // The suites every default release runs: the app starts, its main surfaces draw, nothing logs an error, the budgets hold.
-const CORE_SUITES = ['smoke', 'basics', 'no-errors', 'ui', 'settings', 'tabstrip', 'browser', 'first-run', 'relaunch', 'perf-budget'];
+const CORE_SUITES = ['basics', 'no-errors', 'ui', 'settings', 'tabstrip', 'browser', 'first-run', 'relaunch', 'perf-budget'];
 
 const stemOf = (file) => file.replace(/^.*\//, '').replace(/\.[^.]+$/, '').replace(/-units$/, '');
 
-// A default release's Electron suites: the core set plus the suites related to the files changed since the last release tag.
-// changed: repo paths; electron: the candidate suite names; sources: { name: the suite's source }. Related when the suite is itself a changed
-// test file, its source mentions a changed module by path ("features/spotify-view") or by file name ("spotify-view.js"), or its name starts
-// with the changed file's name or the other way round (src/renderer/settings.js -> settings, settings-open-perf; at least 4 letters).
-// Returns { names, reasons: { name: why }, full }: `full` is true when a build, dependency or workflow file changed, because then nothing
-// narrows the choice.
-function selectSuites({ changed, electron, sources, core = CORE_SUITES }) {
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Does a suite's source name a module? By its path under src/ ("features/spotify-view", followed by a quote, ".js" or "'") or, for a
+// file name of 5+ letters, by "spotify-view.js". A word boundary on both sides: src/main.js is not "named" by "domain".
+function namesModule(src, file) {
+  const mod = file.replace(/^src\//, '').replace(/\.[^.]+$/, '');
+  const stem = stemOf(file);
+  if (new RegExp(`(?:^|[^\\w-])${escRe(mod)}(?:\\.js)?['"\`]`).test(src)) return true;
+  if (mod.includes('/') && src.includes(mod)) return true;
+  if (stem.length >= 5 && new RegExp(`(?:^|[^\\w-])${escRe(stem)}\\.js\\b`).test(src)) return true;
+  // path.join(root, 'src', 'features', 'notes.js') and the like
+  const parts = mod.split('/');
+  return parts.length > 1 && new RegExp(parts.map((p, i) => `['"]${escRe(p)}${i === parts.length - 1 ? '(?:\\.js)?' : ''}['"]`).join('\\s*,\\s*')).test(src);
+}
+
+// The words a diff changed, which a suite that exercises the change is likely to name: IPC channels, setting keys, element ids and classes,
+// test hooks, visible strings (string literals of 6-60 characters with a separator or a capital inside, not a plain word like "query"), the functions the hunks sit in (git's hunk headers), and
+// camelCase or snake_case identifiers of 6+ characters on the changed lines. Plain lower-case words ("return", "window") are not taken.
+function diffTokens(diff, { css = false } = {}) {
+  const out = new Set();
+  const take = (t) => { t = t.trim(); if (t.length >= 6 && t.length <= 60 && /[A-Za-z]/.test(t) && !t.includes('${') && /[:-_./ ]|[a-z][A-Z]/.test(t)) out.add(t); };
+  const idents = (line) => { for (const m of line.matchAll(/[A-Za-z_$][\w$]{5,}/g)) if (/[a-z][A-Z]|_[a-z]|[a-z]_/.test(m[0])) out.add(m[0]); };
+  for (const line of String(diff || '').split('\n')) {
+    if (line.startsWith('@@')) { idents(line.replace(/^@@[^@]*@@/, '')); continue; }
+    if (!/^[+-]/.test(line) || /^(\+\+\+|---)/.test(line)) continue;
+    const body = line.slice(1);
+    for (const m of body.matchAll(/(['"`])((?:(?!\1)[^\\\n])+)\1/g)) take(m[2]);
+    for (const m of body.matchAll(/(?:id|class|data-[\w-]+)=["']([^"']+)["']/g)) for (const t of m[1].split(/\s+/)) take(t);
+    for (const m of body.matchAll(/[#.]([a-z][\w-]*-[\w-]+)/g)) take(m[1]);
+    // an element id or class, a selector or an IPC channel names a feature even when it is one word ('prompt', '.composer')
+    for (const m of body.matchAll(/(?:getElementById|querySelector(?:All)?|closest|matches|classList\.\w+|\.(?:send|invoke|handle|on|once))\(\s*(['"`])([^'"`]{4,60})\1/g)) out.add(m[2].replace(/^[#.]/, ''));
+    if (css) for (const m of body.split('{')[0].matchAll(/[#.]([A-Za-z][\w-]{3,})/g)) out.add(m[1]);
+    idents(body);
+  }
+  return [...out];
+}
+
+// Splits `git diff` output into { file: that file's part }.
+function splitDiff(text) {
+  const out = {};
+  let cur = null;
+  for (const line of String(text || '').split('\n')) {
+    const m = /^diff --git a\/(\S+) b\//.exec(line);
+    if (m) { cur = m[1]; out[cur] = ''; continue; }
+    if (cur) out[cur] += `${line}\n`;
+  }
+  return out;
+}
+
+// A module more than this share of the suites names (src/main.js: they all launch it) says nothing about which suite a change affects.
+const HUB_SHARE = 0.2;
+// A changed word more than this share of the suites mention ("click", "settings") does not narrow the choice either, nor one more than
+// SRC_SHARE of the source files use (isDestroyed, execPath: Electron's and Node's words, not a feature's).
+const TOKEN_SHARE = 0.05;
+const SRC_SHARE = 0.03;
+
+// A default release's Electron suites: the core set plus the suites a change since the last release tag might affect.
+// changed: repo paths; electron: the candidate suite names; sources: { name: the suite's source }; diffs: { file: its `git diff` }, optional;
+// importers: { file: [src files that require it] }, optional. A suite is selected when:
+//  - it is itself a changed test file, or it requires a changed test helper (test/helpers/_chat-seed.js, test/helpers/settings-tab.js);
+//  - its name is the changed file's name or starts with it, or the other way round (src/renderer/settings.js -> settings, settings-open-perf;
+//    at least 4 letters), or it names the changed module by path or file name (namesModule);
+//  - it mentions a word the change added or removed (diffTokens: an IPC channel, a setting key, an element id, a visible string, the
+//    function a hunk sits in), unless that word is common to more than TOKEN_SHARE of the suites;
+//  - one level up: it is named like, or names, a module that requires the changed one.
+// A hub module (one that more than HUB_SHARE of the suites name, src/main.js) is matched by its changed words only: naming it says nothing.
+// Generated bundles, CHANGELOG, docs and README select nothing (their sources are diffed instead). Returns { names, reasons: { name: why },
+// full }: `full` is true when a build, dependency or workflow file changed, because then nothing narrows the choice.
+function selectSuites({ changed, electron, sources, core = CORE_SUITES, diffs = {}, importers = {}, srcTexts = null }) {
   const reasons = {};
   const add = (name, why) => { if (electron.includes(name) && !reasons[name]) reasons[name] = why; };
   for (const c of core) add(c, 'core');
   const files = changed.filter((f) => !/^(CHANGELOG\.md|docs\/|README)/.test(f));
   const full = files.some((f) => /^(package(-lock)?\.json|scripts\/(build|bundle)|electron-builder|\.github\/)/.test(f));
+  const srcOf = (name) => sources[name] || '';
+  const hubCut = Math.max(3, electron.length * HUB_SHARE);
+  const hubs = new Map();
+  const isHub = (f) => { if (!hubs.has(f)) hubs.set(f, electron.filter((n) => namesModule(srcOf(n), f) || srcOf(n).includes(`${stemOf(f)}.js`)).length > hubCut); return hubs.get(f); };
+  const namedLike = (name, stem) => stem.length >= 4 && (name === stem || name.startsWith(`${stem}-`) || (stem.startsWith(`${name}-`) && name.length >= 4));
+  const tokenCut = Math.max(2, electron.length * TOKEN_SHARE);
+  const srcList = srcTexts ? Object.values(srcTexts) : null;
+  const srcCut = srcList ? Math.max(2, srcList.length * SRC_SHARE) : Infinity;
+  const common = new Map();
+  const tooCommonInSrc = (t) => {
+    if (!srcList) return false;
+    if (!common.has(t)) { let n = 0; for (const text of srcList) if (text.includes(t) && ++n > srcCut) break; common.set(t, n > srcCut); }
+    return common.get(t);
+  };
+  const users = new Map(); // token -> suites mentioning it
+  let words = null; // suite -> the set of its words, built on first use (a word token is a set lookup, not a scan)
+  const mentioning = (t) => {
+    if (!users.has(t)) {
+      if (/^[\w$]+$/.test(t)) {
+        words = words || new Map(electron.map((n) => [n, new Set(srcOf(n).match(/[\w$]+/g) || [])]));
+        users.set(t, electron.filter((n) => words.get(n).has(t)));
+      } else users.set(t, electron.filter((n) => srcOf(n).includes(t)));
+    }
+    return users.get(t);
+  };
   for (const f of files) {
     const stem = stemOf(f);
-    if (/^test\/(units|e2e)\/[^/]+\.js$/.test(f)) add(f.replace(/^.*\//, '').slice(0, -3), `changed: ${f}`);
-    if (!/^src\//.test(f) || /bundle|\.html$|\.json$/.test(f)) continue;
-    const mod = f.replace(/^src\//, '').replace(/\.[^.]+$/, '');
+    const tm = /^test\/(units|e2e|helpers)\/([^/]+)\.js$/.exec(f);
+    if (tm) {
+      const s = tm[2];
+      if (tm[1] !== 'helpers') { if (electron.includes(s)) add(s, `changed: ${f}`); }
+      else for (const name of electron) if (new RegExp(`require\\(['"]\\.\\./helpers/${escRe(s)}(?:\\.js)?['"]\\)`).test(srcOf(name))) add(name, `uses the changed helper ${f}`);
+      continue;
+    }
+    if (!/^src\//.test(f) || /\.bundle\./.test(f)) continue;
+    const isCode = /\.(js|mjs|cjs|html|css)$/.test(f);
+    const hub = isCode && isHub(f);
     for (const name of electron) {
-      if (reasons[name]) continue;
-      const src = sources[name] || '';
-      if (stem.length >= 4 && (name === stem || name.startsWith(`${stem}-`) || (stem.startsWith(`${name}-`) && name.length >= 4))) add(name, `named like ${f}`);
-      else if (src.includes(mod) || (stem.length >= 5 && src.includes(`${stem}.js`))) add(name, `uses ${f}`);
+      if (reasons[name] || !isCode) continue;
+      if (namedLike(name, stem)) add(name, `named like ${f}`);
+      else if (!hub && namesModule(srcOf(name), f)) add(name, `uses ${f}`);
+    }
+    if (diffs[f]) {
+      for (const t of diffTokens(diffs[f], { css: /\.css$/.test(f) })) {
+        const who = mentioning(t);
+        if (who.length && who.length <= tokenCut && !tooCommonInSrc(t)) for (const name of who) add(name, `${f} changed "${t}"`);
+      }
+    }
+    if (hub) continue;
+    for (const imp of importers[f] || []) {
+      if (isHub(imp)) continue;
+      for (const name of electron) if (!reasons[name] && (namedLike(name, stemOf(imp)) || namesModule(srcOf(name), imp))) add(name, `uses ${imp}, which requires ${f}`);
     }
   }
   const names = electron.filter((n) => reasons[n]);
   return { names, reasons, full };
+}
+
+// { file: [src files that require it] } over src/: `files` is { path: source } for the .js files under src/ (relative requires only).
+function srcImporters(files) {
+  const have = new Set(Object.keys(files));
+  const out = {};
+  for (const [file, text] of Object.entries(files)) {
+    const dir = path.posix.dirname(file);
+    for (const m of text.matchAll(/require\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g)) {
+      let target = path.posix.normalize(path.posix.join(dir, m[1]));
+      if (!have.has(target)) target = have.has(`${target}.js`) ? `${target}.js` : have.has(`${target}/index.js`) ? `${target}/index.js` : null;
+      if (target && target !== file) (out[target] || (out[target] = [])).includes(file) || out[target].push(file);
+    }
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------------------------------------------------------- node_modules
@@ -549,7 +670,7 @@ module.exports = {
   sectionVersion, findBurned, foldBurned,
   RELEASE_FILES, ciSkipVerdict,
   pickPreflightRun, runVerdict, buildManifest, artifactsReusable, verifyChecksums,
-  PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs, electronJobs, sharedResources, SHARED_RESOURCE_PATTERNS, KNOWN_EXCLUSIVE, CORE_SUITES, selectSuites,
+  PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs, electronJobs, sharedResources, SHARED_RESOURCE_PATTERNS, KNOWN_EXCLUSIVE, CORE_SUITES, selectSuites, diffTokens, splitDiff, srcImporters, namesModule,
   STAGES, stageDone, stagesLeft, nodeModulesMatch, releasePlan,
   parseChangelog, mergeChangelog, cutChangelog, changelogSection,
   readSuites, mergeSuiteList, splitSuiteFile,

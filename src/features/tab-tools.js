@@ -33,7 +33,9 @@ function create({ onChange, isWebUrl }) {
   function state(tab, alive) {
     if (!alive) return { audible: false, muted: Boolean(tab.muted) };
     const wc = tab.view.webContents;
-    return { audible: wc.isCurrentlyAudible(), muted: wc.isAudioMuted() };
+    // muted is what the user chose (Mute Tab, Mute Site), not the page's raw state: Lumen also mutes tabs itself (a tab preloaded in the
+    // background, the AI's own tabs), and those must not show the red muted speaker on a tab that makes no sound.
+    return { audible: wc.isCurrentlyAudible(), muted: Boolean(tab.muted || tab.siteMuted || mutedSites.has(hostOf(wc.getURL()))) };
   }
 
   function setMuted(tab, muted) {

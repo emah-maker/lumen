@@ -48,7 +48,13 @@ Stages, in order; each finished stage is recorded in `<worktree git dir>/lumen-r
 
 ### Which Electron suites run
 
-- **Default**: the core set (`CORE_SUITES`: smoke, basics, no-errors, ui, settings, tabstrip, browser, first-run, relaunch, perf-budget) plus the suites related to the files changed since the last release tag (up to the commit before the release commit). A suite is related when it is itself a changed test file, its source mentions a changed module by path or file name, or its name is the changed file's name or starts with it (`src/features/spotify.js` selects every `spotify-*` suite). If a build, dependency or workflow file changed (`package.json`, `package-lock.json`, `scripts/build/`, `.github/`), or there is no tag to compare with, everything runs. The pure-node stages (units, acceptance, lint) always run in full. `--dry-run` prints the selection; the PR body says it was a selection.
+- **Default**: the core set (`CORE_SUITES`: basics, no-errors, ui, settings, tabstrip, browser, first-run, relaunch, perf-budget) plus the suites a change since the last release tag might affect (up to the commit before the release commit; `selectSuites` in `scripts/release/release-lib.js`). A suite is selected when:
+  - it is itself a changed test file, or it requires a changed test helper (`test/helpers/_chat-seed.js`, `test/helpers/settings-tab.js`);
+  - its name is the changed file's name or starts with it (`src/features/spotify.js` selects every `spotify-*` suite), or it names the changed module by path or file name;
+  - it mentions a word the diff added or removed: an IPC channel, a setting key, an element id or class, a CSS selector, a visible string, a test hook, or the function a hunk sits in. Words common to more than 5% of the suites or 3% of the source files (`click`, `isDestroyed`) are ignored;
+  - one level up: it is named like, or names, a module that requires the changed one.
+
+  A *hub* module, one that more than 20% of the suites name (`src/main.js`: every suite launches it), is matched by its changed words only, so a main.js change no longer selects half the suites. Generated bundles are skipped (their sources are diffed instead). If a build, dependency or workflow file changed (`package.json`, `package-lock.json`, `scripts/build/`, `.github/`), or there is no tag to compare with, everything runs. The pure-node stages (units, acceptance, lint) always run in full. `--dry-run` prints the selection with the reason for each suite; the PR body says it was a selection.
 - `--full`: every Electron suite in test-all.js, as releases ran before.
 - `--only a,b,c`: exactly the named suites (plus perf-budget and the pure-node stages), for an urgent fix.
 
