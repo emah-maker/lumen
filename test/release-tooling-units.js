@@ -318,16 +318,47 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
 {
   const mk = (kind, ...names) => names.map((name) => ({ name, kind }));
   const stages = [...mk('plain', 'units', 'acceptance', 'lint'), ...mk('electron', 'basics', 'perf-budget', 'settings', 'step-labels', 'files-perf', 'hardening', 'page-load-stall', 'settings-open-perf')];
-  const names = (phases) => phases.map((lanes) => lanes.map((l) => l.map((s) => s.name)));
+  const names = (phases) => phases.map((lanes) => lanes.map((l) => l.stages.map((s) => s.name)));
   const par = names(lib.planLanes(stages));
-  check('lanes: parallel = [pure-node lane | other Electron suites], then the perf-sensitive suites alone', JSON.stringify(par) === JSON.stringify([[['units', 'acceptance', 'lint'], ['basics', 'settings', 'hardening']], [['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'page-load-stall']]]), JSON.stringify(par));
+  check('lanes: one Electron job = [pure-node lane | other Electron suites], then the perf-sensitive suites alone', JSON.stringify(par) === JSON.stringify([[['units', 'acceptance', 'lint'], ['basics', 'settings', 'hardening']], [['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'page-load-stall']]]), JSON.stringify(par));
   const ser = names(lib.planLanes(stages, { serial: true }));
   check('lanes: serial = one lane in the old order, perf-sensitive last', JSON.stringify(ser) === JSON.stringify([[['units', 'acceptance', 'lint', 'basics', 'settings', 'hardening']], [['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'page-load-stall']]]), JSON.stringify(ser));
   check('lanes: perf-budget, step-labels, settings-open-perf, files-perf and page-load-stall are all perf-sensitive; ordinary suites are not', ['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'page-load-stall'].every(lib.isPerfSensitive) && !['basics', 'settings', 'units', 'files'].some(lib.isPerfSensitive));
-  check('lanes: no perf-sensitive stage ever shares a phase with another lane', lib.planLanes(stages).every((lanes) => lanes.length === 1 || lanes.every((l) => l.every((s) => !lib.isPerfSensitive(s.name)))));
+  check('lanes: no perf-sensitive stage ever shares a phase with another lane', lib.planLanes(stages, { electronJobs: 3 }).every((lanes) => lanes.length === 1 || lanes.every((l) => l.stages.every((s) => !lib.isPerfSensitive(s.name)))));
   check('lanes: with no Electron suites there is just the pure lane; with only perf suites, one alone', lib.planLanes(mk('plain', 'units', 'lint')).length === 1 && lib.planLanes(mk('electron', 'perf-budget')).length === 1);
-  check('lanes: every stage appears exactly once', lib.planLanes(stages).flat(2).length === stages.length);
-  check('jobs: units get fewer workers while Electron runs beside them, never below 2 or above 8', lib.unitJobs({ cpus: 16, withElectron: true }) === 4 && lib.unitJobs({ cpus: 16, withElectron: false }) === 8 && lib.unitJobs({ cpus: 2, withElectron: true }) === 2 && lib.unitJobs({ cpus: 64, withElectron: false }) === 8);
+  check('lanes: every stage appears exactly once', [1, 3].every((n) => lib.planLanes(stages, { electronJobs: n }).flatMap((p) => p.flatMap((l) => l.stages)).length === stages.length));
+  // electron lane concurrency (--electron-jobs): the ordinary suites N at a time, the shared-resource ones alone and one by one, perf last and alone
+  const big = [...mk('plain', 'units', 'lint'), ...mk('electron', 'a', 'cdp', 'b', 'clip', 'c', 'perf-budget', 'd', 'mcp-perf')];
+  const ex = (n) => ['cdp', 'clip'].includes(n);
+  const three = lib.planLanes(big, { electronJobs: 3, exclusive: ex });
+  check('lanes: 3 jobs = [pure | ordinary suites, 3 at a time], then shared-resource suites alone, then perf-sensitive alone', JSON.stringify(names(three)) === JSON.stringify([[['units', 'lint'], ['a', 'b', 'c', 'd']], [['cdp', 'clip']], [['perf-budget', 'mcp-perf']]]) && three[0][1].jobs === 3 && three[0][0].jobs === 1 && three[1][0].jobs === 1 && three[2][0].jobs === 1, JSON.stringify(three));
+  check('lanes: with 1 job (or serial) shared-resource suites stay in the ordinary lane: nothing overlaps, so nothing has to run alone', JSON.stringify(names(lib.planLanes(big, { electronJobs: 1, exclusive: ex }))) === JSON.stringify([[['units', 'lint'], ['a', 'cdp', 'b', 'clip', 'c', 'd']], [['perf-budget', 'mcp-perf']]]) && lib.planLanes(big, { serial: true, electronJobs: 3, exclusive: ex }).every((p) => p.every((l) => l.jobs === 1)));
+  check('lanes: jobs below 1 or not a number count as 1; a lane never has more workers than a suite list needs (the pool caps itself)', lib.planLanes(big, { electronJobs: 0 })[0][1].jobs === 1 && lib.planLanes(big, { electronJobs: 'x' })[0][1].jobs === 1);
+  check('lanes: only the exclusive suites move to the alone phase; the ordinary ones stay in the pool', JSON.stringify(names(lib.planLanes(big, { electronJobs: 2, exclusive: (n) => n.length === 1 }))) === JSON.stringify([[['units', 'lint'], ['cdp', 'clip']], [['a', 'b', 'c', 'd']], [['perf-budget', 'mcp-perf']]]));
+  check('jobs: default Electron concurrency is min(3, one per 4 cores, one per 10 GB), never below 1', lib.electronJobs({ cpus: 16, ramGb: 64 }) === 3 && lib.electronJobs({ cpus: 8, ramGb: 64 }) === 2 && lib.electronJobs({ cpus: 16, ramGb: 16 }) === 1 && lib.electronJobs({ cpus: 2, ramGb: 4 }) === 1 && lib.electronJobs({ cpus: 64, ramGb: 512 }) === 3);
+  check('jobs: units leave room for the Electron jobs beside them (16 cores: 4 beside 1 job, 3 beside 3 jobs)', lib.unitJobs({ cpus: 16, withElectron: true, electronJobs: 1 }) === 4 && lib.unitJobs({ cpus: 16, withElectron: true, electronJobs: 3 }) === 3 && lib.unitJobs({ cpus: 16, withElectron: false, electronJobs: 3 }) === 8);
+  // which suites must run alone: patterns over the source, plus a known list
+  check('shared: a fixed port, the real clipboard, process/window lists and screen capture are detected; a stubbed clipboard and port 0 are not', lib.sharedResources('x', 'const PORT = 9339;').length === 1 && lib.sharedResources('x', 'server.listen(8123, "127.0.0.1")').length === 1 && lib.sharedResources('x', 'clipboard.readText()').length === 1 && lib.sharedResources('x', "execFile('tasklist')").length === 1 && lib.sharedResources('x', 'desktopCapturer.getSources').length === 1 && lib.sharedResources('x', 'clipboard.writeText = (t) => {}; server.listen(0, "127.0.0.1"); const freePort = 5').length === 0 && lib.sharedResources('y', '', { y: 'because' }).join() === 'because');
+  {
+    // every Electron suite in test-all.js that binds a fixed port, uses the real clipboard or lists the machine's processes is marked, and the
+    // known suites are among them: a new suite like that is caught here (and run alone by release.js) rather than flaking a release
+    const d = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-all.js'), 'utf8')), files: fs.readdirSync(__dirname).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
+    const marked = d.electron.filter((s) => lib.sharedResources(s, fs.readFileSync(path.join(__dirname, s + '.js'), 'utf8')).length);
+    check('shared: the suites known to bind fixed ports (cdp, cdp-inproc, spotify-reconnect-ui) or use the real clipboard (images) are detected in the real tree', ['cdp', 'cdp-inproc', 'spotify-reconnect-ui', 'images', 'passkeys'].every((s) => marked.includes(s)) && marked.length < 40, marked.join());
+    check('shared: shared-resource suites and perf-sensitive ones are different groups only by timing; every perf-sensitive name is a real suite or is simply absent', lib.PERF_SENSITIVE.every((s) => d.electron.includes(s)), lib.PERF_SENSITIVE.filter((s) => !d.electron.includes(s)).join());
+  }
+  // the default selection: core + suites related to the changed files
+  {
+    const electron = ['smoke', 'perf-budget', 'spotify-ui', 'spotify-reconnect-ui', 'settings', 'settings-open-perf', 'notes', 'mcp', 'files'];
+    const sources = { notes: "require('../src/features/notes')", mcp: '', files: 'x', 'spotify-ui': '', 'spotify-reconnect-ui': '', settings: '', 'settings-open-perf': '', smoke: '', 'perf-budget': '' };
+    const core = ['smoke', 'perf-budget'];
+    const pick = (changed) => lib.selectSuites({ changed, electron, sources, core });
+    check('select: nothing changed = just the core set', JSON.stringify(pick([]).names) === JSON.stringify(['smoke', 'perf-budget']) && !pick([]).full);
+    check('select: a changed module brings the suites named like it and the ones that load it', JSON.stringify(pick(['src/features/spotify.js']).names) === JSON.stringify(['smoke', 'perf-budget', 'spotify-ui', 'spotify-reconnect-ui']) && pick(['src/features/notes.js']).names.includes('notes') && pick(['src/renderer/settings.js']).names.includes('settings-open-perf'), JSON.stringify(pick(['src/features/spotify.js'])));
+    check('select: a changed test file selects that suite; CHANGELOG, docs and locale text select nothing', pick(['test/mcp.js']).names.includes('mcp') && JSON.stringify(pick(['CHANGELOG.md', 'docs/releasing.md', 'src/locales/en.json']).names) === JSON.stringify(['smoke', 'perf-budget']));
+    check('select: a build, dependency or workflow file means everything', pick(['package-lock.json']).full && pick(['.github/workflows/ci.yml']).full && pick(['scripts/build.js']).full && !pick(['scripts/release.js']).full);
+    check('select: names too short to be a stem are not matched by prefix; each suite has one reason', !pick(['src/main.js']).names.includes('mcp') && Object.keys(pick(['src/features/spotify.js']).reasons).length === pick(['src/features/spotify.js']).names.length);
+  }
   // test-units.js --jobs: two real unit suites, one at a time and two at a time, give the same verdict and the same sorted summary
   const tu = (...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'test-units.js'), ...a], { encoding: 'utf8', timeout: 120000 });
   const one = tu('zoom-steps-units', 'write-dedupe-units');
