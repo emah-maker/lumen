@@ -498,7 +498,13 @@ function Cmd-Resolve($req) {
 function Cmd-Launch($req) {
   $path = $script:launchable[[string]$req['key']]
   if (-not $path) { throw 'That app was not found by resolve.' }
-  Start-Process -FilePath $path
+  $file = [string]$req['file']
+  if (-not $file) { Start-Process -FilePath $path; return @{ started = $true } }
+  # A document: the program is started with the file as its one argument (no shell). A Start menu shortcut is followed to the program it points at.
+  if ($path -like '*.lnk') { $sh = New-Object -ComObject WScript.Shell; $path = $sh.CreateShortcut($path).TargetPath }
+  if (-not $path -or $path -notlike '*.exe' -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'That app is not a program that can be given a file.' }
+  if (-not [System.IO.Path]::IsPathRooted($file) -or $file.StartsWith('\') -or -not (Test-Path -LiteralPath $file -PathType Leaf)) { throw 'That file path is not valid.' }
+  Start-Process -FilePath $path -ArgumentList ('"' + $file.Replace('"', '') + '"')
   return @{ started = $true }
 }
 

@@ -13,6 +13,7 @@ const policy = require('./policy');
 const treeLib = require('./tree');
 const liveLib = require('./live');
 const platforms = require('./platforms');
+const openFile = require('./open-file');
 
 const THUMB_MS = 1500;
 const POLL_MS = 200;
@@ -101,7 +102,7 @@ function createDesktop(deps = {}) {
   // app, a file manager, a shell or any program not on that list counts like web content for acting anywhere, that same program included.
   const noteRead = (ctx, win) => { const k = ctx.signal || ctx; if (!sources.has(k)) sources.set(k, new Map()); sources.get(k).set(sourceKey(win), policy.isDocumentApp(win)); };
   const readElsewhere = (ctx, win) => { const map = sources.get(ctx.signal || ctx); return Boolean(map) && [...map].some(([k, doc]) => k !== sourceKey(win) || !doc); };
-  async function authorize(win, ctx, { acting = false, what = '' } = {}) {
+  async function authorize(win, ctx, { acting = false, what = '', file = '' } = {}) {
     const tainted = acting && (Boolean(ctx.tainted?.()) || readElsewhere(ctx, win));
     const opts = policyOpts(ctx);
     if (tainted) { opts.allowed = []; opts.once = new Set(); }
@@ -109,7 +110,7 @@ function createDesktop(deps = {}) {
     if (d.status === 'blocked') throw new Error(`${d.name}: ${d.reason}`);
     if (d.status === 'off') {
       await offerSwitch(ctx);
-      return authorize(win, ctx, { acting, what }); // (the switch is on now, or offerSwitch threw)
+      return authorize(win, ctx, { acting, what, file }); // (the switch is on now, or offerSwitch threw)
     }
     if (d.status === 'allow') return d;
     const where = `${d.name}\nProgram: ${win.exe || '(unknown)'}${win.company ? `\nPublisher: ${treeLib.clip(win.company, 80)}` : ''}\nWindow: "${treeLib.clip(win.title, 120)}"`;
@@ -124,7 +125,7 @@ function createDesktop(deps = {}) {
     }
     const answer = await ctx.ask({
       title: `Allow the AI to use ${d.name}?`,
-      detail: `It can read what is in the app (and take a picture of its window, which can show things a password mask does not hide), and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings > AI > Apps the AI can use. It never reads or fills password fields. ${d.warn || ''}`.trim(),
+      detail: `${file ? `It will start with the file ${file}. ` : ''}It can read what is in the app (and take a picture of its window, which can show things a password mask does not hide), and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings > AI > Apps the AI can use. It never reads or fills password fields. ${d.warn || ''}`.trim(),
       args: where,
     });
     if (!answer) throw new Error(`The user did not let the AI use ${d.name}. Ask them what to do instead.`);
@@ -410,8 +411,10 @@ function createDesktop(deps = {}) {
   }
 
   async function openApp(args, ctx) {
-    const name = String(args.name ?? '').trim().slice(0, 80);
-    if (!name) throw new Error('Say which app to open (name).');
+    // path: open that existing document in the app that owns it (open-file.js decides what may be opened); the name may then be left out
+    const opening = args.path != null && String(args.path).trim() ? (deps.checkOpenFile || openFile.checkOpenFile)(args.path, { name: args.name, profile: deps.profile || '' }) : null;
+    const name = String(args.name ?? '').trim().slice(0, 80) || opening?.label || '';
+    if (!name) throw new Error('Say which app to open (name), or the path of a file to open.');
     if (!S.master()) await offerSwitch(ctx);
     const r = await getClient().call('resolve', { name });
     const found = (r.found || []).slice().sort((a, b) => Number(b.exact) - Number(a.exact) || a.name.length - b.name.length)[0];
@@ -420,8 +423,8 @@ function createDesktop(deps = {}) {
     if (!backend.launchable(target)) throw new Error(backend.notLaunchable(found.name));
     const probe = { proc: policy.baseOf(target), title: found.name, exe: found.exe, description: found.name, bundle: found.bundle || '' }; // (macOS: the bundle id from its Info.plist, so a renamed blocked app is still blocked)
     const before = new Set((await apps(true)).map((w) => w.hwnd));
-    await authorize(probe, ctx, { acting: true, what: `open ${found.name}` }); // blocked programs are refused before anything starts; the rest ask
-    await getClient().call('launch', { key: found.key }, { timeoutMs: 15000 });
+    await authorize(probe, ctx, { acting: true, what: opening ? `open ${found.name} with the file ${require('path').basename(opening.file)}` : `open ${found.name}`, file: opening ? opening.file : '' }); // blocked programs are refused before anything starts; the rest ask
+    await getClient().call('launch', { key: found.key, ...(opening ? { file: opening.file } : {}) }, { timeoutMs: 15000 });
     const stamp = now();
     const waitMs = deps.openWaitMs ?? 9000;
     while (now() - stamp < waitMs) {
