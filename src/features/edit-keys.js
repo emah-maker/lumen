@@ -1,5 +1,5 @@
 // The AI's clipboard and edit shortcuts (Ctrl/Cmd + X C V Z Y A), run as the browser's own editing commands.
-// Pure helpers plus the clipboard snapshot; ai/agent.js wires them to press_key (test/edit-keys-units.js covers them).
+// Pure helpers plus the clipboard snapshot; ai/agent.js wires them to press_key (test/units/edit-keys-units.js covers them).
 //   editCommand(key, modifiers)   the webContents command a shortcut stands for, or null for any other key
 //   snapshotClipboard(cb)         what the user had copied (every type: text, html, image...), so a run can put it back (async)
 //   restoreClipboard(cb, snap)    puts it back (async)

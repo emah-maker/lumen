@@ -1,4 +1,4 @@
-// A fake `claude` / `grok` CLI for the tests (test/bgtasks.js): no login, no model, no tokens.
+// A fake `claude` / `grok` CLI for the tests (test/e2e/bgtasks.js): no login, no model, no tokens.
 //
 // Two halves in one file:
 //  - spawn(bin, argv, opts): what Lumen's engines call in place of child_process.spawn when the app runs in

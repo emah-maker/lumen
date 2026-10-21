@@ -8,7 +8,7 @@
 }
 /* The design scale every Lumen page shares (it does not change with light/dark). Colours are in the sets above and in
    styles.css; this file is the one place a radius, a type step, a hit-target size or a motion step is defined, and
-   test/ui-consistency.js checks the pages use it. */
+   test/e2e/ui-consistency.js checks the pages use it. */
 :root {
   /* Radii: 4 chips, 6 small controls, 8 buttons and fields, 10-12 cards and menus, 16 sheets, round pills. Nothing in between. */
   --r-xs: 4px; --r-sm: 6px; --r-md: 8px; --r-lg: 10px; --r-xl: 12px; --r-2xl: 16px; --r-pill: 999px;

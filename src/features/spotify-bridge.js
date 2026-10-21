@@ -10,7 +10,7 @@
 // state says so (player: false) and the card tells the user Spotify changed its page, instead of showing nothing. A press of a control the
 // page doesn't show is an error message of its own (NO_PLAYER); the page's Log in button is reported as signedOut; and a search says why
 // it found nothing (signed out, controls missing, too slow). Search waits for the page's results to stand still with a MutationObserver
-// (test/spotify-dom-units.js runs it against pages saved from open.spotify.com).
+// (test/units/spotify-dom-units.js runs it against pages saved from open.spotify.com).
 //
 // This file is the pure part: the table, the script, and the checks on both directions (the same wire as features/apple-music-bridge.js:
 // JSON text in 'lumen-engine-in' / 'lumen-engine-out' DOM events carried by the preload).
@@ -33,7 +33,7 @@ const MAX_ITEMS = 40;
 
 // Every selector the script uses, by what it is for; the first that matches wins. Change them here when Spotify changes its page.
 // Rules: data-testid first, then aria-label / role / href patterns, never class names (they are hashed). Keep each string to the simple
-// subset test/spotify-dom-units.js can run against saved pages: tag, [attr], [attr="v"], [attr^=], [attr$=], [attr*=], descendant
+// subset test/units/spotify-dom-units.js can run against saved pages: tag, [attr], [attr="v"], [attr^=], [attr$=], [attr*=], descendant
 // spaces and commas. Checked against open.spotify.com (desktop layout, signed out) on 2026-10-07 and signed in on 2026-10-08 (the playbar, the
 // now-playing widget, the left library, the Queue side panel); "assumed" marks what neither page showed.
 const SELECTORS = {

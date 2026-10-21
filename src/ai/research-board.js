@@ -1,5 +1,5 @@
 // The Research board: the sources of one chat. Every source the AI or the user adds is kept with its metadata, the user's note,
-// a star and any pinned quotes. Pure, Electron-free data code (test/research-units.js); main.js keeps one board per chat in the
+// a star and any pinned quotes. Pure, Electron-free data code (test/units/research-units.js); main.js keeps one board per chat in the
 // chat's settings (settings.research), so it is saved, restored and deleted with the chat.
 //
 // A board: { v: 1, next: 4, sources: [source] }.  A source is addressed by its number `n` (1, 2, 3...), which is also the [n]

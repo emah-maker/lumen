@@ -1,4 +1,4 @@
-// Tab sleeping's pure decisions (main.js does the Electron parts; test/tab-sleep-units.js runs this).
+// Tab sleeping's pure decisions (main.js does the Electron parts; test/units/tab-sleep-units.js runs this).
 // Kept here: may this tab be put to sleep, what must the page itself say first, and how does a woken
 // tab get its page back (restore the saved back/forward list, or just load the address).
 'use strict';

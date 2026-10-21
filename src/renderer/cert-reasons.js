@@ -1,6 +1,6 @@
 // What the certificate warning page (cert-error.html) says went wrong, per Chromium's certificate error
 // (net_error_list.h, -200 to -299, without "net::"). Anything not listed gets the general line. The wording is
-// locales/en.json (certError.reason.*): reasonFor takes the translate function (window.t on the page; test/core-browsing-units.js
+// locales/en.json (certError.reason.*): reasonFor takes the translate function (window.t on the page; test/units/core-browsing-units.js
 // passes one built from en.json). Loaded by cert-error.html and required by that test.
 (function (root) {
   const KEYS = {

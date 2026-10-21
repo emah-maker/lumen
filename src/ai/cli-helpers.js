@@ -1,7 +1,7 @@
 // Helpers that run as CLI processes: a job a CLI chat hands to a helper (Grok Build's spawn_subagent, agent.js grokBuildTurn) runs as a
 // run of a signed-in CLI engine, in normal mode, so the helper has Lumen's tools and Lumen's approvals (its tool calls go through the
 // parent run's own gate and cards), never full access unless the chat already has it. Electron-free: the engine runs are injected
-// (agent.js cliHelperOnce), so test/cli-helpers-units.js covers it in plain Node with fake runs. Loaded on first use.
+// (agent.js cliHelperOnce), so test/units/cli-helpers-units.js covers it in plain Node with fake runs. Loaded on first use.
 //
 // Which engine: the chat's own first, then the other signed-in CLIs, then an API key (agent.js: the delegate helpers). No API key is needed
 // when a CLI is signed in. At most MAX_CLI helper processes run at once (across chats: the pool is the agent's), a stopped parent run

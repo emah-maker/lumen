@@ -1,6 +1,6 @@
 // The plan meter's popover (chat-extras.js draws it): everything it says, worked out from the usage summary the strip
 // and Settings → Usage already hold (features/usage.js summary(): bars, plan, meter, providers, rate, codex). Pure
-// formatting, no window and no network, so it also runs in node (test/usage-popover-units.js). Missing data is left
+// formatting, no window and no network, so it also runs in node (test/units/usage-popover-units.js). Missing data is left
 // out, never guessed: no number is better than a made-up one.
 //
 //   view(key, state, { now, name }) -> { name, plan, windows, counted, rates, updatedAt, updated, note, message } | null

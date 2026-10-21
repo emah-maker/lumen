@@ -3,7 +3,7 @@ let anthropicSdk_ = null; // loaded on first use (about 70 ms of startup): only 
 const sdk = () => (anthropicSdk_ ||= require('@anthropic-ai/sdk'));
 const scripts = require('./page-scripts');
 const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides text from the editor's export
-const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/perf-budget.js)
+const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/e2e/perf-budget.js)
 const docTool = lazy(() => require('./document-tool')); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
 const docEdit = lazy(() => require('./doc-edit'));
 const sendLib = lazy(() => require('../features/gmail-send')); // [connectors] Gmail sending's rules (typed permission, undo window, limits); loaded when a send is asked for
@@ -71,7 +71,7 @@ const handsOff = require('../features/agent-hands-off'); // [agent window] what 
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
 const planMode = require('./plan-mode'); // [plan mode] read-only planning, then a plan card the user runs
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings > AI)
-// [work folder] the folder the AI works in: a chat's own, else its project's. Loaded on first use, not at startup (test/perf-budget.js).
+// [work folder] the folder the AI works in: a chat's own, else its project's. Loaded on first use, not at startup (test/e2e/perf-budget.js).
 let projectFoldersMod = null;
 const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('../features/project-folders'))[key] });
 
@@ -628,7 +628,7 @@ const NOTES_TOOL = {
 };
 // [reading list] reading_list saves a page to the user's reading list (Save for later) and reads the list back. For the sidebar's API chats only (MCP clients and the CLI
 // engines see a tool listing that is already at its budget: test/acceptance/chat-prompt-budget.js), and only once the conversation talks about it (readingOffered),
-// so the default request keeps its size (test/units.js tool budget). The text stays short on purpose.
+// so the default request keeps its size (test/units/units.js tool budget). The text stays short on purpose.
 const READING_INTENT = /reading[- ]?list|\bfor later\b|\bread(?:ing)?[- ](?:it |this |that |them |these )?later\b|\bread-later\b/i;
 const READING_LIST_TOOL = {
   name: 'reading_list',
@@ -7010,7 +7010,7 @@ ${same}
           return { ...(await signedOut(url)), ...(how?.note ? { note: how.note } : {}) };
         }));
         // [research tabs] Shown only after the read, and only the final address of each page that was read:
-        // a redirect to a host the user did not allow never loads in a tab (test/exfil.js). A signed-in read
+        // a redirect to a host the user did not allow never loads in a tab (test/e2e/exfil.js). A signed-in read
         // already has its own tab (in the user's session), so it isn't opened again logged out.
         const readOk = pages.filter((p) => !p.signedIn && p.title !== '' && !/^Could not read this page/.test(p.text) && !this.browser.aiOff?.(p.url)).map((p) => p.url);
         if (readOk.length) this.showResearch({ urls: readOk })();

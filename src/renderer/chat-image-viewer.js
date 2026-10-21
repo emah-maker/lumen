@@ -1,7 +1,7 @@
 // The picture viewer for the chat (the sidebar's and lumen://chat): click any picture in a reply, or one you sent, to open it
 // over the conversation, fit to the panel, and zoom, pan, step through the chat's other pictures, save, copy or open it in a tab.
 // It is not in the startup bundle: gen-images.js loads this file and chat-image-viewer.css on the first click (the way
-// meeting-loader.js loads the Meeting helper), so test/perf-budget.js's UI ceiling is untouched.
+// meeting-loader.js loads the Meeting helper), so test/e2e/perf-budget.js's UI ceiling is untouched.
 //
 //   window.chatImageViewer.open({ items: [{ url, alt, id? }], index, opener })
 //     url: a data: URL of a PNG, JPEG, GIF or WebP (anything else is refused); id: the picture's id when main stored it

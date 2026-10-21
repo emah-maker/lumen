@@ -5,7 +5,7 @@
 // It covers the ordinary "text PDF"; scanned pages (images), encrypted files and exotic encodings
 // come back empty or refused with a plain message. The text is untrusted page content: agent.js
 // wraps it and treats it like read_page output. Also here: the page-range parser, the file name
-// shown on the approval card, and the per-chat permission gate (pure, so test/units.js covers it).
+// shown on the approval card, and the per-chat permission gate (pure, so test/units/units.js covers it).
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');

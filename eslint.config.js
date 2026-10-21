@@ -3,7 +3,7 @@ const js = require('@eslint/js');
 const globals = require('globals');
 
 module.exports = [
-  // src/preload/preload.bundle.js is generated from preload.js (scripts/bundle-preload.js); lint the source.
+  // src/preload/preload.bundle.js is generated from preload.js (scripts/build/bundle-preload.js); lint the source.
   { ignores: ['node_modules/**', 'dist/**', 'out/**', '.claude/**', 'src/preload/preload.bundle.js', 'src/renderer/ui.bundle.js', 'src/vendor/**', 'src/renderer/vendor/**', '_site/**'] },
   js.configs.recommended,
   {
@@ -18,7 +18,7 @@ module.exports = [
   },
   // Preloads run with Node's require but inside a page.
   { files: ['**/*preload.js'], languageOptions: { globals: { ...globals.browser } } },
-  // The GitHub Pages site (site/, built by scripts/build-site.js): plain browser scripts; marked and DOMPurify come from cdnjs.
+  // The GitHub Pages site (site/, built by scripts/build/build-site.js): plain browser scripts; marked and DOMPurify come from cdnjs.
   { files: ['site/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, marked: 'readonly', DOMPurify: 'readonly' } } },
   // Renderer pages load plain <script> files that share one global scope.
   {
@@ -76,16 +76,16 @@ module.exports = [
   // files-picker.js is loaded after app.js (the same still picture of the page tab search uses).
   { files: ['src/renderer/files-picker.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly' } } },
   { files: ['src/renderer/command-bar.js'], languageOptions: { globals: { freezePage: 'readonly', thawPage: 'readonly', lastTabState: 'readonly' } } }, // (app.js's, loaded on first use)
-  { files: ['test/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
+  { files: ['test/e2e/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
-    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/capture-media.js', 'scripts/measure-newtab.js'],
+    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/measure/capture-media.js', 'scripts/measure/measure-newtab.js'],
     languageOptions: { globals: { ...globals.browser } },
     rules: { 'require-yield': 'off' },
   },
   // Functions the tests call inside the UI page (defined by renderer/app.js).
-  { files: ['test/exfil.js', 'test/mcp.js', 'test/mcpclient.js', 'test/connectors.js', 'test/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
+  { files: ['test/e2e/exfil.js', 'test/e2e/mcp.js', 'test/e2e/mcpclient.js', 'test/e2e/connectors.js', 'test/e2e/aicontrols.js'], languageOptions: { globals: { approvals: 'readonly', showApproval: 'readonly', showSidebar: 'readonly', resolveApproval: 'readonly', ask: 'readonly' } } },
   // The model picker the sidebar page creates (renderer/chat-core.js), opened from page.evaluate.
-  { files: ['test/models.js', 'test/usage.js'], languageOptions: { globals: { modelPicker: 'readonly' } } },
+  { files: ['test/e2e/models.js', 'test/e2e/usage.js'], languageOptions: { globals: { modelPicker: 'readonly' } } },
   { files: ['test/fixtures/**/*.js'], languageOptions: { sourceType: 'script', globals: { ...globals.browser, ...globals.webextensions } } },
 ];

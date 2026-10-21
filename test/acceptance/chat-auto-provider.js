@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: provider Auto, docs/auto-model.md). Run alone: node scripts/test-acceptance.js chat-auto-provider
+// ACCEPTANCE (feature: provider Auto, docs/auto-model.md). Run alone: node scripts/test/test-acceptance.js chat-auto-provider
 //
 // A chat on a CLI engine's own Auto ('claudecode:auto', 'grokbuild:auto') with the real Agent, the real engines and the real
 // router (ai/auto-model.js, scoped to the engine), and fake CLIs (test/acceptance/chat-harness.js). What each CLI is really

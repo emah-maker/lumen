@@ -11,7 +11,7 @@
 //   - the tab under the pointer (a 60 ms rest, or the moment the button goes down), released 1.5 s after the pointer leaves;
 //   - the most recently used background tabs (Settings > Tabs > Page unloading > "Keep recent tabs ready", 3 by default, 0 turns this part off).
 // Fewer on battery (one), none under memory pressure, in Performance mode, or while the window is hidden or minimised.
-// Pure logic (test/tab-ready-units.js); main.js does the Electron parts.
+// Pure logic (test/units/tab-ready-units.js); main.js does the Electron parts.
 'use strict';
 
 const RECENT_CHOICES = [0, 1, 2, 3, 5]; // Settings > Tabs > Page unloading: "Keep recent tabs ready"

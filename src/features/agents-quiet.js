@@ -1,5 +1,5 @@
 // Keeps every agent that is not the chat the user is typing into out of the user's window (pure; ai-agents.js, agent.js and
-// background-runner.js wire it in, test/agents-quiet-units.js covers it).
+// background-runner.js wire it in, test/units/agents-quiet-units.js covers it).
 //   routeMcpEvent(event, { hasWindow })   where an outside agent's (MCP) event goes: 'agent' (its own window), 'pending' (the agent's
 //                                         window plus the passive badge count), 'user' (the user's window; only with no window of
 //                                         its own, i.e. tests), or 'none'

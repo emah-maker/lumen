@@ -3,7 +3,7 @@
 // settings:routines-act, answered to the Settings tab only); the full editor lives in the sidebar, so Edit and New Routine open it there.
 // Loaded before settings.js and built only when the page is first shown (settings.js's builder table). Everything shown is set with
 // textContent; a routine's result is text, never markup. It uses that file's h(), row(), stackRow(), armedButton(), flash() and tr().
-// The pure helpers (scheduleText, rowModel…) are in the first block so test/settings-routines-units.js can load them in plain Node.
+// The pure helpers (scheduleText, rowModel…) are in the first block so test/units/settings-routines-units.js can load them in plain Node.
 
 (function (root) {
   const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Monday first

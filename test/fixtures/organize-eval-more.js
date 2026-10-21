@@ -1,6 +1,6 @@
 // More evaluation sessions for Organize (see organize-eval.js for the format): students, developers, shoppers, researchers,
 // mixed languages, one site with many topics, near-duplicates, bare titles, and long sessions. Some tabs carry `text`, the
-// short description a loaded page gives (<= 300 chars); scripts/eval-organize.js feeds it to the organizer only for these sessions.
+// short description a loaded page gives (<= 300 chars); scripts/measure/eval-organize.js feeds it to the organizer only for these sessions.
 const T = (title, url, group, text) => (text ? { title, url, group, text } : { title, url, group });
 
 const student = {

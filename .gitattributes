@@ -4,8 +4,8 @@ test/fixtures/** -text
 *.png binary
 *.eml -text
 CHANGELOG.md merge=lumen-changelog
-scripts/test-all.js merge=lumen-list
-# Generated: git keeps our copy on a conflict (lumen-bundle), and scripts/land.js rebuilds them from the merged sources
+scripts/test/test-all.js merge=lumen-list
+# Generated: git keeps our copy on a conflict (lumen-bundle), and scripts/release/land.js rebuilds them from the merged sources
 src/renderer/ui.bundle.js merge=lumen-bundle
 src/renderer/ui.bundle.css merge=lumen-bundle
 src/renderer/settings.bundle.js merge=lumen-bundle

@@ -63,7 +63,7 @@
 //      turn's UserPromptSubmit (which comes before the model call) before the model's first
 //      output, or the process tree is killed before a tool call can even be streamed.
 //    Measured with Grok's own rules taken away (always-approve, no --deny, Lumen's stream check
-//    off; test/grokgate.js): a run told to write a file with run_terminal_command got "Hook denied"
+//    off; test/e2e/grokgate.js): a run told to write a file with run_terminal_command got "Hook denied"
 //    and wrote nothing. The same run with the gate unreachable through a script without the exit 2
 //    DID write the file, which is what the exit 2 and the UserPromptSubmit check are for.
 // 2. Grok's own rules, as before: which MCP servers load (GROK_HOME's config.toml), which built-ins
@@ -451,8 +451,8 @@ const COMPAT_ENV = Object.fromEntries(['CLAUDE', 'CURSOR'].flatMap((v) => COMPAT
 // session's only MCP server is Lumen's. So the hook is asked about everything else: every Grok built-in (run_terminal_command:
 // the user's approval card; the rest: denied) and any other name. Grok's matcher is a regex (Rust: no lookahead), tested
 // against the real tool name (a use_tool call shows as lumen__<tool>); notPrefixed builds "not one of these" without one.
-// An unknown name matches (is gated), a matcher Grok can't read means no hook ever runs: test/grok-warm-units.js checks it
-// against Grok's own events and test/grokgate.js (manual, real CLI) checks a built-in is still denied.
+// An unknown name matches (is gated), a matcher Grok can't read means no hook ever runs: test/units/grok-warm-units.js checks it
+// against Grok's own events and test/e2e/grokgate.js (manual, real CLI) checks a built-in is still denied.
 function notPrefixed({ prefixes = [], exact = [] }) {
   const node = () => ({ kids: new Map(), prefix: false, exact: false });
   const root = node();
@@ -781,7 +781,7 @@ class GrokBuildEngine {
   // first use. lumenReady(tag): true once Lumen's tools have been listed to that run (default: the
   // gate's own record). spawn / kill / exec: the child_process spawn, cli-utils killTree and
   // child_process execFile (for status), swappable for tests. argsFor and watch exist for
-  // test/grokgate.js only, which loosens Grok's own rules to show the gate alone stops a call.
+  // test/e2e/grokgate.js only, which loosens Grok's own rules to show the gate alone stops a call.
   // background: an engine made for one background task (features/ai-agents.js backgroundEngine): its own
   // GROK_HOME (home) and working folder (dir), no terminal command at all, and its own `active` run.
   // onFresh({ sessionId, resume }): a new grok process starts (one per message), so the page reads the
@@ -1080,7 +1080,7 @@ class GrokBuildEngine {
         // A new text block starts a new paragraph in the saved reply too (see claude-code.js).
         if (e.type === 'content_block_start' && e.content_block?.type === 'text') { if (text && !/\n\n$/.test(text)) text += '\n\n'; show({ type: 'text_block' }); }
         else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') { text += e.delta.text; show({ type: 'text', text: e.delta.text }); }
-        // Held like the rest on a chat's first message only (later ones aren't held): a stopped try's thinking must not reach the sidebar (test/units.js).
+        // Held like the rest on a chat's first message only (later ones aren't held): a stopped try's thinking must not reach the sidebar (test/units/units.js).
         else if (e.type === 'content_block_delta' && e.delta?.type === 'thinking_delta') show({ type: 'thinking', text: e.delta.thinking });
         // tool_use blocks are not shown here: Lumen's MCP side emits one step row per call.
       } else if (msg.type === 'user') {

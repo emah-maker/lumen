@@ -6,9 +6,9 @@ Every "Left", "Not done", "Missing" or "left for later" item in `docs/ux-audit/*
 
 | Item | Status |
 |---|---|
-| settings-pages: Delete on one saved login is a single click | fixed now: asks "Delete? Click again" (Settings, Saved passwords); `test/passwords.js` |
+| settings-pages: Delete on one saved login is a single click | fixed now: asks "Delete? Click again" (Settings, Saved passwords); `test/e2e/passwords.js` |
 | settings-pages: Clear list (Recent downloads) is a single click | fixed now: same two-click pattern, now that the list holds up to 1000 entries |
-| chat-features-2 "known limits": the "Switched to X" divider is not saved | fixed now: a reopened chat draws it again before the first message the new model answered (never for replies Auto chose); `test/chat-features2.js` |
+| chat-features-2 "known limits": the "Switched to X" divider is not saved | fixed now: a reopened chat draws it again before the first message the new model answered (never for replies Auto chose); `test/e2e/chat-features2.js` |
 
 ## Already fixed
 

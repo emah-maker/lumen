@@ -75,4 +75,4 @@ Every request carries `Sec-GPC: 1`, and pages that check in script see `navigato
 - The page-side code is `install()` in `src/preload/activity-preload.js`. It reaches each page two ways: as a session `frame` preload, and as a DevTools document-start script (`Page.addScriptToEvaluateOnNewDocument`) added next to the Chrome-identity script in `applyChromeIdentity` (`src/main.js`). The second way is needed because session preloads don't run in cross-origin iframes. `src/features/hide-activity.js` passes the settings to both and replaces the DevTools script when a setting changes.
 - Patched functions are registered with Lumen's shared `lumen.nativeTexts` toString wrapper, so they read as `[native code]`. Getters are replaced on the prototype, never added to the object itself.
 - Links and pings are handled in the ad blocker's `onBeforeRequest` (`src/features/adblock.js`). WebRTC is `webrtcPolicy()` in `src/settings/settings-backend.js`.
-- Tests: `test/hide-activity-units.js`, `test/hide-activity.js` and `test/tracking-links.js`.
+- Tests: `test/units/hide-activity-units.js`, `test/e2e/hide-activity.js` and `test/e2e/tracking-links.js`.

@@ -1,6 +1,6 @@
 // Helpers for the sidebar AI's `delegate` tool: 1-5 independent, read-only sub-tasks that run side by side, each as its own
 // small model loop on a cheaper model of the same provider. Electron-free (the model call and the tool runner are injected),
-// so test/subagents-units.js covers it in plain Node. agent.js wires it in (Agent.delegate): site approvals, usage, progress.
+// so test/units/subagents-units.js covers it in plain Node. agent.js wires it in (Agent.delegate): site approvals, usage, progress.
 //
 // What a helper can do: read_urls, web_search and analyze_posts, nothing else. No clicking, typing, forms, tabs, scripts, uploads,
 // purchases or messages: those tools are not offered to it and are refused if it asks anyway (isHelperTool).

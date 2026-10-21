@@ -10,7 +10,7 @@
 //
 // Comfort rules, built into the numbers:
 //   - The dots and the glow have opacity ceilings (DOT_CAP, FLOW_CAP, stronger over a dark background) and fade to a fifth of that behind the content
-//     column (COLUMN_GAIN), so text keeps its contrast: test/music-react-units.js works the worst case out from the page's own colours.
+//     column (COLUMN_GAIN), so text keeps its contrast: test/units/music-react-units.js works the worst case out from the page's own colours.
 //   - MIN_RISE_GAP_MS: a new rise can only start once per 360 ms (a swell that is already rising carries on), so nothing on the page can flash more
 //     than 2.8 times a second, whatever the music does (a hi-hat roll at 12 Hz becomes a slow swell). Falling is always smooth.
 //   - MIN_BEAT_GAP_MS: a beat at most every 400 ms (2.5 a second). A dot twinkles at 1.2 Hz at the most.

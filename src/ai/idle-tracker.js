@@ -1,4 +1,4 @@
-// Pure "has this page gone quiet?" logic for wait_for network_idle (no Electron, unit-tested in test/page-debug-units.js).
+// Pure "has this page gone quiet?" logic for wait_for network_idle (no Electron, unit-tested in test/units/page-debug-units.js).
 // Exported on its own so other waits (navigate / read_urls `wait`) can share it: feed it the start and end of every request of
 // a tab and ask idle(now) / describe(now).
 //

@@ -1,6 +1,6 @@
 // A fast yes/no for "does this message start with a schedule phrase?" ("every weekday at 8am: check my email").
 // It only gates the IPC that really parses it (features/routines.js parseScheduleText), so the composer asks main
-// about likely matches and not about every keystroke. A plain script in the pages; test/routine-phrase-units.js loads it with require().
+// about likely matches and not about every keystroke. A plain script in the pages; test/units/routine-phrase-units.js loads it with require().
 (function (root) {
   const DAY = '(?:sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)[a-z]*';
   const UNIT = '(?:day|days|weekday|weekdays|work\\s*day|morning|mornings|afternoon|evening|evenings|night|week|hour|hours)';

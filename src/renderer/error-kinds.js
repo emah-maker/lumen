@@ -4,7 +4,7 @@
 // gets the general wording. The wording itself is in locales/en.json (errorPage.kind.<ERROR>.title /
 // .message / .hint, with {site}, {Site} and {server} standing for the host, or "the site" without
 // one); this file says which errors share a wording and which have no hint. Loaded by error.html and
-// required by test/basics-units.js.
+// required by test/units/basics-units.js.
 (function (root) {
   const KINDS = {
     ERR_NAME_NOT_RESOLVED: {},

@@ -3,7 +3,7 @@
 // sidebar's "Working in: <tab>" line says where it is. `target` is { front } from main (agent:target), or null when main
 // has not said (the first moments of a run), which counts as the tab in front. An outside agent's pill (MCP, `mcpActive`)
 // is not about a tab of this window and is left alone. Loaded by index.src.html (before chat-core.js), required by
-// test/agent-pill-units.js.
+// test/units/agent-pill-units.js.
 (function (root) {
   function pillState({ running, target, mcpActive } = {}) {
     const away = Boolean(running && target && !target.front);

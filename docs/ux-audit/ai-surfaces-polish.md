@@ -10,7 +10,7 @@ Walked hidden on a fresh profile with faked Claude failures (overloaded 529, net
 5. Claude API 400s show the raw JSON body ("The Claude API returned an error (400): {...}").
 
 ## Fixed
-1 to 4: `src/ai/providers.js` (describeProviderError), `src/locales/en.json` (models.auto.detail), `src/renderer/picker.js`. Tests in `test/chat-images-units.js`.
+1 to 4: `src/ai/providers.js` (describeProviderError), `src/locales/en.json` (models.auto.detail), `src/renderer/picker.js`. Tests in `test/units/chat-images-units.js`.
 
 Checked and fine: overloaded, offline, rejected key and expired sign-in messages (each says what to do, with a Set up AI / Settings action or Try again); chat notifications and task notifications use the humanized error and their click opens the chat or the Tasks panel (sidebar opened); picker and header in dark at 400 px; the "AI is using this tab" pill.
 

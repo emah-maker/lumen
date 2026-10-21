@@ -19,10 +19,10 @@ render light even when the theme is dark, so dark was judged from the CSS tokens
 
 ## Fixed
 
-All of the above (1 to 8). Tests: `test/chrome-ux-units.js` (new "polish pass" checks, and the Title Case guard now covers
-the page-info, permission and passwords labels), `test/chrome-ux.js` (History reuse; a `localhost` tab keeps its "L"
-monogram and a `127.0.0.1` tab keeps the globe), `test/basics-units.js` (the shortcuts-sheet check also reads
-`extraShortcut`), `test/dialogs.js`.
+All of the above (1 to 8). Tests: `test/units/chrome-ux-units.js` (new "polish pass" checks, and the Title Case guard now covers
+the page-info, permission and passwords labels), `test/e2e/chrome-ux.js` (History reuse; a `localhost` tab keeps its "L"
+monogram and a `127.0.0.1` tab keeps the globe), `test/units/basics-units.js` (the shortcuts-sheet check also reads
+`extraShortcut`), `test/e2e/dialogs.js`.
 
 ## Left
 
@@ -57,7 +57,7 @@ be screenshotted). Shots in `docs/ux-audit/shots/` (gitignored).
 6. `browser/menu-label.js` (`&` becomes `&&`, 60-character ellipsis) used by the History, Bookmarks, Downloads, Back / Forward and Add to group menus.
 7. The status line is used only when the note is missing.
 
-Tests: `test/chrome-ux-units.js`, `test/page-i18n-units.js`, `test/core-browsing-units.js`, `test/managers.js` (address, Undo for both pages).
+Tests: `test/units/chrome-ux-units.js`, `test/units/page-i18n-units.js`, `test/units/core-browsing-units.js`, `test/e2e/managers.js` (address, Undo for both pages).
 
 ### Left
 - **The `&&` fix is untested on screen** (native menus can't be captured here); it follows Electron's rule for Windows and Linux labels.

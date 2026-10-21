@@ -1,4 +1,4 @@
-// Records what chrome.declarativeNetRequest does, for test/extensions.js.
+// Records what chrome.declarativeNetRequest does, for test/e2e/extensions.js.
 window.dnrResult = (async () => {
   const dnr = chrome.declarativeNetRequest;
   if (!dnr) return { present: false };

@@ -3,7 +3,7 @@
 // there is no second automation engine. Elements are found again from the stored locator
 // (macro-page.js, against read_page's element registry), which is what the primitives take.
 //
-// deps (every one injectable, so test/macros-units.js runs this against mocks):
+// deps (every one injectable, so test/units/macros-units.js runs this against mocks):
 //   tool(name, input) -> string          an agent tool call
 //   allow(name, input)                   the per-site approval the AI's own step would need (AI runs only)
 //   confirm({ step, index, reason, label }) -> boolean   a step that submits, buys or sends (AI runs only)

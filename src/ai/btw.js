@@ -2,7 +2,7 @@
 // answered from a snapshot of the chat so far plus the active tab's title and address, in parallel with the running task.
 // It never touches the chat's history, its loop guard or its step list: the question and the answer only live in a card the
 // sidebar shows (renderer/chat-commands.js), apart from the tokens, which join the chat's usage totals (agent.js btw).
-// Electron-free (the model call is injected), so test/btw-units.js covers it in plain Node.
+// Electron-free (the model call is injected), so test/units/btw-units.js covers it in plain Node.
 //
 // Which model answers:
 //  - an API chat: the chat's own provider, on its cheaper sibling when one is known (subagents.helperModel, the same mapping

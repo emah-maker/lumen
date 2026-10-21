@@ -40,7 +40,7 @@ const webUrl = (u) => {
 // deps: { ipcMain, dialog, win, tabs, alive, openTab, switchTab, bookmarks, saveBookmarks,
 //         bookmarksChanged, downloads, hostOf, readingList (the store, made on first use), readingIcon(host) }
 function createManagers(deps) {
-  // The file pickers, replaceable by tests (test/managers.js): native dialogs can't be clicked there.
+  // The file pickers, replaceable by tests (test/e2e/managers.js): native dialogs can't be clicked there.
   const pickers = {
     save: (w, options) => deps.dialog.showSaveDialog(w, options),
     open: (w, options) => deps.dialog.showOpenDialog(w, options),

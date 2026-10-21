@@ -1,5 +1,5 @@
 // Packs an unpacked extension folder into a signed CRX3 file (what the Chrome Web Store serves), with a throwaway key made on the
-// spot, so test/extensions.js can serve a real-looking download from 127.0.0.1 instead of reaching the store. No dependencies beyond
+// spot, so test/e2e/extensions.js can serve a real-looking download from 127.0.0.1 instead of reaching the store. No dependencies beyond
 // adm-zip (already installed for electron-chrome-web-store) and node:crypto.
 //   const { id, crx } = buildCrx(dir);   // id: the 32-letter extension id the key gives; crx: a Buffer
 const nodeCrypto = require('crypto');

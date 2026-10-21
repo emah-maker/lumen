@@ -1,7 +1,7 @@
 // Per-tab address-bar drafts (Chrome's behaviour): text typed into the address bar and not submitted stays with
 // its tab, so switching to another tab and back finds it (and the caret, and the focus) where it was left.
 // Held in memory only: never saved, synced, or sent to main, the AI or extensions. A plain script in the UI
-// (and the private window's UI); test/omnibox-draft-units.js loads it with require().
+// (and the private window's UI); test/units/omnibox-draft-units.js loads it with require().
 (function (root) {
   function createDraftStore() {
     const drafts = new Map(); // tab id -> { text, start, end, focused }

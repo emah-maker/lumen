@@ -1,5 +1,5 @@
 // Images the AI makes or returns, kept for the chat: where they come from, how they are checked, and where they
-// live. Pure and fs-only (no Electron), so test/gen-images-units.js runs it all in plain Node.
+// live. Pure and fs-only (no Electron), so test/units/gen-images-units.js runs it all in plain Node.
 //
 //   sniff / parseDataUrl     only PNG, JPEG, GIF and WebP bytes pass (decided by the first bytes, never by a name or header)
 //   extractImages(json)      every response shape that can carry a picture, as one list (see its comment)

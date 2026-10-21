@@ -1,4 +1,4 @@
-// Three windows from round 13 of Organize Tabs (a realtor, a new parent, a crypto holder who builds furniture): [title, url] rows. test/organize-units.js
+// Three windows from round 13 of Organize Tabs (a realtor, a new parent, a crypto holder who builds furniture): [title, url] rows. test/units/organize-units.js
 // checks that the obvious clusters in them group and that nothing unrelated is pulled in.
 module.exports = {
   realtor: [

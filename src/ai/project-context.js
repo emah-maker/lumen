@@ -1,4 +1,4 @@
-// A project's files and pinned pages as the AI sees them (lumen://chat > Projects). Electron-free, so test/project-workspace-units.js runs it
+// A project's files and pinned pages as the AI sees them (lumen://chat > Projects). Electron-free, so test/units/project-workspace-units.js runs it
 // in plain Node; main.js gives it the files' store (features/project-files.js) and the chat's project.
 //
 //   block({ files, links })      the small index that goes into the chat's context with the project's instructions: file names, sizes and a

@@ -1,4 +1,4 @@
-// Background agent tasks: the pure part (no Electron, unit-tested in test/units.js). A Task is a job
+// Background agent tasks: the pure part (no Electron, unit-tested in test/units/units.js). A Task is a job
 // the AI does on its own while the user keeps browsing: run now, at a time, every N minutes, or
 // "watch a page and tell me when X". This file holds the task model, how a task's allowed sites are
 // derived, schedule math, the run queue, page-watch change detection, the state machine (including

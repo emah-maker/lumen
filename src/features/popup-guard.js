@@ -3,7 +3,7 @@
 // so Lumen caps the rate: one opener may open `max` windows or tabs per `windowMs`; the rest are refused.
 // Attempts count whether they were refused or not, so a page that keeps going stays blocked until it
 // stops for a whole window. A person opening tabs (Ctrl+click, middle-click) never comes near the cap.
-// (test/popup-guard-units.js runs this.)
+// (test/units/popup-guard-units.js runs this.)
 'use strict';
 
 function createBurstLimit({ max = 8, windowMs = 3000, now = Date.now } = {}) {

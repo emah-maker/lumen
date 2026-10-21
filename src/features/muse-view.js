@@ -1,6 +1,6 @@
 // The Muse widget's pure logic (Meta's Muse model through the Meta Model API): config checking, the
 // request bodies, reading the answer and its sources out of a response, and readable error messages.
-// No Electron, no network: features/widgets.js does the request, test/widget-units.js runs this.
+// No Electron, no network: features/widgets.js does the request, test/units/widget-units.js runs this.
 //
 // API facts (dev.meta.ai/docs, read 2026-09-29): base https://api.meta.ai/v1, bearer key, OpenAI-style
 // POST /chat/completions; models muse-spark-1.3 (recommended), 1.2, 1.1; errors { error: { message,

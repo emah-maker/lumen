@@ -44,7 +44,7 @@
 //   x.session(creds?)   the OAuth account for this connector's secret (or for creds, to check them)
 //   x.backoff(ms)       no requests for a while (a service's own rate-limit answer)
 // The connector modules load the first time a card of that kind is drawn or its action runs, so a launch
-// that shows only Notes or the page's own sections never reads them (startup module count, test/perf-budget.js).
+// that shows only Notes or the page's own sections never reads them (startup module count, test/e2e/perf-budget.js).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const ics = lazy(() => require('./ics'));
 const FEED = lazy(() => require('./feed'));
@@ -1522,7 +1522,7 @@ async function gmailGet(x, session, path) {
 
 // Whether a page lets itself be shown in a frame on the new-tab page, and its title. The new-tab
 // page is a file: page, so X-Frame-Options (any value) and a CSP frame-ancestors directive (any
-// list: even "*" doesn't match file:, as test/widgets.js checks) always refuse it.
+// list: even "*" doesn't match file:, as test/e2e/widgets.js checks) always refuse it.
 async function framing(url, x) {
   const res = await x.raw(url, { max: 65536 });
   const xfo = res.headers.get('x-frame-options');

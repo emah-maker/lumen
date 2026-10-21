@@ -29,15 +29,15 @@ It is opt-in by secret. Without the secrets below, releases are built exactly as
 
 ## What the build does
 
-Order on macOS (`scripts/after-pack.js`, then electron-builder, configured by `scripts/signing.js`):
+Order on macOS (`scripts/release/after-pack.js`, then electron-builder, configured by `scripts/release/signing.js`):
 
 1. **Widevine VMP sign** (afterPack, only if EVS credentials exist). castlabs requires this **before** Apple codesign on macOS; the signature files then become part of the bundle Apple seals.
 2. **Apple codesign** with the Developer ID certificate, hardened runtime on, entitlements from `build/entitlements.mac.plist` (main) and `build/entitlements.mac.inherit.plist` (helpers). Each entitlement is explained in the files.
 3. **Notarize** (electron-builder's `@electron/notarize`, `notarytool`) and **staple** the ticket to the app.
-4. `scripts/after-sign.js` does nothing for a Developer ID build (re-signing would void the notarization).
+4. `scripts/release/after-sign.js` does nothing for a Developer ID build (re-signing would void the notarization).
 5. The zip and dmg are made from the stapled app.
 
-Which path a build takes is decided by `scripts/signing.js`: `node scripts/signing.js` prints it from the environment without showing any value.
+Which path a build takes is decided by `scripts/release/signing.js`: `node scripts/release/signing.js` prints it from the environment without showing any value.
 
 The first release signed this way asks once more for access to the "Lumen Safe Storage" Keychain item (the signing identity changed); after that the answer sticks across updates. In-app updates keep working: the update swaps whole bundles and never touches the signature, and a new bundle signed by the same team is accepted.
 

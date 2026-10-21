@@ -1,5 +1,5 @@
 // A chat's system notification: which tab its click brings forward, and keeping the notification alive until then.
-// Pure logic (main.js tellUser does the windows): test/notify-units.js.
+// Pure logic (main.js tellUser does the windows): test/units/notify-units.js.
 
 // The tab a click goes to, the first of these that still exists:
 //  - an approval notification: the tab the approval is about (where the run was working when it asked);

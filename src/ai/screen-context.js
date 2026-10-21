@@ -1,6 +1,6 @@
 // "Look at this": the screenshot the sidebar attaches to a message that points at what the user is looking at
 // (ai/screen-intent.js decides from the words; the camera button in the composer forces it on or off). Pure functions
-// plus one capture routine whose Electron parts are passed in, so test/screen-context-units.js runs it in plain Node.
+// plus one capture routine whose Electron parts are passed in, so test/units/screen-context-units.js runs it in plain Node.
 //
 // What goes along, per model: a vision model gets the tab's visible viewport as a JPEG (long edge <= 1568 px, quality 70, a
 // few hundred KB) as an image block, with the tab's title, address and any selected text already in the message; a model

@@ -9,7 +9,7 @@
 //   same, for work that must go on such as background tasks). When things are active again, overdue jobs run at once.
 // - memorySample(): one app.getAppMetrics() + system memory read per `ttlMs`, shared by the tab-sleep sweep and the
 //   spare-tab policy (separate 30 s and 60 s samplers before).
-// Everything time- or Electron-related is injected, so it is unit-tested with a fake clock (test/scheduler-units.js).
+// Everything time- or Electron-related is injected, so it is unit-tested with a fake clock (test/units/scheduler-units.js).
 function createScheduler({
   now = Date.now,
   setTimer = setTimeout,

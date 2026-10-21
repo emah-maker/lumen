@@ -2,11 +2,11 @@
 // computer (the keys and CLI sign-ins it holds, the models it is cooling down after a limit, the usage it has
 // counted, the chats it is running). Nothing here asks a network, and nothing secret goes in: the card
 // gets names, states, a model name and a few counts. Pure (no Electron, no settings): main.js hands shape()
-// the raw facts, the page gets the result, and test/aistatus-units.js runs both.
+// the raw facts, the page gets the result, and test/units/aistatus-units.js runs both.
 //
 //   shape(raw, now)   the card's data: { ais, counts, summary, sub, live, liveText }
 //   THRESHOLDS        the card sizes (CSS px of the card's content box) where the page changes its layout;
-//                     newtab.html's @container rules use the same numbers (test/aistatus-units.js checks)
+//                     newtab.html's @container rules use the same numbers (test/units/aistatus-units.js checks)
 //   layoutFor(size)   which layout a content box gets: 'dots' | 'rows' | 'detail', and whether the live strip fits
 (function () {
 'use strict';

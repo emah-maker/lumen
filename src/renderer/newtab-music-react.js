@@ -13,7 +13,7 @@
 //   - The analyser runs only while at least one of them is on (features/music-react.js plan) and the page is shown: hidden (another tab, minimised),
 //     there are no frames, no timer and the loopback is closed. Both off: nothing exists.
 //   - The canvas is decorative: aria-hidden, never takes a click, under the content, and cut away to a tenth behind the content column (text keeps its
-//     contrast: features/music-react.js, test/music-react-units.js).
+//     contrast: features/music-react.js, test/units/music-react-units.js).
 //   - Nothing playing: the dots just drift (a very slow idle) and the cards are still.
 //   - Reduce motion (the setting or the system's) and Performance mode: nothing runs at all.
 //   - Visual effects: Light and software drawing: 40 dots, no clock bounce and no cover pulse, at most 15 frames a second.

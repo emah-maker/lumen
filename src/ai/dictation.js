@@ -3,7 +3,7 @@
 // Google's private speech key; preload/permissions-preload.js hides it from sites for that reason),
 // so the audio goes, once, to the provider chosen here and to nothing else. Nothing is written to disk.
 //
-// Pure: main.js passes the key and the fetch, so test/dictation-units.js runs it without Electron.
+// Pure: main.js passes the key and the fetch, so test/units/dictation-units.js runs it without Electron.
 // Keys stay in the main process; the renderer only learns which provider is used.
 
 const PROVIDERS = ['openai', 'gemini']; // the order "auto" tries them in

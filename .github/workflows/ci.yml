@@ -1,4 +1,4 @@
-# Pull requests and main: lint, then every pure-node unit suite (scripts/test-units.js, 3 at a time). The Electron
+# Pull requests and main: lint, then every pure-node unit suite (scripts/test/test-units.js, 3 at a time). The Electron
 # suites (npm test) need a display and stay local; release.yml runs the same unit script before building.
 name: CI
 
@@ -36,8 +36,8 @@ jobs:
         run: npm run lint
 
       - name: Unit tests
-        run: node scripts/test-units.js --jobs 3
+        run: node scripts/test/test-units.js --jobs 3
 
       # Pure node (no Electron, about a minute): prompt and tool budgets, docs and contracts the unit suites do not cover.
       - name: Acceptance tests
-        run: node scripts/test-acceptance.js
+        run: node scripts/test/test-acceptance.js

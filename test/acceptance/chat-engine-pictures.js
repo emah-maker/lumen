@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: engine-images-inline). Run alone: node scripts/test-acceptance.js chat-engine-pictures
+// ACCEPTANCE (feature: engine-images-inline). Run alone: node scripts/test/test-acceptance.js chat-engine-pictures
 //
 // A picture a CLI engine makes with its OWN tool (Grok Build's image_gen, full access on) is shown in the chat reply, not left as a
 // file address: the real Agent and GrokBuildEngine with the fake CLI (test/acceptance/chat-harness.js). The fake saves a JPEG in

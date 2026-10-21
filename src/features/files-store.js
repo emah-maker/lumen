@@ -3,7 +3,7 @@
 // written is encrypted by the injected encrypt/decrypt (the OS keychain in main, as chat-store.js does).
 //
 // Only what the list shows is kept: the path, the name, the kind, the size, the modified time and when it was opened or pinned.
-// Never a file's contents (an unknown field passed in is dropped, and test/files-store-units.js checks the written text for it).
+// Never a file's contents (an unknown field passed in is dropped, and test/units/files-store-units.js checks the written text for it).
 // At most `cap` entries (500): a new one pushes out the oldest recent one that is not pinned; pins go last.
 //
 //   create({ file, encrypt, decrypt, available, now, cap, fsp, delay })

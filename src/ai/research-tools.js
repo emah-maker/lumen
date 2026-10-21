@@ -1,4 +1,4 @@
-// The AI's research tools, Electron-free so test/research-units.js runs them in plain Node:
+// The AI's research tools, Electron-free so test/units/research-units.js runs them in plain Node:
 //   find_sources    scholarly search + snowballing (ai/scholar.js) with quality labels; results get ids S1, S2, ... per chat
 //   research_board  the chat's source list (ai/research-board.js): add, pin a verified quote, star, remove, list, cite
 // agent.js wires the second one to the chat (settings.research) and to the sidebar panel; find_sources works for every engine.

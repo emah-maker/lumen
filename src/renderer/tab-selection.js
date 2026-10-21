@@ -1,5 +1,5 @@
 // The tab strip's multi-selection rules (Chrome's), as pure functions for clickTab in app.js. A plain script in
-// the UI; test/units.js loads it with require().
+// the UI; test/units/units.js loads it with require().
 // Shift+click selects the run from the anchor (else the active tab) to the clicked tab; Ctrl/Cmd+click toggles
 // one (the last selected tab stays selected); a plain click ends the selection.
 (function (root) {

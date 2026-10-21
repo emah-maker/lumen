@@ -1,7 +1,7 @@
 // [look] Accent colours: the choices, and the whole token set each one gives in light and dark.
 // Pure functions, no DOM, no Electron. Used by settings-backend.js (validates the setting, hands every page its shades),
 // features/accent-css.js (the CSS injected into Lumen's own pages), renderer/settings.js (the swatches), renderer/newtab.js
-// and the unit tests (test/theme-colors-units.js, and test/ui-consistency.js on the running pages).
+// and the unit tests (test/units/theme-colors-units.js, and test/e2e/ui-consistency.js on the running pages).
 //
 // One colour in, six tokens out, per mode, all computed in OKLCH (perceptual lightness L, chroma C, hue h), so a new colour,
 // a custom one or one taken from the wallpaper cannot ship a pair that fails the contrast rules:

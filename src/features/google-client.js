@@ -6,7 +6,7 @@
 // The one place it is read from, in order:
 //   1. LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET in the environment (development, or a
 //      self-built copy),
-//   2. features/google-client.json, written by scripts/build.js from the same two variables at build
+//   2. features/google-client.json, written by scripts/build/build.js from the same two variables at build
 //      time (the release workflow passes them from repository secrets) and never committed.
 // With neither, there is no built-in client and Settings shows the paste-your-own-client flow as
 // before. A client the user pasted (Settings > Gmail > Advanced) always wins over the built-in one.
