@@ -341,13 +341,26 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
 // the full-size bitmap; nativeImage.resize() of it then ran 14 to 45 ms on the main thread per screenshot, toJPEG 4 to 13 ms more.
 // Here the main process receives only the finished JPEG. One at a time across all pages, with the event loop let through in between, so
 // several agents' screenshots do not stack their readback and encode work into one stall; and in the page's own queue (see oneAtATime).
+// But a page that does not answer (a heavy page, a script that runs for seconds, an alert()) must not stop the screenshots of every other tab: the
+// turn is held only for SLOT_MS, a healthy capture's time, and then the next tab's capture goes on beside the slow one (before, one chat's
+// locked-up tab made every other chat's screenshot wait for it, and time out).
+const SLOT_MS = 250;
 let captureChain = Promise.resolve();
 let capturing = 0; // screenshots queued or being taken
 const idleWaiters = new Set();
 function captureJpeg(wc, opts) {
   capturing++;
-  const run = captureChain.then(() => oneAtATime(wc, () => captureJpegNow(wc, opts)));
-  captureChain = run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve))).then(() => { if (--capturing === 0) for (const done of [...idleWaiters]) done(); });
+  let free;
+  const slot = new Promise((resolve) => { free = resolve; }); // the global turn: ends when this capture is done, or after SLOT_MS
+  const run = captureChain.then(() => {
+    const timer = setTimeout(free, SLOT_MS);
+    const taken = oneAtATime(wc, () => captureJpegNow(wc, opts));
+    const done = () => { clearTimeout(timer); free(); };
+    taken.then(done, done);
+    return taken;
+  });
+  captureChain = slot.then(() => new Promise((resolve) => setImmediate(resolve)));
+  run.then(() => {}, () => {}).then(() => new Promise((resolve) => setImmediate(resolve))).then(() => { if (--capturing === 0) for (const done of [...idleWaiters]) done(); });
   return run;
 }
 // Resolves once no screenshot is being taken, or after maxMs. A screenshot's result lands on the main process as a ~9 ms task; a step of making an
