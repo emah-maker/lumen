@@ -5341,6 +5341,7 @@ function popupFailPage(wc) {
 // [ai manners] popup windows an AI tab's page opened (window.open with a size, a sign-in popup): window -> { chatId, runId, touched }.
 // They are not tabs, but they are the AI's too: aiTabsClose closes them with the run's tabs, unless the user focused one or typed in it.
 const aiPopups = new Map();
+const passkeyPopups = new WeakMap(); // a popup's page -> its window, for popups the user's own tabs opened (never the AI's, never a research session's)
 function popupWindow(options, noIdentity = false, partition = null, url = null, openerTab = null, behind = false, aiBy = null) {
   behind = behind || manners.isAiTab(openerTab); // [ai manners] a window an AI tab's page opened comes up behind the user's window, never over it
   const child = new BrowserWindow({ ...windowOrder.independent(options), ...popupWindowOptions(), ...(behind ? { show: false } : {}), ...(options?.webContents ? { webContents: options.webContents } : {}), webPreferences: { ...options?.webPreferences, ...popupWindowOptions().webPreferences, ...(partition ? { partition } : {}) } });
@@ -5354,7 +5355,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
     child.on('focus', () => { if (Date.now() > settle) mark.touched = true; });
     wc.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && !manners.isAgentInput(wc)) mark.touched = true; });
     child.once('closed', () => aiPopups.delete(child));
-  }
+  } else if (!partition) passkeyPopups.set(wc, child); // the user's own sign-in popup may use a passkey (passkeyContext)
   popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc); // before anything loads
   if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
@@ -9772,6 +9773,10 @@ function passkeyContext(wc) {
   }
   const p = privateWindows.tabWindow(wc);
   if (p) return front(p.win, p.active) ? { ok: true, win: p.win, inPrivate: true } : { ok: false, reason: 'not-front' };
+  // A sign-in popup (window.open: "Sign in with Microsoft / Google", an SSO provider) is where many passkey prompts
+  // come from; it was refused as "not a tab". The user's own popup, focused, may ask; Windows Security belongs to it.
+  const popup = passkeyPopups.get(wc);
+  if (popup && !popup.isDestroyed() && !aiPopups.has(popup)) return front(popup, true) ? { ok: true, win: popup, inPrivate: false } : { ok: false, reason: 'not-front' };
   return { ok: false, reason: 'not-a-tab' };
 }
 const passkeys = require('./features/passkeys').createPasskeys({
@@ -12630,6 +12635,7 @@ app.whenReady().then(async () => {
   setTimeout(() => instance.fixShortcutIcons(app, shell, undefined, APP_ID), 10000).unref?.(); // (~150 .lnk files read: never before the first window)
   instance.fixAppName(app, APP_ID); // Explorer and notifications say Lumen, not Electron
   instance.fixAssociationIconsAtStartup(app); // PDF, HTML and SVG files show Lumen's icon, not Electron's (the exe's own)
+  setTimeout(() => setup.repairRegistration().catch(() => {}), 8000).unref?.(); // the default-browser registration names this Lumen.exe (links, SSO sign-ins)
   aiAgents.start({ after: firstTabLoaded }); // MCP server, CDP automation (if on), Claude Code detection (once the first tab has loaded)
   settingsBackend.start(ipcMain); // [settings] theme, spell check, proxy, request headers, prefs:* IPC
   setupPermissions();

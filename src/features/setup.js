@@ -14,6 +14,9 @@ const PROG_ID = 'LumenHTML';
 // The icon for Lumen's registry entries: the shipped .ico for the installed exe, the exe itself for a dev run.
 const registrationIcon = (exe) => (instance.isInstalledExe() ? instance.appIcon() : `${exe},0`);
 const CLIENT_KEY = 'Software\\Clients\\StartMenuInternet\\Lumen';
+// Only Lumen itself may be registered: node.exe or a stock electron.exe (a script or test that got this far) would
+// become the program Windows hands every link to. One did: links, and a terminal's SSO sign-in, went to node.exe.
+const registrableExe = (exe) => !/^(node|electron)(\.exe)?$/i.test(path.basename(String(exe || '')));
 
 function reg(args) {
   return new Promise((resolve) => execFile('reg', args, { windowsHide: true, timeout: 5000 }, (err, stdout) => resolve(err ? null : String(stdout))));
@@ -41,6 +44,7 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
   };
   async function registerOnWindows() {
     const exe = process.execPath;
+    if (!registrableExe(exe)) return false;
     // Lumen.exe's own icon is Electron's (the exe stays untouched, see features/instance.js): name the shipped .ico.
     const icon = registrationIcon(exe);
     const open = `${launchCommand()} "%1"`;
@@ -112,6 +116,25 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
     return { ok: true, isDefault: false, opened: process.platform === 'darwin' ? 'system-prompt' : undefined };
   }
 
+  // Startup, installed Lumen.exe only: a registration that names another program (an older install folder, or a dev
+  // or test run that registered node.exe) sends every link Windows opens "in Lumen" there instead, and Default apps
+  // shows that program's icon. Rewritten to this exe; a registration the user never made is not created.
+  async function repairRegistration() {
+    if (process.platform !== 'win32' || !app.isPackaged || !instance.isInstalledExe() || !registrableExe(process.execPath)) return false;
+    const read = async (key) => instance.regDefault(await reg(['query', key, '/ve']));
+    const client = await read(`HKCU\\${CLIENT_KEY}\\shell\\open\\command`);
+    if (client === null) return false;
+    const icon = registrationIcon(process.execPath);
+    const current = client === launchCommand()
+      && (await read(`HKCU\\Software\\Classes\\${PROG_ID}\\shell\\open\\command`)) === `${launchCommand()} "%1"`
+      && (await read(`HKCU\\${CLIENT_KEY}\\DefaultIcon`)) === icon
+      && (await read(`HKCU\\Software\\Classes\\${PROG_ID}\\DefaultIcon`)) === icon;
+    if (current) return false;
+    const done = await registerOnWindows();
+    if (done) instance.notifyAssociationsChanged(); // (Default apps and Explorer redraw the icon)
+    return done;
+  }
+
   // Import for the welcome and Settings: the result comes back to the page (no native dialog).
   async function importFrom(id) {
     await new Promise((r) => setImmediate(r)); // (the button's "Importing…" is drawn first)
@@ -128,7 +151,7 @@ function create({ app, shell, readSettings, writeSettings, importer, importBrows
     return { welcome: welcomePending(), browsers: importer.detectBrowsers(), isDefault: await isDefault(), platform: process.platform, devBuild: Boolean(process.defaultApp) };
   }
 
-  return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, importFrom, state };
+  return { welcomePending, welcomeDone, isDefault, lastDefault: () => lastDefault, makeDefault, repairRegistration, importFrom, state };
 }
 
-module.exports = { create, PROG_ID, progIdIs, registrationIcon };
+module.exports = { create, PROG_ID, progIdIs, registrationIcon, registrableExe };
