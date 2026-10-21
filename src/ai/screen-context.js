@@ -84,11 +84,12 @@ function sensitiveAddress(url) {
 //   forced: the button was lit; asked: the button or the words asked for it. Either way a refusal is said (refusal()); no pointer, no refusal.
 //   local: { url, name } when the tab shows a file on this computer; ask: true when the user has to say yes first (the card).
 function plan({ text, mode, hasSelection = false, lastTurns = [], url, aiOff = false, privateWindow = false, pageContext = true, vision = true, hasTab = true, shared = false } = {}) {
-  const said = () => mode === 'on' || (mode !== 'off' && pageContext !== false && intent.wantsScreen(text, { hasSelection, lastTurns }).screen);
+  const page = classify(url);
+  const hasPage = page.kind === 'web' || page.kind === 'local'; // a page or file is in front: "solve number 4" is about it (screen-intent.js)
+  const said = () => mode === 'on' || (mode !== 'off' && pageContext !== false && intent.wantsScreen(text, { hasSelection, lastTurns, hasPage }).screen);
   const no = (why, extra = {}, say = false) => ({ capture: false, how: null, why, forced: mode === 'on', asked: say ? said() : mode === 'on', ...extra }); // forced / asked: so a refusal is said
   if (privateWindow) return no('private');
   if (!hasTab) return no('no-tab');
-  const page = classify(url);
   if (page.kind === 'none') return no('no-tab');
   if (aiOff) return no(page.kind === 'local' ? 'local-off' : 'ai-off', page.kind === 'local' ? { local: { url: page.address, name: page.name } } : {}, page.kind === 'local'); // (a site with AI off: the words alone say nothing; the button does)
   if (page.kind === 'new-tab') return no('new-tab', {}, true);
@@ -99,7 +100,7 @@ function plan({ text, mode, hasSelection = false, lastTurns = [], url, aiOff = f
   if (mode === 'on') return { capture: true, how, why: 'button', forced: true, asked: true, ...local };
   if (pageContext === false) return no('setting');
   if (page.kind === 'web' && sensitiveAddress(page.address || url)) return no('sensitive'); // (a file the user opened is theirs to ask about, whatever its folder is called)
-  const heard = intent.wantsScreen(text, { hasSelection, lastTurns });
+  const heard = intent.wantsScreen(text, { hasSelection, lastTurns, hasPage });
   return heard.screen ? { capture: true, how, why: `words: ${heard.reason}`, forced: false, asked: true, ...local } : no('no-intent', { reason: heard.reason });
 }
 
