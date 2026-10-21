@@ -14,7 +14,7 @@ const fs = require('fs');
 //   - never uses a shell (shell: false; a shell is one more console program),
 //   - never inherits stdio (a missing stdio is 'pipe'; 'inherit' becomes 'ignore'),
 //   - lets callers pass everything else (cwd, env, detached, timeout, windowsVerbatimArguments).
-// test/hidden-spawn-units.js fails if any other file in src/ (bar a short, justified allowlist) touches child_process.
+// test/units/hidden-spawn-units.js fails if any other file in src/ (bar a short, justified allowlist) touches child_process.
 // child_process is required on first use: nothing here costs startup time.
 let cp = null;
 const real = () => cp || (cp = require('child_process'));

@@ -13,7 +13,7 @@
 // captured or filled here lives only in these closures and in main.js's memory.
 //
 // The rules (pickCredentials, fillTargets) are plain functions over duck-typed field descriptions so
-// test/password-units.js runs them in Node; they are stringified into the page scripts, so they use
+// test/units/password-units.js runs them in Node; they are stringified into the page scripts, so they use
 // nothing from outside themselves.
 
 const PASSWORD_WORLD = 1077; // agent.js uses 1001 (CLAUDE_WORLD); main.js has its own for page text and skills

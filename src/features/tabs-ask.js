@@ -1,5 +1,5 @@
 // Ask across open tabs: the rules and the text that goes to the model, kept free of Electron so
-// test/units.js can run them. Used by agent.js (read_tabs, and the tabs a message attaches) and main.js.
+// test/units/units.js can run them. Used by agent.js (read_tabs, and the tabs a message attaches) and main.js.
 //  - which tabs may be read (web or file pages of the same window; never Lumen's own pages, a site
 //    with AI off, or a tab of another window or of a private window),
 //  - how the character budget is split (per-tab cap, and a total split evenly),

@@ -141,7 +141,7 @@ jobs:
       # Offline tests only (no API keys, no live sites): a release never ships with these failing. (The unit suites run in the units job.)
       - name: Test
         shell: bash
-        run: node test/models.js && node test/adhd.js && node test/pagecontext.js && node test/providers.js && node test/import.js
+        run: node test/e2e/models.js && node test/e2e/adhd.js && node test/e2e/pagecontext.js && node test/e2e/providers.js && node test/e2e/import.js
 
       # Widevine VMP signing (scripts/release/after-pack.js) needs a free castlabs EVS account. Add the
       # repository secrets EVS_ACCOUNT_NAME and EVS_PASSWD to enable it; without them the build is

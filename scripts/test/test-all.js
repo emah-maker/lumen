@@ -1,7 +1,7 @@
 // `npm test`: runs the core suites one after another (never in parallel: several of them move focus
 // between windows) and keeps going past a failure, then prints which suites failed.
 // `npm test -- tabstrip groups` runs just those. Suites that need the network, an API key or a
-// signed-in CLI (claudecode, drm, measure, topics-bench, …) stay manual: `node test/<name>.js`.
+// signed-in CLI (claudecode, drm, measure, topics-bench, …) stay manual: `node test/e2e/<name>.js`.
 // `LUMEN_TEST_BACKGROUND=1 npm test`: test windows are invisible and never take focus (main.js), so
 // a run doesn't get in the way of a Lumen you're using; checks that need OS focus print SKIP.
 const { spawnSync } = require('child_process');
@@ -28,14 +28,14 @@ const TIMEOUT_MS = Number(process.env.LUMEN_SUITE_TIMEOUT_MS) || 600000;
 
 // Each Electron suite runs under the machine-wide lock (scripts/test/e2e-lock.js) so parallel agents never overlap; pure-node suites need none.
 const { withLockSync } = require('./e2e-lock');
-const { isPlainSuite } = require('../release/release-lib');
+const { isPlainSuite, suiteFile } = require('../release/release-lib');
 
 const results = [];
 for (const name of picked.length ? picked : SUITES) {
   console.log(`\n=== ${name}`);
   const started = Date.now();
   const tmp = suiteTmp(name);
-  const go = () => spawnSync(process.execPath, [path.join(__dirname, '..', '..', 'test', `${name}.js`)], { stdio: 'inherit', env: tmp.env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const go = () => spawnSync(process.execPath, [path.join(__dirname, '..', '..', suiteFile(name))], { stdio: 'inherit', env: tmp.env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
   const run = isPlainSuite(name) ? go() : withLockSync(go, { owner: 'test-all' });
   tmp.done();
   const timedOut = run.error && run.error.code === 'ETIMEDOUT';

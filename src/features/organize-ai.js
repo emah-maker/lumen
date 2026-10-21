@@ -4,7 +4,7 @@
 // summary per group (top words, a few titles, hosts) plus the leftover tabs, in a compact format.
 // When the local result is already clear, or the same tabs were organized before, no request is made.
 //
-// Pure logic: the tab list, the model and the clock are passed in, so test/units.js and
+// Pure logic: the tab list, the model and the clock are passed in, so test/units/units.js and
 // scripts/measure/measure-organize.js run it against a fake model.
 const crypto = require('crypto');
 const tg = require('../browser/tab-groups');

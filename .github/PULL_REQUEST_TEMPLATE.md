@@ -4,7 +4,7 @@
 
 ## How it was tested
 
-<!-- The suites you ran (node test/<name>.js) and anything checked by hand. -->
+<!-- The suites you ran (node test/e2e/<name>.js) and anything checked by hand. -->
 
 - [ ] Ran the affected test suites one at a time
 - [ ] Added or updated a test for this change

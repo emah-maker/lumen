@@ -13,7 +13,7 @@
 // or the user removes them. Each file is capped at MAX_FILE_BYTES. A chat's files go when the chat is deleted;
 // folders of chats that are gone, and old pending files, are swept at start-up.
 //
-// Also here, as pure functions so test/upload-files-units.js runs them in plain Node: matching a file against an
+// Also here, as pure functions so test/units/upload-files-units.js runs them in plain Node: matching a file against an
 // input's `accept`, the single-file rule, what the model is told about attached files, and the element-finding
 // logic that runs in the page (resolveUploadTarget).
 

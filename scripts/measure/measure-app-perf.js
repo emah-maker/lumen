@@ -24,7 +24,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const path = require('path');
-const { seed } = require('../../test/_chat-seed');
+const { seed } = require('../../test/helpers/_chat-seed');
 const { buildCrx } = require('../../test/fixtures/extensions/build-crx');
 
 const root = path.join(__dirname, '..', '..');

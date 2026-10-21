@@ -1,4 +1,4 @@
-// Ranking for the command bar (Ctrl+K, renderer/command-bar.js). Plain script in the UI; test/command-bar-units.js loads it with require().
+// Ranking for the command bar (Ctrl+K, renderer/command-bar.js). Plain script in the UI; test/units/command-bar-units.js loads it with require().
 // It reuses tab search's word matcher (tab-search-match.js): a whole-word start beats a substring, which beats letters in order.
 //
 // An item is { id, group, title, keywords?, url?, ... } and group is one of GROUPS. `search` returns the rows to draw, in order, each with

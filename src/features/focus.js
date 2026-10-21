@@ -8,7 +8,7 @@
 // Blocking uses the same place Safe Browsing does: main.js's main-frame gate (session.webRequest.onBeforeRequest, for pages only) asks
 // gate() first. gate() cancels the load; the tab's did-fail-load then asks blockPage() for the block page's address (the Safe Browsing
 // warning's way). Nothing here loads at start-up unless a focus session or a schedule exists (main.js startFocus); the pure helpers
-// (matching, schedules, phrases) are exported for test/focus-units.js.
+// (matching, schedules, phrases) are exported for test/units/focus-units.js.
 //
 // Schedules ("weekdays 7-9 pm") reuse routines.js's calendar math: a schedule's start is the routine rule { weekly, days, time }, and it
 // stays on for its length. Everything time-, disk- and Electron-related is injected into create().

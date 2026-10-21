@@ -1,5 +1,5 @@
 // The Meeting Helper panel's code and styles (meeting.js, meeting.css) load the first time it is opened, from the ⋯ menu
-// or Mod+Enter: they are not in the startup bundle (test/perf-budget.js holds the browser UI to 950 KB).
+// or Mod+Enter: they are not in the startup bundle (test/e2e/perf-budget.js holds the browser UI to 950 KB).
 (() => {
   const api = window.assistant?.meeting;
   const button = document.getElementById('meeting-btn');

@@ -1,6 +1,6 @@
 // `npm run test:units`: every pure-node suite (no window, no network, no API key), one child process
 // each, with a per-suite timeout. CI (ci.yml, release.yml) runs this, so a new
-// test/*-units.js file is picked up without editing a list. Exits non-zero if any suite fails.
+// test/units/*-units.js file is picked up without editing a list. Exits non-zero if any suite fails.
 // `node scripts/test/test-units.js foo-units` runs just the named suites.
 // `--jobs N` (or LUMEN_UNIT_JOBS=N) runs N suites at a time, each one's output printed in one block when it ends;
 // the default is one after another with the output going straight through.
@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { suiteTmp } = require('./test-tmp'); // each suite gets its own TEMP folder, removed after it
 
-const TEST_DIR = path.join(__dirname, '..', '..', 'test');
+const TEST_DIR = path.join(__dirname, '..', '..', 'test', 'units');
 const TIMEOUT_MS = Number(process.env.LUMEN_UNIT_TIMEOUT_MS) || 120000;
 
 // Suites that match the globs below or are named in EXTRA but must not run here.

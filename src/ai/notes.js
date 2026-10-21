@@ -1,5 +1,5 @@
 // Quick notes: a small notepad kept on this computer (sidebar → More → Notes), and the `notes` tool the AI reads and appends with.
-// Electron-free, so test/notes-units.js runs it in plain Node; main.js gives it the profile folder.
+// Electron-free, so test/units/notes-units.js runs it in plain Node; main.js gives it the profile folder.
 //
 // One file, notes.json: { v: 1, current, notes: [{ id, text, created, updated }] }. A note is plain text (Markdown is drawn by the panel);
 // its title is its first line. Every change is written to a temporary file and renamed over the real one, so a crash or a power cut never

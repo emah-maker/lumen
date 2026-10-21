@@ -6,7 +6,7 @@
 //   - an edit asks first (a card per document for this chat; every time once the AI has read content from elsewhere), saving over a file or to a
 //     new path always shows the path, hands-off mode refuses all of it, text from a document is untrusted data, nothing is ever deleted and no
 //     document is closed.
-// Everything with a side effect comes in through `deps`, so test/word-units.js drives it with a stand-in helper in plain Node.
+// Everything with a side effect comes in through `deps`, so test/units/word-units.js drives it with a stand-in helper in plain Node.
 'use strict';
 
 const spec = require('./spec');

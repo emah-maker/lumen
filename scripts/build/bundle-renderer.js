@@ -2,7 +2,7 @@
 // joined into ui.bundle.js and ui.bundle.css. The Settings page gets the same: settings.html from settings.src.html, joined into
 // settings.bundle.js and settings.bundle.css (it took 180 ms to load 16 scripts and 5 stylesheets one by one). One file each loads far faster than thirty-eight from disk
 // (about 100 ms off the window's first tab showing), and the script runs deferred, after the markup has painted.
-// The output is committed; test/units.js checks it still matches this script's output.
+// The output is committed; test/units/units.js checks it still matches this script's output.
 // Edit index.src.html and the files it lists, then run:  node scripts/build/bundle-renderer.js
 const fs = require('fs');
 const path = require('path');

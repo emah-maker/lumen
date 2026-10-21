@@ -16,10 +16,10 @@
 // (idle = Windows had parked it) and how many setVisible calls a switch made, then writes the full export next to where you ran it.
 // Read it like this: if A's first-frame time is clearly higher than B's and C's, the parked renderer was the lag, and the default fixes it;
 // if all three are alike, the lag is somewhere else (the export's "gpuFeatureStatus" and "byIdleBefore" say where to look next).
-require('../../test/_tmp-cleanup');
+require('../../test/helpers/_tmp-cleanup');
 const fs = require('fs');
 const path = require('path');
-const rig = require('../../test/_tab-switch-rig');
+const rig = require('../../test/helpers/_tab-switch-rig');
 
 const arg = (name, dflt) => { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? Number(a.split('=')[1]) : dflt; };
 if (!process.argv.includes('--visible')) {

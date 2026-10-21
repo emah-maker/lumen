@@ -292,7 +292,7 @@ What one call costs on real pages (tokens ≈ characters / 4, measured with Lume
 | DuckDuckGo results | ~2,700 | ~760 | ~21 | ~360 |
 | Long article: World War II | ~7,600 | ~1,500 | ~21 | ~180 |
 
-Compact is about 4–5× smaller than a full read. The big savings come from not reading again: `since_last` after an action, `find` for one thing, and `batch` for several steps in one call. `node test/measure.js` runs whole tasks both ways.
+Compact is about 4–5× smaller than a full read. The big savings come from not reading again: `since_last` after an action, `find` for one thing, and `batch` for several steps in one call. `node test/e2e/measure.js` runs whole tasks both ways.
 
 ## Privacy and security
 
@@ -351,7 +351,7 @@ python -m castlabs_evs.account signup      # or: python -m castlabs_evs.account 
 
 **Headless / CI:** set `EVS_ACCOUNT_NAME` and `EVS_PASSWD` instead. The release workflow does this on the Windows and macOS jobs when the repository secrets of the same names exist; without them it builds unsigned.
 
-To check DRM playback manually (not part of `npm test`): `node test/drm.js`.
+To check DRM playback manually (not part of `npm test`): `node test/e2e/drm.js`.
 
 ### Screenshots and GIFs
 
@@ -411,7 +411,7 @@ src/                    the app (package.json "main": src/main.js)
 ├── assets/             app icons
 └── vendor/             third-party code shipped as is (Readability)
 mcp.js                  the MCP bridge's stable address (<app>/mcp.js in agents' configs); it starts src/automation/mcp.js
-test/                   Playwright suites, one file per area, and units.js / *-units.js / cli-json.js pure-logic checks (`npm run test:units`)
+test/                   units/ (pure-Node suites, `npm run test:units`), e2e/ (Playwright suites, one file per area), helpers/ (shared rigs, fixtures builders), fixtures/, acceptance/
 scripts/                build/ (build, bundle, check), release/ (release, land, signing), test/ (test-all, test-units), measure/ (measure-*, profile-*, capture-media)
 docs/                   reference pages (below) and docs/media (the README's screenshots, not shipped)
 site/                   the website on GitHub Pages; its docs pages render README.md, CHANGELOG.md and docs/*.md

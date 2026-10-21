@@ -13,7 +13,7 @@
 //
 // The page scripts run in Lumen's isolated world (agent.js runScript), so the page cannot see or change the
 // saved playback state. They are plain functions, serialized with toString(), so they are testable with a fake
-// video (test/video-units.js) and must not use anything outside themselves.
+// video (test/units/video-units.js) and must not use anything outside themselves.
 //
 // The pixels never go anywhere but back to the AI that asked (the tool result).
 

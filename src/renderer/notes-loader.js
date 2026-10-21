@@ -1,5 +1,5 @@
 // The Notes panel's code and styles (notes.js, notes.css) load the first time it is opened, from the ⋯ menu: they are not in the startup
-// bundle (test/perf-budget.js holds the browser UI to its size).
+// bundle (test/e2e/perf-budget.js holds the browser UI to its size).
 (() => {
   const api = window.assistant?.notes;
   const button = document.getElementById('notes-btn');

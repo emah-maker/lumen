@@ -1,5 +1,5 @@
 // The checks and conversions of Lumen's WebAuthn (passkeys, Windows Hello, security keys) that need no Electron and
-// no Windows: pure, and covered by test/webauthn-core-units.js.
+// no Windows: pure, and covered by test/units/webauthn-core-units.js.
 //
 //   checkOrigin / checkRpId   who may ask for which relying party (the security boundary; features/passkeys.js
 //                             feeds them the frame's real origin, never one a page reports)

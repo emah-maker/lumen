@@ -6,7 +6,7 @@
 //     paragraphs around the last change, drawn by the chat as a small page, updated after every change;
 //   - at the end, a last picture (or page) and "completed".
 // The events are the desktop card's own ({ type: 'desktop_card', surface: 'app', ... }) with word: true, so the chat draws them with the same card.
-// Plain functions with injected deps (test/word-units.js drives it with a fake helper and a fake clock). Loaded with the word tool, never at startup.
+// Plain functions with injected deps (test/units/word-units.js drives it with a fake helper and a fake clock). Loaded with the word tool, never at startup.
 'use strict';
 
 const { createLive, widthFor } = require('../desktop/live');

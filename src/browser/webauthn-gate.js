@@ -13,7 +13,7 @@
 //   forever on a dead prompt, the way FedCM's IdentityCredential is removed in preload/page-dialogs-preload.js.
 //
 // Both functions are serialized into the page's main world (contextBridge.executeInMainWorld), so each must be
-// self-contained. Pure (no Electron): test/webauthn-gate-units.js. preload/webauthn-preload.js is generated from this
+// self-contained. Pure (no Electron): test/units/webauthn-gate-units.js. preload/webauthn-preload.js is generated from this
 // file by scripts/build/bundle-webauthn-preload.js (a sandboxed preload can only require('electron')).
 /* global window */ // serialized into pages and run there
 

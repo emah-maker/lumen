@@ -1,5 +1,5 @@
 {
- "description": "Realistic mixed tab sessions for the topic grouping benchmark (test/topics-realistic.js). group: what a person would file the tab under (null = should stay loose). text: the meta description / first heading main.js reads after load. names: per group, a regex source a good name should match.",
+ "description": "Realistic mixed tab sessions for the topic grouping benchmark (test/e2e/topics-realistic.js). group: what a person would file the tab under (null = should stay loose). text: the meta description / first heading main.js reads after load. names: per group, a regex source a good name should match.",
  "sessions": [
   {
    "name": "trip: two weeks in Japan (many domains)",

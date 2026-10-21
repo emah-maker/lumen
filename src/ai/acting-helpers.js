@@ -1,6 +1,6 @@
 // Acting helpers for the sidebar AI's `parallel_tasks` tool: 1-3 independent jobs that click, type and fill forms side by side,
 // each in a background tab of its own and as its own small model loop (subagents.js runHelper) on a cheaper model of the same
-// provider. Electron-free (the model call, the tools and the tabs are injected), so test/acting-helpers-units.js covers it in plain
+// provider. Electron-free (the model call, the tools and the tabs are injected), so test/units/acting-helpers-units.js covers it in plain
 // Node. agent.js wires it in (Agent.parallelTasks): the helper tabs, site approvals, usage and the helper cards in the chat.
 //
 // Off by default (Settings > AI and agents > "Let helpers act in tabs", actingHelpers) and offered to the API engines only: the CLI

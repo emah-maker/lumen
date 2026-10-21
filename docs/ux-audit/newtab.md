@@ -29,7 +29,7 @@ Status: FIXED here (round 1, or round 2 for the items that were left for later).
 
 5. **The tip's dismiss x is about 15 px wide. FIXED.** Now at least 24x24.
 
-6. **Gmail's button is announced "Sign in to Gmail for Gmail". FIXED (round 2).** The label is now "Sign in to Gmail", with the card's own title in brackets only when it differs from "Gmail" (so two Gmail cards stay apart). Pinned in `test/gmail-ui.js` and `test/newtab-states-ui.js`.
+6. **Gmail's button is announced "Sign in to Gmail for Gmail". FIXED (round 2).** The label is now "Sign in to Gmail", with the card's own title in brackets only when it differs from "Gmail" (so two Gmail cards stay apart). Pinned in `test/e2e/gmail-ui.js` and `test/e2e/newtab-states-ui.js`.
 
 7. **"Couldn't update" followed by "Couldn't connect. Check your internet connection." repeats itself. FIXED (round 2).** Presentation only (`request()` and `freshFetch` are untouched): a message that already starts "Couldn't" or "Can't" is shown as the card's heading on its own; other failures keep "Couldn't update" above the message.
 
@@ -57,6 +57,6 @@ Status: FIXED here (round 1, or round 2 for the items that were left for later).
 
 ## Tests
 
-Round 2 added checks to `test/newtab-states-ui.js` (Gmail label, one clear error line, greeting hours, Favorites hint, Ask AI setup prompt, Add widget outside Edit layout with groups, filter and the Todoist note, 24 px targets), `test/widget-edit-units.js` (grouping, filter, setup notes) and updated `test/home.js`, `test/widgets.js` and `test/gmail-ui.js`.
+Round 2 added checks to `test/e2e/newtab-states-ui.js` (Gmail label, one clear error line, greeting hours, Favorites hint, Ask AI setup prompt, Add widget outside Edit layout with groups, filter and the Todoist note, 24 px targets), `test/units/widget-edit-units.js` (grouping, filter, setup notes) and updated `test/e2e/home.js`, `test/e2e/widgets.js` and `test/e2e/gmail-ui.js`.
 
-`test/newtab-states-ui.js` (added to `scripts/test/test-all.js`): needs-setup heading and single Open Settings button for Todoist and GitHub, no "Updated" under Gmail's sign-in, Try again shows "Trying...", the edit tip is short, steps aside for the list and returns, and the x is 24 px.
+`test/e2e/newtab-states-ui.js` (added to `scripts/test/test-all.js`): needs-setup heading and single Open Settings button for Todoist and GitHub, no "Updated" under Gmail's sign-in, Try again shows "Trying...", the edit tip is short, steps aside for the list and returns, and the x is 24 px.

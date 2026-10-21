@@ -1,6 +1,6 @@
 // Pure helpers behind scripts/release/land.js, scripts/release/release.js and the git merge drivers (scripts/release/merge-driver.js): the CHANGELOG and
 // test-all.js merges, the CHANGELOG section cut, the version bump, and deriving the release-check suites. No I/O, so
-// test/release-tooling-units.js covers them all in plain node.
+// test/units/release-tooling-units.js covers them all in plain node.
 
 const toLf = (s) => s.replace(/\r\n/g, '\n');
 const nlOf = (s) => (s.includes('\r\n') ? '\r\n' : '\n');
@@ -227,10 +227,12 @@ function bumpVersion(current, spec) {
 
 // Suites that need no window: scripts/test/test-units.js runs them (every *-units.js plus these).
 const isPlainSuite = (name) => name === 'units' || name === 'cli-json' || name.endsWith('-units');
+// Where a suite's file lives: pure-node suites in test/units/, the Electron ones in test/e2e/ (shared modules are in test/helpers/).
+const suiteFile = (name) => `test/${isPlainSuite(name) ? 'units' : 'e2e'}/${name}.js`;
 
-// deriveChecks({ suites, files }): suites is the list from scripts/test/test-all.js, files the names in test/ (without .js).
+// deriveChecks({ suites, files }): suites is the list from scripts/test/test-all.js, files the names in test/units/ and test/e2e/ (without .js).
 //  electron: the core suites that launch Lumen, in test-all order with perf-budget last (it measures a warm disk cache);
-//  units: true when the pure-node suites exist (they all run through `npm run test:units`, which finds them in test/);
+//  units: true when the pure-node suites exist (they all run through `npm run test:units`, which finds them in test/units/);
 //  missing: named in test-all.js but with no file; manual: test files outside test-all.js that need a window, the network or a key.
 function deriveChecks({ suites, files }) {
   const have = new Set(files);
@@ -477,7 +479,7 @@ function selectSuites({ changed, electron, sources, core = CORE_SUITES }) {
   const full = files.some((f) => /^(package(-lock)?\.json|scripts\/(build|bundle)|electron-builder|\.github\/)/.test(f));
   for (const f of files) {
     const stem = stemOf(f);
-    if (/^test\/[^/]+\.js$/.test(f)) add(f.slice(5, -3), `changed: ${f}`);
+    if (/^test\/(units|e2e)\/[^/]+\.js$/.test(f)) add(f.replace(/^.*\//, '').slice(0, -3), `changed: ${f}`);
     if (!/^src\//.test(f) || /bundle|\.html$|\.json$/.test(f)) continue;
     const mod = f.replace(/^src\//, '').replace(/\.[^.]+$/, '');
     for (const name of electron) {
@@ -552,5 +554,5 @@ module.exports = {
   parseChangelog, mergeChangelog, cutChangelog, changelogSection,
   readSuites, mergeSuiteList, splitSuiteFile,
   parseVersion, compareVersions, bumpVersion,
-  isPlainSuite, deriveChecks, procsUnder,
+  isPlainSuite, suiteFile, deriveChecks, procsUnder,
 };

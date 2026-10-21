@@ -1,6 +1,6 @@
 // Builds src/preload/webauthn-preload.js from src/browser/webauthn-gate.js. The preload is registered on every tab
 // session as a 'frame' preload and is sandboxed, so it can only require('electron'): the two page-world functions are
-// copied into it as source. The output is committed; test/webauthn-gate-units.js checks it still matches this
+// copied into it as source. The output is committed; test/units/webauthn-gate-units.js checks it still matches this
 // script's output. Run after changing webauthn-gate.js:  node scripts/build/bundle-webauthn-preload.js
 const fs = require('fs');
 const path = require('path');

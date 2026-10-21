@@ -1,8 +1,8 @@
 // Scores the local organizer against every labelled session: test/fixtures/organize-eval.js (this round's
-// set) and test/topics-sessions.js (the older one). Pairwise precision / recall / F1, tabs wrongly grouped
+// set) and test/helpers/topics-sessions.js (the older one). Pairwise precision / recall / F1, tabs wrongly grouped
 // that should stay loose, and group names that match. Pure Node.
 //   node scripts/measure/eval-organize.js [--verbose]
-const run = require('../../test/topics-sessions-run');
+const run = require('../../test/helpers/topics-sessions-run');
 const fixtures = require('../../test/fixtures/organize-eval');
 const { sessions } = fixtures;
 const mod = require('../../src/browser/tab-groups');
@@ -27,5 +27,5 @@ for (const s of fixtures.files) {
   fileSum.n++; fileSum.f1 += r.f1; fileSum.precision += r.precision; fileSum.recall += r.recall;
 }
 console.log(`FILE SESSIONS  P/R/F1 ${(fileSum.precision / fileSum.n).toFixed(2)}/${(fileSum.recall / fileSum.n).toFixed(2)}/${(fileSum.f1 / fileSum.n).toFixed(2)}`);
-console.log('--- older sessions (test/topics-sessions.js)');
+console.log('--- older sessions (test/helpers/topics-sessions.js)');
 run.main(mod, false);

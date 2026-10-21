@@ -1,6 +1,6 @@
 // [desktop apps] press_keys: "ctrl+s", "Enter", "ctrl+a ctrl+c" -> the string SendKeys wants ("^s", "{ENTER}", "^a^c"), and the shortcuts the AI is
 // never allowed to send (they leave the app it was let into, close it without asking, or reach Windows itself). Typed text is escaped the
-// same way, so "50% (done)" is typed as written. Pure: test/desktop-units.js.
+// same way, so "50% (done)" is typed as written. Pure: test/units/desktop-units.js.
 'use strict';
 
 const NAMED = {

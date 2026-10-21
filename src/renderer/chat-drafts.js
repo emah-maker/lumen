@@ -1,7 +1,7 @@
 // Each chat's unsent draft (what is typed in the composer and the long pasted blocks waiting as chips), kept on this machine so it
 // comes back when the chat is opened again, also after a restart. One localStorage entry holds every draft, keyed by the chat id
 // ('new' is the chat not started yet); the oldest go past MAX_DRAFTS. Plain script in the UI (chat-core.js uses it);
-// test/chat-drafts-units.js loads it with require().
+// test/units/chat-drafts-units.js loads it with require().
 (function (root) {
   const KEY = 'lumen.chatDrafts';
   const MAX_DRAFTS = 100;

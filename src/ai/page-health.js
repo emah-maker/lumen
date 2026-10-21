@@ -1,4 +1,4 @@
-// Pure helpers for reading pages well (no Electron, no DOM; test/page-reading-units.js): what kind of page a
+// Pure helpers for reading pages well (no Electron, no DOM; test/units/page-reading-units.js): what kind of page a
 // read got (page health), the structured data a page carries (JSON-LD, meta tags, embedded JSON "data islands")
 // squeezed into something a model can read cheaply, and slicing a long read into chunks (read_urls offset).
 // The in-page scripts that collect the raw material live in page-reading.js; this file only judges and compacts it.

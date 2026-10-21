@@ -15,7 +15,7 @@
 // Bypass permissions skips the card (askApproval answers allow and shows a step) and still logs; nothing is undone behind the
 // user's back then, and the journal keeps the undo available.
 //
-// Pure parts (classify, diffRegion, exceeds, describeLoss, journal, verifyReport) are unit tested (test/content-guard-units.js); the
+// Pure parts (classify, diffRegion, exceeds, describeLoss, journal, verifyReport) are unit tested (test/units/content-guard-units.js); the
 // page side is the script strings below, run in Claude's isolated world (nothing in them is visible to the page).
 const { HELPERS } = require('./page-scripts');
 

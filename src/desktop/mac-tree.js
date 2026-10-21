@@ -3,7 +3,7 @@
 // click and type. The helper is a new osascript per call and keeps nothing, so the ids live here: each id maps to its path and to the role,
 // name and description it had, and an action is refused when the element at that path is no longer the same one. An element with neither a
 // name nor a description could not be told from another of its kind at the same place, so it gets no id, unless it is the only one of its
-// role in the window (a document's one text area). Pure: test/desktop-mac-units.js.
+// role in the window (a document's one text area). Pure: test/units/desktop-mac-units.js.
 //
 // Raw node from the helper: { r: 'AXButton', sr: subrole, n: title or name, d: description, v: value, en: false if disabled,
 // sel: true if selected, p: [0, 3, 1], c: [children] } or { pw: true } for a secure text field (nothing else of it is ever read).

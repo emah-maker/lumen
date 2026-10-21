@@ -65,7 +65,7 @@ const deferVmp = (env) => String((env || {}).LUMEN_DEFER_VMP || '').trim() === '
 // build.files into a file set of its own, so ANY platform-level `files` becomes a second matcher that skips both
 // the top-level filters and electron-builder's default excludes (.git, node_modules, ...). That is how 0.5.7's
 // Mac build copied the whole checkout, .git included, and codesign failed on .git's read-only pack files.
-// test/package-files-units.js guards both.
+// test/units/package-files-units.js guards both.
 const WINDOWS_ONLY_MODULES = ['koffi', '@koromix'];
 function pruneWindowsOnlyModules(appOutDir, electronPlatformName) {
   if (electronPlatformName !== 'darwin' && electronPlatformName !== 'mas') return [];

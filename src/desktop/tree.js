@@ -1,6 +1,6 @@
 // [desktop apps] What read_app hands the AI: the UI Automation tree of one window, cut down to what it needs. The helper (uia-helper.ps1)
 // returns every control it walked as nested nodes; this turns them into a short indented outline of names, kinds, values and element
-// ids, never more than a fixed size. Pure functions of their inputs: test/desktop-units.js runs them in plain Node.
+// ids, never more than a fixed size. Pure functions of their inputs: test/units/desktop-units.js runs them in plain Node.
 //
 // Node shape from the helper: { i: 'e12'|null, t: 'Button', n: name, v: value, a: automationId, en: false if disabled, off: true if
 // offscreen, pw: true for a password field, k: true if checked/toggled, s: true if selected, x: true if expanded, ro: true if

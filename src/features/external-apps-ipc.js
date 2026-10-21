@@ -50,7 +50,7 @@ function setupExternalApps(deps) {
     onFinished: (a) => notify('Lumen', `${a.name} finished in Lumen`),
   });
   // Token required for every app (new users), or token-less clients asked one by one ('ask'). 'open' (no checks) exists only so the older tests, which
-  // drive Lumen through token-less sessions (and the unit tests, outside Electron, with fake sessions), keep running; test/external-apps.js turns it off (global.__externalStrict).
+  // drive Lumen through token-less sessions (and the unit tests, outside Electron, with fake sessions), keep running; test/e2e/external-apps.js turns it off (global.__externalStrict).
   ext.setPolicy(() => (readSettings().externalAppsRequireToken === true ? 'require' : (isTest && !global.__externalStrict) || !process.versions.electron ? 'open' : 'ask'));
 
   const enabled = () => readSettings().mcpEnabled === true;

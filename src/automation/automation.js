@@ -252,7 +252,7 @@ function multiplexer(up) {
 }
 
 // ---- [ai manners] hands-off mode for the proxy (features/ai-manners.js automationVerdict, via hooks.handsOffVerdict(method, tabId)
-// -> { ok } | { noop } | { error }). Pure over its inputs, so test/ai-manners-units.js drives it with fakes.
+// -> { ok } | { noop } | { error }). Pure over its inputs, so test/units/ai-manners-units.js drives it with fakes.
 // The Lumen tab a new session belongs to: a tab's own session, or (a frame / worker) its parent's.
 // A target that is one of the user's tabs is judged as THAT tab, whichever session it was attached from: a session in the AI's own tab
 // that attaches to a user's tab (Target.attachToTarget) must not inherit the AI tab's right to act. Only what is not a tab (an iframe,

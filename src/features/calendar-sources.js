@@ -1,5 +1,5 @@
 // The Calendar widget's sources (features/widgets.js, renderer/newtab-widgets.js), no DOM and no Electron
-// (test/calendar-multi-units.js covers this file). A Calendar card shows one or several calendars at once:
+// (test/units/calendar-multi-units.js covers this file). A Calendar card shows one or several calendars at once:
 //
 //   config.cals = [{ name, url, color, enabled }]   up to MAX_SOURCES, in the order the person put them
 //

@@ -8,7 +8,7 @@
 // settings.css; the newer ones carry their `art` here, and both pages set it as the element's background.
 //   tone  'dark': white text and frosted-dark cards (every background has always been this)   'light': dark text and white cards
 //   seed  the colour "Match wallpaper" takes the accent from (a picture gives its own)
-// The text colour over each is checked on the running page (test/newtab-wallpaper.js), not assumed.
+// The text colour over each is checked on the running page (test/e2e/newtab-wallpaper.js), not assumed.
 (function () {
 'use strict';
 

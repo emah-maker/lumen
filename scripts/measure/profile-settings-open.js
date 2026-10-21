@@ -1,7 +1,7 @@
 // node scripts/measure/profile-settings-open.js <outdir>: CPU profiles of the Settings page (renderer) and the main process during a cold open.
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs'); const path = require('path');
-const { seedProfile, tmpProfile, env, root, sleep } = require('../../test/_settings-open-rig');
+const { seedProfile, tmpProfile, env, root, sleep } = require('../../test/helpers/_settings-open-rig');
 (async () => {
   const out = process.argv[2] || '.'; fs.mkdirSync(out, { recursive: true });
   const profile = tmpProfile(); await seedProfile(profile);

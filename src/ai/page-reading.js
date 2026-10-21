@@ -2,7 +2,7 @@
 // signals, its JSON-LD / meta tags / embedded JSON data islands, Readability's article) and the glue that turns
 // them into read_urls and read_page results. agent.js's readInBackground (read_urls), its read_page full read and
 // snapshot.js's read_page outline call in here; everything that decides something is pure and lives in
-// page-health.js, page-markdown.js and page-outline.js (test/page-reading-units.js).
+// page-health.js, page-markdown.js and page-outline.js (test/units/page-reading-units.js).
 
 /* global document */
 const fs = require('fs');

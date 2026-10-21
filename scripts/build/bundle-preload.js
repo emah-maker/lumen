@@ -1,7 +1,7 @@
 // Builds preload.bundle.js: preload.js plus electron-chrome-extensions' toolbar element in one file.
 // The UI window is sandboxed, and a sandboxed preload can only require('electron'), so the library's
 // browser-action module (which itself needs nothing but 'electron') is inlined. The output is
-// committed; test/units.js checks it still matches this script's output. Run after changing
+// committed; test/units/units.js checks it still matches this script's output. Run after changing
 // preload.js or updating electron-chrome-extensions:  node scripts/build/bundle-preload.js
 const fs = require('fs');
 const path = require('path');

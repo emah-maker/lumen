@@ -1,6 +1,6 @@
 // Speed helpers for read_urls (agent.js readInBackground): a pool of warm hidden reader views, a short-lived result cache
 // shared across runs, and the asset filter for the reader's own session. Electron-free (views, timers and sessions are
-// injected) so test/read-speed-units.js covers them in plain Node.
+// injected) so test/units/read-speed-units.js covers them in plain Node.
 
 const READER_PARTITION = 'claude-reader';
 

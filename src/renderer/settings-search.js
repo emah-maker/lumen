@@ -1,5 +1,5 @@
 // Settings search: which settings a query finds, and how well. Plain functions (no DOM), shared by settings.js and the
-// unit tests (test/settings-search-units.js).
+// unit tests (test/units/settings-search-units.js).
 //  - A query word matches where a word of the setting starts with it ("mode" finds "Dark mode", not "Model").
 //  - A few everyday words also match what the setting calls it ("night" finds the dark theme, "adblock" the tracker blocker).
 //  - Every query word must match; a hit in the label beats one in the group title, which beats one in the helper text.

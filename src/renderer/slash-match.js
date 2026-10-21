@@ -1,5 +1,5 @@
 // Filtering and ordering for the composer's "/" menu (renderer/slash.js). A plain script in the UI;
-// test/units.js loads it with require().
+// test/units/units.js loads it with require().
 (function (root) {
   // commands: [{ name, label, description }]. A name that is the query, then one that starts with it
   // (shorter first), then a name containing every word, then a match in the label or description.

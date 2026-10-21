@@ -10,7 +10,7 @@ Method: fresh profile, hidden windows; new-tab page (light, dark, with and witho
 - No console errors in any Settings section or the new tab; every icon control has an accessible name; light and dark both read well.
 
 ## Fixed
-- All four above (src/renderer/settings.js, src/browser/search.js internalPage, src/main.js goFromAddress). Unit tests in test/core-browsing-units.js (own-page addresses); the form fixes were driven in the real app.
+- All four above (src/renderer/settings.js, src/browser/search.js internalPage, src/main.js goFromAddress). Unit tests in test/units/core-browsing-units.js (own-page addresses); the form fixes were driven in the real app.
 
 ## Left
 - About page has no link to the licence or release notes beyond the What's new button: fine as is.

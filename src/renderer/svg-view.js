@@ -1,6 +1,6 @@
 // Inline SVG in the chat: a ```svg block (or ```xml / ```html holding one <svg>, or a raw <svg> in the text, which markdown.js lifts into a
 // ```svg block) is drawn as a picture, with a Code toggle for the source, Copy (the code), PNG (save it) and click-to-enlarge.
-// It is not in the startup bundle: code-extras.js loads this file on the first SVG block (the way it loads Mermaid), so test/perf-budget.js's
+// It is not in the startup bundle: code-extras.js loads this file on the first SVG block (the way it loads Mermaid), so test/e2e/perf-budget.js's
 // UI ceiling is untouched.
 //
 // The SVG comes from a model, and a model's reply can carry text a web page put there, so it is never trusted:
@@ -9,7 +9,7 @@
 //      external url() or @import; <use> and every reference point only at a local #id. Size, element and depth caps apply.
 //   2. The result is shown as <img src="data:image/svg+xml,…">, never inlined in the page: an SVG drawn as an image cannot run a script
 //      or load anything, whatever the sanitizer missed. (A data: URL, so the chat page's CSP needs no blob: source.)
-// sanitize() is pure string work, so test/svg-view-units.js runs it in Node.
+// sanitize() is pure string work, so test/units/svg-view-units.js runs it in Node.
 (() => {
   const MAX_BYTES = 200 * 1024;
   const MAX_ELEMENTS = 3000;

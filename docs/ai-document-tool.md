@@ -39,4 +39,4 @@ After every edit the tool re-reads the document's export and compares it with th
 - A general "did the AI wipe my text" check cannot measure a canvas editor like Docs; this tool and the guard on Docs keys cover that gap for Google Docs.
 - Word Online and Notion are not supported by the tool yet.
 
-The code is `src/ai/document-tool.js` (the actions) and `src/ai/doc-edit.js` (the checks); tests are `test/doc-edit-units.js` and `test/document-tool.js`.
+The code is `src/ai/document-tool.js` (the actions) and `src/ai/doc-edit.js` (the checks); tests are `test/units/doc-edit-units.js` and `test/e2e/document-tool.js`.

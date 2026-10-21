@@ -1,6 +1,6 @@
 // Usage for every AI, not just Claude Code: the pieces that read what a provider tells us for free and count what Lumen did.
 // Pure (no Electron, no network, no settings): features/usage.js keeps the log and the readings, Settings → Usage and the
-// AI status card draw them, test/provider-usage-units.js runs all of it.
+// AI status card draw them, test/units/provider-usage-units.js runs all of it.
 //
 //   PROVIDERS                 every AI Lumen can use: key, name, kind ('cli' | 'api') and what its plan data can be
 //   parseRateLimitHeaders()   x-ratelimit-* (OpenAI, xAI, OpenRouter) / anthropic-ratelimit-* response headers -> buckets

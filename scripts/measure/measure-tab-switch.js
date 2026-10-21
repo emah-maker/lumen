@@ -10,10 +10,10 @@
 // Columns (ms; median / p95 / max): shown = click reaches main -> new view visible; sync = main's click handler's own run time;
 // strip = click -> the UI's tab strip shows the tab active; settled = two frames after that (the chat panel and the rest of the UI done);
 // lag = main event-loop stall during the switch; long = longest UI long task during the switch.
-require('../../test/_tmp-cleanup');
+require('../../test/helpers/_tmp-cleanup');
 const fs = require('fs');
 const path = require('path');
-const rig = require('../../test/_tab-switch-rig');
+const rig = require('../../test/helpers/_tab-switch-rig');
 
 const N = Number(process.argv[2] || 20);
 const outDir = process.env.OUT || process.cwd(); // (where PROFILE=1 writes: not the run's private TEMP, which is removed at the end)

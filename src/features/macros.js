@@ -1,5 +1,5 @@
 // Macros: named sequences of steps you run on demand (Settings > Macros). This file is the pure part,
-// so most of it is tested in plain Node (test/macros-units.js):
+// so most of it is tested in plain Node (test/units/macros-units.js):
 //   1. the schema: steps, locators, validation and sanitising (a macro is data, never code);
 //   2. variables: {{query}} asked at run time, and {{clipboard}} {{date}} {{selection}} {{url}} {{title}} {{time}};
 //   3. keyboard shortcuts: parsing, matching and conflicts with Lumen's own and other macros;

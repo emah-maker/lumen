@@ -1,6 +1,6 @@
 // Stocks and Crypto widgets, the pure part: watchlist checks, the parsers for the two data providers'
 // answers, and the SIMULATED paper-trading portfolio. No network, no Electron: features/widgets.js does
-// the fetching, and test/widget-units.js exercises all of this on its own.
+// the fetching, and test/units/widget-units.js exercises all of this on its own.
 //
 // Nothing here trades anything. A portfolio is a starting cash figure and a list of trades
 // { sym, qty, px, t } (qty > 0 buys, qty < 0 sells, px the last fetched quote). Cash and positions are

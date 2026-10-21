@@ -1,13 +1,13 @@
 // Times how long chat tabs take to open, hidden, on a seeded throwaway profile (50 chats, long messages, Markdown, code, mermaid):
 //   node scripts/measure/measure-chat-tabs.js [runs=3]
 // (a) a new chat tab (shortcut, the new-tab page's Chat button, Ctrl+click on it), (b) an existing chat from the chat library,
-// (c) restoring chat tabs at startup, (d) opening several chat tabs. The shared code is test/_chat-speed.js; test/chat-tab-speed.js asserts ceilings.
-require('../../test/_tmp-cleanup');
+// (c) restoring chat tabs at startup, (d) opening several chat tabs. The shared code is test/helpers/_chat-speed.js; test/e2e/chat-tab-speed.js asserts ceilings.
+require('../../test/helpers/_tmp-cleanup');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { seed } = require('../../test/_chat-seed');
-const speed = require('../../test/_chat-speed');
+const { seed } = require('../../test/helpers/_chat-seed');
+const speed = require('../../test/helpers/_chat-speed');
 
 const median = (xs) => { const s = xs.filter((x) => x >= 0).sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : -1; };
 

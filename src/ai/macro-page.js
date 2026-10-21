@@ -7,7 +7,7 @@
 //   - record what the user does in the tab (clicks, typed text, selects, a few keys) without ever
 //     reading a secret field's value.
 // Everything the page runs comes from kit(), one function that is serialized into the page and also
-// called directly by test/macros-units.js against a fake DOM. Arguments reach the page only through JSON.
+// called directly by test/units/macros-units.js against a fake DOM. Arguments reach the page only through JSON.
 const pageScripts = require('./page-scripts');
 
 function kit() {

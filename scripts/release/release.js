@@ -26,7 +26,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const e2eLock = require('../test/e2e-lock');
 const {
-  cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder,
+  cutChangelog, changelogSection, readSuites, suiteFile, bumpVersion, deriveChecks, procsUnder,
   findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, releasePlan, stageDone, stagesLeft,
 } = require('./release-lib');
 const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
@@ -41,7 +41,7 @@ function planChecks(readFile, listTestFiles) {
   const derived = deriveChecks({ suites: readSuites(readFile('scripts/test/test-all.js')), files: listTestFiles() });
   // Each Electron suite's source: which ones share a port, the clipboard or the machine (they run alone), and which a change relates to.
   const sources = {};
-  for (const s of derived.electron) { try { sources[s] = readFile(`test/${s}.js`); } catch { sources[s] = ''; } }
+  for (const s of derived.electron) { try { sources[s] = readFile(suiteFile(s)); } catch { sources[s] = ''; } }
   const shared = {};
   for (const s of derived.electron) { const why = sharedResources(s, sources[s]); if (why.length) shared[s] = why; }
   const plain = (name, args) => ({ name, kind: 'plain', cmd: process.execPath, args });
@@ -49,7 +49,7 @@ function planChecks(readFile, listTestFiles) {
     plain('units', ['scripts/test/test-units.js']),
     plain('acceptance', ['scripts/test/test-acceptance.js']),
     plain('lint', ['node_modules/eslint/bin/eslint.js', '.']),
-    ...derived.electron.map((s) => ({ name: s, kind: 'electron', cmd: process.execPath, args: [`test/${s}.js`] })),
+    ...derived.electron.map((s) => ({ name: s, kind: 'electron', cmd: process.execPath, args: [suiteFile(s)] })),
   ];
   return { stages, derived, sources, shared };
 }
@@ -130,7 +130,7 @@ function runStage(wt, stage, logFile, timeoutMs) {
 const failLines = (logFile) => { try { return fs.readFileSync(logFile, 'utf8').split('\n').filter((l) => /^FAIL/.test(l)).slice(0, 5); } catch { return []; } };
 
 async function runChecks(wt, st, opts) {
-  let { stages, derived, sources, shared } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => fs.readdirSync(path.join(wt, 'test')).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
+  let { stages, derived, sources, shared } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => ['units', 'e2e'].flatMap((d) => fs.readdirSync(path.join(wt, 'test', d))).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
   // --only a,b,c: a targeted release (the suites a change touches). The pure-node stages and perf-budget always run; the choice is kept
   // in the state file so --resume runs the same set, and the release PR names it.
   // Neither --only nor --full: the core set plus the suites related to the files changed since the last release tag (selectSuites); that choice is kept
@@ -147,7 +147,7 @@ async function runChecks(wt, st, opts) {
     } else say('checks', ch ? `running every Electron suite: a build, dependency or workflow file changed since ${ch.tag}` : 'running every Electron suite: no release tag to compare with');
   }
   if (only) { st.only = only; saveState(wt, st); stages = stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)); const unknown = only.filter((n) => !derived.electron.includes(n)); if (unknown.length) say('checks', `--only names suites test-all.js does not list (skipped): ${unknown.join(', ')}`); }
-  if (derived.missing.length) say('checks', `named in test-all.js but not in test/ (skipped): ${derived.missing.join(', ')}`);
+  if (derived.missing.length) say('checks', `named in test-all.js but not in test/units/ or test/e2e/ (skipped): ${derived.missing.join(', ')}`);
   fs.mkdirSync(st.logs, { recursive: true });
   const timeoutMs = opts.suiteMinutes * 60000;
   st.checks = st.checks || {};
@@ -516,7 +516,7 @@ function dryRun(main, spec, opts) {
   const resumable = opts.resume ? releaseWorktrees(main).filter((w) => w.state.stage !== 'publish') : [];
   const version = opts.resume && resumable.length ? resumable[resumable.length - 1].state.version : bumpVersion(current, spec);
   const wt = path.join(worktreesDir(main), `release-${version}`);
-  const { stages, derived, sources, shared } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
+  const { stages, derived, sources, shared } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/units/', 'test/e2e/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
   let only = opts.full ? null : opts.only;
   let selectionNote = 'every Electron suite (--full)';
   if (!only && !opts.full) {

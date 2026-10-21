@@ -8,7 +8,7 @@ screenshotted, so their templates were dumped and read. Screenshots are in `docs
 
 Overall the chrome is in good shape: the find bar, the omnibox keyboard handling (arrows, Esc, drafts), the tab hover
 card, group menus, the audio button, focus rings and accessible names are all solid. Findings below are ranked by how
-much they get in a user's way. **Fixed** items are in this PR (test: `test/chrome-ux.js`, `test/chrome-ux-units.js`).
+much they get in a user's way. **Fixed** items are in this PR (test: `test/e2e/chrome-ux.js`, `test/units/chrome-ux-units.js`).
 
 ## Fixed in this PR
 
@@ -54,8 +54,8 @@ one of them. Now "Ask AI About Selection" (README updated).
 
 ## Round 2: the "left for later" list (items 1 to 8 fixed, 9 and 10 left)
 
-Tests: `test/chrome-ux-units.js` (default match, address check, sentence-case guard, wiring), `test/chrome-ux.js`, `test/aitaboff.js`,
-`test/tabmenu.js`, `test/tabui.js`, `test/private.js`, `test/security-ui.js`, `test/a11y.js`.
+Tests: `test/units/chrome-ux-units.js` (default match, address check, sentence-case guard, wiring), `test/e2e/chrome-ux.js`, `test/e2e/aitaboff.js`,
+`test/e2e/tabmenu.js`, `test/e2e/tabui.js`, `test/e2e/private.js`, `test/e2e/security-ui.js`, `test/e2e/a11y.js`.
 
 1. **The AI shield looked like a security shield and was on every page. FIXED.** The button is now a sparkle (the mark Lumen
    uses for AI everywhere: Organize, the AI-opened tab mark), slashed while the tab is read-only, and when it is on it carries
@@ -82,7 +82,7 @@ Tests: `test/chrome-ux-units.js` (default match, address check, sentence-case gu
    Edge use, and what the rest of Lumen already used). About 140 strings: the app menus (⋯, File/Edit/View/Window, menu bar), the
    tab, group, page, link, image, video and address-bar context menus, the private window's menus, the macros and spelling items,
    the ad-blocker items. Proper nouns and "AI" keep their capitals ("Lumen on GitHub", "Ask AI about selection",
-   "Translate with Google Translate…"). Top-level names that are one word are unchanged. `test/chrome-ux-units.js` now
+   "Translate with Google Translate…"). Top-level names that are one word are unchanged. `test/units/chrome-ux-units.js` now
    fails on any new Title Case menu label, and the tests that matched labels were updated. Not changed: macOS system menu items
    that come from the OS, and dialog titles ("Keyboard Shortcuts" is a window title).
 6. **The omnibox's top suggestion wasn't pre-selected. FIXED.** When what you typed is plain words and the first row is a

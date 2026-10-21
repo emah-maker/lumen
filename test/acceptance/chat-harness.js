@@ -10,7 +10,7 @@
 //  - Lumen's local HTTP MCP server (automation/mcp-http.js startHttp) is replaced by a recording fake gate: it hands
 //    out one token per run (the token IS the run's tag), records open / close, and keeps the `callTool` it was given,
 //    which the tests call the way a CLI's MCP request would arrive (session.engine = the run's tag).
-require('../_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
+require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const cp = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -42,7 +42,7 @@ process.env.LUMEN_GROK_SIDEBAR = '1';
 process.env.LUMEN_AGY_BIN = FAKE_AGY;
 process.env.LUMEN_AGY_SIDEBAR = '1';
 process.env.LUMEN_CODEX_SIDEBAR = '1';
-process.env.LUMEN_CODEX_WARM = '0'; // (the kept `codex app-server` is covered by test/codex-warm-units.js; these runs are headless `codex exec`)
+process.env.LUMEN_CODEX_WARM = '0'; // (the kept `codex app-server` is covered by test/units/codex-warm-units.js; these runs are headless `codex exec`)
 fs.mkdirSync(process.env.GROK_HOME, { recursive: true });
 
 // ---- the fake HTTP gate (mcp-http.js startHttp's shape: open/close/armed/listed/port/stop)

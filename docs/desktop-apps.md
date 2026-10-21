@@ -72,4 +72,4 @@ macOS asks the user, not Lumen, to allow this. Lumen never turns a permission on
 
 To take any of it back, turn Lumen off in the same panes, or turn off the switch in Settings → AI.
 
-Tests: `test/desktop-units.js` (permissions, pruning, keys, schema, the controller with a stand-in helper), `test/desktop-mac-units.js` (the macOS backend with a stand-in `execFile`: argument building, the tree and its ids, permission errors and the Settings card, the macOS never list and keys; it never runs `osascript`) and `test/desktop-apps.js` (a real WPF test window of its own, never a user app; Windows only).
+Tests: `test/units/desktop-units.js` (permissions, pruning, keys, schema, the controller with a stand-in helper), `test/units/desktop-mac-units.js` (the macOS backend with a stand-in `execFile`: argument building, the tree and its ids, permission errors and the Settings card, the macOS never list and keys; it never runs `osascript`) and `test/e2e/desktop-apps.js` (a real WPF test window of its own, never a user app; Windows only).

@@ -1,5 +1,5 @@
 // Merging browser windows (Merge All Windows, Merge Window Into, Undo): the planning, with no Electron in it,
-// so test/units.js can check it. main.js describes each window as plain data, asks for a plan, and carries it
+// so test/units/units.js can check it. main.js describes each window as plain data, asks for a plan, and carries it
 // out with moveTabBetween (the page keeps running; nothing reloads).
 //
 // A window is described as

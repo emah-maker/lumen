@@ -1,5 +1,5 @@
 // node scripts/measure/measure-settings-open.js [section ...]: prints how long Settings takes to open (cold and warm) on a seeded profile.
-const { seedProfile, measure, tmpProfile } = require('../../test/_settings-open-rig');
+const { seedProfile, measure, tmpProfile } = require('../../test/helpers/_settings-open-rig');
 (async () => {
   const profile = tmpProfile();
   await seedProfile(profile);

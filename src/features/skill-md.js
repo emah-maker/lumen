@@ -3,7 +3,7 @@
 // `metadata`, `allowed-tools`) and a Markdown body with the instructions.
 //
 // Lumen reads and writes that format so a skill can move between Lumen and those tools (features/skills.js does
-// the importing, exporting and listing; this file is the pure part, tested in test/skills-md-units.js):
+// the importing, exporting and listing; this file is the pure part, tested in test/units/skills-md-units.js):
 //   - a tiny frontmatter parser and writer (no YAML dependency: the format only uses scalars, block scalars,
 //     lists and one level of maps);
 //   - SKILL.md <-> a Lumen skill;

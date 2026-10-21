@@ -103,7 +103,7 @@ const DEFAULTS = {
   httpsOnly: false,
   passkeys: true, // passkeys, Windows Hello and security keys through Windows' own WebAuthn (features/passkeys.js); off: pages get no passkey API
   safeBrowsing: false, // Google Safe Browsing warnings (features/safe-browsing.js); needs the user's API key
-  focusSites: ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'], // [focus] the sites blocked while focus mode is on (features/focus.js; test/focus-units.js keeps this the same as its DEFAULT_SITES)
+  focusSites: ['youtube.com', 'youtu.be', 'reddit.com', 'tiktok.com', 'instagram.com', 'x.com', 'twitter.com', 'facebook.com', 'twitch.tv', 'netflix.com'], // [focus] the sites blocked while focus mode is on (features/focus.js; test/units/focus-units.js keeps this the same as its DEFAULT_SITES)
   focusSchedules: [], // [focus] recurring focus: { id, days, from, to, on } (features/focus.js)
   adblock: true,
   adblockAllow: [],

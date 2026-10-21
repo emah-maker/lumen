@@ -5,7 +5,7 @@
 // Do Not Track / language rewriting. None of that has any business with a download of Lumen itself: a filter-list entry
 // that happened to match the release host would stop every update with a bare "net::ERR_BLOCKED_BY_CLIENT". So this
 // session is never handed to the ad blocker, Safe Browsing or settings-backend, and nothing registers a webRequest
-// listener on it (test/updater-session.js checks both ends: a request the ad blocker cancels in the default session
+// listener on it (test/e2e/updater-session.js checks both ends: a request the ad blocker cancels in the default session
 // goes through here).
 // (electron-updater's release check already uses its own partition, "electron-updater", for the same reason.)
 // The one thing it does follow is the profile's proxy setting, so a user behind a proxy can still update.

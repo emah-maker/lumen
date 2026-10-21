@@ -14,7 +14,7 @@ const KINDS = ['notes', 'files', 'countdown', 'timer', 'aistatus', 'routines', '
 const EDIT_ONLY = ['crypto']; // edited here, added in Settings (the optional key lives there)
 const NAMES = { notes: 'Notes', countdown: 'Countdown', timer: 'Timer', aistatus: 'AI status', routines: 'Routines', files: 'Files', applemusic: 'Apple Music', tradingview: 'TradingView', custom: 'Custom', embed: 'Web page', weather: 'Weather', worldclock: 'World clock', calendar: 'Calendar', feed: 'Feed headlines', crypto: 'Crypto' };
 const CLOCKS = [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
-// features/feed.js PRESETS (test/widget-config-units.js keeps the two lists the same).
+// features/feed.js PRESETS (test/units/widget-config-units.js keeps the two lists the same).
 const FEEDS = [['bloomberg-markets', 'Bloomberg Markets'], ['bloomberg-technology', 'Bloomberg Technology'], ['bloomberg-politics', 'Bloomberg Politics'], ['hn', 'Hacker News'], ['hn-frontpage', 'Hacker News (hnrss.org)'], ['npr', 'NPR News']];
 const secure = (v) => /^(https|webcals?):\/\/[^\s"'<>\\]+$/i.test(String(v || '').trim());
 const COIN_RE = /^[a-z0-9][a-z0-9-]{0,49}$/; // features/markets-view.js; main checks it again

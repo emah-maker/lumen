@@ -1,6 +1,6 @@
 // Files: the pinned and recently opened files and folders, for the new-tab page's Files widget, the quick picker (Ctrl+Shift+F),
 // Settings > General > Files and the AI's file lookup (list_files find:). This module wires the pure parts (files-store.js, files-fuzzy.js,
-// files-index.js and its worker) to Electron through `deps`, so test/files-ai.js can drive it with the real thing and units with fakes.
+// files-index.js and its worker) to Electron through `deps`, so test/e2e/files-ai.js can drive it with the real thing and units with fakes.
 //
 // The calls come from three pages, each with its own channel prefix and its own sender check (main.js):
 //   the browser UI        files:<op>           (window.lumenFiles, preload.js)   [files:open is taken by dropped files: files:open-entry]

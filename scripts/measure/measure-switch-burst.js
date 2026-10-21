@@ -1,8 +1,8 @@
 // Rapid switching over unloaded, frozen and normal tabs (hidden, fresh profile): how long a click takes to show in the strip, how long
 // after the LAST input the final tab is active with its view visible, and how many tabs were woken on the way.
 //   node scripts/measure/measure-switch-burst.js [N=20] [GAP=100]      env: HOW=click|key  LUMEN_ROOT=<another checkout>
-require('../../test/_tmp-cleanup');
-const rig = require('../../test/_tab-switch-rig');
+require('../../test/helpers/_tmp-cleanup');
+const rig = require('../../test/helpers/_tab-switch-rig');
 const N = Number(process.argv[2] || 20);
 const GAP = Number(process.argv[3] || 100);
 (async () => {

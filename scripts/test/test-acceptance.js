@@ -1,7 +1,7 @@
 // `npm run test:acceptance`: the chat acceptance suites in test/acceptance/ (one per feature: parallel CLI chats,
 // unlimited chats at once, per-chat CLI history, Send now, the Grok prompt budget). Pure Node with fake CLIs, one child
 // process each, like test-units.js. They specify features that are still being built, so they are kept out of
-// `npm run test:units` / CI until their feature lands; then move the suite to test/<name>-units.js (fixing its
+// `npm run test:units` / CI until their feature lands; then move the suite to test/units/<name>-units.js (fixing its
 // require paths) so CI keeps it.
 // `node scripts/test/test-acceptance.js chat-send-now` runs just the named suites.
 const { spawnSync } = require('child_process');

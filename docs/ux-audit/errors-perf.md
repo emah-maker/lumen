@@ -4,7 +4,7 @@ Measured on `origin/main` at 0.5.25 (a05a7a40), hidden window, throwaway profile
 
 ## 1. Error sweep
 
-`test/no-errors.js` (new, in `npm test`) launches Lumen through a tiny entry point that loads `test/_no-errors-hook.js` before `main.js`. The hook records, to a file, every `console.error` / `console.warn` and uncaught exception or rejection in the main process, every warning or error logged by every web contents (the chrome UI, sidebar, new tab and widgets, Settings, History, Downloads, Bookmarks, the chat page and canvas, the PDF and slide viewers, error pages, sleeping and woken tabs), plus render-process crashes, preload errors and failed main-frame loads. The suite also reads the process's stderr.
+`test/e2e/no-errors.js` (new, in `npm test`) launches Lumen through a tiny entry point that loads `test/helpers/_no-errors-hook.js` before `main.js`. The hook records, to a file, every `console.error` / `console.warn` and uncaught exception or rejection in the main process, every warning or error logged by every web contents (the chrome UI, sidebar, new tab and widgets, Settings, History, Downloads, Bookmarks, the chat page and canvas, the PDF and slide viewers, error pages, sleeping and woken tabs), plus render-process crashes, preload errors and failed main-frame loads. The suite also reads the process's stderr.
 
 The session it drives: 15+ tabs (11 local pages, a PDF, a deck, a local file, a refused address for the error page), switching through all of them, sidebar open/close, two chat messages through a fake client, the chat page and an HTML reply opened in the canvas, Organize, History, Bookmarks, Downloads, every Settings section and the Settings search, dark mode, three resizes, a new tab, eight tabs put to sleep and woken, quit. It fails on anything not in its `ALLOW` list, and every entry there has a reason (the deliberate refused address and what Electron and Chromium print about it, the DevTools attach line Playwright causes, GPU-less test noise).
 
@@ -58,7 +58,7 @@ Run-to-run spread on this machine is larger than most of these differences (the 
 - **ai-files:** there is no watcher. `features/ai-files.js` has no timers; it resolves and stats at most 24 candidates per reply, and previews are read on demand.
 - **Stuck-load guard:** one `unref`'d timer per tab, armed only while one of Lumen's own pages is loading and cleared on `did-navigate`, `did-stop-loading` and `destroyed`.
 - **Organize file reads, music view:** the music engine's unload timer runs only while a music view exists. Nothing eager showed up at startup (the startup module list gained small pure modules only: `file-tabs`, `shared-files`, `stuck-load`, `profile-guard`, `hide-activity`, `device-chooser`, `ai-files`, and so on). `markdown.js` is required lazily in main.
-- `test/perf-budget.js` still passes (uiKB 950, modules 335).
+- `test/e2e/perf-budget.js` still passes (uiKB 950, modules 335).
 
 Nothing was changed for performance: there was no obvious eager load, forgotten timer or leaking listener to fix. The one listener finding (#1 above) is a warning, not a leak.
 

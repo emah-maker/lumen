@@ -1,7 +1,7 @@
 // Shared by test-all.js, test-units.js and test-acceptance.js: every suite runs with its own TEMP folder (TEMP / TMP / TMPDIR),
 // removed once the suite is over, so nothing a suite or the Lumen it launched makes in the temp folder outlives it, even when
 // the suite fails, crashes or is killed on a timeout. (Before, throwaway profiles piled up in %TEMP%, each with a hard link to
-// the user's real ~/.grok/auth.json.) test/_tmp-cleanup.js does the same from inside a suite for `node test/<name>.js`.
+// the user's real ~/.grok/auth.json.) test/helpers/_tmp-cleanup.js does the same from inside a suite for `node test/<name>.js`.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

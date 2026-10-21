@@ -1,5 +1,5 @@
 // find_sources: scholarly source finding over free, keyless public APIs. Electron-free (the fetch is injected), so
-// test/research-units.js covers it in plain Node against saved responses (test/fixtures/research), with no network.
+// test/units/research-units.js covers it in plain Node against saved responses (test/fixtures/research), with no network.
 //
 //   OpenAlex          works search, open-access location (best_oa_location, the Unpaywall data), citation counts, is_retracted,
 //                     and the cites / cited_by filters used for snowballing

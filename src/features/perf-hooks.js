@@ -1,4 +1,4 @@
-// Test-mode instrumentation for the performance budget (test/perf-budget.js, scripts/measure/measure-perf.js):
+// Test-mode instrumentation for the performance budget (test/e2e/perf-budget.js, scripts/measure/measure-perf.js):
 // startup marks, how long each top-level require of main.js took, and which setInterval timers are
 // still running. Installed by main.js only when CLAUDE_BROWSER_TEST is set on a development run, so a
 // real Lumen never loads it.

@@ -7,7 +7,7 @@ const path = require('path');
 // first: every build and every update ships it at the same place. The icon.ico that
 // scripts/build/install-windows.ps1 puts next to the exe is not in the release zip, so an update's swap
 // deleted it and left the shortcuts pointing at nothing (Windows then shows the exe's, Electron's).
-// The installed Lumen, not the stock electron binary with app.isPackaged made true (test/hardening.js does that to check a
+// The installed Lumen, not the stock electron binary with app.isPackaged made true (test/e2e/hardening.js does that to check a
 // packaged run ignores test switches): only the real exe may write the user's registry, shortcuts and taskbar entries.
 const isInstalledExe = () => !/^electron(\.exe)?$/i.test(path.basename(process.execPath));
 
@@ -39,7 +39,7 @@ function appNameValues(exe, appId, icon) {
   ];
 }
 
-// File types Lumen is associated with (package.json build.fileAssociations names, test/assoc-icons-units.js keeps them
+// File types Lumen is associated with (package.json build.fileAssociations names, test/units/assoc-icons-units.js keeps them
 // in step) and the ProgID setup.js registers. The installer writes each one's DefaultIcon as Lumen.exe,0, which
 // is Electron's atom: the exe is deliberately left untouched (Smart App Control), so Explorer showed that atom on every
 // PDF, HTML and SVG file Lumen opens. Point each at the shipped .ico instead.
