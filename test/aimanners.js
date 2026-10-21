@@ -31,6 +31,7 @@ const launch = (profile) => electron.launch({
   let app = await launch(profile);
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
+  await app.evaluate(() => global.__settings.backend.set('groupAiTabs', false)); // (these checks look at the AI's tabs loose in the strip; the folded group is ai-tab-group.js)
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
 
@@ -333,6 +334,7 @@ const launch = (profile) => electron.launch({
     const app3 = await launch(profile3);
     const w1 = await app3.firstWindow();
     await w1.waitForSelector('.tab');
+    await app3.evaluate(() => global.__settings.backend.set('groupAiTabs', false)); // (loose in the strip, as above)
     await w1.evaluate(() => document.getElementById('toggle-sidebar').click());
     await app3.evaluate(() => global.__settings.backend.set('hideAiTabs', true));
     const strip = (page) => page.evaluate(() => {

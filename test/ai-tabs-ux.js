@@ -70,6 +70,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   try {
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
+    await app.evaluate(() => global.__settings.backend.set('groupAiTabs', false)); // (these checks look at the AI's tabs loose in the strip; the folded group is ai-tab-group.js)
     const errors = [];
     ui.on('pageerror', (e) => errors.push(e.message));
     const active = () => app.evaluate(() => global.__windows.list().find((w) => w.current)?.activeId ?? global.__windows.list()[0].activeId);
@@ -103,7 +104,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     check('settings: ...and Leave open as "off"', Boolean(await waitFor(async () => (await prefs()).closeAiTabs === 'off')), (await prefs()).closeAiTabs);
     // the strip button follows the setting
     const ai = await openAi(`${base}/ai1`);
-    const t1 = await waitFor(async () => { const x = await toggle(); return !x.hidden && x.pressed === 'true' && /hidden/.test(x.title) && x; });
+    const t1 = await waitFor(async () => { const x = await toggle(); return !x.hidden && x.pressed === 'true' && /tab the AI opened/.test(x.title) && x; }); // (the title counts the tab once the strip has it; before that it says only that hiding is on)
     check('toggle: switched on from Settings, the strip button shows it pressed, with its tooltip and haspopup', Boolean(t1) && t1.popup === 'menu' && /tab the AI opened/.test(t1.title), JSON.stringify(t1));
     check('toggle: the AI tab is out of the strip (hidden), not closed', Boolean(await waitFor(() => ui.evaluate((i) => !document.querySelector(`#tabs .tab[data-id="${i}"]`), ai))));
 
