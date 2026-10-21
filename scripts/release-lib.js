@@ -401,8 +401,8 @@ function verifyChecksums(manifest, actual) {
 // Suites whose numbers depend on a quiet machine: they run alone, after everything else. The first group is what release.js has always
 // held back; the second is every other suite with a wall-clock budget (a latency, a frame rate, "no main-process task over N ms").
 const PERF_SENSITIVE = [
-  'perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'overlay-first-perf', 'page-load-stall', 'igpu-perf',
-  'mcp-perf', 'tab-switch-perf', 'chat-tab-speed', 'chat-save-stall', 'desktop-apps', 'music-react', 'project-folders', 'pptx-shapes', 'tools', 'files-ai', 'gpu-health', 'video-frames',
+  'perf-budget', 'step-labels', 'overlay-first-perf', 'page-load-stall', 'igpu-perf',
+  'tab-switch-perf', 'chat-tab-speed', 'chat-save-stall', 'desktop-apps', 'music-react', 'project-folders', 'pptx-shapes', 'tools', 'files-ai', 'gpu-health', 'video-frames',
 ];
 const isPerfSensitive = (name) => PERF_SENSITIVE.includes(name);
 
