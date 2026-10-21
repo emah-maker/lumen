@@ -5,6 +5,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Windows no longer calls Lumen "Electron".** A leftover Start menu shortcut named Electron (from an early build) carried Lumen's app ID, so Start and Windows search listed Lumen as "Electron". Lumen now removes that stray shortcut at startup when its own Lumen shortcut is there. The **Close tabs the AI opened** task (right-click Lumen on the taskbar) also shows Lumen's icon instead of Electron's.
+
+## 0.5.64 (2026-10-21)
+
 - **"An app wants to use Lumen" is a pill in the toolbar, like the update prompt.** The question for an app that connects without a token (Allow this time / Deny) used to be a bar across the whole window. It is now a pill next to the toolbar buttons that says which app is asking; the full warning is in its tooltip, and on a narrow window it keeps the app's name and the two buttons.
 - **The tab strip's Hidden, Organize and tab-list buttons stay at the right edge.** They used to sit right after the last tab, so they moved every time a tab opened or closed. They are now pinned to the right of the strip, just left of the window's own buttons, with the window-drag space between them and the tabs; the + button still follows the tabs.
 - **Only the tab the AI is working in, and the tab you have open, show its spinner.** A chat you had used in several tabs put its working spinner (and its check mark or "!" afterwards) on every one of those tabs at once, though the AI works in one. Now the mark shows on the tab the AI is working in (or last worked in) and on the tab you have open with that chat; the others stay plain. If you start a new chat in the tab the AI was working in, the mark moves to the chat's home tab.
