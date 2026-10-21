@@ -28,7 +28,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
     },
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
-    stop: () => ipcRenderer.send('agent:stop'),
+    stop: (chatId) => ipcRenderer.send('agent:stop', chatId), // (as the sidebar's: the chat the page shows)
     resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),

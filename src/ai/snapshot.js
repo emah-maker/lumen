@@ -11,7 +11,6 @@
 //
 // Page scripts are written as real functions and serialized, so they need no escaping.
 
-const lastSnapshot = new Map(); // webContents id -> { url, lines }
 
 // Re-reading an unchanged page costs a whole snapshot of tokens for nothing. Per tab we remember the
 // last full read (URL, request shape, content fingerprint, and when); an identical read soon after
@@ -23,11 +22,12 @@ const FRESH_CALLS = 6;
 class ReadCache {
   // acted: how many acting tools have run (batch's baseline reuse compares it, see batch below).
   // session: the CLI session the cache belongs to; entries are keyed by it, and reset() clears them.
-  constructor() { this.tabs = new Map(); this.seq = 0; this.acted = 0; this.session = ''; }
+  // snaps: webContents id -> { url, lines, seq, acted }, the last compact read of each tab (since_last diffs, batch baselines).
+  constructor() { this.tabs = new Map(); this.snaps = new Map(); this.seq = 0; this.acted = 0; this.session = ''; }
   tick(name) { this.seq++; if (!READ_ONLY.has(name)) { this.acted++; this.tabs.clear(); } }
   // A model that no longer has the earlier read in its context (new CLI process or session, rewind,
   // engine reset, expired-session handoff) must get the page again, not "unchanged".
-  clear() { this.tabs.clear(); lastSnapshot.clear(); }
+  clear() { this.tabs.clear(); this.snaps.clear(); }
   reset(session = '') { this.clear(); this.session = String(session || ''); }
   // Returns the short reply when this read repeats the last one, else remembers it and returns null.
   check(tabId, url, shape, content) {
@@ -43,7 +43,31 @@ class ReadCache {
     return null;
   }
 }
-const reads = new ReadCache();
+// One cache per chat: two chats working at once each have a model that saw only its OWN reads, so chat A must never get
+// "Unchanged since your last read" (or a since_last diff) for a read only chat B made, and B's new CLI session must not reset A's.
+// `chatOf()` (set by agent.js) is the calling run's conversation (its messages array); runs with none (background tasks, outside
+// MCP clients) share one cache, as every caller did before.
+const sharedReads = new ReadCache();
+const chatReads = new WeakMap();
+let chatOf = () => null;
+function currentReads() {
+  const chat = chatOf();
+  if (!chat || typeof chat !== 'object') return sharedReads;
+  let cache = chatReads.get(chat);
+  if (!cache) chatReads.set(chat, (cache = new ReadCache()));
+  return cache;
+}
+const reads = {
+  get seq() { return currentReads().seq; },
+  get acted() { return currentReads().acted; },
+  get session() { return currentReads().session; },
+  tick: (name) => currentReads().tick(name),
+  check: (...args) => currentReads().check(...args),
+  clear: () => currentReads().clear(),
+  reset: (session) => currentReads().reset(session),
+  snaps: () => currentReads().snaps,
+  setChatOf: (fn) => { chatOf = typeof fn === 'function' ? fn : () => null; },
+};
 
 // ---------------------------------------------------------------- page-side functions
 
@@ -645,8 +669,9 @@ async function compact(agent, wc, input, h, { dedupe = false } = {}) {
   }), 15000);
   if (inFrames && !input.start_line) result.lines.push(...await frameOutlines(agent, wc, input, h));
   const url = wc.getURL();
-  const previous = lastSnapshot.get(wc.id);
-  lastSnapshot.set(wc.id, { url, lines: result.lines, seq: reads.seq, acted: reads.acted });
+  const snaps = reads.snaps();
+  const previous = snaps.get(wc.id);
+  snaps.set(wc.id, { url, lines: result.lines, seq: reads.seq, acted: reads.acted });
   let body;
   if (input.since_last && previous && previous.url === url) {
     const before = new Set(previous.lines);
@@ -732,7 +757,7 @@ ${await compact(agent, wc, { mode: 'compact', max_chars: 1500, head: true, noTit
 // True when the last compact read of this tab (same URL, few calls ago) is still the baseline for the
 // acting tool now running: no acting tool since it (this tool's own tick is the one after).
 function baselineKnown(wc) {
-  const last = lastSnapshot.get(wc.id);
+  const last = reads.snaps().get(wc.id);
   return Boolean(last) && last.url === wc.getURL() && last.acted === reads.acted - 1 && reads.seq - last.seq <= FRESH_CALLS;
 }
 

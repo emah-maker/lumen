@@ -64,6 +64,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   let ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   await app.evaluate(() => global.__settings.backend.set('sidebarNewChat', false));
+  await app.evaluate(() => global.__settings.backend.set('groupAiTabs', false)); // (these paths click the AI's tabs loose in the strip; the folded group is ai-tab-group.js)
   await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'always'));
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));

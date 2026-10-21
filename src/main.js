@@ -286,7 +286,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1717,6 +1717,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.commandBar'), accelerator: 'CmdOrCtrl+K', click: openCommandBar },
         { label: t('menu.openFile'), accelerator: 'CmdOrCtrl+O', click: openFileDialog },
         { label: t('menu.findFiles'), accelerator: 'CmdOrCtrl+Shift+F', click: openFilesPicker },
+        { label: t('menu.receiveFromPhone'), click: () => { openWifiUpload().catch(() => {}); } }, // [phone wifi]
         ...mergeWindowItems(curRec),
       ], 'tabs', t('menu.tabsAndFiles'), 4),
       chunk([
@@ -1744,6 +1745,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.screenshot'), accelerator: 'CmdOrCtrl+Shift+S', enabled: web, click: () => takeScreenshot(wc) },
         { label: t('menu.record'), submenu: recordMenu(wc) }, // [screen recording]
         { label: t('menu.qrCode'), enabled: web, click: () => showQrCode(wc) },
+        ...(web && phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendPageToPhone(wc) }] : []), // [phone files]
         { label: t('menu.readerMode'), type: 'checkbox', checked: pageTools.page(wc?.getURL()) === 'reader', enabled: Boolean(tabs.find((t) => t.id === activeId)?.readerable) || pageTools.page(wc?.getURL()) === 'reader', click: () => toggleReaderActive() },
         ...translate.pageMenuItem(tabs.find((x) => x.id === activeId && alive(x))),
         { label: t('menu.pictureInPicture'), enabled: web, click: () => togglePictureInPicture(wc) },
@@ -2001,6 +2003,7 @@ ipcMain.on('downloads:row-menu', (event, id) => {
     { label: t('dlpage.action.show'), click: () => downloads.act(id, 'show') },
     { type: 'separator' },
     { label: t('menu.pinToFiles'), click: () => downloads.act(id, 'pin') },
+    ...(phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendFileToPhone(d.path) }] : []), // [phone files]
   ]).popup({ window: BrowserWindow.fromWebContents(event.sender) || win });
 });
 ipcMain.on('downloads:height', (event, height) => { if (fromDownloadsPanel(event) && Number.isFinite(height)) placeDownloadsPanel(Math.max(120, Math.min(height, 640))); });
@@ -2645,6 +2648,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);
+  if (!groupId) joinAiGroup(tab); // [ai tabs] the folded "AI tabs" group (a tab given a group of its own, a research tab, keeps that one)
 
   if (background) {
     // Adding or first loading the view may hand it the keyboard without an event we can see: look again as it settles.
@@ -3857,12 +3861,37 @@ function onTabGone(id, fn) {
 }
 
 // [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
-// and "close the tabs the AI opened" leaves it alone.
+// and "close the tabs the AI opened" leaves it alone. It also leaves the folded "AI tabs" group, back among the user's tabs.
 function userTookOver(tab) {
   if (tab?.rec?.agent) tab.rec.agent.used = true; // [agent window] the user clicked or typed in the agent's window: it is theirs to keep
   if (!manners.handOver(tab)) return;
   const rec = tab.rec;
-  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, sendTabs);
+  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
+}
+// [ai tabs] Settings → AI tabs → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
+// gray "AI tabs" group there, folded when it is made, so a run that opens dozens of tabs adds one label to the strip. The
+// tab in front shows even in a folded group (app.js), and the user's own unfolding is kept. The group holds no other tabs
+// (one the user takes over leaves it), so when the AI's tabs close it goes too. Runs in the tab's window (tabGroups is that window's).
+const aiGroupName = () => t('tabs.aiGroup');
+function aiGroup() {
+  for (const g of tabGroups.groups.values()) {
+    if (g.aiTabs) return g;
+    if (g.name === aiGroupName() && !g.userNamed && tabs.some((x) => x.groupId === g.id) && tabs.every((x) => x.groupId !== g.id || manners.isAiTab(x))) { g.aiTabs = true; return g; } // (restored after a restart: the mark itself is not saved)
+  }
+  return null;
+}
+function joinAiGroup(tab) {
+  if (!manners.isAiTab(tab) || tab.pinned || curRec?.agent || readSettings().groupAiTabs === false) return;
+  const group = aiGroup();
+  if (group) { if (tab.groupId !== group.id) { if (tab.groupId) tabGroups.remove(tab.id); tabGroups.add(tab.id, group.id); } return; }
+  if (tab.groupId) tabGroups.remove(tab.id);
+  const made = tabGroups.create(aiGroupName(), [tab.id], { color: 'gray' });
+  made.aiTabs = true;
+  made.collapsed = true;
+}
+function leaveAiGroup(tab) {
+  const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
+  if (group?.aiTabs) tabGroups.remove(tab.id, { byUser: true });
 }
 
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
@@ -5470,6 +5499,7 @@ function showContextMenu(wc, p) {
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
         { label: t('menu.qrCode'), click: () => showQrCode(wc) },
+        ...(phoneReady() ? [{ label: t('phone.send.menu'), click: () => sendPageToPhone(wc) }] : []), // [phone files]
         ...translate.pageMenuItem(tabByContents(wc)),
         { type: 'separator' },
       );
@@ -6016,7 +6046,7 @@ function openNotified({ run, kind, approvalTab }) {
 // A tab the AI worked in has no chat of its own (it carried the open one): it shows the chat the notification is about, opened.
 function showChatInTab({ rec, t: tab }, chatIdWanted) {
   try {
-    if (chatBind.chatOf(tab.id) !== chatIdWanted) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatIdWanted, { share: true }); withWindow(rec, () => followTabChat(tab)); }
+    if (chatBind.chatOf(tab.id) !== chatIdWanted) { chatBind.bind(tab.id, chatIdWanted, { share: true }); withWindow(rec, () => followTabChat(tab)); }
     setTabSidebar(tab.id, true);
   } catch { /* the sidebar's own open-chat still follows */ }
 }
@@ -6057,16 +6087,15 @@ const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antig
 onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
-// Tabs bound to the same chat share the answer. The renderer asks for it (sidebar:set, from the toolbar button, Ctrl+J, or an
-// agent feature opening the sidebar for the tab in front) and applies the front tab's answer from every tabs state.
+// Each tab keeps its own answer, whatever chat it shows or shares: opening or closing the sidebar in one tab never opens or
+// closes it in another (tabs showing the same chat used to share it, so a toggle in one flipped the others). The renderer asks
+// for it (sidebar:set, from the toolbar button, Ctrl+J, or an agent feature opening the sidebar for the tab in front) and
+// applies the front tab's answer from every tabs state.
 const sidebarTabs = sidebarTabsLib.create();
-// A tab that only carries the chat you were in (no chat of its own: followTabChat) keeps its own sidebar state: it neither takes
-// nor gives the open/closed answer of the tabs showing the same chat, so each tab's sidebar stays as the user left it.
-const carriedTabs = new Set();
 const sidebarSharers = (tabId) => {
-  const c = chatBind.chatOf(tabId);
-  const mate = tabs.find((t) => t.id === tabId)?.split ? splitPartner(tabs.find((t) => t.id === tabId)) : null; // [split view] the two sides of a pair open and close the sidebar together (the page area must not jump when the other side is clicked)
-  return [...(c && !carriedTabs.has(tabId) ? chatBind.tabsOf(c).filter((t) => t !== tabId && !carriedTabs.has(t)) : []), ...(mate ? [mate.id] : [])];
+  const tab = tabs.find((t) => t.id === tabId);
+  const mate = tab?.split ? splitPartner(tab) : null; // [split view] the two sides of a pair open and close the sidebar together (the page area must not jump when the other side is clicked)
+  return mate ? [mate.id] : [];
 };
 const tabSidebarOpen = (tab) => Boolean(tab) && sidebarTabs.isOpen(tab.id, sidebarSharers(tab.id));
 function setTabSidebar(tabId, open) {
@@ -6144,7 +6173,7 @@ function pushChatView(wc) {
 // `push`: tell the sidebar (false when the sender already shows it).
 function followTabChat(tab, { push = true } = {}) {
   if (!tab || tab.isolated || tab.settings || tab.rec?.agent) return; // Settings keeps whatever chat is open. [agent window] An outside agent's tabs have no chat, and opening one never changes the user's
-  if (tab.managerPage === 'chat' && !chatBind.chatOf(tab.id)) { carriedTabs.add(tab.id); chatBind.bind(tab.id, chatId, { share: true }); } // the chat page keeps the chat it was left on, like any tab; one with none yet takes the open chat and keeps it from then on
+  if (tab.managerPage === 'chat' && !chatBind.chatOf(tab.id)) { chatBind.bind(tab.id, chatId, { share: true }); } // the chat page keeps the chat it was left on, like any tab; one with none yet takes the open chat and keeps it from then on
   const own = chatBind.chatOf(tab.id) || (tab.managerPage === 'chat' ? null : pinnedChat(tab.id));
   const plan = own ? { chat: own } : tabChatsLib.followPlan({ tabId: tab.id, chatOf: () => null, claimed: chatBind.claimed, openChatId: chatId, openIdle: !chatBusy(chatId), carry: readSettings().oneChatPerTab !== true });
   const sidebarOpen = Boolean(ui() && sidebarShown.get(ui()));
@@ -6153,7 +6182,6 @@ function followTabChat(tab, { push = true } = {}) {
     if (chatBind.chatOf(tab.id) !== plan.chat) chatBind.bind(tab.id, plan.chat); // (a tab already showing it stays as it is: coming to the front must not make it the home)
     const keep = unseen(plan.chat);
     if (plan.chat !== chatId && !switchChat(plan.chat, { ensure: true, quiet: true })) { // its saved file can't be read (gone, or locked): the tab lets go of it and starts over, never an empty chat under its id
-      carriedTabs.delete(tab.id);
       chatBind.unbindTab(tab.id);
       followTabChat(tab, { push });
       const page = tab.managerPage === 'chat' ? tab.view?.webContents : null;
@@ -6163,7 +6191,6 @@ function followTabChat(tab, { push = true } = {}) {
     if (keep) unreadChats.add(chatId);
     else if (sidebarOpen) unreadChats.delete(chatId);
   } else if (plan.carry) {
-    carriedTabs.add(tab.id);
     chatBind.bind(tab.id, plan.carry, { share: true }); // the chat carries on in this tab; its home moves here when a message is sent from it (agent:ask)
   } else if (plan.adopt) {
     chatBind.bind(tab.id, plan.adopt);
@@ -6265,14 +6292,12 @@ function refreshSidebars() {
 function bindOpenChatHere(sender) {
   const page = pageTabOf(sender);
   if (page) { // a chat page opened it: that page shows it from now on (no tab loses it, no run moves onto the page's tab)
-    carriedTabs.delete(page.id);
     chatBind.bind(page.id, chatId, { share: true });
     shownChat.set(sender, chatId);
     pushAttention();
     refreshSidebars();
     return;
   }
-  carriedTabs.delete(activeId);
   const run = chatRuns.get(chatId);
   chatBind.move(chatId, activeId);
   if (run && !run.deleted) {
@@ -6311,7 +6336,6 @@ function chatTabGone(id, goneRec = null) {
   warmChatLeft(chatBind.chatOf(id)); // [warm per chat]
   grokChatLeft(chatBind.chatOf(id)); // [keep connected]
   chatBind.unbindTab(id);
-  carriedTabs.delete(id);
   sidebarTabs.forget(id); // [sidebar per tab]
   for (const r of chatRuns.values()) {
     if (r.deleted) continue;
@@ -6740,12 +6764,14 @@ function macMenu() {
         normal({ label: t('menu.commandBar'), ...shown('Cmd+K'), click: openCommandBar }),
         normal({ label: t('menu.openFile'), ...shown('Cmd+O'), click: openFileDialog }),
         normal({ label: t('menu.findFiles'), ...shown('Cmd+Shift+F'), click: openFilesPicker }),
+        normal({ label: t('menu.receiveFromPhone'), click: () => { openWifiUpload().catch(() => {}); } }), // [phone wifi]
         { label: t('menu.openLocation'), ...shown('Cmd+L'), click: pv('focusAddress', focusAddress) },
         { type: 'separator' },
         normal({ label: t('menu.savePageAs'), ...shown('Cmd+S'), click: () => { if (wc()) pageTools.savePage(wc()).catch(() => {}); } }),
         { label: t('menu.screenshot'), ...shown('Cmd+Shift+S'), click: pv('screenshot', () => takeScreenshot(wc())) },
         normal({ label: t('menu.record'), submenu: recordMenu(wc()) }), // [screen recording]
         normal({ label: t('menu.qrCode'), click: () => showQrCode(wc()) }),
+        ...(phoneReady() ? [normal({ label: t('phone.send.menu'), click: () => sendPageToPhone(wc()) })] : []), // [phone files]
         { label: t('menu.print'), ...shown('Cmd+P'), click: pv('print', () => printTab(wc())) },
         { label: t('menu.printSystem'), ...shown('Shift+Cmd+P'), click: pv('printSystem', () => printSystem(wc())) },
         { type: 'separator' },
@@ -8445,8 +8471,17 @@ const mcpCall = () => Boolean(agent.currentScope()?.mcp);
 // [working-on chip] A chat-page run has no tab until its tools actually need one: then it takes the tab the user last looked at
 // (chatPageRt.pick) and keeps it for the rest of the reply. Asking for the active tab outside a task (the first look at the
 // request, the /btw card) names that tab without taking it, so nothing is marked "working on" or shows the AI's dot for it.
+// [parallel chats] Is the calling run the chat page's own? Only then do its tab choices go to the page's "working on" tab: another
+// chat's run (a sidebar chat working at the same time) keeps its own tabs. Outside a task (the page's first look) it is the page's.
+function pageRunHere() {
+  if (!chatPageRt?.runFromPage()) return false;
+  const scope = agent.currentScope();
+  if (!scope) return true;
+  const page = chatPageRt.runs.get();
+  return Boolean(scope.chat) && chatRuns.get(page?.chatId)?.messages === scope.chat;
+}
 const agentActiveTab = () => {
-  const fromPage = !mcpCall() && Boolean(chatPageRt?.runFromPage());
+  const fromPage = !mcpCall() && pageRunHere();
   const pinned = fromPage ? chatPageRt.runTarget() : null;
   if (pinned != null) return agentTabById(pinned);
   if (fromPage) {
@@ -8471,7 +8506,7 @@ const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null
 const agentOpenTab = (url, opts = {}) => {
   const { ai = false, show: wantShow = false, keep = false, ...rest } = opts || {};
   const mcp = mcpCall();
-  const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null; // ([acting helpers] a helper's tab never becomes the chat page's target)
+  const fromPage = !mcp && !agent.currentScope()?.helper && chatPageRt?.runTarget() != null && pageRunHere(); // ([acting helpers] a helper's tab never becomes the chat page's target; [parallel chats] nor another chat's)
   // Only the AI's own tool call (`ai`, or an explicit `show`) is held to the manners; any other caller (a window
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
@@ -8485,7 +8520,7 @@ const agentOpenTab = (url, opts = {}) => {
 };
 const agentSwitchTab = (id, opts = {}) => {
   if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
-  const fromPage = chatPageRt?.runTarget() != null;
+  const fromPage = chatPageRt?.runTarget() != null && pageRunHere(); // ([parallel chats] the page's own run only)
   if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const aiCall = Boolean(opts && 'show' in opts && agent.currentScope()); // only a run's switch_tab passes `show`
     const ok = aiCall ? asAiSwitch(() => switchTab(id)) : switchTab(id);
@@ -9001,13 +9036,170 @@ const telegramDeps = () => ({
   },
   canEncrypt: () => safeStorage.isEncryptionAvailable(),
   isOnline: () => net.isOnline(),
+  inbox: phoneInbox(), onFile: (saved, caption) => notePhoneFile(saved, caption), openUrl: (url) => openFromPhone(url), // [phone files]
   tasks: { create: (spec) => { const task = bgTasks.create(spec); missionFromPhone.add(task.id); return task; }, stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
 });
+ipcMain.handle('settings:telegram-show-inbox', () => { const dir = phoneInbox().dir; fs.mkdirSync(dir, { recursive: true }); filesShell('open', dir); return true; }); // [phone files]
 for (const channel of ['settings:telegram', 'settings:telegram-token', 'settings:telegram-pair', 'settings:telegram-pair-cancel', 'settings:telegram-unpair', 'settings:telegram-remove']) {
   ipcMain.handle(channel, (...args) => { telegramNow(); return telegramHandlers[channel](...args); });
 }
 const telegram = { refresh: () => { if (telegramRt || readSettings().telegramChannel === true) telegramNow().refresh(); } };
 app.on('will-quit', () => telegramRt?.shutdown());
+// [phone files] Photos and files sent to the bot land in Downloads/From phone (features/phone-inbox.js). The strip's toast offers
+// Attach to chat (the bytes go to the composer like a dropped file, the caption into the empty composer, never sent); a program or
+// script only gets Show in Finder. Several in a row (an album) share one toast. Outside Lumen, a system notification says so.
+let phoneInboxRt = null;
+function phoneInbox() {
+  if (phoneInboxRt) return phoneInboxRt;
+  const dir = path.join(TEST && global.__phoneInboxDir ? global.__phoneInboxDir : app.getPath('downloads'), require('./features/phone-inbox').FOLDER);
+  const setXattr = (file, name, value) => require('./ai/cli-utils').execFile('/usr/bin/xattr', ['-w', name, value, file], { timeout: 5000 }, (err) => { if (err) console.error('[lumen] phone inbox: xattr:', err.message); });
+  phoneInboxRt = require('./features/phone-inbox').createPhoneInbox({ dir, setXattr });
+  return phoneInboxRt;
+}
+const phoneNotes = new Map(); // toast token -> { files: [saved], caption }
+let phoneNoteSeq = 0;
+let phoneBatch = null; // { token, at }: the toast files arriving close together join
+// `batch`: files of one Wi-Fi session share a toast however far apart they came (openWifiUpload).
+function notePhoneFile(saved, caption, { batch = null } = {}) {
+  const joins = phoneBatch && phoneNotes.has(phoneBatch.token) && (batch ? phoneBatch.key === batch : !phoneBatch.key && Date.now() - phoneBatch.at < 8000);
+  const token = joins ? phoneBatch.token : ++phoneNoteSeq;
+  const entry = joins ? phoneNotes.get(token) : { files: [], caption: '' };
+  entry.files.push(saved);
+  if (caption && !entry.caption) entry.caption = String(caption).slice(0, 4000);
+  phoneNotes.set(token, entry);
+  phoneBatch = { token, at: Date.now(), key: batch };
+  for (const old of phoneNotes.keys()) { if (phoneNotes.size <= 10) break; phoneNotes.delete(old); }
+  const text = entry.files.length === 1 ? t('phone.toast.one', { name: saved.name }) : t('phone.toast.many', { count: entry.files.length });
+  const showOnly = entry.files.every((f) => f.risky);
+  const rec = focusedRec() || curRec;
+  if (TEST) (global.__phoneNotes ||= []).push({ token, text, showOnly });
+  if ((TEST || BrowserWindow.getFocusedWindow()) && rcAlive(rec) && winRecs.has(rec)) { // (test windows stay in the background: the toast is what they check)
+    withWindow(rec, () => ui()?.send('tabs:organize-note', { text, undo: true, ttl: 15000, phoneNote: token, undoLabel: t(showOnly ? 'phone.toast.show' : 'phone.toast.attach'), undoTitle: entry.caption || text }));
+    return;
+  }
+  if (TEST) return;
+  try {
+    const n = new Notification({ title: t('phone.notify.title'), body: text, silent: false });
+    n.on('click', () => { focusWindow(); phoneNoteAction(token); });
+    n.show();
+    phoneNotifs.add(n); // (held: Electron drops the click handler of a collected Notification)
+    if (phoneNotifs.size > 10) phoneNotifs.delete(phoneNotifs.values().next().value);
+  } catch (err) { console.error('[lumen] phone files: notification:', err?.message || err); }
+}
+const phoneNotifs = new Set();
+// The toast's button: the files into the composer (the caption too, when the composer is empty), or Finder for programs.
+async function phoneNoteAction(token) {
+  const entry = phoneNotes.get(Number(token));
+  if (!entry) return false;
+  if (phoneBatch?.token === Number(token)) phoneBatch = null; // (a used toast takes no more files: the next one gets its own)
+  const safe = entry.files.filter((f) => !f.risky);
+  if (!safe.length) { filesShell('show', entry.files[0].path); return true; }
+  let first = true;
+  for (const f of safe.slice(0, 10)) {
+    let data;
+    try { data = await fs.promises.readFile(f.path); } catch { continue; } // moved or deleted since
+    ui()?.send('files:attach-file', { name: f.name, type: f.mime || '', data, ...(first && entry.caption ? { text: entry.caption } : {}) });
+    first = false;
+  }
+  return true;
+}
+ipcMain.handle('phone:note-action', (_e, token) => phoneNoteAction(token));
+// A link sent from the phone: a new tab in the window in front, behind the current one (nothing the user is doing is taken over).
+function openFromPhone(url) {
+  const rec = focusedRec() || curRec;
+  if (!rec) throw new Error('No Lumen window is open.');
+  withWindow(rec, () => { openTab(url, { background: true }); toast(t('phone.toast.opened')); });
+}
+// Send to phone (page menus, a finished download's menu): only ever the user's own click. Shown while a chat is paired.
+const phoneReady = () => readSettings().telegramChannel === true && telegramNow().paired();
+async function sendToPhone(what) {
+  const rec = focusedRec() || curRec;
+  try {
+    await telegramNow().sendToChat(what);
+    noteIn(rec, t('phone.send.sent'), { ttl: 2600 });
+  } catch (err) {
+    noteIn(rec, t('phone.send.failed', { error: String(err?.message || err).slice(0, 200) }), { ttl: 6000 });
+  }
+}
+const sendPageToPhone = (wc) => { if (wc && !wc.isDestroyed() && isWebUrl(wc.getURL())) sendToPhone({ text: [wc.getTitle(), wc.getURL()].filter(Boolean).join('\n') }); };
+async function sendFileToPhone(file) {
+  let data;
+  try { data = await fs.promises.readFile(file); } catch (err) { noteIn(focusedRec() || curRec, t('phone.send.failed', { error: err.message }), { ttl: 6000 }); return; }
+  return sendToPhone({ file: { name: path.basename(file), data, mime: require('./features/upload-files').mimeOf(file) } });
+}
+// [phone wifi] Receive from phone (Wi-Fi) (features/wifi-upload.js): a QR sheet for a one-time address on this computer's
+// Wi-Fi; the phone's page sends files into the phone inbox. The server runs only while the sheet is open. What came is handed
+// over when it closes: opened from the composer's + menu, straight into the composer; from a menu, the strip's toast.
+let wifiRt = null;
+let wifiSheet = null; // { win, session, attach, received: [{ saved, caption }], id }
+let wifiSeq = 0;
+function wifiUpload() {
+  if (wifiRt) return wifiRt;
+  const words = Object.fromEntries(['title', 'intro', 'pick', 'note', 'waiting', 'sent', 'failed', 'tooBig', 'ended', 'taken', 'sessionFull', 'diskFull', 'noNetwork'].map((k) => [k, t(`wifi.page.${k}`)]));
+  wifiRt = require('./features/wifi-upload').createWifiUpload({
+    http: require('http'), interfaces: () => require('os').networkInterfaces(), inbox: phoneInbox(), words,
+    allowLoopback: TEST && global.__wifiLoopback === true,
+    onFile: (saved, caption) => { wifiSheet?.received.push({ saved, caption }); },
+    onEvent: onWifiEvent,
+  });
+  return wifiRt;
+}
+function onWifiEvent(e) {
+  const sheet = wifiSheet;
+  if (TEST) (global.__wifiEvents ||= []).push(e);
+  if (!sheet) return;
+  if (e.type === 'claimed') toolOverlay.update(sheet.win, sheet.session, { status: t('wifi.connected') });
+  else if (e.type === 'file') toolOverlay.update(sheet.win, sheet.session, { status: t('wifi.received', { count: sheet.received.length || 1 }) });
+  else if (e.type === 'stopped') {
+    wifiSheet = null;
+    if (e.reason !== 'closed') toolOverlay.hide(sheet.win, sheet.session);
+    if (e.reason === 'idle' || e.reason === 'expired') toast(t('wifi.endedIdle'));
+    else if (e.reason === 'bad-keys') toast(t('wifi.endedBadKeys'));
+    deliverWifi(sheet);
+  }
+}
+function deliverWifi(sheet) {
+  if (!sheet.received.length) return;
+  if (sheet.attach) {
+    const token = ++phoneNoteSeq;
+    phoneNotes.set(token, { files: sheet.received.map((r) => r.saved), caption: sheet.received.find((r) => r.caption)?.caption || '' });
+    phoneNoteAction(token).catch((err) => console.error('[lumen] wifi upload: could not attach:', err?.message || err));
+    return;
+  }
+  for (const r of sheet.received) notePhoneFile(r.saved, r.caption, { batch: `wifi-${sheet.id}` });
+}
+async function openWifiUpload({ attach = false } = {}) {
+  if (wifiSheet) wifiUpload().stop('replaced'); // (one at a time: what came so far is handed over)
+  const rec = focusedRec() || curRec;
+  if (!rec) return null;
+  return withWindow(rec, async () => {
+    const w = win; // (taken before the await: another window may be in front by then)
+    const wc = activeTab()?.webContents;
+    let info;
+    try { info = await wifiUpload().start(); } catch (err) {
+      noteIn(rec, err?.code === 'no-network' ? t('wifi.noNetwork') : t('wifi.failed', { error: String(err?.message || err).slice(0, 200) }), { ttl: 6000 });
+      return null;
+    }
+    const sheet = { win: w, session: null, attach, received: [], id: ++wifiSeq };
+    wifiSheet = sheet;
+    sheet.session = await toolOverlay.show(w, {
+      mode: 'qr',
+      restoreFocus: () => { if (wc && !wc.isDestroyed()) wc.focus(); },
+      payload: {
+        title: t('wifi.title'), sub: t('wifi.scan'), modules: require('./features/qr').makeMatrix(info.url), alt: t('wifi.alt'),
+        text: t('wifi.address', { address: `${info.ip}:${info.port}` }), warn: t('wifi.trusted'), // (the address without its key: only the QR carries that)
+        buttons: [{ id: 'close', label: t('wifi.done'), primary: true }],
+      },
+      onAction: () => {},
+      onClose: () => { if (wifiSheet === sheet) wifiUpload().stop('closed'); },
+    });
+    if (TEST) global.__wifiUrl = info.url;
+    return info;
+  });
+}
+ipcMain.on('phone:wifi-open', () => { openWifiUpload({ attach: true }).catch((err) => console.error('[lumen] wifi upload:', err?.message || err)); }); // the composer's + menu
+app.on('will-quit', () => wifiRt?.stop('quit'));
+if (TEST) global.__phone = { inbox: phoneInbox, note: notePhoneFile, open: openFromPhone, notes: phoneNotes, action: phoneNoteAction, sendPage: sendPageToPhone, sendFile: sendFileToPhone, ready: () => phoneReady(), wifi: openWifiUpload, wifiStatus: () => wifiRt?.status() || { running: false }, wifiClose: () => { const s = wifiSheet; if (s) toolOverlay.hide(s.win, s.session); } };
 if (TEST) {
   global.__usage = usage;
   global.__agent = agent;
@@ -10739,7 +10931,8 @@ ipcMain.on('agent:stop', (event, id) => {
   syncToSender(event);
   const run = chatRuns.get(chatId);
   if (run?.queued) run.cancelQueued(); // it never started: leaves the waiting line
-  else { agent.stop(); if (run?.messages) agent.stopFor(run.messages); } // [stop always works] the chat's own run, even when the agent's open conversation is another
+  else if (run?.messages) agent.stopFor(run.messages); // [stop always works] the chat's own run, even when the agent's open conversation is another
+  else agent.stopOpen(); // (no run of its own: only the open conversation's, never another chat's that happens to be the only one going)
 });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
@@ -10825,7 +11018,6 @@ function startNewChat(event, { temporary = false } = {}) {
   switchChat(null);
   if (temporary) temporaryChats.add(chatId);
   const forTab = pageTabOf(event.sender)?.id ?? activeId; // (a chat page's New chat is its own tab's)
-  carriedTabs.delete(forTab);
   chatBind.bind(forTab, chatId); // [chat per tab] the tab shows its new chat; the old one stays in the list (and keeps working if it is)
   if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
   pushAttention();
@@ -11045,7 +11237,6 @@ ipcMain.handle('chats:share', async (event, id) => {
   const view = switchChat(String(id), { loaded });
   if (view) {
     const forTab = pageTabOf(event.sender)?.id ?? activeId;
-    carriedTabs.delete(forTab);
     chatBind.bind(forTab, chatId, { share: true });
     if (event.sender && !event.sender.isDestroyed()) shownChat.set(event.sender, chatId);
     pushAttention();
