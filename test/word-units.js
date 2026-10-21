@@ -91,6 +91,8 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   {
     const backend = read('src/settings/settings-backend.js');
     check('setting: aiWordControl is on by default (Settings > AI keeps the switch)', /aiWordControl: true,/.test(backend) && /toggle\('aiWordControl'/.test(read('src/renderer/settings.js')) && /"settings\.ai\.wordControl": "Let the AI use Microsoft Word"/.test(read('src/locales/en.json')));
+    const fia = read('src/renderer/settings.js'); const en = read('src/locales/en.json');
+    check('setting: aiFilesInApps is app | auto | file, auto by default, on the AI page above the Word switch, with English strings', backend.includes("aiFilesInApps: 'auto'") && backend.includes("case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null)") && fia.indexOf("select('aiFilesInApps'") > fia.indexOf("toggle('aiDesktopControl'") && fia.indexOf("select('aiFilesInApps'") < fia.indexOf("toggle('aiWordControl'") && en.includes('"settings.ai.filesInApps": "Work on files in their apps"') && en.includes('"settings.ai.filesInApps.file": "From the file"'));
     check('setting: the switch sits below the desktop-app ones', read('src/renderer/settings.js').indexOf("toggle('aiWordControl'") > read('src/renderer/settings.js').indexOf("toggle('aiDesktopControl'"));
     const main = read('src/main.js');
     check('lazy: main.js requires src/word only inside a function, and nothing but main.js and agent.js mention it', /const wordLazy = \(\) => \(wordCtl \|\|= require\('\.\/word'\)\.createWord\(/.test(main) && !/^const \w+ = require\('\.\/word/m.test(main) && !/^const \w+ = require\('\.\.\/word/m.test(read('src/ai/agent.js')));
@@ -98,7 +100,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   }
 
   // ---- the controller with a fake COM host
-  const makeRig = ({ enabled = true, platform = 'win32', docs, installed = true, tainted = false, once = new Set(), answers = [] } = {}) => {
+  const makeRig = ({ enabled = true, platform = 'win32', docs, installed = true, tainted = false, once = new Set(), answers = [], mode, openAdds = false } = {}) => {
     const store = { docs: docs || [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: false, paragraphs: 12, text: 'Intro\nResults\nbody' }], calls: [], cards: [], opened: [] };
     const host = {
       installed: () => installed,
@@ -115,7 +117,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       save: async (a) => { store.calls.push(['save', a]); return {}; },
       saveAs: async (a) => { store.calls.push(['saveAs', a]); return { doc: 'New.docx', path: a.path }; },
       show: async (a) => { store.calls.push(['show', a]); return { shown: true }; },
-      open: async (a) => { store.calls.push(['open', a]); store.opened.push(a.path); return { already: false, doc: { name: path.win32.basename(a.path), paragraphs: 3, path: a.path } }; },
+      open: async (a) => { store.calls.push(['open', a]); store.opened.push(a.path); if (openAdds && !store.docs.some((d) => d.path === a.path)) store.docs.push({ name: path.win32.basename(a.path), path: a.path, active: false, saved: true, tracking: false, paragraphs: 3, text: 'Opened in Word text' }); return { already: false, doc: { name: path.win32.basename(a.path), paragraphs: 3, path: a.path } }; },
       new: async () => { store.calls.push(['new']); return { doc: { name: 'Document3', paragraphs: 1 } }; },
     };
     const state = { enabled, tainted };
@@ -125,7 +127,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       ask: async (card) => { store.cards.push(card); return queue.length ? queue.shift() : true; },
     };
     const files = { exists: new Set() };
-    const word = createWord({ settings: { enabled: () => state.enabled }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
+    const word = createWord({ settings: { enabled: () => state.enabled, filesInApps: () => mode }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
     return { word, store, ctx, state, once, files };
   };
 
@@ -413,6 +415,55 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('docx: an unknown heading is a plain error naming it', /No heading or paragraph matches "Nowhere"/.test(await rejects(() => docx.editDocx(buf, { insert: { at: 'after', heading: 'Nowhere', text: 'x' } })) || ''));
     const headed = await docx.editDocx(await docx.editDocx(fresh, { insert: { at: 'end', text: 'Caf\u00e9 \u4e2d\u6587' } }).then((r) => r.buf), { insert: { at: 'after', heading: 'caf\u00e9', text: 'hit by lower case' } });
     check('docx: a heading matches without case, by start or by part, in unicode', (await docx.readDocx(headed.buf)).text.split('\n')[1] === 'hit by lower case');
+  }
+
+  // ---- Settings > AI > Work on files in their apps (aiFilesInApps): app | auto | file
+  {
+    const real = path.join(tmp, 'Mode test.docx');
+    const maker = makeRig({ installed: false });
+    await maker.word.run({ action: 'new', path: real }, maker.ctx);
+    const callsOf = (r) => r.store.calls.map((c) => c[0]);
+    const win = (p) => p; // (checkFile is the identity in the rig: the path is the file's real path)
+    const rd = async (mode) => { const r = makeRig({ mode, openAdds: true }); r.store.docs = []; const out = await r.word.run({ action: 'read', path: win(real) }, r.ctx); return { r, out }; };
+    const auto = await rd('auto');
+    const app = await rd('app');
+    const file = await rd('file');
+    check('apps setting: automatic reads a closed .docx from the file, as before (Word is not started)', !callsOf(auto.r).includes('open') && /Mode test.docx|blocks/.test(auto.out), callsOf(auto.r));
+    check('apps setting: "in the app" opens the .docx in Word and reads it there', callsOf(app.r).join() === 'open,read' && /Opened in Word text/.test(app.out), callsOf(app.r));
+    check('apps setting: "from the file" reads the .docx file and does not open Word', !callsOf(file.r).includes('open') && !callsOf(file.r).includes('read') && /blocks/.test(file.out), callsOf(file.r));
+    const insert = async (mode, p = real) => { const r = makeRig({ mode, openAdds: true }); r.store.docs = []; await r.word.run({ action: 'insert', path: p, text: 'Added line' }, r.ctx); return r; };
+    check('apps setting: insert into a closed .docx opens Word in the default, and writes the file itself with "from the file"', callsOf(await insert('auto')).includes('open') && !callsOf(await insert('file')).includes('open') && !callsOf(await insert('file')).includes('insert'));
+    check('apps setting: a document Word already has open is always read and edited in Word', await (async () => { const r = makeRig({ mode: 'file' }); r.store.docs = [{ name: 'Mode test.docx', path: real, active: true, saved: true, paragraphs: 3, text: 'live text' }]; const out = await r.word.run({ action: 'read', path: real }, r.ctx); return /live text/.test(out); })());
+    check('apps setting: "from the file" still opens Word for a kind it cannot change itself (.doc)', callsOf(await insert('file', path.join(tmp, 'Old.doc'))).includes('open') === true);
+    const nw = makeRig({ mode: 'file' }); const created = path.join(tmp, 'Made in file mode.docx');
+    await nw.word.run({ action: 'new', path: created }, nw.ctx);
+    check('apps setting: "from the file" creates a new .docx directly, without Word', fs.existsSync(created) && !callsOf(nw).includes('new'));
+    check('apps setting: any other value behaves as automatic', await (async () => { const r = makeRig({ mode: 'bogus', openAdds: true }); r.store.docs = []; await r.word.run({ action: 'read', path: real }, r.ctx); return !callsOf(r).includes('open'); })());
+  }
+
+  // ---- tokens: what an edit and a read cost the AI
+  {
+    const r = makeRig({});
+    const out = [];
+    out.push(await r.word.run({ action: 'insert', doc: 'Report.docx', text: 'one two', at: 'after', heading: 'Results' }, r.ctx));
+    out.push(await r.word.run({ action: 'replace', doc: 'Report.docx', find: 'a', replace: 'b' }, r.ctx));
+    out.push(await r.word.run({ action: 'style', doc: 'Report.docx', find: 'a', bold: true }, r.ctx));
+    out.push(await r.word.run({ action: 'table', doc: 'Report.docx', rows: [['a', 'b'], ['c', 'd']] }, r.ctx));
+    out.push(await r.word.run({ action: 'comment', doc: 'Report.docx', find: 'a', text: 'note' }, r.ctx));
+    out.push(await r.word.run({ action: 'save', doc: 'Report.docx' }, r.ctx));
+    check('tokens: an edit or a save answers in one short line (under 200 characters) and never repeats the document', out.every((t) => t.length < 200 && !t.includes(String.fromCharCode(10)) && !/Intro/.test(t)), JSON.stringify(out.map((t) => t.length)));
+    const big = Array.from({ length: 400 }, (_, i) => `Paragraph ${i} ${'word '.repeat(30)}`).join(String.fromCharCode(10));
+    const rg = makeRig({ docs: [{ name: 'Big.docx', path: `C:${B}Docs${B}Big.docx`, active: true, saved: true, paragraphs: 400, text: big }] });
+    await rg.word.run({ action: 'read', doc: 'Big.docx' }, rg.ctx);
+    const asked = rg.store.calls.find((c) => c[0] === 'read')[1];
+    check('tokens: a read asks Word for at most 6000 characters (it was 9000); a long document is paged with offset', asked.budget === 6000, String(asked.budget));
+  }
+  const tree = require('../src/desktop/tree');
+  {
+    const kids = Array.from({ length: 400 }, (_, i) => ({ i: `e${i}`, t: 'Button', n: `Button number ${i} with a fairly long label to take space` }));
+    const pruned = tree.prune({ t: 'Window', n: 'App', c: kids });
+    const chars = pruned.lines.join(String.fromCharCode(10)).length;
+    check('tokens: a big app window reads as at most 120 items and 5000 characters (it was 160 and 7000)', pruned.shown <= 120 && chars <= 5200, `${pruned.shown} ${chars}`);
   }
 
   // ---- the file route through the controller (no Word): reading, writing, approval, atomic write

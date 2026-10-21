@@ -177,6 +177,7 @@ const DEFAULTS = {
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
+  aiFilesInApps: 'auto', // [ai] app: the AI opens a file in the app that owns it (Word, Excel, PowerPoint...) and reads and edits it there; auto: it chooses; file: it reads and edits the file's own data and does not open apps (agent.js filesInApps, src/word/)
   aiWordControl: true, // [ai] the AI may work with Microsoft Word documents directly (src/word/): Word's own automation on Windows, .docx files without Word; every edit and save still asks first, and nothing starts until the AI first uses it
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
@@ -287,6 +288,7 @@ function validate(key, value) {
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
+    case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'aiEffort': return require('../ai/effort').cleanAll(value);

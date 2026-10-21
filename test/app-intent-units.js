@@ -51,6 +51,45 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
   check('prompt: the word tool says to prefer it for a docx and to open it in Word; desktop mentions path; both stay under the 420-character description budget', /\.docx/.test(wd) && /open/i.test(wd) && /path/.test(dd) && wd.length < 420 && dd.length < 420, `${wd.length} ${dd.length}`);
   check('prompt: the default request pays nothing (neither tool listed)', !def('word', {}) && !def('desktop', {}));
 
+  // ---- Settings > AI > Work on files in their apps (aiFilesInApps)
+  const modeOf = (m) => ({ filesInApps: () => m });
+  const csv = user('summarize data.csv and main.m');
+  check('apps setting: automatic is the existing behaviour (a .csv or .m alone is not routed; Excel files are)', !offerDesk(csv, modeOf('auto')) && !offerDesk(csv, modeOf('nonsense')) && !offerDesk(csv, {}) && offerDesk(user('edit Budget.xlsx'), modeOf('auto')));
+  check('apps setting: "in the app" also offers desktop for a .csv or .m (never a .key), still not for chat', offerDesk(csv, modeOf('app')) && offerDesk(user('open data.csv'), modeOf('app')) && !offerDesk(user('rotate server.key'), modeOf('app')) && !offerDesk(user('what is the capital of France'), modeOf('app')) && J(apps(csv, { weak: true }).sort()) === J(['excel', 'matlab']));
+  check('apps setting: "in the app" keeps word offered for a .docx; the Word-only rules are unchanged', offerWord(user('fix my essay'), modeOf('app')) && !offerDesk(user('fix my essay'), modeOf('app')));
+  check('apps setting: "from the file" never routes a file to desktop, but a plain request for an app, or the master switch, still offers it', !offerDesk(user('edit Budget.xlsx'), modeOf('file')) && !offerDesk(user('edit deck.pptx'), modeOf('file')) && offerDesk(user('open it in Excel'), modeOf('file')) && offerDesk(user('hello'), { filesInApps: () => 'file', desktopAccess: () => true }));
+  check('apps setting: "from the file" still offers word for a .docx (its file route reads and edits the file)', offerWord(user('fix the typos in my essay.docx'), modeOf('file')));
+  const noteOf = (name, mode, flags) => requestFor(settings, user('hi'), undefined, { ...flags, filesInApps: mode }).tools.find((t) => t.name === name).description;
+  const base = { word: def('word', { word: true }).description, desktop: def('desktop', { desktop: true }).description };
+  check('apps setting prompt: automatic adds nothing to either tool', noteOf('word', 'auto', { word: true }) === base.word && noteOf('desktop', 'auto', { desktop: true }) === base.desktop && noteOf('word', undefined, { word: true }) === base.word);
+  check('apps setting prompt: app and file add one short sentence each (under 120 characters) to the tool that is offered', ['app', 'file'].every((m) => ['word', 'desktop'].every((n) => { const d = noteOf(n, m, { [n]: true }); return d.startsWith(base[n]) && d.length - base[n].length > 20 && d.length - base[n].length < 120; })));
+  check('apps setting prompt: the sentences say what the choice is', /in Word/.test(noteOf('word', 'app', { word: true })) && /do not open Word/.test(noteOf('word', 'file', { word: true })) && /open_app path.*read_app/.test(noteOf('desktop', 'app', { desktop: true })) && /do not open files in apps/.test(noteOf('desktop', 'file', { desktop: true })));
+  check('tokens: the word and desktop descriptions are shorter than before (414 and 408 characters on main) and say to read text, not pictures', base.word.length <= 410 && base.desktop.length <= 370 && /read only what you need/.test(base.word) && /Prefer read_app to screenshot_app/.test(base.desktop), `${base.word.length} ${base.desktop.length}`);
+  check('word tool: the description says to edit in place, not with scripts, and stays under the 420-character budget', /in place/.test(base.word) && /scripts/.test(base.word) && base.word.length <= 420, String(base.word.length));
+  check('apps setting prompt: "in the app" says to edit in place in Word, never the file', /in Word.*in place/.test(noteOf('word', 'app', { word: true })));
+
+  // ---- the CLI engines (Claude Code, Codex, Grok Build, Antigravity): the word tool and one rule, only on Word intent
+  {
+    const mkAgent = (mode) => new Agent({ filesInApps: () => mode });
+    const run = (agent, chat, fn) => agent.inScope({ chat, gate: {}, signal: new AbortController().signal }, fn);
+    const withWord = user('fix the typos in my essay.docx');
+    const chatA = { settings: {} };
+    const a = mkAgent('auto');
+    const noteA = run(a, chatA, () => a.cliWordNote(withWord));
+    check('cli: Word intent adds the one-line rule (word tool, in Word, in place, no scripts or new files unless asked) and marks the chat', /word tool/.test(noteA) && /edit in place/.test(noteA) && /read only what the edit needs/.test(noteA) && /do not re-read/.test(noteA) && /Never write scripts or new files/.test(noteA) && noteA.split(String.fromCharCode(10)).filter(Boolean).length === 1 && chatA.cliWord === true, noteA);
+    const chatB = { settings: {} };
+    check('cli: no Word intent, no rule and no tool', run(a, chatB, () => a.cliWordNote(user('what is the capital of France'))) === '' && chatB.cliWord === undefined && a.cliWordToolDefs(chatB).length === 0);
+    check('cli: the chat session lists the word tool once marked (a trimmed definition; an unmarked chat or an outside client gets nothing)', a.cliWordToolDefs(chatA).length === 1 && a.cliWordToolDefs(chatA)[0].name === 'word' && !a.cliWordToolDefs(null).length && !a.cliWordToolDefs({}).length);
+    check('cli: once marked the tool stays for later messages in the chat', run(a, chatA, () => a.cliWordNote(user('thanks, now shorten it'))) !== '');
+    const f = mkAgent('file');
+    const noteF = run(f, { settings: {} }, () => f.cliWordNote(withWord));
+    check('cli: "from the file" tells the engine to use the word tool with the path, not to open Word', /file path/.test(noteF) && !/open the file in Word/.test(noteF) && /Never write scripts/.test(noteF), noteF);
+    check('cli: the rule is small (under 260 characters) and the listing carries the setting sentence', noteA.trim().length < 260 && /Setting:/.test(mkAgent('app').cliWordToolDefs({ cliWord: true })[0].description) && !/Setting:/.test(a.cliWordToolDefs(chatA)[0].description));
+    const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+    check('cli: the shared tool list is untouched (the word tool is a per-run extra: ai-agents.js runTools, main.js wordTools)', !require('../src/ai/agent').EXTERNAL_TOOLS.some((t) => t.name === 'word') && read('src/features/ai-agents.js').includes('deps.wordTools?.(chat)') && read('src/main.js').includes('wordTools: (chat) => agent.cliWordToolDefs(chat)') && read('src/ai/agent.js').includes('this.cliWordNote(messages)'));
+  }
+  check('apps setting prompt: nothing is added when the tool is not offered', !requestFor(settings, user('hi'), undefined, { filesInApps: 'app' }).tools.some((t) => t.name === 'word' || t.name === 'desktop'));
+
   // ---- open_app path checks
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-appintent-'));
   const home = path.join(root, 'home');

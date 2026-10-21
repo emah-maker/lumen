@@ -8748,7 +8748,7 @@ ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (wha
 // [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings > AI > "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
 const wordLazy = () => (wordCtl ||= require('./word').createWord({
-  settings: { enabled: () => readSettings().aiWordControl !== false },
+  settings: { enabled: () => readSettings().aiWordControl !== false, filesInApps: () => readSettings().aiFilesInApps }, // (aiFilesInApps: app | auto | file)
   checkFile: (p) => require('./features/device-access').checkedPath(p, 'file', { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }), // the AI's file rules: no credentials folders, no Lumen profile
   checkTarget: (p) => { const why = require('./features/device-access').blockedReason(p, { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }); if (why) throw new Error(why); },
   live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false), dpr: () => { try { return require('electron').screen?.getPrimaryDisplay?.().scaleFactor || 1; } catch { return 1; } } }, // the card's live picture of Word's window (word/card.js), the desktop card's own pacing
@@ -8899,7 +8899,7 @@ const agent = new Agent({
   autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
   effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
-  word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
+  word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
@@ -12480,6 +12480,7 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
   projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
+  wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page

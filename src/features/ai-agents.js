@@ -371,12 +371,13 @@ function setupAiAgents(deps) {
   // random tag (mcp config / bearer token Lumen writes into that run's own temp config) is what proves it. An outside client has no such tag,
   // so it never sees the tool and is refused if it names it. A background task's run is left out too (nobody there to confirm a write).
   // [project workspace] Likewise project_files, in a run whose chat is in a project with files or pinned pages, and the connector tool only where the project allows it.
+  // [word] And the word tool, in a run whose chat is about a Word document (agent.js cliWordNote), so the model edits it in Word instead of writing scripts.
   // [cli helpers] The same runs are offered delegate where their engine has no subagent of its own that passes Lumen's approvals (agent.js cliHelperToolDefs).
   const runTools = (session) => {
     if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
     const owner = engineForSession(session);
     const chat = owner?.active?.scope?.chat || null;
-    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || [])];
+    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || [])];
   };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
