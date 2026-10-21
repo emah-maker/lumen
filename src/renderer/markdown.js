@@ -99,7 +99,10 @@
         const body = s.slice(i + 1, j);
         const mathy = /[_^]/.test(s[i + 1]) || /\\[A-Za-z]/.test(body) || /^[A-Za-z]$/.test(body); // "$n$th", "5 $\mu$m", "$\times$2"
         const next = s[j + 1] || '';
-        return !/\s/.test(s[j - 1]) && next !== '$' && (!/[A-Za-z0-9]/.test(next) || mathy) ? j : -1;
+        // A space before the closing $ is money's mark ("$5 and $"), unless the formula has a TeX command: "$\sigma = 0 - (<0) = $ positive"
+        // is a formula a model left open-ended, and money never holds \sigma.
+        const spacedOk = !/\s/.test(s[j - 1]) || /\\[A-Za-z]/.test(body);
+        return spacedOk && next !== '$' && (!/[A-Za-z0-9]/.test(next) || mathy) ? j : -1;
       }
     }
     return -1;

@@ -29,6 +29,12 @@ check('money is not math', () => {
     assert.strictEqual(maths.length, 0, s);
   }
 });
+check('a formula with a TeX command may end in a space before its $ (a table cell: "$\\sigma = 0 - (<0) = $ positive")', () => {
+  const { maths } = md.liftMath('| (a) | $\\sigma = 0 - (<0) = $ positive, which is allowed |');
+  assert.strictEqual(maths.length, 1, JSON.stringify(maths));
+  assert.match(md.render('$\\sigma = 0 - (<0) = $ positive'), /data-tex|<math/);
+  for (const s of ['Pay $5 and $ 10 later', 'It was $5 or $', 'from $10 to $20 total']) assert.strictEqual(md.liftMath(s).maths.length, 0, s); // (money with spaces is still money)
+});
 check('\\$ reads as a dollar sign', () => assert.match(md.render('It is \\$5.'), /It is \$5\./));
 check('emphasis inside math is left alone', () => {
   const html = md.render('$a*b*c$ and $x_1 + y_1$');
