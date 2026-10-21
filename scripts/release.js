@@ -23,11 +23,11 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const e2eLock = require('./e2e-lock');
 const {
   cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder,
-  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, releasePlan, stageDone, stagesLeft,
+  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, splitDiff, srcImporters, releasePlan, stageDone, stagesLeft,
 } = require('./release-lib');
 const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
 
@@ -54,14 +54,39 @@ function planChecks(readFile, listTestFiles) {
   return { stages, derived, sources, shared };
 }
 
-// The default suite choice (see selectSuites): the files changed since the last release tag, up to the commit before the release commit.
+// The default suite choice (see selectSuites): the files changed since the last release tag, up to the commit before the release commit,
+// with what selectSuites narrows by: each changed src file's diff, who requires whom under src/, and every src file's text (all at headRev).
 // null when there is no tag to compare with (then everything runs).
 function changedSinceTag(wt, tagGuess, headRev) {
   const tag = tagGuess || git(wt, 'describe', '--tags', '--abbrev=0', headRev).stdout;
   if (!tag) return null;
   const r = git(wt, 'diff', '--name-only', tag, headRev);
-  return r.status === 0 ? { tag, files: r.stdout.split('\n').filter(Boolean) } : null;
+  if (r.status !== 0) return null;
+  const files = r.stdout.split('\n').filter(Boolean);
+  const d = spawnSync('git', ['diff', '-U0', tag, headRev, '--', 'src'], { cwd: wt, encoding: 'utf8', maxBuffer: 1 << 30, windowsHide: true });
+  const diffs = d.status === 0 ? splitDiff(d.stdout) : {};
+  return { tag, files, diffs, ...srcAt(wt, headRev) };
 }
+
+// { srcTexts: { path: text } for the .js, .css and .html files under src/ at `rev` (not vendor/, not the generated bundles), importers }.
+function srcAt(wt, rev) {
+  const ls = spawnSync('git', ['ls-tree', '-r', '--name-only', rev, 'src'], { cwd: wt, encoding: 'utf8', maxBuffer: 1 << 28, windowsHide: true });
+  const names = (ls.stdout || '').split('\n').filter((f) => /\.(js|css|html)$/.test(f) && !/\/vendor\/|\.bundle\./.test(f));
+  if (!names.length) return { srcTexts: null, importers: {} };
+  const out = spawnSync('git', ['cat-file', '--batch'], { cwd: wt, input: names.map((f) => `${rev}:${f}`).join('\n') + '\n', maxBuffer: 1 << 30, windowsHide: true }).stdout;
+  const srcTexts = {};
+  let at = 0;
+  for (const f of names) {
+    const nl = out.indexOf(10, at);
+    const size = Number(out.slice(at, nl).toString().split(' ')[2]);
+    srcTexts[f] = out.slice(nl + 1, nl + 1 + size).toString('utf8');
+    at = nl + 1 + size + 1;
+  }
+  const js = Object.fromEntries(Object.entries(srcTexts).filter(([f]) => f.endsWith('.js')));
+  return { srcTexts, importers: srcImporters(js) };
+}
+
+const pickSuites = (ch, derived, sources) => selectSuites({ changed: ch.files, electron: derived.electron, sources, diffs: ch.diffs, importers: ch.importers, srcTexts: ch.srcTexts });
 
 // Electron suites at once: --electron-jobs, else min(3, cores/4, RAM/10 GB). Always 1 with --share-machine (the lock is taken per suite).
 function pickElectronJobs(opts) {
@@ -139,7 +164,7 @@ async function runChecks(wt, st, opts) {
   let only = opts.only || (opts.full ? null : st.only) || null;
   if (!only && !opts.full && !st.full) {
     const ch = changedSinceTag(wt, st.baseTag, 'HEAD~1');
-    const pick = ch ? selectSuites({ changed: ch.files, electron: derived.electron, sources }) : null;
+    const pick = ch ? pickSuites(ch, derived, sources) : null;
     if (pick && !pick.full) {
       only = pick.names;
       st.selection = { tag: ch.tag, changed: ch.files.length, reasons: pick.reasons };
@@ -519,10 +544,11 @@ function dryRun(main, spec, opts) {
   const { stages, derived, sources, shared } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
   let only = opts.full ? null : opts.only;
   let selectionNote = 'every Electron suite (--full)';
+  let why = null;
   if (!only && !opts.full) {
     const ch = changedSinceTag(main, null, 'origin/main');
-    const pick = ch ? selectSuites({ changed: ch.files, electron: derived.electron, sources }) : null;
-    if (pick && !pick.full) { only = pick.names; selectionNote = `the core set plus suites related to the ${ch.files.length} files changed since ${ch.tag}: ${pick.names.length} of ${derived.electron.length} Electron suites (--full runs all)`; }
+    const pick = ch ? pickSuites(ch, derived, sources) : null;
+    if (pick && !pick.full) { only = pick.names; why = pick.reasons; selectionNote = `the core set plus suites related to the ${ch.files.length} files changed since ${ch.tag}: ${pick.names.length} of ${derived.electron.length} Electron suites (--full runs all)`; }
     else selectionNote = ch ? `every Electron suite (a build, dependency or workflow file changed since ${ch.tag})` : 'every Electron suite (no release tag to compare with)';
   } else if (only) selectionNote = `--only: ${only.length} named Electron suites`;
   const kept = only ? stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)) : stages;
@@ -537,6 +563,7 @@ function dryRun(main, spec, opts) {
   let n = 0;
   for (const s of plan) say('plan', s.parallel ? `   | ${s.id}: ${s.text}` : `${++n}. ${s.id}: ${s.text}`);
   say('plan', `   selection: ${selectionNote}`);
+  if (why) for (const [name, reason] of Object.entries(why)) if (reason !== 'core') say('plan', `      ${name}: ${reason}`);
   say('plan', `   checks lanes: ${phases.map((lanes) => lanes.map((l) => `[${l.stages.map((s) => s.name).slice(0, 3).join(', ')}${l.stages.length > 3 ? `, ... ${l.stages.length} in all` : ''}${l.jobs > 1 ? `; ${l.jobs} at a time` : ''}]`).join(' + ')).join('  then  ')}`);
   const aloneNames = Object.keys(shared).filter((n) => kept.some((x) => x.name === n));
   if (ej > 1 && aloneNames.length) say('plan', `   run alone (shared port, clipboard or machine): ${aloneNames.map((n) => `${n} (${shared[n].join(', ')})`).join('; ')}`);

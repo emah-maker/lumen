@@ -359,6 +359,35 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
     check('select: a build, dependency or workflow file means everything', pick(['package-lock.json']).full && pick(['.github/workflows/ci.yml']).full && pick(['scripts/build.js']).full && !pick(['scripts/release.js']).full);
     check('select: names too short to be a stem are not matched by prefix; each suite has one reason', !pick(['src/main.js']).names.includes('mcp') && Object.keys(pick(['src/features/spotify.js']).reasons).length === pick(['src/features/spotify.js']).names.length);
   }
+  // the default selection narrowed by what a diff changed: hubs, changed words, helpers, importers
+  {
+    const many = Array.from({ length: 20 }, (_, i) => `s${i}`);
+    const electron = ['perf-budget', 'tab-chips', 'composer', 'aitabs', 'notes', 'helper-user', ...many];
+    const launch = "electron.launch({ args: [path.join(root, 'src', 'main.js')] })";
+    const sources = {
+      'tab-chips': `${launch}; await ui.evaluate(() => window.lumen.invoke('tabs:chip-pin'))`,
+      composer: `${launch}; ui.locator('#prompt')`,
+      aitabs: `${launch}; await app.evaluate(() => global.__test.closeAiTabs())`,
+      notes: `${launch}; require('../src/features/notes')`,
+      'helper-user': `${launch}; const seed = require('./_chat-seed');`,
+      'perf-budget': launch,
+      ...Object.fromEntries(many.map((n) => [n, `${launch}; ui.click('button'); // isDestroyed`])),
+    };
+    const core = ['perf-budget'];
+    const pick = (changed, diffs = {}, extra = {}) => lib.selectSuites({ changed, electron, sources, core, diffs, ...extra });
+    const mainDiff = "@@ -10,2 +10,2 @@ function closeAiTabs(win) {\n-  ipcMain.handle('tabs:chip-pin', pin);\n+  if (win.isDestroyed()) return;\n";
+    const r = pick(['src/main.js'], { 'src/main.js': mainDiff });
+    check('select: a hub module (every suite launches src/main.js) does not select every suite that names it', !r.names.includes('s3') && !r.names.includes('notes'), r.names.join());
+    check('select: a hub change selects the suites that mention its changed IPC channel and the function its hunk sits in', r.names.includes('tab-chips') && r.names.includes('aitabs') && /closeAiTabs|tabs:chip-pin/.test(r.reasons.aitabs), JSON.stringify(r.reasons));
+    check('select: a changed word most suites mention (isDestroyed) selects nothing', !r.names.some((n) => many.includes(n)));
+    check('select: a word used by many source files is ignored when the source texts are given', !pick(['src/main.js'], { 'src/main.js': mainDiff }, { srcTexts: Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`src/f${i}.js`, 'closeAiTabs tabs:chip-pin'])) }).names.includes('aitabs'));
+    check('select: a CSS selector changed in a stylesheet selects the suite that uses that element', pick(['src/renderer/styles.css'], { 'src/renderer/styles.css': '@@ -1 +1 @@\n-#prompt { height: 2px }\n+#prompt { field-sizing: content }\n' }).names.includes('composer'));
+    check('select: a changed test helper selects the suites that require it', pick(['test/_chat-seed.js']).names.includes('helper-user') && !pick(['test/_chat-seed.js']).names.includes('notes'));
+    check('select: a module selects, one level up, the suites of a module that requires it', pick(['src/features/note-store.js'], {}, { importers: { 'src/features/note-store.js': ['src/features/notes.js'] } }).names.includes('notes'));
+    check('select: generated bundles select nothing', JSON.stringify(pick(['src/renderer/ui.bundle.js'], { 'src/renderer/ui.bundle.js': mainDiff }).names) === JSON.stringify(['perf-budget']));
+    check('diffTokens: channels, ids, hunk functions and camelCase identifiers; not plain words', (() => { const t = lib.diffTokens("@@ -1 +1 @@ function saveDraft() {\n+ ipc.send('chat:draft', { draftKey }); return query;\n+ document.getElementById('prompt');\n"); return ['saveDraft', 'chat:draft', 'draftKey', 'prompt'].every((x) => t.includes(x)) && !t.includes('query') && !t.includes('return'); })());
+    check('splitDiff / srcImporters: per-file diffs and relative requires resolved to files', (() => { const d = lib.splitDiff('diff --git a/src/a.js b/src/a.js\n@@ -1 +1 @@\n+x\ndiff --git a/src/b.js b/src/b.js\n@@ -1 +1 @@\n+y\n'); const imp = lib.srcImporters({ 'src/a.js': "require('./lib/c')", 'src/lib/c.js': "require('../b.js')", 'src/b.js': '' }); return /\+x/.test(d['src/a.js']) && /\+y/.test(d['src/b.js']) && imp['src/lib/c.js'][0] === 'src/a.js' && imp['src/b.js'][0] === 'src/lib/c.js'; })());
+  }
   // test-units.js --jobs: two real unit suites, one at a time and two at a time, give the same verdict and the same sorted summary
   const tu = (...a) => spawnSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'test-units.js'), ...a], { encoding: 'utf8', timeout: 120000 });
   const one = tu('zoom-steps-units', 'write-dedupe-units');
