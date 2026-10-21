@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.62 (2026-10-21)
+
 - **A tab dropped onto a screen with a different display scale keeps the size of the window it came from.** On a desktop that mixes a 100% and a 150% screen, a tab torn off into its own window could open about a third smaller than it should (Windows sized the window with the scale of the screen it had just left). Lumen now checks the size after placing the window and sets it again once it is on the target screen. The tab-drag test also no longer depended on that wrong size: it released a tab over the right edge of a window, which opens a split view.
 - **Links opened "in Lumen" reach Lumen again, and Default apps shows Lumen's icon.** A dev or test run had registered Lumen as the default browser with node.exe as its program, so with Lumen as the default browser every link from another app, including the SSO sign-in page Claude Code opens with `/login`, went to node.exe and never arrived, and Windows Settings showed Node's green icon for Lumen. Lumen now refuses to register node.exe or a stock electron.exe, and at startup the installed Lumen.exe rewrites a registration that names another program or a missing icon (one you never made is never created). Tests: `test/setup-units.js`, `test/assoc-icons-units.js`.
 - **Passkeys work in sign-in popups.** A passkey or Windows Hello prompt from a popup window (Sign in with Microsoft or Google, school and work SSO pages) was refused as "not a tab", so the site said the passkey failed. Your own focused popup may now ask, and Windows Security opens over it. Popups the AI opened still can't. Test: `test/passkeys.js`.
