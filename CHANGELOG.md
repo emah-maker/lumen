@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The red muted speaker shows only on tabs you muted.** Lumen keeps some tabs quiet by itself (a tab it loads ahead in the background, the AI's own tabs), and those showed the muted speaker even though you never muted them and they made no sound. The icon now follows Mute tab and Mute site only.
 ## 0.5.64 (2026-10-21)
 
 - **"An app wants to use Lumen" is a pill in the toolbar, like the update prompt.** The question for an app that connects without a token (Allow this time / Deny) used to be a bar across the whole window. It is now a pill next to the toolbar buttons that says which app is asking; the full warning is in its tooltip, and on a narrow window it keeps the app's name and the two buttons.
