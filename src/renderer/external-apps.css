@@ -17,3 +17,16 @@
 .external-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-pill-text { position: absolute; width: 1px; height: 1px; min-width: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .external-pill { animation: none; } }
+/* "<app> wants to use Lumen": a toolbar pill like the update prompt (extras.css .update-pill), not a bar across the window. */
+.external-ask { max-width: 46vw; } /* (more room than the update pill: the app's name is the point) */
+.external-ask .external-ask-btn { flex: none; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: transparent; color: var(--text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.external-ask .external-ask-btn:hover { background: var(--hover); }
+.external-ask .external-ask-btn.primary { background: var(--accent-soft); color: var(--accent-text); }
+.external-ask .external-ask-btn.primary:hover { box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.external-ask .external-ask-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.external-ask .external-ask-text { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-ask { gap: 6px; padding-left: 8px; }
+/* A compact toolbar keeps the app's name in quotes (which app is asking is the point) and clips the rest of the sentence; the title has it all. */
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-ask .ea-rest { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-ask .ea-name::before { content: "“"; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"]) .external-ask .ea-name::after { content: "”"; }
