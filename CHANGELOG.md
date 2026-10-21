@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.65 (2026-10-21)
+
 - **The AI no longer switches you to other tabs while you are on a tab.** It used to bring the tabs it opened or moved to into view whenever it thought it had something to show, even while you were reading your own tab. Now it keeps working in background tabs and only brings one to the front when your own message asks for it (“go to…”, “switch to…”, “show me…”, “open it for me”). Settings → AI → **Bring tabs the AI opened to the front** still turns that off completely.
 - **A question about the page in front of you is answered from that page, without looking things up.** With a PDF open at question 3, asking "what is the answer for number 4" made Claude Code search for a tool, take a 27-second screenshot, list your tabs and open the same PDF in a second tab. Now "solve number 4", "explain question 3" and similar words count as pointing at the page you have open, and the message carries the page on screen and the next one (about a page or two of text, not the first pages of the whole PDF) with a screenshot, so the AI answers straight away, on every AI. A summary still reads the document from its start. If the AI does ask to open the file you are already looking at, no second tab opens. Claude Code also gets Lumen's tools up front, which saves its lookup step the first time it needs one.
 - **A formula that ends in a space before its closing $ is drawn as math.** An AI answer such as "$\sigma = 0 - (<0) = $ positive" showed the raw dollar signs and LaTeX, often in a table cell. A formula with a LaTeX command such as \sigma now counts even with that space; prices like "$5 and $ 10" still stay plain text.
