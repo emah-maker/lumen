@@ -156,7 +156,7 @@ const block = (i) => ({ type: 'image', source: { type: 'base64', media_type: i.m
     check('images survive a JSON round trip (the encrypted chat file)', J(JSON.parse(J(messages))) === J(messages));
     const md = toMarkdown({ title: 'T' }, items);
     check('export says how many images were attached (the pictures themselves are not written)', /1 image attached \(not included\)/.test(md) && !md.includes('base64'), md);
-    check('a privacy check: no module under src/ai or features/chat-images logs image data', !/console\.(log|info|debug)\([^)]*(\.data|base64)/.test(['../src/ai/agent.js', '../src/ai/providers.js', '../src/features/chat-images.js'].map((f) => fs.readFileSync(path.join(__dirname, f), 'utf8')).join('\n')));
+    check('a privacy check: no module under src/ai or features/chat-images logs image data', !/console\.(log|info|debug)\([^)]*(\.data|base64)/.test(['../../src/ai/agent.js', '../../src/ai/providers.js', '../../src/features/chat-images.js'].map((f) => fs.readFileSync(path.join(__dirname, f), 'utf8')).join('\n')));
   }
   {
     const messages = [{ role: 'user', content: [block(img()), { type: 'text', text: 'x' }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [block(img())] }] }];

@@ -2,7 +2,7 @@
 // Tab objects are shaped like main.js's (sleeping restored tabs carry sleepUrl/sleepTitle; live ones a view).
 // TG_MODULE=<path> runs the same checks against another copy of tab-groups.js (to see them fail on the old one).
 const path = require('path');
-const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../src/browser/tab-groups');
+const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../../src/browser/tab-groups');
 
 let failed = 0;
 const cpuMs = (from) => { const u = process.cpuUsage(from); return (u.user + u.system) / 1000; }; // CPU time, not wall time: a loaded machine stretches the latter without the code doing more work

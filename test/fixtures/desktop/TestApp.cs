@@ -1,4 +1,4 @@
-// A tiny WPF window for test/desktop-apps.js: a textbox, a button, a label, a checkbox and a password box. Built by the test with csc and run
+// A tiny WPF window for test/e2e/desktop-apps.js: a textbox, a button, a label, a checkbox and a password box. Built by the test with csc and run
 // by PID; it is never activated (ShowActivated = false, no taskbar button) and sits off the user's screen area. WPF, because its controls
 // report real UI Automation types and patterns (Edit, Button, CheckBox) and a PasswordBox reports IsPassword.
 using System;
@@ -27,7 +27,7 @@ class TestApp {
     AutomationProperties.SetName(pin, "Card PIN"); AutomationProperties.SetAutomationId(pin, "txtPin");
     go.Click += delegate { result.Text = "Hello, " + name.Text; w.Title = title + " - greeted " + name.Text; }; // (the title bar paints even where the window's client area does not, so a capture changes too)
     panel.Children.Add(name); panel.Children.Add(go); panel.Children.Add(result); panel.Children.Add(agree); panel.Children.Add(pass); panel.Children.Add(pin);
-    if (args.Length > 2 && args[2] == "animate") { // (test/desktop-apps.js, the live picture: the window changes by itself, ten times a second, with no help from Lumen)
+    if (args.Length > 2 && args[2] == "animate") { // (test/e2e/desktop-apps.js, the live picture: the window changes by itself, ten times a second, with no help from Lumen)
       TextBlock ticker = new TextBlock { Text = "Tick 0", FontSize = 28, Margin = new Thickness(0, 8, 0, 0) };
       AutomationProperties.SetAutomationId(ticker, "lblTick");
       panel.Children.Add(ticker);

@@ -24,7 +24,7 @@ const ALL = ['memory', 'plan', 'skills', 'telegram', 'voice', 'helpers'];
     p = FO.plan({ settings: { lastSeenVersion: '0.5.19', featureOffersSeen: 'junk' }, offers: toggles });
     check('a broken seen list is treated as empty', p.show.length === 2, J(p));
     check('the real list is the new batch: memory, plan mode, skills, Telegram, voice input, acting helpers', J(FO.OFFERS.map((o) => o.id)) === J(ALL), J(FO.OFFERS.map((o) => o.id)));
-    const backend = require('fs').readFileSync(require('path').join(__dirname, '../src/settings/settings-backend.js'), 'utf8');
+    const backend = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
     check('every real toggle is a boolean setting that defaults to false', FO.OFFERS.filter((o) => o.kind === 'toggle').every((o) => new RegExp(`\\n  ${o.key}: false,`).test(backend)));
     check('every setup offer opens a Settings section that exists', FO.OFFERS.filter((o) => o.kind === 'setup').every((o) => new RegExp(`'${o.section}'`).test(backend)));
     check('Telegram and voice input are setup offers, never turned on by the card', ['telegram', 'voice'].every((id) => FO.OFFERS.find((o) => o.id === id).kind === 'setup'));

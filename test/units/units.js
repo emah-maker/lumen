@@ -14,7 +14,7 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
 
 // ---- the window's CSP lets the page snapshot (a blob: URL image, see freezePage in app.js) load
 {
-  const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'), 'utf8');
   // A tolerant read of the CSP <meta>: any attribute order, quote style and spacing.
   const cspMeta = (html.match(/<meta\b[^>]*>/gi) || []).find((m) => /http-equiv\s*=\s*["']?content-security-policy["']?(\s|\/|>)/i.test(m)) || '';
   const csp = (cspMeta.match(/\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i) || []).slice(1).find((g) => g !== undefined) || '';
@@ -54,8 +54,8 @@ const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 
   {
     const fs = require('fs');
     const path = require('path');
-    const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
-    const appJs = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+    const css = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'styles.css'), 'utf8');
+    const appJs = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'app.js'), 'utf8');
     check('chrome: --tabstrip-h and --toolbar-h are px tokens', /--tabstrip-h:\s*\d+px/.test(css) && /--toolbar-h:\s*\d+px/.test(css), '');
     check('chrome: --chrome-h is calc(--tabstrip-h + --toolbar-h)', /--chrome-h:\s*calc\(var\(--tabstrip-h\)\s*\+\s*var\(--toolbar-h\)\)/.test(css), '');
     check('chrome: .tabstrip height uses --tabstrip-h', /\.tabstrip\s*\{[^}]*height:\s*var\(--tabstrip-h\)/.test(css), '');
@@ -820,7 +820,7 @@ check('model names that could read as a flag are refused', !validModel('--tools'
 // ---- The main window's page is a committed bundle of index.src.html's scripts and stylesheets
 {
   const out = require('../../scripts/build/bundle-renderer').bundle();
-  const dir = path.join(__dirname, '../src/renderer');
+  const dir = path.join(__dirname, '..', '..', 'src', 'renderer');
   const committed = (f) => (fs.existsSync(path.join(dir, f)) ? fs.readFileSync(path.join(dir, f), 'utf8').replace(/\r\n/g, '\n') : '');
   check('ui bundle: index.html, ui.bundle.js and ui.bundle.css are up to date (run node scripts/build/bundle-renderer.js)', committed('index.html') === out.html && committed('ui.bundle.js') === out.js && committed('ui.bundle.css') === out.css, '');
   check('ui bundle: no inline script (the CSP allows none)', !/<script>/.test(out.html), '');
@@ -2254,7 +2254,7 @@ async function inprocRuns() {
 
 // ---- Organize with AI: local first, the model refines (features/organize-ai.js, organize-learn.js)
 async function organizeAiRuns() {
-  const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../src/browser/tab-groups');
+  const tg = require(process.env.TG_MODULE ? path.resolve(process.env.TG_MODULE) : '../../src/browser/tab-groups');
   const oai = require(process.env.OAI_MODULE ? path.resolve(process.env.OAI_MODULE) : '../src/features/organize-ai');
   const learn = require('../../src/features/organize-learn');
   const { harness } = require('../helpers/topics-bench');

@@ -100,10 +100,10 @@ const makeDeck = () => zip({
   fs.mkdirSync(entry);
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   fs.writeFileSync(path.join(entry, 'package.json'), JSON.stringify({ name: pkg.name, productName: pkg.productName, version: pkg.version, main: 'entry.js' }));
-  fs.writeFileSync(path.join(entry, 'entry.js'), `require(${JSON.stringify(path.join(__dirname, '_no-errors-hook.js'))}); require('electron').app.setAppPath(${JSON.stringify(root)}); require(${JSON.stringify(path.join(root, pkg.main))});`);
+  fs.writeFileSync(path.join(entry, 'entry.js'), `require(${JSON.stringify(path.join(__dirname, '..', 'helpers', '_no-errors-hook.js'))}); require('electron').app.setAppPath(${JSON.stringify(root)}); require(${JSON.stringify(path.join(root, pkg.main))});`);
 
   // Never launch Electron on a file that doesn't parse (a broken main-process script pops a modal on the user's screen).
-  for (const file of [path.join(entry, 'entry.js'), path.join(__dirname, '_no-errors-hook.js')]) {
+  for (const file of [path.join(entry, 'entry.js'), path.join(__dirname, '..', 'helpers', '_no-errors-hook.js')]) {
     const r = require('child_process').spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
     if (r.status !== 0) { console.error(`syntax error in ${file}
 ${r.stderr}`); process.exit(1); }

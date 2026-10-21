@@ -153,7 +153,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-rec-units-'));
   const en = JSON.parse(read('src/locales/en.json'));
   const used = new Set([...(main + read('src/features/screen-recorder.js')).matchAll(/\bt\('((?:record|menu)\.[A-Za-z.]+)'/g)].map((x) => x[1]));
   check('wiring: every record.* text exists', [...used].filter((k) => k.startsWith('record.') || k === 'menu.record').every((k) => en[k]), [...used].filter((k) => !en[k]).join(','));
-  check('wiring: the page and its preload exist and the bar is not captured', fs.existsSync(path.join(__dirname, '../src/renderer/recorder.html')) && fs.existsSync(path.join(__dirname, '..', '..', 'src', 'preload', 'recorder-preload.js')) && /setContentProtection\(true\)/.test(read('src/features/screen-recorder.js')));
+  check('wiring: the page and its preload exist and the bar is not captured', fs.existsSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'recorder.html')) && fs.existsSync(path.join(__dirname, '..', '..', 'src', 'preload', 'recorder-preload.js')) && /setContentProtection\(true\)/.test(read('src/features/screen-recorder.js')));
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(failed ? `\n${failed} FAILED` : '\nscreen-recorder units: all passed');

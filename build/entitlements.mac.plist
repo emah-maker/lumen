@@ -4,7 +4,7 @@
   Entitlements for the main Lumen executable (Developer ID builds with the hardened runtime, which
   notarization requires). Helpers get entitlements.mac.inherit.plist. Each key below is here for a
   reason; add nothing without one. Without a Developer ID certificate the build is ad-hoc signed
-  with the hardened runtime off (see scripts/signing.js) and none of this is enforced.
+  with the hardened runtime off (see scripts/release/signing.js) and none of this is enforced.
 -->
 <plist version="1.0">
 <dict>

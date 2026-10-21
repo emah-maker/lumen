@@ -146,7 +146,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     state.handsOff = true;
     const hands = await refused(() => inTab(1, () => agent.ensureAllowed('click', () => {}, signal, outside(true))));
     check('own-window agents: noAsk never gets past hands-off mode', /Hands-off mode is on/.test(hands || ''), hands);
-    const src = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-agents.js'), 'utf8');
     check('own-window agents: noAsk is set only for a call in the agent\'s own window, from the setting (on unless turned off)', /noAsk: Boolean\(agentRec\) && agentsNoAsk\(\)/.test(src) && /readSettings\(\)\.agentsNoAsk !== false/.test(src));
   }
   // The system prompt names the mode, so the model plans around it
@@ -155,7 +155,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     if (typeof systemFor === 'function') {
       check('prompt: hands-off adds a line to the system prompt', /Hands-off mode is on/.test(systemFor({ handsOff: true, model: 'claude-opus-5' })) && !/Hands-off mode is on/.test(systemFor({ model: 'claude-opus-5' })));
     } else {
-      const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
       check('prompt: hands-off adds a line to the system prompt', /settings\.handsOff \?/.test(src) && /manners\.HANDS_OFF_PROMPT/.test(src));
     }
   }
@@ -240,7 +240,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
     // closing: the guards live in main.js (checked here as source, since the main process cannot load in plain Node)
     {
-      const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+      const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
       const close = /async function aiTabsClose[\s\S]*?\n\}\n/.exec(main)?.[0] || '';
       check('close: the unsaved-text guard runs on every path, not only the automatic one', /unsavedInputState\(tab\.view\.webContents\)/.test(close) && !/auto && alive\(tab\) && \(await unsavedInputState/.test(close));
       check('close: busy / bound / user-owned is checked again after that wait', /aiTabSelect\(\{ \.\.\.selector, auto, rec \}\)\.some\(\(x\) => x\.tab === tab\)/.test(close));
@@ -251,10 +251,10 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       check('popups: a link or window.open from a tab the AI opened opens behind, as the AI\'s own (all three open paths)', (main.match(/\.\.\.fromAiTab\(\)/g) || []).length >= 4 && /const background = disposition === 'background-tab' \|\| manners\.isAiTab\(tab\)/.test(main));
       check('shortcuts: Ctrl/Cmd/Alt keys in an AI tab do not hand it to the user', /if \(!\(input\.control \|\| input\.meta \|\| input\.alt\)\) userTookOver\(tab\)/.test(main));
       check('hidden tabs: Ctrl+Tab and Ctrl+1-9 skip the tabs the strip hides', /const list = tabs\.filter\(\(t\) => !aiTabHidden\(t\)\)/.test(main) && /const shown = tabs\.filter\(\(x\) => !aiTabHidden\(x\)\)/.test(main));
-      check('prefs: hands-off and hide-AI-tabs reach every window and the chat page', /broadcastUi: \(channel, payload\)/.test(main) && /deps\.broadcastUi \? deps\.broadcastUi\('prefs:ui'/.test(fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8')));
-      check('hands-off: a failed tab lookup is refused, not let through', /catch \{ throw new Error\(manners\.handsOffRefusal\(name\)\); \}/.test(fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8')));
+      check('prefs: hands-off and hide-AI-tabs reach every window and the chat page', /broadcastUi: \(channel, payload\)/.test(main) && /deps\.broadcastUi \? deps\.broadcastUi\('prefs:ui'/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'settings', 'settings-backend.js'), 'utf8')));
+      check('hands-off: a failed tab lookup is refused, not let through', /catch \{ throw new Error\(manners\.handsOffRefusal\(name\)\); \}/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8')));
       check('close: a call naming neither a run nor a chat closes nothing', /s\.runId === null && s\.chatId === null \? \{ closed: 0, kept: 0, token: 0 \}/.test(main) && /ipcMain\.handle\('agent:ai-tabs-close', \(_e, o\) => aiTabsCloseFor\(o\)\)/.test(main));
-      const ag = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
+      const ag = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
       check('clicks: a background tab gets a trusted click (Input.dispatchMouseEvent, no focus) before page events', /backgroundClick\(wc, target\.x, target\.y\)/.test(ag) && /Input\.dispatchMouseEvent/.test(ag) && !/\.focus\(\)/.test(/async backgroundClick[\s\S]*?\n {2}\}/.exec(ag)?.[0] || ''));
     }
 
@@ -285,12 +285,12 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
   // ---- the agent path never takes the OS focus
   {
-    const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
     check('focus: agent.js never focuses a window or a page view', !/\.focus\(\)/.test(src.replace(/\/\/.*$/gm, '').replace(/el\.focus\([^)]*\)/g, '')) && !/win\.focus|BrowserWindow/.test(src));
     const open = /case 'open_tab': \{[\s\S]*?case 'switch_tab'/.exec(src)?.[0] || '';
     check('open_tab: opens the tab as the AI\'s (marked) and in the background unless show:true', /openTab\((?:(?:webUrl|navUrl)\(input\.url\)|this\.ownFileUrl\(input\.url\) \|\| navUrl\(input\.url\)), \{ ai: true, show: input\.show === true, keep: input\.keep === true \}\)/.test(open));
     check('switch_tab: stays behind unless show:true', /switchTab\(input\.tab_id, \{ show: input\.show === true \}\)/.test(src));
-    const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
     const agentTab = /const agentOpenTab = [\s\S]*?const noTabReason/.exec(main)?.[0] || '';
     check('main: only the AI\'s own call is held back; a plain openTab (no ai, no show) still activates', /const governed = ai \|\| \(opts && 'show' in opts\);/.test(agentTab) && /governed \? manners\.showsTab\(.*\) : !rest\.background/.test(agentTab));
     check('main: a plain switchTab (no show option) still switches', /opts && 'show' in opts \? manners\.showsTab\(.*\) : true/.test(agentTab));
@@ -299,7 +299,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
   // ---- the sidebar toggle that hides the tabs the AI opened
   {
-    const app = fs.readFileSync(path.join(__dirname, '../src/renderer/app.js'), 'utf8').replace(/\r\n/g, '\n');
+    const app = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'app.js'), 'utf8').replace(/\r\n/g, '\n');
     const fn = /function aiHiddenTab\(tab, state\) \{[\s\S]*?\n\}/.exec(app)?.[0];
     check('hide toggle: app.js has the rule', Boolean(fn));
     const ctx = { window: { lumenHideAiTabs: true }, drag: null };
@@ -339,24 +339,24 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('hide toggle: summary: off: nothing hidden or shown by the toggle, the total is what it would hide', sum({ id: 1, aiOpened: true }, { id: 5, aiOpened: true }) === JSON.stringify({ on: false, total: 2, hidden: 0, shown: 0 }));
     const sync = /function syncHideAiToggle\(state\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
     check('hide toggle: the words: "N hidden", "N more hidden" beside a shown one, "N in view" when only shown ones remain', /sidebar\.hideAiTabs\.chipMore/.test(sync) && /sidebar\.hideAiTabs\.chipInView/.test(sync) && /sidebar\.hideAiTabs\.chip'/.test(sync));
-    const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
     check('hide toggle: every string the button can show exists', ['chip', 'chipMore', 'chipInView', 'more.one', 'more.other', 'inView.one', 'inView.other', 'on.none', 'on.one', 'on.other', 'off.one', 'off.other'].every((k) => typeof enLoc[`sidebar.hideAiTabs.${k}`] === 'string'));
     check('hide toggle: the "more hidden" tip says the tab in front stays, and the in-view tip does not claim hiding', /stays in the strip/.test(enLoc['sidebar.hideAiTabs.more.other']) && !/\bhidden\b/.test(enLoc['sidebar.hideAiTabs.inView.one']));
     // every way a tab of the AI's opens carries the mark, or the toggle could not hide it
-    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('AI tabs are marked: the signed-in reader\'s tab', /const tab = openTab\(url, \{ background: true, openedBy: runOf\(\) \}\);/.test(mainSrc));
     check('AI tabs are marked: a link from a popup an AI tab opened', /const byAi = manners\.isAiTab\(openerTab\)/.test(mainSrc) && /\.\.\.\(byAi \? \{ openedBy:/.test(mainSrc));
     check('AI tabs are marked: a Shift+click popup from an AI tab opens behind', /openTab\(target, \{ background: manners\.isAiTab\(tab\), openerId: id/.test(mainSrc));
     check('hide toggle: part of the strip\'s layout signature, so a toggle redraws it', /\$\{aiHiddenTab\(x, state\) \? 1 : 0\}/.test(app));
     check('hide toggle: a group left with no visible tab shows no label', /!aiHiddenTab\(t, state\)/.test(app) && /if \(aiHiddenTab\(tab, state\)\) continue;/.test(app));
 
-    const backend = fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8').replace(/\r\n/g, '\n');
+    const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'settings', 'settings-backend.js'), 'utf8').replace(/\r\n/g, '\n');
     check('stay on my tab: a saved setting (off by default) that turns show:true off for open_tab and switch_tab', /aiStayOnMyTab: false/.test(backend) && /const stayOnUsersTab = \(\) => readSettings\(\)\.aiStayOnMyTab === true;/.test(mainSrc) && (mainSrc.match(/[sS]how === true && !stayOnUsersTab\(\)/g) || []).length === 2);
     check('hide toggle: it is a saved setting (off by default) and reaches the strip through prefs:ui', /hideAiTabs: false/.test(backend) && /hideAiTabs: p\.hideAiTabs === true/.test(backend) && /'aiHandsOff', 'hideAiTabs'\]\.includes\(key\)/.test(backend));
-    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8').replace(/\r\n/g, '\n');
+    const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.src.html'), 'utf8').replace(/\r\n/g, '\n');
     const button = /<button[^>]*id="hide-ai-tabs"[^>]*>/.exec(html)?.[0] || '';
     check('hide toggle: a real button with aria-pressed and a label, on the tab strip (not the crowded sidebar head)', /aria-pressed="false"/.test(button) && /aria-label=/.test(button) && /type="button"/.test(button) && html.indexOf('id="hide-ai-tabs"') < html.indexOf('id="sidebar"') && html.indexOf('id="hide-ai-tabs"') > html.indexOf('id="tabs"') && !app.includes("hideAiButton.setAttribute('aria-label'"));
-    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8').replace(/\r\n/g, '\n'));
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8').replace(/\r\n/g, '\n'));
     check('hide toggle: its labels say the count, singular and plural', ['off', 'on'].every((k) => en[`sidebar.hideAiTabs.${k}.one`]?.includes('{count}') && en[`sidebar.hideAiTabs.${k}.other`]?.includes('{count}')));
     check('hide toggle: it is separate from the close setting (its own channel and key)', /ipcMain\.handle\('tabs:hide-ai'/.test(mainSrc) && !/hideAiTabs/.test(/function aiTabsAfterRun[\s\S]*?\n\}/.exec(mainSrc)?.[0] || ''));
   }
@@ -376,7 +376,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       const viaExecute = await refused(() => inTab(1, () => agent.execute(name, input)));
       check(`off-tab: ${name} on the tab is refused (ensureAllowed and execute), hands-off off`, TEXT.test(viaAllowed || '') && TEXT.test(viaExecute || ''), `${viaAllowed} | ${viaExecute}`);
     }
-    check('off-tab: a batch step goes through allowStep and execute, which both check the tab', /await agent\.allowStep\(\.\.\.tool\);\n\s*const result = await agent\.execute\(\.\.\.tool\);/.test(fs.readFileSync(path.join(__dirname, '../src/ai/snapshot.js'), 'utf8').replace(/\r\n/g, '\n')));
+    check('off-tab: a batch step goes through allowStep and execute, which both check the tab', /await agent\.allowStep\(\.\.\.tool\);\n\s*const result = await agent\.execute\(\.\.\.tool\);/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'snapshot.js'), 'utf8').replace(/\r\n/g, '\n')));
     for (const [name, input] of [['read_page', {}], ['find', { text: 'x' }], ['screenshot', {}], ['wait_for', { text: 'x' }], ['read_pdf', {}], ['read_tabs', { tab_ids: [1] }], ['read_pdf', { tab_id: 1 }], ['switch_tab', { tab_id: 1 }]]) {
       check(`off-tab: ${name} on the tab is not refused for being kept off`, !TEXT.test((await refused(() => inTab(1, () => ask(name, input)))) || '') && !TEXT.test((await refused(() => inTab(2, () => ask(name, input)))) || ''));
     }
@@ -408,7 +408,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     await agent.pageContextFor({ id: 1, webContents: secret }, {}).catch(() => {});
     check('off-tab: pageContextFor reads the tab', read === true);
 
-    const src = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
     check('off-tab: pageContextFor does not ask the tab flag', !/async pageContextFor[\s\S]*?tabOff[\s\S]*?page = await readPageText\(wc, \{ chars: PAGE_CONTEXT_CHARS/.test(src));
     check('off-tab: the browser state tells the model the tab is read-only', /OFF_TAB_NOTE\} You can read this tab, but tools that click, type, navigate or run scripts are refused there/.test(src));
     check('off-tab: both gates (ensureAllowed and execute) call offTabCheck, before any card', /this\.offTabCheck\(name, input\); \/\/ \[ai off-tab\] \.\.\.nor/.test(src) && /this\.offTabCheck\(name, input\); \/\/ \[ai off-tab\]\n/.test(src));
@@ -416,18 +416,18 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
 
   // ---- [ai off-tab]: wiring (the flag lives on the tab; only the UI toggles it; no AI tool or MCP path can clear it)
   {
-    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
-    const agents = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
-    const agentSrc = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
-    const mcpSrc = fs.readFileSync(path.join(__dirname, '../src/automation/mcp.js'), 'utf8').replace(/\r\n/g, '\n');
-    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8').replace(/\r\n/g, '\n'));
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
+    const agents = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
+    const agentSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
+    const mcpSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'automation', 'mcp.js'), 'utf8').replace(/\r\n/g, '\n');
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8').replace(/\r\n/g, '\n'));
     check('off-tab wiring: the tab strip state carries the flag, awake and asleep', (mainSrc.match(/aiKeepOff: manners\.isKeptOff\(t\)/g) || []).length === 2);
     check('off-tab wiring: saved with the tab in the session and restored with it; a duplicate keeps it', /aiKeepOff: saved\.map/.test(mainSrc) && /saved\.aiKeepOff\?\.\[i\] === true\) manners\.keepOff\(tab\)/.test(mainSrc) && /manners\.keepOff\(copy, manners\.isKeptOff\(tab\)\)/.test(mainSrc));
     check('off-tab wiring: the agent, the CDP proxy and the skills reader both ask the tab', /tabOff: \(id\) => manners\.isKeptOff\(tabAnywhere\(id\)\?\.t\)/.test(mainSrc) && /offTab: Boolean\(deps\.tabOff\?\.\(tabId\)\)/.test(agents) && !/skillTabOk = \(tab\) => [^\n]*isKeptOff\(tab\)/.test(mainSrc));
     check('off-tab wiring: the grouping AI and the skills read such a tab like any other', /textOf: \(t\) => t\.pageText \|\| ''/.test(mainSrc) && !/readPageText\(tab\) \{[\s\S]{0,300}isKeptOff/.test(mainSrc));
     check('off-tab wiring: only an IPC from the UI and the tab menu set it (no tool, no MCP path)', /ipcMain\.on\('tab:ai-off'/.test(mainSrc) && !/keepOff\(/.test(agents) && !/keepOff\(/.test(agentSrc) && !/keepOff|aiKeepOff/.test(mcpSrc));
     check('off-tab wiring: the button and menu strings exist in English', ['toolbar.aiOffTab.off', 'toolbar.aiOffTab.on', 'menu.keepAiOffTab', 'menu.allowAiTab', 'tabs.aiKeptOff'].every((k) => typeof en[k] === 'string' && en[k]));
-    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.src.html'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.src.html'), 'utf8');
     check('off-tab wiring: the button is in the address bar next to the page icons, a real toggle with aria-pressed', /<div class="omnibox-end">[\s\S]*id="ai-off-tab" type="button"[^>]*aria-pressed="false"[\s\S]*id="reader"/.test(html));
   }
 
@@ -469,20 +469,20 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('proxy: with hands-off off nothing is held back', (await gate('Input.dispatchMouseEvent', 's1')).ok && (await gate('Storage.clearCookies', null)).ok && (await gate('Target.closeTarget', 's2', { targetId: 't1' })).ok);
     check('proxy: no hook (an older embedder): nothing is held back', (await AU.gateCommand({ method: 'Input.insertText', sessionId: 's1', sessionTab, userTargets, hooks: {} })).ok);
 
-    const agents = fs.readFileSync(path.join(__dirname, '../src/features/ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
+    const agents = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-agents.js'), 'utf8').replace(/\r\n/g, '\n');
     check('automation: the hook reads the setting and the tab\'s mark; tabs a client opens are the AI\'s', /handsOffVerdict: \(method, tabId\) =>/.test(agents) && /aiHandsOff === true/.test(agents) && /openedBy: \{\}/.test(agents));
-    const doc = fs.readFileSync(path.join(__dirname, '../docs/settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', '..', 'SECURITY.md'), 'utf8');
+    const doc = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'settings.md'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', '..', 'SECURITY.md'), 'utf8');
     check('automation: documented in docs/settings.md, SECURITY.md and the changelog', /aiHandsOff/.test(doc) && /Don't let the AI act on my pages/.test(doc) && /Automation server/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'CHANGELOG.md'), 'utf8')));
-    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
     check('automation: the setting text says it covers the Automation server', /Automation server/.test(en['settings.ai.handsOffDesc']));
   }
 
   // ---- closing: no answer is not "holds text"; the toast goes to the right window; the AI's close_tab never fronts a tab
   {
-    const main = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('close: a page that gave no answer (hung / crashed / threw) is told apart from one holding text', /return 'unknown'/.test(main) && /\(await unsavedInputState\(tab\.view\.webContents\)\) === 'yes'\) return keepTab/.test(main));
     check('close: the toast of a chat-row close goes to the window holding the tabs', /aiCloseNote\(r\.rec \|\| curRec, r\)/.test(main) && /Object\.defineProperty\(result, 'rec'/.test(main));
-    check('close_tab: the AI path closes without the Leave-site question and says the page blocked it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page blocked it/.test(fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8')));
+    check('close_tab: the AI path closes without the Leave-site question and says the page blocked it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page blocked it/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8')));
   }
 
   // ---- a click that never reached the page (torn-off / hidden / minimized window) falls back to page events
@@ -512,8 +512,8 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     check('probe: after it is gone (page navigated) a read says landed', run(scripts.clickProbeRead(true)) === true);
 
     // Wiring: agent.js falls back when the click did not land; main.js answers "in front" per window.
-    const agentSrc = fs.readFileSync(path.join(__dirname, '../src/ai/agent.js'), 'utf8').replace(/\r\n/g, '\n');
-    const mainSrc = fs.readFileSync(path.join(__dirname, '../src/main.js'), 'utf8').replace(/\r\n/g, '\n');
+    const agentSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
+    const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('click: the ordinary and the background click are both verified, with the DOM click as the fallback', /else if \(!\(await this\.verifiedClick\(wc, \(\) => this\.mouseClick\(wc, x, y\)\)\)\) await this\.elementRun\(wc, id, scripts\.domClick\)/.test(agentSrc) && /return await this\.verifiedClick\(wc, \(\) => manners\.agentInputAsync/.test(agentSrc));
     check('front: taskTabInFront asks the window the tab lives in', /this\.browser\.tabInFront\(scope\.tabId\)/.test(agentSrc) && /tabInFront: inRun\(agentTabInFront\)/.test(mainSrc) && /activeIdOf\(rec\)/.test(mainSrc.slice(mainSrc.indexOf('const agentTabInFront'))));
   }

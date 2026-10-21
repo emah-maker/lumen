@@ -22,7 +22,7 @@ check('notes: the install guide link points at the tagged docs/install.md', note
 check('notes: with no section, a link to the CHANGELOG stands in', releaseNotes('9.9.9', CL).includes('/blob/v9.9.9/CHANGELOG.md'));
 check('the install guide exists and names the same downloads', (() => { const g = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'install.md'), 'utf8'); return ['Lumen-Setup-<version>.exe', 'win-x64.zip', 'mac-arm64.dmg', 'mac-x64.dmg', 'latest.yml', 'blockmap'].every((f) => g.includes(f)); })());
 const workflow = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'release.yml'), 'utf8');
-check('release.yml builds the notes and passes them as the body', /node scripts\/release-notes\.js/.test(workflow) && /body_path:/.test(workflow));
+check('release.yml builds the notes and passes them as the body', /node scripts\/release\/release-notes\.js/.test(workflow) && /body_path:/.test(workflow));
 
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);

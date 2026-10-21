@@ -192,7 +192,7 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
 
   // ---- pinch zoom: on by default, a real setting
   {
-    const backend = fs.readFileSync(path.join(__dirname, '../src/settings/settings-backend.js'), 'utf8');
+    const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
     check('pinchZoom defaults on and aiDeviceAccess defaults off', /pinchZoom: true,/.test(backend) && /aiDeviceAccess: false,/.test(backend));
     check('every tab gets the visual zoom limits, again after each navigation', /function pinchZoom\(wc\)/.test(backend) && /setVisualZoomLevelLimits\(1, max\)/.test(backend) && (backend.match(/pinchZoom\(wc\);/g) || []).length >= 2);
   }

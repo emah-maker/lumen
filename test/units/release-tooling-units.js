@@ -8,6 +8,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const lib = require('../../scripts/release/release-lib');
 const { register } = require('../../scripts/release/setup-merge-drivers');
+const suiteNames = () => ['units', 'e2e'].flatMap((d) => fs.readdirSync(path.join(__dirname, '..', d))).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)); // every suite name (test/units and test/e2e)
 
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 600)}`}`); };
@@ -99,7 +100,7 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
   check('derive: test files outside test-all.js that need a window or a key are listed as manual (no helpers, no units)', d.manual.join() === 'claudecode,manual-thing', d.manual.join());
   check('derive: pure-node suites are recognised by name, as scripts/test/test-units.js does', ['units', 'cli-json', 'foo-units'].every(lib.isPlainSuite) && !lib.isPlainSuite('ui') && !lib.isPlainSuite('perf-budget'));
   const dir = path.join(__dirname);
-  const real = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(dir, '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: fs.readdirSync(dir).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
+  const real = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(dir, '..', '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: suiteNames() });
   check('derive: on this repo, perf-budget is last and every Electron suite has a file', real.electron.length > 100 && real.electron[real.electron.length - 1] === 'perf-budget' && !real.missing.length, `${real.electron.length} electron, missing ${real.missing}`);
   check('derive: this suite is a pure-node one (so it never reaches the Electron list)', !real.electron.includes('release-tooling-units'));
 }
@@ -148,7 +149,7 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
     const g = (...a) => git(repo, ...a);
     g('init', '-q', '-b', 'main');
     g('config', 'user.email', 't@example.com'); g('config', 'user.name', 't'); g('config', 'core.autocrlf', 'false'); g('config', 'commit.gpgsign', 'false');
-    w('.gitattributes', 'CHANGELOG.md merge=lumen-changelog\nscripts/test-all.js merge=lumen-list\ngen.js merge=lumen-bundle\n');
+    w('.gitattributes', 'CHANGELOG.md merge=lumen-changelog\nscripts/test/test-all.js merge=lumen-list\ngen.js merge=lumen-bundle\n');
     register(repo, { script: path.join(__dirname, '..', '..', 'scripts', 'release', 'merge-driver.js') });
     w('CHANGELOG.md', cl(['- **A.** first'], REL));
     w('scripts/test/test-all.js', testAll("  'units', 'ui',"));
@@ -342,8 +343,8 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   {
     // every Electron suite in test-all.js that binds a fixed port, uses the real clipboard or lists the machine's processes is marked, and the
     // known suites are among them: a new suite like that is caught here (and run alone by release.js) rather than flaking a release
-    const d = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: fs.readdirSync(__dirname).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)) });
-    const marked = d.electron.filter((s) => lib.sharedResources(s, fs.readFileSync(path.join(__dirname, s + '.js'), 'utf8')).length);
+    const d = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: suiteNames() });
+    const marked = d.electron.filter((s) => lib.sharedResources(s, fs.readFileSync(path.join(__dirname, '..', 'e2e', s + '.js'), 'utf8')).length);
     check('shared: the suites known to bind fixed ports (cdp, cdp-inproc, spotify-reconnect-ui) or use the real clipboard (images) are detected in the real tree', ['cdp', 'cdp-inproc', 'spotify-reconnect-ui', 'images', 'passkeys'].every((s) => marked.includes(s)) && marked.length < 40, marked.join());
     check('shared: shared-resource suites and perf-sensitive ones are different groups only by timing; every perf-sensitive name is a real suite or is simply absent', lib.PERF_SENSITIVE.every((s) => d.electron.includes(s)), lib.PERF_SENSITIVE.filter((s) => !d.electron.includes(s)).join());
   }

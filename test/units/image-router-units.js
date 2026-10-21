@@ -179,8 +179,8 @@ const classify = (e) => fallback.classify(e);
   // ---- settings
   {
     check('the setting defaults to Automatic and takes only Automatic, Off or a provider', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'antigravity') === null && settingsBackend.validate('imageGen', '') === null);
-    const ui = fs.readFileSync(path.join(__dirname, '../src/renderer/settings.js'), 'utf8');
-    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+    const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'settings.js'), 'utf8');
+    const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
     check('Settings > AI shows the choice, with every option named in the locale', /select\('imageGen'/.test(ui) && router.SETTINGS.every((v) => en[`settings.ai.imageGen.${v}`]) && en['settings.ai.imageGen'] && en['settings.ai.imageGenDesc'] && en['genimg.madeWith'] === 'Made with {name}');
   }
 
@@ -228,8 +228,8 @@ const classify = (e) => fallback.classify(e);
       check('the picture is shown in the chat with the provider and model that made it', pic && pic.credit === 'OpenAI · gpt-image-1' && blocks.length === 1 && blocks[0].credit === 'OpenAI · gpt-image-1', J(events));
       const items = transcriptFor([{ role: 'assistant', content: blocks }], { model: 'claudecode:default' });
       check('the saved chat keeps who made it (the line survives a reopen)', items.at(-1)?.generated?.[0]?.credit === 'OpenAI · gpt-image-1', J(items));
-      const renderer = fs.readFileSync(path.join(__dirname, '../src/renderer/gen-images.js'), 'utf8');
-      const core = fs.readFileSync(path.join(__dirname, '../src/renderer/chat-core.js'), 'utf8');
+      const renderer = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'gen-images.js'), 'utf8');
+      const core = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'chat-core.js'), 'utf8');
       check('the chat draws "Made with …" under the picture, live and restored', /pic\.credit/.test(renderer) && /genimg\.madeWith/.test(renderer) && /credit: event\.credit/.test(core));
     }
 

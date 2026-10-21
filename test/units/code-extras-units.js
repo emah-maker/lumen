@@ -169,7 +169,7 @@ check('tables: five or more columns get a Fit switch, fewer do not', () => {
 check('Mermaid is vendored, never a start-up script, and code-extras.js is on both pages', () => {
   const fs = require('fs');
   const path = require('path');
-  const dir = path.join(__dirname, '../src/renderer');
+  const dir = path.join(__dirname, '..', '..', 'src', 'renderer');
   assert.ok(fs.existsSync(path.join(dir, 'vendor/mermaid.min.js')) && fs.existsSync(path.join(dir, 'vendor/mermaid-LICENSE.txt')));
   for (const page of ['index.src.html', 'chat-page.html']) {
     const html = fs.readFileSync(path.join(dir, page), 'utf8');
@@ -182,7 +182,7 @@ check('Mermaid is vendored, never a start-up script, and code-extras.js is on bo
 });
 
 check('chat-core.js hands each new code block and table to codeExtras', () => {
-  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/renderer/chat-core.js'), 'utf8');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'src', 'renderer', 'chat-core.js'), 'utf8');
   assert.ok(src.includes('window.codeExtras?.decorate(box, pre'));
   assert.ok(src.includes('window.codeExtras?.decorateTables(root)'));
 });

@@ -112,12 +112,12 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-enginepics-'));
 
   // A Claude Code reply ends early (reply_complete) before agent.js enginePictures runs: its picture event must still be drawn.
   {
-    const core = fs.readFileSync(path.join(__dirname, '../src/renderer/chat-core.js'), 'utf8').replace(/\r\n/g, '\n');
+    const core = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'chat-core.js'), 'utf8').replace(/\r\n/g, '\n');
     const lateAt = core.indexOf("if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId)");
     const guardAt = core.indexOf('if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;');
     check('renderer: a picture arriving after an early-ended reply is handled before the finished-turn guard drops it', lateAt > 0 && guardAt > 0 && lateAt < guardAt, `${lateAt} ${guardAt}`);
     check('renderer: the late picture is placed after that reply (latePicture), not dropped', /function latePicture\(event\)/.test(core) && /anchor\.after\(pic\)/.test(core));
-    const bundle = fs.readFileSync(path.join(__dirname, '../src/renderer/ui.bundle.js'), 'utf8');
+    const bundle = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'ui.bundle.js'), 'utf8');
     check('renderer: the committed bundle has the late-picture handling', bundle.includes('function latePicture(event)'));
   }
   fs.rmSync(tmp, { recursive: true, force: true });

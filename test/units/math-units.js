@@ -19,7 +19,7 @@ check('a formula may open on a relation ("Work $= 2 pi N tau$")', () => {
   assert.strictEqual(maths[0].tex, String.raw`= 2\pi N \tau \approx 15{,}834`);
 });
 check('a long inline formula sits on the text baseline (baseline-source after the vertical-align shorthand)', () => {
-  const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'styles.css'), 'utf8');
   const rule = /\.msg\.assistant \.math-inline \{([^}]*)\}/.exec(css)[1];
   assert.ok(rule.indexOf('baseline-source: first') > rule.indexOf('vertical-align'), rule);
 });

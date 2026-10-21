@@ -6,6 +6,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 - **Windows no longer calls Lumen "Electron".** A leftover Start menu shortcut named Electron (from an early build) carried Lumen's app ID, so Start and Windows search listed Lumen as "Electron". Lumen now removes that stray shortcut at startup when its own Lumen shortcut is there. The **Close tabs the AI opened** task (right-click Lumen on the taskbar) also shows Lumen's icon instead of Electron's.
 
+- **Developer change: `test/` and `scripts/` are organized into folders.** Unit suites are in `test/units/`, Electron suites in `test/e2e/`, shared rigs in `test/helpers/`; the scripts are in `scripts/build/`, `scripts/release/`, `scripts/test/` and `scripts/measure/`. Nothing changes in the app.
+
 ## 0.5.64 (2026-10-21)
 
 - **"An app wants to use Lumen" is a pill in the toolbar, like the update prompt.** The question for an app that connects without a token (Allow this time / Deny) used to be a bar across the whole window. It is now a pill next to the toolbar buttons that says which app is asking; the full warning is in its tooltip, and on a narrow window it keeps the app's name and the two buttons.

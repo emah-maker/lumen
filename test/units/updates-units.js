@@ -226,7 +226,7 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   check('retry: offline has its own words', t.u.state().retrying === 'there is no internet connection', t.u.state().retrying);
   dl.fail(Object.assign(new Error('net::ERR_FAILED'), { reasonKey: 'dropped' })); await flush();
   check('retry: after the last try the error is the plain reason (no net:: code), with Try again available', t.u.state().status === 'error' && t.u.state().error === 'the connection dropped' && t.u.state().retrying === '', JSON.stringify(t.u.state()));
-  const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+  const enLoc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
   check('retry: the locale file has every reason the main process can give, and the Retrying… strings', ['dropped', 'offline', 'timeout', 'server', 'refused', 'blocked', 'secure', 'failed'].every((k) => typeof enLoc[`updates.reason.${k}`] === 'string') && enLoc['updates.retrying'] === 'Retrying…' && /Couldn’t download the update: {reason}. Lumen will try again./.test(enLoc['updates.settings.retrying']), '');
 
   // the plain move (no update known): the native flow, with the downgrade check and errors shown
@@ -395,7 +395,7 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
 
 
   // ---- every string key the update screens ask for exists in en.json (ut() is updates.settings.*)
-  const en = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/locales/en.json'), 'utf8'));
+  const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
   // the main process's own dialog strings (features/updates.js asks deps.t for updates.* keys)
   const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'updates.js'), 'utf8');
   const mainKeys = new Set([...mainSrc.matchAll(/(?<![\w.])tr\(\s*'([^']+)'/g)].map((m) => m[1]));
@@ -406,7 +406,7 @@ check('dmg: drag Lumen onto an Applications link', (pkg.dmg.contents || []).some
   const dlg = tt.log.dialogs[0] || {};
   check('move dialog: the English fallback (no deps.t) says the same as en.json', tt.log.dialogs.length === 1 && dlg.message === en['updates.moveDialog.message'].replace('{version}', '2.0.0') && dlg.buttons[0] === en['updates.moveDialog.confirm'] && dlg.buttons[1] === en['updates.moveDialog.later'] && dlg.detail === en['updates.moveDialog.detail'], JSON.stringify(tt.log.dialogs));
   for (const file of ['settings-updates.js', 'updates.js']) {
-    const src = fs.readFileSync(path.join(__dirname, '../src/renderer', file), 'utf8');
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', file), 'utf8');
     const keys = new Set();
     for (const m of src.matchAll(/(?<![\w.])ut\(\s*'([^']+)'/g)) keys.add(`updates.settings.${m[1]}`);
     for (const m of src.matchAll(/(?<![\w.])ut\(\s*[^'()]*\?\s*'([^']+)'\s*:\s*'([^']+)'/g)) { keys.add(`updates.settings.${m[1]}`); keys.add(`updates.settings.${m[2]}`); }
