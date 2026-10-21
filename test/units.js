@@ -1152,6 +1152,9 @@ async function fuseChecks() {
   a.view.webContents.emit('audio-state-changed');
   check('tab-tools: a sound starting or stopping refreshes the strip', changes === 1, changes);
   check('tab-tools: state reports audible and muted', JSON.stringify(tools.state(a, true)) === '{"audible":true,"muted":false}' && JSON.stringify(tools.state({ muted: true }, false)) === '{"audible":false,"muted":true}', JSON.stringify(tools.state(a, true)));
+  c.view.webContents.setAudioMuted(true); // muted by Lumen itself (a preloaded background tab, an AI tab), not by the user
+  check('tab-tools: a tab Lumen muted itself is not shown as muted (no red speaker on a tab the user never muted)', tools.state(c, true).muted === false, JSON.stringify(tools.state(c, true)));
+  c.view.webContents.setAudioMuted(false);
   tools.setMuted(a, true);
   check('tab-tools: Mute Tab mutes only that tab', a.view.webContents.muted && !b.view.webContents.muted, 'mute');
   tools.setMuted(a, false);
