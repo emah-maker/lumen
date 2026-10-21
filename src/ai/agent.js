@@ -667,6 +667,12 @@ const OTHER_READING = slimTool(READING_LIST_TOOL); // [reading list]
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
 const OTHER_WORD = slimTool(WORD_TOOL); // [word]
+// [word] [desktop apps] Settings > AI > "Work on files in their apps" (aiFilesInApps): app | file add one short sentence to the tool that is offered (nothing to the default, 'auto'; nothing when the tool is not offered).
+const FILES_IN_APPS_NOTE = {
+  word: { app: ' Setting: work in Word itself (open the file, read and edit there), not on the file.', file: ' Setting: work on the .docx file itself (path); do not open Word.' },
+  desktop: { app: ' Setting: open a file of an app with open_app path, then read_app and work there; do not read its data.', file: ' Setting: do not open files in apps; read their data.' },
+};
+const withAppsNote = (tool, kind, mode) => (FILES_IN_APPS_NOTE[kind][mode] ? { ...tool, description: tool.description + FILES_IN_APPS_NOTE[kind][mode] } : tool);
 const OTHER_SKILL = slimTool(SKILL_TOOL); // [skills]
 const OTHER_PLAN = slimTool(planMode.PLAN_TOOL); // [plan mode]
 const OTHER_PARALLEL = slimTool(PARALLEL_TASKS_TOOL); // [acting helpers]
@@ -1045,7 +1051,7 @@ const isContextError = (err) => /prompt is too long|context (length|window)|maxi
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false } = {}) { // project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, filesInApps = 'auto' } = {}) { // project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -1060,7 +1066,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [DESKTOP_TOOL] : [], word ? [WORD_TOOL] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -3883,7 +3889,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3936,7 +3942,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [OTHER_DESKTOP] : []), ...(this.wordOffered(messages) ? [OTHER_WORD] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -6050,10 +6056,13 @@ ${out.text}${note}
   frontTab() {
     try { const t = this.browser.listTabs?.()?.find((x) => x.active); return t ? { url: String(t.url || ''), title: String(t.title || '') } : null; } catch { return null; }
   }
+  // Settings > AI > Work on files in their apps: 'app' | 'auto' (today's behaviour, the default) | 'file'.
+  filesInApps() { try { const v = this.browser.filesInApps?.(); return v === 'app' || v === 'file' ? v : 'auto'; } catch { return 'auto'; } }
   desktopOffered(messages) {
     try {
       if (this.browser.desktopAccess?.() === true) return true;
-      if (appIntent().wantsDesktop(messages, { active: this.frontTab() })) return true; // a file of another app (.xlsx, .pptx, .m, .sldprt...) is attached, listed, open in a tab or named
+      const mode = this.filesInApps();
+      if (mode !== 'file' && appIntent().wantsDesktop(messages, { active: this.frontTab(), weak: mode === 'app' })) return true; // ('file': never routed to an app; 'app': a .csv or .m counts as an app's file too) // a file of another app (.xlsx, .pptx, .m, .sldprt...) is attached, listed, open in a tab or named
       for (let i = messages.length - 1, seen = 0; i >= 0 && seen < 6; i--) { // the latest few things the user said
         const m = messages[i];
         if (m?.role !== 'user') continue;

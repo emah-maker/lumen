@@ -35,9 +35,9 @@ const isWeak = (id, ext) => Boolean(APPS[id]?.weak?.includes(ext));
 // A routing extension needs a name before the dot, so "make a .docx" alone is left to the user-text words below.
 const EXT_ALT = Object.keys(EXT_APP).sort((a, b) => b.length - a.length).join('|');
 const FILE_IN_TEXT = new RegExp(`[^\\s"'<>|*?\\\\/:\\x00]\\.(${EXT_ALT})(?![\\w.-]*[a-z0-9])`, 'gi');
-function appsInText(text) {
+function appsInText(text, { weak = false } = {}) { // weak: the user asked for files to be worked on in their apps (aiFilesInApps 'app'), so a .csv or .m counts too (never a .key: that is a private key)
   const out = new Set();
-  for (const m of String(text || '').matchAll(FILE_IN_TEXT)) { const ext = m[1].toLowerCase(); const id = appForExt(ext); if (id && !isWeak(id, ext)) out.add(id); }
+  for (const m of String(text || '').matchAll(FILE_IN_TEXT)) { const ext = m[1].toLowerCase(); const id = appForExt(ext); if (id && (!isWeak(id, ext) || (weak && ext !== 'key'))) out.add(id); }
   return out;
 }
 
@@ -58,7 +58,7 @@ const FILE_RESULT_TOOLS = new Set(['list_files', 'upload_file', 'project_files',
 
 // The apps this conversation is about -> { apps: [ids], reason }. `active`: { url, title } of the tab in front, when known.
 // Looks at the last few user messages (their words, attached file names, the page context's address) and at the file tools' results.
-function appsFor(messages, { active = null, tools = FILE_RESULT_TOOLS } = {}) {
+function appsFor(messages, { active = null, tools = FILE_RESULT_TOOLS, weak = false } = {}) {
   const found = new Set();
   const add = (set) => { for (const id of set) found.add(id); };
   const list = Array.isArray(messages) ? messages : [];
@@ -73,7 +73,7 @@ function appsFor(messages, { active = null, tools = FILE_RESULT_TOOLS } = {}) {
     if (!activeUrl) { let u; for (const x of t.slice(0, 20000).matchAll(URL_IN_CONTEXT)) u = x[1]; if (u) activeUrl = u.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))); }
   }
   const gdoc = isGoogleDoc(activeUrl);
-  if (active?.url && !gdoc) add(appsInText(`${active.title || ''} ${active.url}`)); // a file open in a Lumen tab (its name is in the title or the address)
+  if (active?.url && !gdoc) add(appsInText(`${active.title || ''} ${active.url}`, { weak })); // a file open in a Lumen tab (its name is in the title or the address)
   let userSeen = 0;
   for (let i = list.length - 1; i >= 0 && i >= list.length - 40; i--) {
     const m = list[i];
@@ -81,7 +81,7 @@ function appsFor(messages, { active = null, tools = FILE_RESULT_TOOLS } = {}) {
     if (m.role === 'user' && Array.isArray(m.content)) { // results of the file tools
       for (const b of m.content) {
         if (b?.type !== 'tool_result' || !tools.has(names.get(b.tool_use_id))) continue;
-        add(appsInText(textOf(b.content).slice(0, 20000)));
+        add(appsInText(textOf(b.content).slice(0, 20000), { weak }));
       }
     }
     if (m.role !== 'user' || userSeen >= 6) continue;
@@ -90,7 +90,7 @@ function appsFor(messages, { active = null, tools = FILE_RESULT_TOOLS } = {}) {
     userSeen++;
     const say = t.replace(/<untrusted_page_content[\s\S]*?<\/untrusted_page_content>\s*/g, ''); // the user's own words and attached files, not the page
     if (say.length < 4000) {
-      add(appsInText(say));
+      add(appsInText(say, { weak }));
       if (!gdoc && !NOT_WORD_CTX.test(say) && (OWN_DOC.test(say) || (THIS_DOC.test(say) && !isWebPage(activeUrl)))) found.add('word');
     }
   }

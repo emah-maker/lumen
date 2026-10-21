@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Choose whether the AI works on your files inside their apps.** Settings → AI has a new **Work on files in their apps** choice. **In the app** has the AI open a Word, Excel or PowerPoint file in that program and read and edit it there, so you can watch; **From the file** has it read and edit the file's own data without opening any app; **Automatic** (the default) keeps things as they were.
+
 ## 0.5.63 (2026-10-21)
 
 - **The AI reaches for Word, Excel, PowerPoint and your other apps on its own when your files are involved.** Say "fix the typos in my essay", attach a .docx, have a .docx open in a Lumen tab, or let the AI list your Downloads, and it now works in the document through Word (opened so you can watch) instead of just reading the file or clicking around. The same goes for Excel (.xlsx), PowerPoint (.pptx), MATLAB, SolidWorks and a few more: the AI can ask to open a document in the app that owns it (a card still asks first, and it never opens programs, scripts or files in your credentials folders). A Google Doc in front is left to the Google Docs tools.

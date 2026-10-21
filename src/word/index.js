@@ -120,6 +120,9 @@ function createWord(deps = {}) {
   }
   const isDocx = (p) => /\.docx$/i.test(p);
 
+  // Settings > AI > "Work on files in their apps" (aiFilesInApps): app = open a .docx in Word to read and edit it, file = read and write the .docx itself, auto = as before (Word when it has the document open or for anything but a plain read).
+  const mode = () => { try { const v = S.filesInApps?.(); return v === 'app' || v === 'file' ? v : 'auto'; } catch { return 'auto'; } };
+
   // ---- run
   async function run(input, ctx) {
     if (!S.enabled()) throw new Error(spec.OFF_TEXT);
@@ -150,7 +153,7 @@ function createWord(deps = {}) {
       noteRead(ctx, ref.key);
       if (open) { cardUse(ctx, ref, spec.stepLabel(v, open.name)); const got = await getHost().read({ doc: open.path, offset: v.offset, budget: READ_BUDGET }); await cardRead(ctx, ref, got); return formatRead(got, open.name, 'word'); }
       if (/\.txt$/i.test(v.path)) { const { buf } = readFile(v.path); const t = buf.toString('utf8', 0, 200000); return formatRead({ total: t.split('\n').length, offset: 0, text: t, next: null }, ref.name, 'file'); }
-      if (!isDocx(v.path)) { if (win && (await installed())) { await openThen(v, ctx); return run({ action: 'read', doc: v.path, offset: v.offset }, ctx); } throw new Error('Without Word only .docx files can be read.'); }
+      if (!isDocx(v.path) || (mode() === 'app' && win && (await installed()))) { if (win && (await installed())) { await openThen(v, ctx); return run({ action: 'read', doc: v.path, offset: v.offset }, ctx); } throw new Error('Without Word only .docx files can be read.'); }
       const { buf } = readFile(v.path);
       const got = await docx().readDocx(buf, { offset: v.offset, budget: READ_BUDGET });
       cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
@@ -159,7 +162,7 @@ function createWord(deps = {}) {
     }
 
     if ((A === 'new' || A === 'insert' || A === 'table') && v.path && !(await wordHasIt(v))) {
-      if (win && (await installed())) {
+      if (win && (mode() !== 'file' || !isDocx(v.path)) && (await installed())) { // (file: a .docx is changed in the file itself; any other kind still needs Word)
         if (A !== 'new') await openThen(v, ctx); // Word is there: the document is opened in it and changed there
         else return newViaWord(v, ctx);
       } else return fileWrite(v, ctx);

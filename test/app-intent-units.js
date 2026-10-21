@@ -51,6 +51,21 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
   check('prompt: the word tool says to prefer it for a docx and to open it in Word; desktop mentions path; both stay under the 420-character description budget', /\.docx/.test(wd) && /open/i.test(wd) && /path/.test(dd) && wd.length < 420 && dd.length < 420, `${wd.length} ${dd.length}`);
   check('prompt: the default request pays nothing (neither tool listed)', !def('word', {}) && !def('desktop', {}));
 
+  // ---- Settings > AI > Work on files in their apps (aiFilesInApps)
+  const modeOf = (m) => ({ filesInApps: () => m });
+  const csv = user('summarize data.csv and main.m');
+  check('apps setting: automatic is the existing behaviour (a .csv or .m alone is not routed; Excel files are)', !offerDesk(csv, modeOf('auto')) && !offerDesk(csv, modeOf('nonsense')) && !offerDesk(csv, {}) && offerDesk(user('edit Budget.xlsx'), modeOf('auto')));
+  check('apps setting: "in the app" also offers desktop for a .csv or .m (never a .key), still not for chat', offerDesk(csv, modeOf('app')) && offerDesk(user('open data.csv'), modeOf('app')) && !offerDesk(user('rotate server.key'), modeOf('app')) && !offerDesk(user('what is the capital of France'), modeOf('app')) && J(apps(csv, { weak: true }).sort()) === J(['excel', 'matlab']));
+  check('apps setting: "in the app" keeps word offered for a .docx; the Word-only rules are unchanged', offerWord(user('fix my essay'), modeOf('app')) && !offerDesk(user('fix my essay'), modeOf('app')));
+  check('apps setting: "from the file" never routes a file to desktop, but a plain request for an app, or the master switch, still offers it', !offerDesk(user('edit Budget.xlsx'), modeOf('file')) && !offerDesk(user('edit deck.pptx'), modeOf('file')) && offerDesk(user('open it in Excel'), modeOf('file')) && offerDesk(user('hello'), { filesInApps: () => 'file', desktopAccess: () => true }));
+  check('apps setting: "from the file" still offers word for a .docx (its file route reads and edits the file)', offerWord(user('fix the typos in my essay.docx'), modeOf('file')));
+  const noteOf = (name, mode, flags) => requestFor(settings, user('hi'), undefined, { ...flags, filesInApps: mode }).tools.find((t) => t.name === name).description;
+  const base = { word: def('word', { word: true }).description, desktop: def('desktop', { desktop: true }).description };
+  check('apps setting prompt: automatic adds nothing to either tool', noteOf('word', 'auto', { word: true }) === base.word && noteOf('desktop', 'auto', { desktop: true }) === base.desktop && noteOf('word', undefined, { word: true }) === base.word);
+  check('apps setting prompt: app and file add one short sentence each (under 120 characters) to the tool that is offered', ['app', 'file'].every((m) => ['word', 'desktop'].every((n) => { const d = noteOf(n, m, { [n]: true }); return d.startsWith(base[n]) && d.length - base[n].length > 20 && d.length - base[n].length < 120; })));
+  check('apps setting prompt: the sentences say what the choice is', /Word itself/.test(noteOf('word', 'app', { word: true })) && /do not open Word/.test(noteOf('word', 'file', { word: true })) && /open_app path.*read_app/.test(noteOf('desktop', 'app', { desktop: true })) && /do not open files in apps/.test(noteOf('desktop', 'file', { desktop: true })));
+  check('apps setting prompt: nothing is added when the tool is not offered', !requestFor(settings, user('hi'), undefined, { filesInApps: 'app' }).tools.some((t) => t.name === 'word' || t.name === 'desktop'));
+
   // ---- open_app path checks
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-appintent-'));
   const home = path.join(root, 'home');
