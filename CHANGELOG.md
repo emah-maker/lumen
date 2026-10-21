@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Live previews of Word and other apps work again.** The chat's card for the AI working in Word, Excel or another program showed one picture at most, then stopped updating, once any web-page card had finished in that chat. The card now tells Lumen it is on screen for programs too, so their window keeps updating live while the AI works.
 - **Choose whether the AI works on your files inside their apps.** Settings → AI has a new **Work on files in their apps** choice. **In the app** has the AI open a Word, Excel or PowerPoint file in that program and read and edit it there, so you can watch; **From the file** has it read and edit the file's own data without opening any app; **Automatic** (the default) keeps things as they were.
 
 ## 0.5.63 (2026-10-21)
