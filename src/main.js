@@ -12625,7 +12625,7 @@ app.on('second-instance', (_e, argv) => {
 function setupTaskbar() {
   if (TEST) return;
   if (process.platform === 'win32' && app.isPackaged) {
-    try { app.setUserTasks(taskbarTasks.jumpListTasks({ execPath: process.execPath, label: t('taskbar.closeAiTabs'), description: t('taskbar.closeAiTabsDesc') })); } catch {}
+    try { app.setUserTasks(taskbarTasks.jumpListTasks({ execPath: process.execPath, iconPath: instance.appIcon(), label: t('taskbar.closeAiTabs'), description: t('taskbar.closeAiTabsDesc') })); } catch {}
   } else if (process.platform === 'darwin') {
     try { app.dock?.setMenu(Menu.buildFromTemplate(taskbarTasks.dockMenuItems({ label: t('taskbar.closeAiTabs'), click: () => { closeAiTabsEverywhere().catch(() => {}); } }))); } catch {}
   }
