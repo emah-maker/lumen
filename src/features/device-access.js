@@ -51,7 +51,8 @@ function resolvePath(raw, { home = os.homedir() } = {}) {
 
 // Why `abs` (already resolved, and through any links) may not be used, or '' when it may. `profile`: Lumen's userData.
 function blockedReason(abs, { home = os.homedir(), profile = '' } = {}) {
-  const inside = (dir) => { const rel = path.relative(dir, abs); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
+  const under = (dir) => { const rel = path.relative(dir, abs); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
+  const inside = (dir) => { if (under(dir)) return true; try { const real = fs.realpathSync(dir); return real !== dir && under(real); } catch { return false; } }; // (abs is a real path: a home or profile behind a link, /var -> /private/var on macOS, is compared as it really is too)
   if (profile && inside(profile)) return 'That is Lumen\'s own profile (cookies, sign-ins, saved passwords), which the AI never reads.';
   for (const dir of SECRET_DIRS) if (inside(path.join(home, dir))) return `${path.join('~', dir)} holds credentials, which the AI never reads.`;
   const base = path.basename(abs);

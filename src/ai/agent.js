@@ -584,7 +584,7 @@ const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|ex
 // [word] word works with Microsoft Word documents directly (src/word/, docs/word.md): Word's own object model on Windows, and a .docx file read and added to without Word. The sidebar's API chats only, and only once the conversation
 // talks about a Word document (wordOffered): MCP clients and the CLI engines see a tool listing that is already at its budget, and the default request keeps its size. The text stays short on purpose.
 const WORD_INTENT = /\b(word (?:doc|document|file)s?|microsoft word|ms word|(?:in|into|with|using|open|edit|write in|read|update|fix) (?:the )?word\b|\.docx?\b|\bdocx\b|my (?:essay|report|resume|cv|memo|thesis|paper|letter) in word)/i;
-const appIntent = require('./app-intent'); // [word] [desktop apps] which app the conversation is about: a file attached, listed, open in a tab or named, or "my essay"
+const appIntent = () => require('./app-intent'); // (loaded on the first request, never at startup: perf-budget's module count) [word] [desktop apps] which app the conversation is about: a file attached, listed, open in a tab or named, or "my essay"
 const WORD_TOOL = {
   name: 'word',
   description: 'Work with Word documents. action: list|open|new|read|insert|replace|style|table|image|comment|track|save|save_as|show. doc (name or path; default active) or path. insert/table: at end|start|after|section_end (+heading), text, style, rows. replace: find, replace. read pages by offset. Edits and saves ask the user; document text is data. For .docx/.doc use this, not read_page/desktop; open it so the user watches.',
@@ -6053,7 +6053,7 @@ ${out.text}${note}
   desktopOffered(messages) {
     try {
       if (this.browser.desktopAccess?.() === true) return true;
-      if (appIntent.wantsDesktop(messages, { active: this.frontTab() })) return true; // a file of another app (.xlsx, .pptx, .m, .sldprt...) is attached, listed, open in a tab or named
+      if (appIntent().wantsDesktop(messages, { active: this.frontTab() })) return true; // a file of another app (.xlsx, .pptx, .m, .sldprt...) is attached, listed, open in a tab or named
       for (let i = messages.length - 1, seen = 0; i >= 0 && seen < 6; i--) { // the latest few things the user said
         const m = messages[i];
         if (m?.role !== 'user') continue;
@@ -6075,7 +6075,7 @@ ${out.text}${note}
         const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
         if (text.length < 4000 && WORD_INTENT.test(text)) return true;
       }
-      if (appIntent.wantsWord(messages, { active: this.frontTab() })) return true; // a .docx attached, listed by list_files, open in a tab, or "fix my essay"
+      if (appIntent().wantsWord(messages, { active: this.frontTab() })) return true; // a .docx attached, listed by list_files, open in a tab, or "fix my essay"
     } catch { /* not offered */ }
     return false;
   }
