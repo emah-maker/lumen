@@ -14,6 +14,9 @@
 //   --preflight-timeout <minutes> (default 45)   how long to wait for that build
 //   --no-skip-ci     always wait for CI on the release PR (default: skip when the commit is verified to be only the release)
 //   --serial-checks  run the checks one after another (default: the pure-node lane alongside the Electron lane)
+//   --electron-jobs <n>  run n ordinary Electron suites at once (default min(3, cores/4, RAM/10 GB); 1 = one at a time). Suites that bind a
+//                    fixed port or share the clipboard or the machine's windows/processes run alone, perf-sensitive ones last and alone
+//   --full           run every Electron suite (default: the core set plus the suites related to the files changed since the last release tag)
 //   --fresh-install  npm ci in the worktree instead of reusing the main checkout's node_modules
 // Never run it while another Lumen test or release is using Electron: it refuses when a release worktree is mid-run.
 // Stages and gotchas: docs/releasing.md.
@@ -24,7 +27,7 @@ const { spawn } = require('child_process');
 const e2eLock = require('./e2e-lock');
 const {
   cutChangelog, changelogSection, readSuites, bumpVersion, deriveChecks, procsUnder,
-  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, releasePlan, stageDone, stagesLeft,
+  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, releasePlan, stageDone, stagesLeft,
 } = require('./release-lib');
 const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
 
@@ -36,6 +39,11 @@ const STATE_FILE = 'lumen-release-state.json';
 // The checks for a tree: cheap pure-node stages first, then every Electron suite from test-all.js (perf-budget last).
 function planChecks(readFile, listTestFiles) {
   const derived = deriveChecks({ suites: readSuites(readFile('scripts/test-all.js')), files: listTestFiles() });
+  // Each Electron suite's source: which ones share a port, the clipboard or the machine (they run alone), and which a change relates to.
+  const sources = {};
+  for (const s of derived.electron) { try { sources[s] = readFile(`test/${s}.js`); } catch { sources[s] = ''; } }
+  const shared = {};
+  for (const s of derived.electron) { const why = sharedResources(s, sources[s]); if (why.length) shared[s] = why; }
   const plain = (name, args) => ({ name, kind: 'plain', cmd: process.execPath, args });
   const stages = [
     plain('units', ['scripts/test-units.js']),
@@ -43,7 +51,23 @@ function planChecks(readFile, listTestFiles) {
     plain('lint', ['node_modules/eslint/bin/eslint.js', '.']),
     ...derived.electron.map((s) => ({ name: s, kind: 'electron', cmd: process.execPath, args: [`test/${s}.js`] })),
   ];
-  return { stages, derived };
+  return { stages, derived, sources, shared };
+}
+
+// The default suite choice (see selectSuites): the files changed since the last release tag, up to the commit before the release commit.
+// null when there is no tag to compare with (then everything runs).
+function changedSinceTag(wt, tagGuess, headRev) {
+  const tag = tagGuess || git(wt, 'describe', '--tags', '--abbrev=0', headRev).stdout;
+  if (!tag) return null;
+  const r = git(wt, 'diff', '--name-only', tag, headRev);
+  return r.status === 0 ? { tag, files: r.stdout.split('\n').filter(Boolean) } : null;
+}
+
+// Electron suites at once: --electron-jobs, else min(3, cores/4, RAM/10 GB). Always 1 with --share-machine (the lock is taken per suite).
+function pickElectronJobs(opts) {
+  if (!opts.holdLock) return 1;
+  if (opts.electronJobs) return opts.electronJobs;
+  return electronJobs({ cpus: os.cpus().length, ramGb: os.totalmem() / 2 ** 30 });
 }
 
 const localDate = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
@@ -106,10 +130,22 @@ function runStage(wt, stage, logFile, timeoutMs) {
 const failLines = (logFile) => { try { return fs.readFileSync(logFile, 'utf8').split('\n').filter((l) => /^FAIL/.test(l)).slice(0, 5); } catch { return []; } };
 
 async function runChecks(wt, st, opts) {
-  let { stages, derived } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => fs.readdirSync(path.join(wt, 'test')).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
+  let { stages, derived, sources, shared } = planChecks((f) => fs.readFileSync(path.join(wt, f), 'utf8'), () => fs.readdirSync(path.join(wt, 'test')).filter((f) => f.endsWith('.js')).map((f) => f.slice(0, -3)));
   // --only a,b,c: a targeted release (the suites a change touches). The pure-node stages and perf-budget always run; the choice is kept
   // in the state file so --resume runs the same set, and the release PR names it.
-  const only = opts.only || st.only || null;
+  // Neither --only nor --full: the core set plus the suites related to the files changed since the last release tag (selectSuites); that choice is kept
+  // too, and --full (also kept) runs every Electron suite instead.
+  if (opts.full) { delete st.only; delete st.selection; st.full = true; saveState(wt, st); }
+  let only = opts.only || (opts.full ? null : st.only) || null;
+  if (!only && !opts.full && !st.full) {
+    const ch = changedSinceTag(wt, st.baseTag, 'HEAD~1');
+    const pick = ch ? selectSuites({ changed: ch.files, electron: derived.electron, sources }) : null;
+    if (pick && !pick.full) {
+      only = pick.names;
+      st.selection = { tag: ch.tag, changed: ch.files.length, reasons: pick.reasons };
+      say('checks', `default selection: ${pick.names.length} of ${derived.electron.length} Electron suites (the core set and what the ${ch.files.length} files changed since ${ch.tag} relate to; --full runs all)`);
+    } else say('checks', ch ? `running every Electron suite: a build, dependency or workflow file changed since ${ch.tag}` : 'running every Electron suite: no release tag to compare with');
+  }
   if (only) { st.only = only; saveState(wt, st); stages = stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)); const unknown = only.filter((n) => !derived.electron.includes(n)); if (unknown.length) say('checks', `--only names suites test-all.js does not list (skipped): ${unknown.join(', ')}`); }
   if (derived.missing.length) say('checks', `named in test-all.js but not in test/ (skipped): ${derived.missing.join(', ')}`);
   fs.mkdirSync(st.logs, { recursive: true });
@@ -120,54 +156,83 @@ async function runChecks(wt, st, opts) {
   const pending = stages.filter((x) => x.kind === 'electron' && isPending(x));
   // Unit suites run several at a time (test-units.js --jobs), leaving cores for the Electron lane when both run at once.
   const parallel = !opts.serialChecks;
-  const jobs = unitJobs({ cpus: os.cpus().length, withElectron: parallel && pending.length > 0 });
+  const ej = parallel ? pickElectronJobs(opts) : 1;
+  if (!opts.holdLock && opts.electronJobs > 1) say('checks', '--share-machine takes the Electron lock per suite, so Electron suites run one at a time (--electron-jobs ignored)');
+  const jobs = unitJobs({ cpus: os.cpus().length, withElectron: parallel && pending.length > 0, electronJobs: ej });
   for (const s of stages) if (s.name === 'units') s.args = ['scripts/test-units.js', '--jobs', String(jobs)];
-  const phases = planLanes(stages, { serial: !parallel });
-  say('checks', `${stages.length} stages (${derived.electron.length} Electron suites, perf-sensitive ones last and alone; units ${jobs} at a time; ${parallel ? 'pure-node lane alongside the Electron lane' : 'one after another'}); logs in ${st.logs}`);
+  const phases = planLanes(stages, { serial: !parallel, electronJobs: ej, exclusive: (n) => Boolean(shared[n]) });
+  const nElectron = stages.filter((x) => x.kind === 'electron').length;
+  const alone = Object.keys(shared).filter((n) => stages.some((x) => x.name === n));
+  say('checks', `${stages.length} stages (${nElectron} Electron suites, ${ej} at a time${ej > 1 ? `, ${alone.length} that share a port, the clipboard or the machine alone` : ''}; perf-sensitive ones last and alone; units ${jobs} at a time; ${parallel ? 'pure-node lane alongside the Electron lane' : 'one after another'}); logs in ${st.logs}`);
 
   // The machine-wide Electron lock (docs/releasing.md): taken when the first Electron suite is about to start and held to the end of the checks by
   // default, or taken per suite with --share-machine. The pure-node lane never needs it, so it starts (and may finish) while the lock is awaited.
   let lockP = null;
   const ensureLock = () => { if (!lockP) { say('checks', 'taking the machine-wide Electron lock'); lockP = e2eLock.acquire({ owner }); } return lockP; };
 
-  async function runOne(stage, ctx) {
-    const prev = st.checks[stage.name];
-    if (prev && prev.status !== 'fail') { say('checks', `skip  ${stage.name} (${prev.status} earlier)`); return; }
-    const logFile = path.join(st.logs, `${stage.name}.log`);
+  // One attempt at a stage. The Electron lock is taken here per suite (--share-machine) or already held (default).
+  async function attempt(stage, logFile) {
     const isElectron = stage.kind === 'electron';
     const perSuite = isElectron && !opts.holdLock;
     if (isElectron && opts.holdLock) await ensureLock();
     if (perSuite) { say('checks', `waiting for the Electron lock for ${stage.name}`); await e2eLock.acquire({ owner }); }
-    try {
-      let r = await runStage(wt, stage, logFile, timeoutMs);
-      let status = r.ok ? 'pass' : 'fail';
-      if (!r.ok) {
-        const leftover = procsUnder(listElectron(), [wt]);
-        for (const p of leftover) killTree(p.pid);
-        if (isElectron) {
-          say('checks', `FAIL  ${stage.name} (${r.code}); retrying once${ctx.quiet ? ' when the pure-node lane is done (alone on the machine)' : ''}`);
-          if (ctx.quiet) await ctx.quiet;
-          const r2 = await runStage(wt, stage, logFile, timeoutMs);
-          if (r2.ok) { status = 'flaky'; r = r2; } else { r = r2; for (const p of procsUnder(listElectron(), [wt])) killTree(p.pid); }
-        }
-      }
-      st.checks[stage.name] = { status, seconds: r.seconds, code: r.ok ? 0 : r.code, log: logFile };
-      saveState(wt, st);
-      const tag = { pass: 'PASS ', flaky: 'FLAKY', fail: 'FAIL ' }[status];
-      say('checks', `${tag} ${stage.name} (${r.seconds}s${r.ok ? '' : `, ${r.code}`})`);
-      if (status === 'fail') for (const l of failLines(logFile)) console.log(`            ${l.slice(0, 200)}`);
-    } finally { if (perSuite) e2eLock.release(); }
+    try { return await runStage(wt, stage, logFile, timeoutMs); } finally { if (perSuite) e2eLock.release(); }
+  }
+  // Electron processes a failed suite left behind are stopped (by PID, only ones under this worktree) once no other Electron suite is running:
+  // with several at once there is no telling whose they are, so the sweep waits for the last one.
+  let inFlight = 0;
+  let sweepWanted = false;
+  const sweep = () => { sweepWanted = false; for (const p of procsUnder(listElectron(), [wt])) killTree(p.pid); };
+  const settle = (stage) => { if (stage.kind !== 'electron') return; inFlight--; if (sweepWanted && inFlight === 0) sweep(); };
+  function record(stage, logFile, r, status) {
+    st.checks[stage.name] = { status, seconds: r.seconds, code: r.ok ? 0 : r.code, log: logFile };
+    saveState(wt, st);
+    const tag = { pass: 'PASS ', flaky: 'FLAKY', fail: 'FAIL ' }[status];
+    say('checks', `${tag} ${stage.name} (${r.seconds}s${r.ok ? '' : `, ${r.code}`})`);
+    if (status === 'fail') for (const l of failLines(logFile)) console.log(`            ${l.slice(0, 200)}`);
+  }
+
+  // Runs a stage; a failed Electron suite is not retried here (other suites may still be running) but added to `retries`, which the phase works
+  // through once everything in it is done: each retried alone on the machine, passing = flaky.
+  async function runOne(stage, retries) {
+    const prev = st.checks[stage.name];
+    if (prev && prev.status !== 'fail') { say('checks', `skip  ${stage.name} (${prev.status} earlier)`); return; }
+    const logFile = path.join(st.logs, `${stage.name}.log`);
+    const isElectron = stage.kind === 'electron';
+    if (isElectron) inFlight++;
+    let r;
+    try { r = await attempt(stage, logFile); } catch (err) { settle(stage); throw err; }
+    if (r.ok) { record(stage, logFile, r, 'pass'); settle(stage); return; }
+    if (isElectron) {
+      sweepWanted = true;
+      say('checks', `FAIL  ${stage.name} (${r.code}); retrying once when the phase is done (alone on the machine)`);
+      retries.push({ stage, logFile });
+      settle(stage);
+      return;
+    }
+    record(stage, logFile, r, 'fail');
+  }
+  async function retryOne({ stage, logFile }) {
+    const r2 = await attempt(stage, logFile);
+    if (r2.ok) record(stage, logFile, r2, 'flaky');
+    else { record(stage, logFile, r2, 'fail'); }
+    sweep();
+  }
+  // A lane runs its stages `lane.jobs` at a time, each worker taking the next one in order.
+  async function runLane(lane, retries) {
+    let next = 0;
+    const worker = async () => { while (next < lane.stages.length) await runOne(lane.stages[next++], retries); };
+    await Promise.all(Array.from({ length: Math.min(lane.jobs, lane.stages.length) }, worker));
   }
 
   const t0 = Date.now();
   try {
     for (const lanes of phases) {
-      // Within one phase the lanes run at once; the Electron lane's retry waits for the pure-node lane to end so a retry runs on a quiet machine.
-      const pureIdx = lanes.findIndex((l) => l[0].kind === 'plain');
-      const ctxs = lanes.map(() => ({ quiet: null }));
-      const lanePromises = lanes.map((lane, i) => (async () => { for (const stage of lane) await runOne(stage, ctxs[i]); })());
-      if (pureIdx >= 0) ctxs.forEach((c, i) => { if (i !== pureIdx) c.quiet = lanePromises[pureIdx].catch(() => {}); });
-      await Promise.all(lanePromises);
+      // The lanes of a phase run at once (the pure-node lane beside the Electron lane); the failed Electron suites are retried afterwards, one by one.
+      const retries = [];
+      await Promise.all(lanes.map((lane) => runLane(lane, retries)));
+      if (retries.length) sweep();
+      for (const x of retries) await retryOne(x);
     }
   } finally { if (lockP) { try { await lockP; e2eLock.release(); } catch { /* never taken */ } } }
   say('checks', `all stages ran in ${Math.round((Date.now() - t0) / 1000)}s`);
@@ -261,7 +326,7 @@ function releaseBody(wt, version, st) {
   const lines = [`Release ${version}: version bump, and Unreleased becomes the ${version} section.`, ''];
   if (st.folded && st.folded.length) lines.push(`${st.folded.join(', ')} was tagged but never published (its build failed after the tag), so its notes are folded into ${version}.`, '');
   if (subjects.length) lines.push(`Included since ${tag}:`, ...subjects.map((s) => `- ${s}`), '');
-  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (${st.only ? `a targeted set: units, acceptance, lint, perf-budget and ${st.only.join(', ')}` : 'every Electron suite, units, acceptance, lint'}). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`);
+  lines.push(`Release checks (scripts/release.js) ran hidden, each suite with its own profile and TEMP: ${st.suiteCount} stages (${st.only ? (st.selection ? `the core set and the suites related to the changes since ${st.selection.tag}: units, acceptance, lint, perf-budget and ${st.only.join(', ')}` : `a targeted set: units, acceptance, lint, perf-budget and ${st.only.join(', ')}`) : 'every Electron suite, units, acceptance, lint'}). All pass.${st.flaky && st.flaky.length ? ` Flaky (failed once, passed on retry): ${st.flaky.join(', ')}.` : ''}`);
   if (st.preflight) lines.push('', `The Windows and macOS build was pre-flighted on this branch (release.yml, workflow_dispatch${st.preflight.url ? `: ${st.preflight.url}` : ''}); the tag publishes those artifacts when the tagged tree is identical.`);
   lines.push('', '🤖 Generated with [Claude Code](https://claude.com/claude-code)');
   return lines.join('\n');
@@ -451,19 +516,31 @@ function dryRun(main, spec, opts) {
   const resumable = opts.resume ? releaseWorktrees(main).filter((w) => w.state.stage !== 'publish') : [];
   const version = opts.resume && resumable.length ? resumable[resumable.length - 1].state.version : bumpVersion(current, spec);
   const wt = path.join(worktreesDir(main), `release-${version}`);
-  const { stages, derived } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
-  const kept = opts.only ? stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || opts.only.includes(x.name)) : stages;
-  const phases = planLanes(kept, { serial: opts.serialChecks });
+  const { stages, derived, sources, shared } = planChecks(show, () => must(git(main, 'ls-tree', '--name-only', 'origin/main', 'test/'), 'git ls-tree').split('\n').filter((f) => f.endsWith('.js')).map((f) => path.basename(f, '.js')));
+  let only = opts.full ? null : opts.only;
+  let selectionNote = 'every Electron suite (--full)';
+  if (!only && !opts.full) {
+    const ch = changedSinceTag(main, null, 'origin/main');
+    const pick = ch ? selectSuites({ changed: ch.files, electron: derived.electron, sources }) : null;
+    if (pick && !pick.full) { only = pick.names; selectionNote = `the core set plus suites related to the ${ch.files.length} files changed since ${ch.tag}: ${pick.names.length} of ${derived.electron.length} Electron suites (--full runs all)`; }
+    else selectionNote = ch ? `every Electron suite (a build, dependency or workflow file changed since ${ch.tag})` : 'every Electron suite (no release tag to compare with)';
+  } else if (only) selectionNote = `--only: ${only.length} named Electron suites`;
+  const kept = only ? stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)) : stages;
+  const ej = opts.serialChecks ? 1 : pickElectronJobs(opts);
+  const phases = planLanes(kept, { serial: opts.serialChecks, electronJobs: ej, exclusive: (n) => Boolean(shared[n]) });
   say('plan', `origin/main (as last fetched) is ${current}; releasing ${version} (${spec}), worktree ${wt}`);
   if (!opts.resume && fs.existsSync(wt)) say('plan', `would STOP: ${wt} already exists (a release of ${version} is in progress or unfinished: use --resume, or remove that worktree)`);
   if (opts.resume) say('plan', resumable.length ? `--resume would continue ${resumable[resumable.length - 1].branch} after stage "${resumable[resumable.length - 1].state.stage}" (stages left: ${stagesLeft(resumable[resumable.length - 1].state, opts).join(', ') || 'none'}; the build preflight is checked again before the PR, never trusted blindly)` : '--resume found no unfinished release; it would stop');
   const stale = procsUnder(listElectron(), [main]);
   say('plan', `0. preflight: ${stale.length ? `${stale.length} electron process(es) under the repo: ${stale.map((p) => p.pid).join(', ')} (${opts.killStale ? 'would be stopped by PID' : 'would STOP the run; --kill-stale stops them'})` : 'no electron under the repo'}; refuse if another release is mid-run`);
-  const plan = releasePlan({ version, date: localDate(), opts, counts: { stages: kept.length } });
+  const plan = releasePlan({ version, date: localDate(), opts, counts: { stages: kept.length, electronJobs: ej } });
   let n = 0;
   for (const s of plan) say('plan', s.parallel ? `   | ${s.id}: ${s.text}` : `${++n}. ${s.id}: ${s.text}`);
-  say('plan', `   checks lanes: ${phases.map((lanes) => lanes.map((l) => `[${l.map((s) => s.name).slice(0, 3).join(', ')}${l.length > 3 ? `, ... ${l.length} in all` : ''}]`).join(' + ')).join('  then  ')}`);
-  say('plan', `   units: --jobs ${unitJobs({ cpus: os.cpus().length, withElectron: !opts.serialChecks && derived.electron.length > 0 })}; each stage has its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; an Electron suite that fails is retried once, alone on the machine (passing = flaky, reported, not blocking)`);
+  say('plan', `   selection: ${selectionNote}`);
+  say('plan', `   checks lanes: ${phases.map((lanes) => lanes.map((l) => `[${l.stages.map((s) => s.name).slice(0, 3).join(', ')}${l.stages.length > 3 ? `, ... ${l.stages.length} in all` : ''}${l.jobs > 1 ? `; ${l.jobs} at a time` : ''}]`).join(' + ')).join('  then  ')}`);
+  const aloneNames = Object.keys(shared).filter((n) => kept.some((x) => x.name === n));
+  if (ej > 1 && aloneNames.length) say('plan', `   run alone (shared port, clipboard or machine): ${aloneNames.map((n) => `${n} (${shared[n].join(', ')})`).join('; ')}`);
+  say('plan', `   units: --jobs ${unitJobs({ cpus: os.cpus().length, withElectron: !opts.serialChecks && derived.electron.length > 0, electronJobs: ej })}; each stage has its own TEMP and CLAUDE_BROWSER_PROFILE, LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1, ${opts.suiteMinutes} min timeout, a log per suite; an Electron suite that fails is retried once, alone on the machine, after its phase (passing = flaky, reported, not blocking)`);
   if (derived.missing.length) say('plan', `   in test-all.js but no file (skipped): ${derived.missing.join(', ')}`);
   say('plan', `   not run (not in test-all.js, need network/keys/manual): ${derived.manual.length} file(s)`);
   say('plan', 'network steps (git fetch/push/ls-remote, every gh call) retry up to 5 times with 2 s, 4 s, 8 s, 16 s backoff, and polls tolerate a dropped connection for several minutes');
@@ -474,7 +551,7 @@ function dryRun(main, spec, opts) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, preflightMinutes: 45, assets: 13, only: null, noPreflight: false, noSkipCi: false, serialChecks: false, freshInstall: false };
+  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, preflightMinutes: 45, assets: 13, only: null, noPreflight: false, noSkipCi: false, serialChecks: false, freshInstall: false, electronJobs: 0, full: false };
   let spec = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -488,6 +565,8 @@ async function main() {
     else if (a === '--no-skip-ci') opts.noSkipCi = true;
     else if (a === '--serial-checks') opts.serialChecks = true;
     else if (a === '--fresh-install') opts.freshInstall = true;
+    else if (a === '--full') opts.full = true;
+    else if (a === '--electron-jobs') { opts.electronJobs = Math.floor(Number(args[++i])); if (!(opts.electronJobs >= 1 && opts.electronJobs <= 8)) { console.error('--electron-jobs takes a number from 1 to 8'); process.exit(2); } }
     else if (a === '--suite-timeout') opts.suiteMinutes = Number(args[++i]) || 15;
     else if (a === '--ci-timeout') opts.ciMinutes = Number(args[++i]) || 40;
     else if (a === '--preflight-timeout') opts.preflightMinutes = Number(args[++i]) || 45;
@@ -496,7 +575,7 @@ async function main() {
     else if (!a.startsWith('-') && !spec) spec = a;
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
-  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite] [--no-preflight] [--no-skip-ci] [--serial-checks] [--fresh-install]'); process.exit(2); }
+  if (!spec && !opts.resume) { console.error('usage: node scripts/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite] [--no-preflight] [--no-skip-ci] [--serial-checks] [--electron-jobs n] [--full] [--fresh-install]'); process.exit(2); }
   const main = mainCheckout(process.cwd());
   if (opts.dryRun) return dryRun(main, spec || 'patch', opts);
 
