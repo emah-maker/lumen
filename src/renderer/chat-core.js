@@ -1776,7 +1776,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, helper: event.helper });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, denyLabel: event.denyLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -2365,7 +2365,7 @@ function showHelperCard(e) {
 function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined }); // ([close guard] the AI closing a tab of the user's: its own sentence under the title)
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
@@ -2516,7 +2516,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     : () => answer(true);
   if (always) always.onclick = () => answer('always');
   card.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target === card && note !== 'connector') { e.preventDefault(); answer(true); }
+    if (e.key === 'Enter' && e.target === card && note !== 'connector' && note !== 'close') { e.preventDefault(); answer(true); }
     else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); } // (Escape in a box being edited keeps the card and its edits)
   });
   actions.append(...[deny, always, allow].filter(Boolean));
