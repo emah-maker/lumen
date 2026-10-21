@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A formula that ends in a space before its closing $ is drawn as math.** An AI answer such as "$sigma = 0 - (<0) = $ positive" showed the raw dollar signs and LaTeX, often in a table cell. A formula with a LaTeX command such as sigma now counts even with that space; prices like "$5 and $ 10" still stay plain text.
 - **Windows no longer calls Lumen "Electron".** A leftover Start menu shortcut named Electron (from an early build) carried Lumen's app ID, so Start and Windows search listed Lumen as "Electron". Lumen now removes that stray shortcut at startup when its own Lumen shortcut is there. The **Close tabs the AI opened** task (right-click Lumen on the taskbar) also shows Lumen's icon instead of Electron's.
 - **The red muted speaker shows only on tabs you muted.** Lumen keeps some tabs quiet by itself (a tab it loads ahead in the background, the AI's own tabs), and those showed the muted speaker even though you never muted them and they made no sound. The icon now follows Mute tab and Mute site only.
 - **Developer change: `test/` and `scripts/` are organized into folders.** Unit suites are in `test/units/`, Electron suites in `test/e2e/`, shared rigs in `test/helpers/`; the scripts are in `scripts/build/`, `scripts/release/`, `scripts/test/` and `scripts/measure/`. Nothing changes in the app.
