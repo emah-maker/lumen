@@ -5921,6 +5921,7 @@ function chatView() {
 // { chatId, messages, runId, rec, pending: approvalId -> card event, reply, error, stopped, deleted }
 const chatRuns = new Map();
 const unreadChats = new Set(); // a reply finished while its chat was not in view
+const chatWorkTab = new Map(); // [chat per tab] chat id -> the tab its last run worked in (where its check mark shows once it has finished)
 const sidebarShown = new WeakMap(); // a window's UI -> is its sidebar open (chat:sidebar-state)
 ipcMain.on('chat:sidebar-state', (event, open) => {
   sidebarShown.set(event.sender, Boolean(open));
@@ -6123,6 +6124,8 @@ function pinnedChat(tabId) {
   return null;
 }
 // The mark a tab shows: 'approval' | 'running' | 'waiting' | 'done' | null.
+// The tab a chat's mark belongs to: the one it works (or worked) in while that tab still shows the chat, else the chat's home tab (a new chat was started in the tab it works in).
+const markTabOf = (id, work) => (work != null && chatBind.chatOf(work) === id ? work : chatBind.tabOf(id) ?? null);
 function tabChatMark(tabId) {
   const bound = chatBind.chatOf(tabId);
   const rank = { approval: 4, running: 3, waiting: 2, done: 1 };
@@ -6134,6 +6137,8 @@ function tabChatMark(tabId) {
     // [working-on chip] A reply typed on the chat page has no home tab: a web tab that merely shows the same chat is not "running" for it
     // (only the tab its tools work in, and the chat page itself, are). A reply started in a tab's own sidebar does mark that tab.
     const elsewhere = run && !run.deleted && run.homeTab == null && id !== pinned && !chatPage;
+    const at = tabAnywhere(tabId);
+    if (!tabChatsLib.markHere({ tabId, workTab: markTabOf(id, run && !run.deleted ? (run.tabId ?? run.homeTab ?? null) : chatWorkTab.get(id) ?? null), open: Boolean(at && activeIdOf(at.rec) === tabId), own: chatPage || id === pinned })) continue; // only the tab it works in and the tab you have open, not every tab that once used this chat
     const live = runIsLive(run) && !elsewhere ? (run.queued ? 'queued' : 'running') : null;
     const s = tabChatsLib.tabStatus({ run: live, approvals: run?.pending.size || 0, unread: id === bound && unreadChats.has(id) });
     if (s && (!best || rank[s] > rank[best])) best = s;
@@ -10857,6 +10862,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       run.doneMsg = msg;
       if (!run.deleted) stampRun(run, msg);
       const mine = chatRuns.get(runChat) === run;
+      if (mine) { const wt = run.tabId ?? run.homeTab; if (wt != null) chatWorkTab.set(runChat, wt); else chatWorkTab.delete(runChat); if (chatWorkTab.size > 500) chatWorkTab.delete(chatWorkTab.keys().next().value); }
       if (mine) chatRuns.delete(runChat);
       if (mine) runSlots.release(runChat); // the next chat in line may start
       if (chatPageRt.runs.get()?.runId === runId) chatPageRt.endRun();
