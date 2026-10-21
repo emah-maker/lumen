@@ -204,9 +204,10 @@
   }
   function refreshCard(turn, card) {
     const state = stateOf(turn, card);
-    if (card.el.dataset.state !== state || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on)
+    if (card.el.dataset.state !== state || ((card.hadBrowser || card.app) && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on)
       card.el.dataset.state = state;
-      if (card.hadBrowser) { card.hb = true; if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
+      if (card.hadBrowser || card.app) { card.hb = true; // (a program's window too: its live picture runs only while a card is on screen; a browser-only gate left Word and other apps with no live picture once a browser card had finished in that chat)
+        if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
     }
     const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.surface === 'tool' ? 'tool' : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
