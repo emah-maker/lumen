@@ -60,6 +60,9 @@ const http = require('http');
   // The scripted cursor main.js follows (instead of the real one).
   const cursor = (point) => app.evaluate((_e, p) => global.__windows.setCursor(p), point);
   const dragState = () => app.evaluate(() => global.__windows.dragState());
+  // Windows sizes a setBounds with the scale of the display the window is on now. These windows are parked off-screen (nearest display: the
+  // 150% one on a mixed-DPI desktop), so the first call to an on-screen spot comes out the wrong size; the second, once it is there, is exact.
+  const place = async (id, b) => { for (let i = 0; i < 3; i++) { const got = await app.evaluate(({ BrowserWindow }, [w, bb]) => { const win = BrowserWindow.fromId(w); win.setBounds(bb); return win.getBounds(); }, [id, b]); if (Math.abs(got.width - b.width) <= 2 && Math.abs(got.height - b.height) <= 2) return; } };
   const winBounds = (id) => app.evaluate(({ BrowserWindow }, w) => BrowserWindow.fromId(w).getBounds(), id);
   const scaleOf = (id) => app.evaluate(({ BrowserWindow, screen }, w) => screen.getDisplayMatching(BrowserWindow.fromId(w).getBounds()).scaleFactor, id);
   const boundsAt = (id, x, y) => waitFor(async () => { const b = await winBounds(id); return Math.abs(b.x - x) <= 2 && Math.abs(b.y - y) <= 2 ? b : null; }, 3000);
@@ -166,8 +169,8 @@ const http = require('http');
     check('and nothing follows the cursor after the release', Boolean(await boundsAt(w2id, 950, 585)), JSON.stringify(await winBounds(w2id)));
 
     // ---- hover another window's strip: an insertion point, and release joins it there
-    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).setBounds({ x: 100, y: 100, width: 1000, height: 700 }), win1);
-    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).setBounds({ x: 1150, y: 150, width: 800, height: 600 }), w2id);
+    await place(win1, { x: 100, y: 100, width: 1000, height: 700 });
+    await place(w2id, { x: 1150, y: 150, width: 800, height: 600 });
     await emit(win1, 'tab:switch', initialId);
     await app.evaluate((_e, id) => global.__pinTab(id, false), b.id);
     await app.evaluate((_e, [w, id]) => global.__windows.pin(w, id, false), [w2id, a.id]); // it stayed pinned; a loose strip to drop into
@@ -250,7 +253,7 @@ const http = require('http');
     await emit(win1, 'tab:dragprep');
     const spareId = await waitFor(() => app.evaluate(() => global.__windows.spare()));
     check('a tab heading out readies a hidden window, left out of the window list', Boolean(spareId) && (await windows()).length === 1, JSON.stringify([spareId, await windows()]));
-    await cursor({ x: 900, y: 500 });
+    await cursor({ x: 1400, y: 900 }); // beside win1 (100..1100 across): not over its page, where the right edge is a split-view drop zone
     await emit(win1, 'tab:dragstart', b.id, { x: 300, y: 15, stripX: 150 });
     await emit(win1, 'tab:dragend');
     const intoSpare = await windows();
@@ -283,7 +286,7 @@ const http = require('http');
     await emit(priv.windowId, 'tab:dragstart', priv.tabs[0].id, { x: 100, y: 10, stripX: 50 });
     await sleep(500);
     check("a private window's UI cannot start a drag", (await dragState()) === null && JSON.stringify(await windows()) === before && (await app.evaluate(() => global.__private.list()[0].tabs.length)) === 1);
-    await app.evaluate(({ BrowserWindow }, id) => BrowserWindow.fromId(id).setBounds({ x: 1200, y: 100, width: 900, height: 600 }), priv.windowId);
+    await place(priv.windowId, { x: 1200, y: 100, width: 900, height: 600 });
     await cursor({ x: 900, y: 500 });
     await emit(win1, 'tab:dragstart', a.id, { x: 300, y: 15, stripX: 150 });
     await cursor({ x: 1200 + 40, y: 100 + 15 });
@@ -331,7 +334,7 @@ const http = require('http');
       const homeNow = winOf(list0, home.windowId);
       if (away && homeNow && homeNow.tabs.some((t) => t.id === m1.id)) {
         await app.evaluate((_e, [w, ids]) => global.__windows.setSelection(w, ids), [home.windowId, [m1.id, m2.id]]);
-        await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [home.windowId, away.windowId]);
+        await place(home.windowId, { x: 100, y: 100, width: 1000, height: 700 }); await place(away.windowId, { x: 1150, y: 150, width: 800, height: 600 });
         await cursor({ x: 700, y: 500 });
         await emit(home.windowId, 'tab:dragstart', m2.id, { x: 300, y: 15, stripX: 150, pressY: 15, ids: [m1.id, m2.id] });
         check('dragging a selected tab takes the whole selection', JSON.stringify((await dragState())?.ids) === JSON.stringify([m1.id, m2.id]), JSON.stringify(await dragState()));
@@ -383,7 +386,7 @@ const http = require('http');
         const donorTab = await app.evaluate(async (_e, u) => global.__agent.browser.openTab(u).id, `${base}/z`);
         const donorWin = (await windows()).find((w) => w.tabs.some((t) => t.id === donorTab));
         const other = donorWin.windowId === a0.windowId ? b0 : a0;
-        await app.evaluate(({ BrowserWindow }, [a, b]) => { BrowserWindow.fromId(a).setBounds({ x: 100, y: 100, width: 1000, height: 700 }); BrowserWindow.fromId(b).setBounds({ x: 1150, y: 150, width: 800, height: 600 }); }, [donorWin.windowId, other.windowId]);
+        await place(donorWin.windowId, { x: 100, y: 100, width: 1000, height: 700 }); await place(other.windowId, { x: 1150, y: 150, width: 800, height: 600 });
         await cursor({ x: 700, y: 500 });
         await emit(donorWin.windowId, 'tab:dragstart', donorTab, { x: 300, y: 15, stripX: 150, pressY: 15 });
         await cursor({ x: 1150 + 790, y: 150 + 15 });
