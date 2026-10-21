@@ -14,6 +14,9 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').repla
   check('task: one task, no more', Boolean(task) && rest.length === 0);
   check('task: it launches Lumen with the flag only', task.program === 'C:\\Lumen\\Lumen.exe' && task.arguments === '--close-ai-tabs' && T.CLOSE_AI_TABS_ARG === '--close-ai-tabs');
   check('task: Lumen\'s own icon (index 0), the label as title, the description', task.iconPath === 'C:\\Lumen\\Lumen.exe' && task.iconIndex === 0 && task.title === 'Close tabs the AI opened' && task.description === 'Close them');
+  const withIcon = T.jumpListTasks({ execPath: 'C:\\Lumen\\Lumen.exe', iconPath: 'C:\\Lumen\\resources\\app\\src\\assets\\icon.ico', label: 'L' })[0];
+  check('task: given Lumen\'s icon.ico it shows that (Lumen.exe\'s own icon is Electron\'s), still launching Lumen.exe', withIcon.iconPath === 'C:\\Lumen\\resources\\app\\src\\assets\\icon.ico' && withIcon.iconIndex === 0 && withIcon.program === 'C:\\Lumen\\Lumen.exe', JSON.stringify(withIcon));
+  check('wiring: main gives the Jump List task Lumen\'s icon.ico', /jumpListTasks\(\{ execPath: process\.execPath, iconPath: instance\.appIcon\(\)/.test(require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'main.js'), 'utf8')));
   check('task: no description falls back to the label', T.jumpListTasks({ execPath: 'x', label: 'L' })[0].description === 'L');
   check('task: no program or no label means no task', J(T.jumpListTasks()) === '[]' && J(T.jumpListTasks({ label: 'L' })) === '[]' && J(T.jumpListTasks({ execPath: 'x' })) === '[]' && J(T.jumpListTasks({ execPath: 5, label: 'L' })) === '[]');
 }
