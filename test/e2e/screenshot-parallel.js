@@ -1,7 +1,7 @@
 // Two sidebar chats working at the same time, each in its own background tab, both calling the AI's screenshot tool
 // again and again (ai/snapshot.js screenshot -> features/tab-capture.js captureJpeg / captureTab). While chat A's page is
 // locked up, chat B's screenshots of its own tab must still come back at once. Fake model, hidden windows.
-require('./_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
+require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
 const fs = require('fs');
@@ -25,7 +25,7 @@ const BUSY_MS = 14000; // how long chat A's page is locked up
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-shotpar-'));
   const app = await electron.launch({
-    args: [path.join(__dirname, '..')],
+    args: [path.join(__dirname, '..', '..')],
     env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test' },
   });
   await app.evaluate(() => { global.__settings.backend.set('sidebarNewChat', false); global.__settings.backend.set('oneChatPerTab', true); });
