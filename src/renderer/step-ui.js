@@ -181,6 +181,13 @@
     card.toggle.onclick = () => toggleAiTabs(card);
     card.closeAll.onclick = () => closeAiTabs(card);
     card.shot.onclick = () => openIt(card); // (the picture does what the button does)
+    card.shot2.onclick = () => { if (card.surface === 'app' && card.app?.id) openIt(card); }; // (a program's picture, or Word's page: a click goes to the program)
+    card.shot2.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === card.shot2 && card.shot2.getAttribute('role') === 'button') { e.preventDefault(); openIt(card); } });
+    card.head = el0.querySelector('.act-head');
+    card.head.addEventListener('click', (e) => { // (the header too, but never over a button or a text selection)
+      if (card.surface !== 'app' || !card.app?.id || e.target.closest('button, a') || String(window.getSelection?.() || '')) return;
+      openIt(card);
+    });
     card.tabsHead.addEventListener('click', () => { card.tabsUser = true; }); // (a card the user opened or folded stays as they left it)
     try { new MutationObserver(() => tabsCount(card)).observe(card.tabsList, { subtree: true, attributes: true, attributeFilter: ['data-state'] }); } catch { /* no observer */ }
     card.img.addEventListener('load', () => capSize(card)); // (shown at or below its own pixels, see capSize)
@@ -215,7 +222,12 @@
     else if (card.surface === 'app' && card.app) label = tr('desktopcard.open');
     // (a files card has no button: each file in it is a link that opens it)
     card.btn.hidden = !label;
+    const where = card.surface === 'app' && card.app ? (card.wordWork && !card.otherApp ? tr('card.word') : card.app.name || tr('desktopcard.app')) : ''; // (the program a click goes to)
     if (label && card.btn.textContent !== label) { card.btn.textContent = label; card.btn.title = card.surface === 'browser' ? tr('card.openPreview.title') : ''; }
+    if (where) card.btn.title = tr('desktopcard.show', { app: where });
+    if (where && !card.shot2.hidden) { const name = tr('desktopcard.show', { app: where }); card.shot2.setAttribute('role', 'button'); card.shot2.tabIndex = 0; card.shot2.title = name; card.shot2.setAttribute('aria-label', name); } // (the picture is a real button: Enter / Space, a focus ring, a name)
+    else if (card.shot2.getAttribute('role') === 'button') { for (const a of ['role', 'tabindex', 'aria-label', 'title']) card.shot2.removeAttribute(a); }
+    card.head.classList.toggle('act-go', Boolean(where));
     const appLive = card.surface === 'app' && card.app && (card.app.status === 'working' || card.app.status === 'paused');
     card.resumeBtn.hidden = !(appLive && card.app.status === 'paused');
     card.stopBtn.hidden = !appLive;
@@ -388,13 +400,30 @@
     const chip = el('button', { type: 'button', className: 'act-wordchip', title: tr('wordcard.chip.title', { doc: name }) });
     chip.innerHTML = ICONS.word;
     chip.append(el('span', { className: 'act-wordchip-name', textContent: name }));
-    chip.onclick = () => { if (card.app?.id) Promise.resolve(window.assistant?.desktopOpen?.(card.app.id)).catch(() => {}); };
+    chip.onclick = () => openIt(card);
+    card.tabref.append(chip);
+    card.tabref.hidden = false;
+  }
+  // Any other program, the same chip: the window the AI is in (its title without the "- <App>" tail); a click brings the program forward.
+  function appChip(card) {
+    const app = card.app.name;
+    let win = String(card.app.title || '').replace(/\s+/g, ' ').trim();
+    for (const sep of [' - ', ' \u2013 ', ' \u2014 ']) if (app && win.toLowerCase().endsWith(sep + app.toLowerCase())) win = win.slice(0, win.length - sep.length - app.length).trim();
+    if (!win || win.toLowerCase() === app.toLowerCase()) { card.tabref.hidden = true; card.tabref.dataset.sig = ''; return; }
+    if (card.tabref.dataset.sig === `app|${win}`) { card.tabref.hidden = false; return; }
+    card.tabref.dataset.sig = `app|${win}`;
+    card.tabref.textContent = '';
+    const chip = el('button', { type: 'button', className: 'act-wordchip', title: tr('desktopcard.show', { app: app || tr('desktopcard.app') }) });
+    chip.innerHTML = ICONS.terminal;
+    chip.append(el('span', { className: 'act-wordchip-name', textContent: win.slice(0, 120) }));
+    chip.onclick = () => openIt(card);
     card.tabref.append(chip);
     card.tabref.hidden = false;
   }
   function cardChip(card) {
     const t = card.tab;
     if (card.surface === 'app' && card.word && card.word.doc && card.wordWork && !card.otherApp) { wordChip(card); return; } // (Word work: the document's name, which brings Word forward)
+    if (card.surface === 'app' && card.app?.name && card.app.title && card.otherApp) { appChip(card); return; } // (another program: the window it is in)
     if (card.surface !== 'browser') { card.tabref.hidden = true; return; } // (working in a command, a file or a program: the tab's chip waits)
     if (card.siteMode) { card.tabref.hidden = true; card.tabref.dataset.sig = ''; return; }
     if (!t || !window.tabRef) return;
@@ -737,7 +766,7 @@
     }
     if (event.frame && card.surface === 'app' && card.app?.id === event.id && typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { setShot2(card, event.thumbnail); return true; } // a live picture: only the picture changes
     setSurface(card, 'app', event.word === true ? 'word' : 'desktop');
-    card.app = { id: event.id, name: String(event.app || ''), status: event.status || 'working' };
+    card.app = { id: event.id, name: String(event.app || ''), title: String(event.title || '').slice(0, 200), status: event.status || 'working' };
     if (event.word === true) card.word = { doc: String(event.doc || '').slice(0, 200) };
     if (event.status === 'working' && event.task) card.latest = String(event.task);
     if (event.word === true && event.page && Array.isArray(event.page.lines) && !(typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail))) { card.img2.removeAttribute('src'); setPage(card, event.page); } // (Word's window cannot be shown: the page around the change)

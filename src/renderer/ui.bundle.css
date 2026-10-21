@@ -2378,6 +2378,8 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .dc-btn:disabled { opacity: .6; cursor: default; }
 .dc-btn[hidden] { display: none; }
 .dc-thumb { display: block; width: 100%; max-height: min(260px, 40vh); border-radius: var(--r-md); object-fit: contain; object-position: top left; background: var(--paper); box-shadow: 0 0 0 1px var(--hairline); }
+.dc-thumb { cursor: pointer; }
+.dc-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dc-thumb[hidden], .dc-icon[hidden] { display: none; }
 @keyframes dc-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .desktop-card[data-status="working"] .dc-status::before { animation: none; } }

@@ -30,6 +30,7 @@ function createWord(deps = {}) {
   const getCard = () => deps.card || (card ||= require('./card').createWordCard({ host: getHost(), live: deps.live || null, now: deps.now, hooks: deps.hooks }));
   const cardUse = (ctx, doc, label, opts) => { try { getCard().use(ctx, doc, label, opts); } catch { /* the card is a courtesy */ } };
   const cardChanged = async (ctx, doc, opts) => { try { await getCard().changed(ctx, doc, opts); } catch { /* the card is a courtesy */ } };
+  const cardRead = async (ctx, doc, got) => { try { await getCard().read(ctx, doc, { text: got?.text, offset: got?.offset }); } catch { /* the card is a courtesy */ } }; // (what it reads shows as the page when Word's picture is not there)
   const sources = new WeakMap(); // run -> Set(document keys it has read)
   const keyOf = (p) => String(p || '').replace(/\//g, '\\').toLowerCase();
 
@@ -147,7 +148,7 @@ function createWord(deps = {}) {
       const ref = open ? docRef(open) : fileRef(v.path);
       await authorize(ctx, 'read', ref);
       noteRead(ctx, ref.key);
-      if (open) { cardUse(ctx, ref, spec.stepLabel(v, open.name)); return formatRead(await getHost().read({ doc: open.path, offset: v.offset, budget: READ_BUDGET }), open.name, 'word'); }
+      if (open) { cardUse(ctx, ref, spec.stepLabel(v, open.name)); const got = await getHost().read({ doc: open.path, offset: v.offset, budget: READ_BUDGET }); await cardRead(ctx, ref, got); return formatRead(got, open.name, 'word'); }
       if (/\.txt$/i.test(v.path)) { const { buf } = readFile(v.path); const t = buf.toString('utf8', 0, 200000); return formatRead({ total: t.split('\n').length, offset: 0, text: t, next: null }, ref.name, 'file'); }
       if (!isDocx(v.path)) { if (win && (await installed())) { await openThen(v, ctx); return run({ action: 'read', doc: v.path, offset: v.offset }, ctx); } throw new Error('Without Word only .docx files can be read.'); }
       const { buf } = readFile(v.path);
@@ -175,7 +176,9 @@ function createWord(deps = {}) {
         await authorize(ctx, 'read', d);
         noteRead(ctx, d.key);
         cardUse(ctx, d, spec.stepLabel(v, d.name));
-        return formatRead(await getHost().read({ doc: d.path || d.name, offset: v.offset, budget: READ_BUDGET }), d.name, 'word');
+        const got = await getHost().read({ doc: d.path || d.name, offset: v.offset, budget: READ_BUDGET });
+        await cardRead(ctx, d, got);
+        return formatRead(got, d.name, 'word');
       }
       case 'show': { const d = pick(await openDocs(), v); cardUse(ctx, docRef(d), spec.stepLabel(v, d.name)); const r = await getHost().show({ doc: d.path || d.name }); return `Word is showing ${d.name}${r.shown === false ? ' (its window stays hidden in this run)' : ''}.`; }
       case 'save': {

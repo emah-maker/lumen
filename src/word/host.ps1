@@ -393,6 +393,11 @@ function Cmd-Show($req) {
   if (-not $HIDDEN) {
     try { $a.Visible = $true; $a.Activate(); $d.Activate() } catch { }
     $span = $script:last[(Doc-Key $d)]
+    # at: the paragraph a read began at (the card's "Show in Word" before anything was changed); data, clamped, never text of a script
+    $at = Arg $req 'at' $null
+    if ($null -ne $at) {
+      try { $n = [int]$d.Paragraphs.Count; if ($n -ge 1) { $r = $d.Paragraphs.Item([Math]::Min([Math]::Max([int]$at + 1, 1), $n)).Range; $span = @([int]$r.Start, [int]$r.Start) } } catch { }
+    }
     if ($span) { try { $sel = $a.Selection; $sel.SetRange([int]$span[0], [int]$span[1]); $d.ActiveWindow.ScrollIntoView($sel.Range, $true) } catch { } }
   }
   return @{ doc = [string]$d.Name; shown = (-not $HIDDEN) }
