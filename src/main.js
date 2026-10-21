@@ -7806,7 +7806,7 @@ function finishCardDrag(d, reason, target) {
     });
   };
   const landIn = (rec) => {
-    rec.win.setBounds({ x: at.x, y: at.y, width: d.size.width, height: d.size.height }); // one call: no size drift on mixed-DPI setups
+    setBoundsSettled(rec.win, { x: at.x, y: at.y, width: d.size.width, height: d.size.height }); // one call, checked: no size drift on mixed-DPI setups
     if (!moveTabsBetween(src, rec, ids, 0, { focus: false, active: d.tabId, group: d.group })) { rec.win.close(); hideDragCard(d, 'cancel'); settled(); return; }
     wakeDeferredAside(d);
     settled();
@@ -7831,6 +7831,16 @@ function finishCardDrag(d, reason, target) {
     return;
   }
   newWindowFor();
+}
+// setBounds with the size checked. Windows converts a size with the scale of the display the window is on now, not the one it moves to,
+// so a window that crosses to a display with another scale (a spare made on one screen, torn off onto the next) comes out the wrong
+// size (a 1000x700 window as 667x467, then lifted to its minimum). Once it sits on the target display, the same call is exact.
+function setBoundsSettled(win, b) {
+  for (let i = 0; i < 3 && !win.isDestroyed(); i++) {
+    win.setBounds(b);
+    const got = win.getBounds();
+    if (Math.abs(got.width - b.width) <= 2 && Math.abs(got.height - b.height) <= 2) return;
+  }
 }
 function beginTabDrag(src, tabId, grab) {
   if (tabDrag) finishTabDrag('cancel');
