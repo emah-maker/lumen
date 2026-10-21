@@ -196,7 +196,9 @@ function createMacClient(deps = {}) {
         const key = String(args.key || '');
         if (!resolved.has(key) || !/^\/[^\0]+\.app$/.test(key)) throw new Error('Only an app open_app found can be started.');
         if (!resolved.get(key)) throw new Error('That app could not be checked before it starts (its bundle id could not be read), so the AI does not start it. The user can open it, and the AI can then use it.');
-        await run('open', ['-a', key], timeoutMs);
+        const file = args.file == null ? '' : String(args.file); // a document open_app checked (open-file.js): one argument to open, never through a shell
+        if (file && !/^\/[^\0\n]+$/.test(file)) throw new Error('That file path is not valid.');
+        await run('open', file ? ['-a', key, '--', file] : ['-a', key], timeoutMs);
         return { ok: true };
       }
       default: throw new Error(`Unknown helper command ${cmd}.`);

@@ -2,7 +2,7 @@
 
 Lumen's AI can work with Word documents directly: read them with their headings, lists, tables, comments and tracked changes, add and change text, apply styles, insert tables and pictures, add comments, turn tracked changes on, and save. This is more reliable than clicking around Word (see [The AI using other apps](desktop-apps.md)), because the AI talks to the document itself rather than to a picture of it.
 
-It is on by default (Settings → AI → **Let the AI use Microsoft Word**) and costs nothing until the AI first works with a document: nothing is started, and the tool is offered only when your message is about a Word document.
+It is on by default (Settings → AI → **Let the AI use Microsoft Word**) and costs nothing until the AI first works with a document: nothing is started, and the tool is offered only when the conversation is about a Word document: you name one ("in Word", `.docx`), say "my essay / report / resume..." or "this doc", attach a .docx/.doc/.rtf/.odt, have one open in a Lumen tab, or a file tool (list_files, a download) shows one. A Google Doc in front is the `document` tool's, never Word's. The tool says to prefer it over reading the file or clicking in Word with `desktop`, and to open the document so you can watch. The routing is `src/ai/app-intent.js` (`test/app-intent-units.js`).
 
 ## What it can do
 
