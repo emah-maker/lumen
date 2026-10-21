@@ -176,7 +176,16 @@ function stepLabel(action, args = {}, name = '') {
   }
 }
 
+// The step with the window it is in, as the Word card says it ("Reading Excel — Budget.xlsx"): the title minus a trailing " - <App>", clipped; unchanged when that adds nothing.
+function withWindow(label, win) {
+  const name = String(win?.name || '');
+  let title = String(win?.title || '').replace(/\s+/g, ' ').trim();
+  for (const sep of [' - ', ' – ', ' — ']) if (name && title.toLowerCase().endsWith(sep + name.toLowerCase())) title = title.slice(0, title.length - sep.length - name.length).trim(); // (a trailing " - <App>")
+  if (!name || !title || title.toLowerCase() === name.toLowerCase() || !String(label).includes(name) || String(label).includes(title)) return label;
+  return `${label} — ${title.length > 60 ? `${title.slice(0, 59)}…` : title}`;
+}
+
 module.exports = {
-  blockedReason, decide, clean, isDocumentApp, DOCUMENT_APPS, friendlyName, stepLabel, procKey, exeKey, baseOf, identities, appKey, WARN_SHELL, OFF_TEXT, NOT_WINDOWS, NOT_SUPPORTED, MAX_APPS,
+  withWindow, blockedReason, decide, clean, isDocumentApp, DOCUMENT_APPS, friendlyName, stepLabel, procKey, exeKey, baseOf, identities, appKey, WARN_SHELL, OFF_TEXT, NOT_WINDOWS, NOT_SUPPORTED, MAX_APPS,
   TERMINALS, SECURITY, SYSTEM, PASSWORD_MANAGERS, FINANCE,
 };

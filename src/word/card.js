@@ -88,7 +88,7 @@ function createWordCard(deps = {}) {
     const moved = s.doc && doc && s.doc.key !== doc.key;
     s.doc = doc || s.doc;
     s.label = label || s.label;
-    if (moved) { s.thumb = null; s.page = null; }
+    if (moved) { s.thumb = null; s.page = null; s.readAt = null; }
     touch(s);
     if (com) { startLive(s); s.live?.kick({ fresh: Boolean(moved) }); } else if (s.live) { s.live.stop(); s.live = null; s.thumb = null; }
     s.com = com;
@@ -101,6 +101,7 @@ function createWordCard(deps = {}) {
     const s = sessions.get(keyOf(ctx));
     if (!s || s.ended) return;
     touch(s);
+    s.readAt = null; // (an edit: "Show in Word" goes to the change again, not to where it last read)
     try {
       const livePicture = s.com && s.thumb && now() - s.lastFrameAt < 3000 && s.lastFrameAt > (s.skipAt || 0);
       if (lines) s.page = { doc: doc?.name || s.doc?.name || '', lines };
@@ -112,6 +113,15 @@ function createWordCard(deps = {}) {
       s.live?.kick();
     } catch { /* the page preview is a courtesy */ }
     emitFor(s, 'working');
+  }
+
+  // A read from paragraph `offset`: the page lines being read, so the card shows what the AI looks at when Word's own picture is not there.
+  // "Show in Word" goes to this place until something is changed.
+  async function read(ctx, doc, { text = '', offset = 0 } = {}) {
+    const s = sessions.get(keyOf(ctx));
+    if (!s || s.ended) return;
+    await changed(ctx, doc, { lines: pageLines(String(text).split('\n').slice(0, 12), -1, 0) });
+    s.readAt = Math.max(0, Math.floor(Number(offset)) || 0);
   }
 
   async function finish(key, status = 'completed') {
@@ -133,12 +143,16 @@ function createWordCard(deps = {}) {
   }
 
   return {
-    use, changed,
+    use, changed, read,
     finishRun: (signal) => finish(signal, 'completed'),
     finishAll: () => Promise.all([...sessions.keys()].map((k) => finish(k, 'completed'))),
     busy: (on) => { inflight = Math.max(0, inflight + (on ? 1 : -1)); },
-    // "Show in Word": the document the card is about, brought forward at the place it was changed.
-    async open(id) { const s = cards.get(id); if (!s?.doc || !deps.host?.show) return false; try { await deps.host.show({ doc: s.doc.path || s.doc.name }); return true; } catch { return false; } },
+    // "Show in Word": the document the card is about, brought forward at the place it was changed (before any change: where it last read; `at` travels as data).
+    async open(id) {
+      const s = cards.get(id);
+      if (!s?.doc || !deps.host?.show) return false;
+      try { await deps.host.show(Number.isInteger(s.readAt) ? { doc: s.doc.path || s.doc.name, at: s.readAt } : { doc: s.doc.path || s.doc.name }); return true; } catch { return false; }
+    },
     stats: () => ({ sessions: sessions.size, cards: cards.size }),
     destroy() { for (const s of sessions.values()) { s.ended = true; s.live?.stop(); unlater(s.idle); } sessions.clear(); },
   };

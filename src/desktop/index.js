@@ -177,7 +177,7 @@ function createDesktop(deps = {}) {
     if (!session || session.stopped) startSession(ctx);
     const s = session;
     s.lastCall = now();
-    s.label = label;
+    s.label = policy.withWindow(label, win); // ("Reading Excel — Budget.xlsx": the card names the window like Word's does)
     const moved = !s.target || s.target.hwnd !== win.hwnd || s.target.pid !== win.pid;
     s.target = { hwnd: win.hwnd, pid: win.pid, hpid: win.hpid || 0, start: win.start || 0, app: win.app, name: win.name, title: win.title, exe: win.exe };
     s.win = win; // (everything the policy looks at; the live picture asks it again with the window's current title)

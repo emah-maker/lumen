@@ -570,6 +570,11 @@ process.stdin.on('data', async (d) => {
       open: ca.querySelector('.act-btn').hidden ? '' : ca.querySelector('.act-btn').textContent,
     };
     ca.querySelector('.act-wordchip').click();
+    const pic = ca.querySelector('.act-shot2'); // the page preview is a real button, and so is a click on the picture or the header: each goes to Word
+    out.pic = { role: pic.getAttribute('role'), tab: pic.tabIndex, label: pic.getAttribute('aria-label'), head: ca.querySelector('.act-head').classList.contains('act-go') };
+    pic.click();
+    pic.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    ca.querySelector('.act-icon').click();
     // 2. Word's window as the live picture (a drawn stand-in): the page gives way, frames only change the picture
     const cv = document.createElement('canvas'); cv.width = 340; cv.height = 212; const x = cv.getContext('2d');
     x.fillStyle = '#2b579a'; x.fillRect(0, 0, 340, 22); x.fillStyle = '#f3f3f3'; x.fillRect(0, 22, 340, 190); x.fillStyle = '#fff'; x.fillRect(60, 34, 220, 178);
@@ -599,7 +604,7 @@ process.stdin.on('data', async (d) => {
     out.mixed = d.h.querySelector('.act-title').textContent;
     return out;
   });
-  wordRun.opened = await waitFor(() => app.evaluate(() => (global.__wordOpened.length ? global.__wordOpened.slice() : null)));
+  wordRun.opened = await waitFor(() => app.evaluate(() => (global.__wordOpened.length >= 4 ? global.__wordOpened.slice() : null)));
   const shotDir = process.env.LUMEN_SHOT_DIR;
   if (shotDir) {
     fs.mkdirSync(shotDir, { recursive: true });
@@ -611,7 +616,8 @@ process.stdin.on('data', async (d) => {
   await ui.evaluate(() => document.getElementById('word-host')?.remove());
   check('Word card: the same one card, titled Word with the document icon, the document name as its chip (a button), the step in words in the status bar and the step row', wordRun.sawA === true && wordRun.cards === 1 && wordRun.surface === 'app' && wordRun.title === 'Word' && wordRun.iconKind === 'word' && wordRun.chip === 'Report.docx' && wordRun.chipTag === 'BUTTON' && wordRun.chipVisible && /^Writing in Report.docx: adding a table of 3 rows after/.test(wordRun.status) && /^Writing in Report.docx: adding a table/.test(wordRun.step), J(wordRun));
   check('Word card: with no window picture it draws the page around the change (headings, a bullet, table rows, the changed lines marked), as text only', wordRun.pageShown && !wordRun.imgShown && wordRun.pageRows.length === 7 && wordRun.pageRows[0].startsWith('act-pg-h1:Report') && wordRun.pageRows[3].startsWith('act-pg-tr hl') && wordRun.hl === 2 && wordRun.pageImgs === 0 && !wordRun.xss && /Preview of Report.docx/.test(wordRun.pageAlt), J(wordRun));
-  check('Word card: the chip brings Word forward (it asks main for this card\'s id), and the card offers Open', J(wordRun.opened) === '["word-1"]' && wordRun.open === 'Open', J([wordRun.opened, wordRun.open]));
+  check('Word card: the chip, the picture (click and Enter) and the header each bring Word forward (they ask main for this card id), and the card offers Open', J(wordRun.opened) === '["word-1","word-1","word-1","word-1"]' && wordRun.open === 'Open', J([wordRun.opened, wordRun.open]));
+  check('Word card: the picture is a button with a name (Show in Word) and a tab stop', wordRun.pic.role === 'button' && wordRun.pic.tab === 0 && wordRun.pic.label === 'Show in Word' && wordRun.pic.head === true, J(wordRun.pic));
   check('Word card: with Word\'s window as the picture the page gives way, and a live frame only changes the picture', wordRun.live.imgShown && wordRun.live.pageHidden && wordRun.live.src && /Report.docx/.test(wordRun.live.alt) && wordRun.live.changed, J(wordRun.live));
   check('Word card: at the end it says Done with the answer, keeps the last frame and the chip; Word mixed with another program is a Computer card', /^Done: Added the results table/.test(wordRun.done.status) && wordRun.done.state === 'completed' && wordRun.done.imgShown && wordRun.done.chip === 'Report.docx' && wordRun.mixed === 'Computer', J(wordRun.done) + wordRun.mixed);
   const wordBack = await ui.evaluate(() => {

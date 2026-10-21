@@ -56,6 +56,10 @@
 /* One card for the whole turn: the preview of the surface being acted on (the tab, a program's window, a picture), the assistant's live line. */
 .act-card:not([data-surface="browser"]) > .act-shot { display: none; }
 .act-shot2 { width: 100%; max-width: 340px; align-self: flex-start; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); aspect-ratio: 16 / 10; }
+.act-shot2[role="button"] { cursor: pointer; }
+.act-shot2[role="button"]:hover { border-color: var(--accent); }
+.act-shot2[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.act-head.act-go { cursor: pointer; }
 .act-shot2[hidden], .act-card[data-surface="browser"] > .act-shot2 { display: none; }
 .act-thumb2 { display: block; width: 100%; height: 100%; object-fit: contain; object-position: center; }
 .act-thumb2[hidden] { display: none; }

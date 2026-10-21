@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **The AI reaches for Word, Excel, PowerPoint and your other apps on its own when your files are involved.** Say "fix the typos in my essay", attach a .docx, have a .docx open in a Lumen tab, or let the AI list your Downloads, and it now works in the document through Word (opened so you can watch) instead of just reading the file or clicking around. The same goes for Excel (.xlsx), PowerPoint (.pptx), MATLAB, SolidWorks and a few more: the AI can ask to open a document in the app that owns it (a card still asks first, and it never opens programs, scripts or files in your credentials folders). A Google Doc in front is left to the Google Docs tools.
+- **Click the card to go to the program the AI is working in.** While the AI works in Word, Excel or any other program, the chat's activity card is now one viewer for all of them: click its picture (or press Enter on it), or its header, and the program comes to the front (**Show in Word**, **Show in Excel**). When the AI has only read a document so far, Word opens at the place it read. The card says the same thing for every program ("Reading Excel — Budget.xlsx") and shows the window in a chip. While the AI reads a Word document and Word's own picture is not available (hidden, minimized, or the file route), the card shows the lines it is reading instead of only following edits. Tests: `test/word-units.js`, `test/desktop-units.js`, `test/desktop-live-units.js`, `test/step-labels.js`.
 
 ## 0.5.62 (2026-10-21)
 

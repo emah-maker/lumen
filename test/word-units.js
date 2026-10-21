@@ -272,6 +272,27 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const e2 = [];
     card2.use({ signal: {}, emit: (e) => e2.push(e) }, doc, 'Reading Report.docx');
     check('card: Show in Word brings the card\'s document forward by its path (an unknown card id does nothing)', (await card2.open(e2[0].id)) === true && frames.some((a) => Array.isArray(a) && a[0] === 'show' && a[1].doc === doc.path) && (await card2.open('word-999')) === false);
+    // a read: the card shows the page lines being read (no window picture), and "Show in Word" goes to where it read until something is changed
+    const card4 = createWordCard({ host, live: null });
+    const e4 = [];
+    const ctx4 = { signal: {}, emit: (e) => e4.push(e) };
+    card4.use(ctx4, doc, 'Reading Report.docx');
+    await card4.read(ctx4, doc, { text: '# Title\nBody line\n- item one\n| a | b |', offset: 7 });
+    const rd = e4[e4.length - 1];
+    check('card: a read shows the lines being read as the page (headings, text, list item, table row), with no window picture', rd.page && rd.page.lines.length === 4 && rd.page.lines[0].k === 'h1' && rd.page.lines[0].t === 'Title' && rd.page.lines[2].k === 'li' && rd.page.lines[3].k === 'tr' && rd.thumbnail === null, J(rd).slice(0, 300));
+    await card4.open(e4[0].id);
+    const sh = frames.filter((a) => Array.isArray(a) && a[0] === 'show').pop();
+    check('card: Show in Word after a read passes the paragraph it began at as data, with the document', sh[1].at === 7 && sh[1].doc === doc.path, J(sh));
+    await card4.changed(ctx4, doc);
+    await card4.open(e4[0].id);
+    const sh2 = frames.filter((a) => Array.isArray(a) && a[0] === 'show').pop();
+    check('card: once something is changed, Show in Word goes to the change again (no read position sent)', sh2[1].at === undefined && sh2[1].doc === doc.path, J(sh2));
+    const e5 = []; await card4.read({ signal: {}, emit: (e) => e5.push(e) }, doc, { text: 'x', offset: 1 });
+    check('card: a read with no card for the run does nothing (no throw, no event)', e5.length === 0);
+    const ps2 = read('src/word/host.ps1');
+    check('helper: show takes the read position as data (Arg at), clamps it to the document, and never puts it in script text', /Arg \$req 'at'/.test(ps2) && /\[Math\]::Min\(\[Math\]::Max\(\[int\]\$at \+ 1, 1\), \$n\)/.test(ps2));
+    const idx = read('src/word/index.js');
+    check('word tool: both Word read routes tell the card what was read (text and offset)', (idx.match(/await cardRead\(ctx, /g) || []).length === 2 && /getCard\(\)\.read\(ctx, doc, \{ text: got\?\.text, offset: got\?\.offset \}\)/.test(idx));
     const abort = new AbortController();
     const e3 = [];
     createWordCard({ host, live: null }).use({ signal: abort.signal, emit: (e) => e3.push(e) }, doc, 'x');

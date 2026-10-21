@@ -28,6 +28,10 @@
     const resume = el('button', { type: 'button', className: 'dc-btn dc-resume primary', textContent: tr('desktopcard.resume'), hidden: true });
     const stop = el('button', { type: 'button', className: 'dc-btn dc-stop', textContent: tr('desktopcard.stop'), hidden: true });
     const thumb = el('img', { className: 'dc-thumb', alt: '', hidden: true, draggable: false });
+    const go = () => { if (!open.disabled && !open.hidden) open.click(); };
+    thumb.setAttribute('role', 'button'); thumb.tabIndex = 0; // (the picture goes to the program too: a real control, Enter / Space)
+    thumb.onclick = go;
+    thumb.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
     open.onclick = () => { open.disabled = true; Promise.resolve(window.assistant?.desktopOpen?.(card.dataset.id)).catch(() => {}).finally(() => { open.disabled = false; }); };
     resume.onclick = () => window.assistant?.desktopControl?.('resume');
     stop.onclick = () => window.assistant?.desktopControl?.('stop');
@@ -58,6 +62,8 @@
     q('.dc-resume').hidden = event.status !== 'paused';
     q('.dc-stop').hidden = !live;
     q('.dc-open').hidden = event.status === 'stopped' && !event.thumbnail;
+    const show = tr('desktopcard.show', { app: q('.dc-app').textContent });
+    q('.dc-open').title = show; q('.dc-thumb').title = show; q('.dc-thumb').setAttribute('aria-label', show);
     if (typeof event.icon === 'string' && IMAGE.test(event.icon)) { const i = q('.dc-icon'); if (i.src !== event.icon) i.src = event.icon; i.hidden = false; }
     if (typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) {
       const t = q('.dc-thumb');

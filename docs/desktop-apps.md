@@ -41,7 +41,7 @@ The tool is only in the AI's request while the switch is on, or when the convers
 - A small banner stays at the top of the screen while it works: **The AI is using Word · Stop**. It never takes focus and clicks go through it, except on its buttons.
 - **Hold Esc** for about 0.7 seconds, or press **Ctrl+Alt+Esc** (**Control+Option+Esc** on a Mac), to stop at once. Stop kills the helper process, so typing or a click in progress ends immediately; a fresh helper starts when it is next needed. The shortcut is registered only while the AI is using an app. If the checks behind Esc and "you took over" cannot start, the AI does not use other apps at all.
 - **Touch the app** (move the mouse over it, or type in it) and the AI pauses (a call in progress is cut off): the banner and the chat card say "You took over. Resume?" and the next step waits for Resume or Stop.
-- The chat card has **Open** to bring the app forward, plus Resume and Stop while it works.
+- The chat card has **Open** to bring the app forward, plus Resume and Stop while it works. Clicking the card's picture (or Enter or Space on it) or its header does the same ("Show in Excel"), the header names the window the AI is in ("Reading Excel — Budget.xlsx"), and Word gets the same card, so every program is one viewer.
 
 ## How it works
 
