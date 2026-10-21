@@ -135,6 +135,20 @@ public static class LumenCred {
     check('passkeyContext says the background tab is not in front', ctxBg && ctxBg.ok === false && ctxBg.reason === 'not-front', JSON.stringify(ctxBg));
     const ctxFront = await app.evaluate((_e, id) => global.__passkeys.context(id), await front());
     check('the front tab of the focused window may ask (passkeyContext)', ctxFront && ctxFront.ok === true, JSON.stringify(ctxFront));
+
+    // A sign-in popup (window.open, as "Sign in with Microsoft" and SSO providers do) may ask once it is focused.
+    const before = await app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => w.id));
+    await page(`window.open(location.href, 'signin', 'popup,width=480,height=600'); 1`);
+    const popupId = await waitFor(() => app.evaluate(({ webContents }, ids) => (webContents.getAllWebContents().find((w) => !ids.includes(w.id) && w.getType() === 'window' && /^http:\/\/localhost/.test(w.getURL())) || {}).id || null, before), 8000);
+    if (popupId) {
+      await waitFor(() => page('document.readyState === "complete"', popupId).catch(() => false), 8000);
+      check('a sign-in popup gets the API', (await page('typeof PublicKeyCredential', popupId)) === 'function', '');
+      const focused = await app.evaluate(({ webContents, BrowserWindow }, id) => { const w = BrowserWindow.fromWebContents(webContents.fromId(id)); w.show(); w.focus(); return w.isFocused(); }, popupId);
+      const ctxPopup = await app.evaluate((_e, id) => global.__passkeys.context(id), popupId);
+      check('the focused sign-in popup may ask (passkeyContext), not "not-a-tab"', ctxPopup && (ctxPopup.ok === true || (!focused && ctxPopup.reason === 'not-front')), JSON.stringify({ ctxPopup, focused }));
+      await app.evaluate(({ webContents, BrowserWindow }, id) => BrowserWindow.fromWebContents(webContents.fromId(id)).close(), popupId);
+      await focusWindow();
+    } else check('a sign-in popup opened', false, 'no popup web contents appeared');
   }
 
   // ---- the setting: off -> the API is hidden again (#195's behavior)
