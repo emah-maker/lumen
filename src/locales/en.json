@@ -607,6 +607,7 @@
   "external.takeOver": "Take over",
   "external.resume": "Resume",
   "external.region": "An app wants to use Lumen",
+  "external.wantsShort": "“{client}” wants to use Lumen (unverified)",
   "external.wants": "Unverified app “{client}” wants to use Lumen. It has no token: it only says that is its name.",
   "external.allow": "Allow this time",
   "external.deny": "Deny",

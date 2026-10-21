@@ -11379,9 +11379,18 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     if (bar.dataset.promptId === ask.id) return;
     bar.dataset.promptId = ask.id;
     const answer = (decision) => window.assistant.externalApps.answer(ask.id, decision);
-    bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
-      button('primary', t('external.allow'), () => answer('allow')),
-      button('', t('external.deny'), () => answer('deny')));
+    const full = t('external.wants', { client: ask.name });
+    const dot = el('span', 'update-dot'); dot.setAttribute('aria-hidden', 'true');
+
+    const MARK = '⁣';
+    const [before = '', after = ''] = t('external.wantsShort', { client: MARK }).split(MARK);
+    const words = el('span', 'update-text external-ask-text');
+    words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
+    bar.replaceChildren(dot, words,
+      button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
+      button('external-ask-btn', t('external.deny'), () => answer('deny')));
+    bar.title = full;
+    bar.setAttribute('aria-description', full);
     bar.hidden = false;
   }
   window.assistant.externalApps.on(render);
