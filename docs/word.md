@@ -29,6 +29,8 @@ One tool, `word`, with these actions:
 
 **Choosing where it works.** Settings → AI → **Work on files in their apps** (`aiFilesInApps`) picks the route for a file that is not already open in Word. **Automatic** (the default) is what is described above: a closed `.docx` is read from the file, and edits open it in Word when Word is installed. **In the app** always opens the document in Word and reads and edits it there, so you can watch, and offers the tool for any Word document in the chat (this setting does not turn the Word switch on). **From the file** reads and writes the `.docx` file itself and does not start Word, including for a new `.docx`; a kind the file route cannot change (`.doc`, `.rtf`) still opens in Word. A document Word already has open is always read and edited in Word, so unsaved changes are never missed.
 
+**In Claude Code, Codex, Grok Build and Antigravity.** The word tool is not in their shared tool list (that list is size-limited); in a chat about a Word document it is added to that chat's own session, together with one line telling the assistant to edit the document with the word tool in Word, in place, and never to write scripts or new files to do it unless you ask. A chat that is not about a Word document sees neither. A chat's tool list is read when its assistant process starts, so a document first mentioned in a later message may need a new chat before the tool appears.
+
 **On macOS** the Word actions are not available yet ("Windows only for now"); the `.docx` file route above works.
 
 ## What it asks

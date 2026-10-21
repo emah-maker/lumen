@@ -12474,6 +12474,7 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
   projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
+  wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
