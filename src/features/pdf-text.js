@@ -397,6 +397,41 @@ ${lines.join('\n')}`
   return { numPages: total, pages: done, text: parts.join('\n\n'), truncated, next };
 }
 
+// The page the user has on screen and its neighbours, for a message that points at what is in front of them ("what is the answer for number 4"):
+// a question that runs over a page break is still in the text, and a whole document is not sent for one page's question. The page on screen
+// goes first and whole (cut only when it alone is over the budget), then the next page and the one before it, each whole or left out (a page
+// cut in the middle is worse than none), up to maxChars of text. -> { numPages, current, pages: [n…] ascending, text, truncated }
+const WINDOW_CHARS = 6000;
+function windowAround(texts, current, { maxChars = WINDOW_CHARS, radius = 1 } = {}) {
+  const total = texts.length;
+  if (!total) throw new PdfError('No pages were found in this PDF.');
+  const at = Math.min(total, Math.max(1, Math.floor(Number(current)) || 1));
+  const order = [at];
+  for (let d = 1; d <= radius; d++) { if (at + d <= total) order.push(at + d); if (at - d >= 1) order.push(at - d); }
+  const picked = [];
+  let used = 0;
+  for (const n of order) {
+    const block = pageBlock(n, total, texts[n - 1]);
+    if (!picked.length) { picked.push([n, block.length > maxChars ? `${block.slice(0, maxChars)}…` : block]); used += Math.min(block.length, maxChars) + 2; continue; }
+    if (used + block.length + 2 > maxChars) continue;
+    picked.push([n, block]);
+    used += block.length + 2;
+  }
+  picked.sort((a, b) => a[0] - b[0]);
+  const pages = picked.map(([n]) => n);
+  const truncated = pages.length < total;
+  return { numPages: total, current: at, pages, text: picked.map(([, b]) => b).join('\n\n'), truncated };
+}
+// The page a PDF address asks for (#page=3, also inside a lumen-pdf viewer address's own fragment), or 0.
+function pageFromAddress(address) {
+  const m = /[#&]page=(\d{1,5})(?![\d])/i.exec(String(address || '').replace(/%23/gi, '#').replace(/%26/gi, '&').replace(/%3D/gi, '='));
+  return m ? Number(m[1]) : 0;
+}
+
+const WHOLE_DOCUMENT = /\b(?:summari[sz]e|summary|overview|outline|tl;?dr|gist|whole|entire|all (?:of )?(?:the |its )?(?:pages|document|pdf|file|questions)|every (?:page|question)|table of contents|how many (?:pages|questions)|what(?:'s| is) (?:this|the) (?:pdf|document|file|paper|handout|exam|test|worksheet) about)\b/i;
+// Does the message want the document as a whole (a summary, an overview, every question) rather than the part in front of the user?
+const wantsWholeDocument = (text) => WHOLE_DOCUMENT.test(String(text ?? ''));
+
 // The page range read_pdf was asked for: pages, else from:N as "N-" (a bad or missing from reads from page 1).
 function pagesArg(input = {}) {
   const spec = input.pages;
@@ -500,4 +535,4 @@ async function loadPdfBytes(session, url) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
+module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, windowAround, pageFromAddress, wantsWholeDocument, WINDOW_CHARS, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };

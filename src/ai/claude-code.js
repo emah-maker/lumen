@@ -205,10 +205,15 @@ const INTERRUPT_MS = 1500;
 // (mcp-http.js, as Grok Build uses) with this process's own bearer token: no bridge process, pipe or
 // challenge per message, so Lumen's tools are there at once. Fallback: the stdio bridge (mcp.js),
 // named by its LUMEN_ENGINE tag.
+// alwaysLoad: Claude Code defers every MCP tool behind its ToolSearch tool (docs: code.claude.com/docs/en/mcp#exempt-a-server-from-deferral), so the
+// first Lumen tool call of a chat cost a lookup step ("Looking up a tool: select:mcp__lumen__screenshot,...") before the call itself. A server's
+// `alwaysLoad: true` (any server type; present in CLI 2.1.306, the installed one) keeps its tool schemas in the first prompt instead: about 2.5k
+// tokens (Lumen's tools, ~10k characters), cached after the first turn, in place of a round trip. Only Lumen's own server: the user's other
+// servers (full access) stay deferred.
 function mcpConfigFor({ http = null, bridge = null, userData, tag }) {
-  if (http) return { mcpServers: { lumen: { type: 'http', url: http.mcpUrl, headers: { Authorization: `Bearer ${http.mcpToken}` } } } };
+  if (http) return { mcpServers: { lumen: { type: 'http', url: http.mcpUrl, headers: { Authorization: `Bearer ${http.mcpToken}` }, alwaysLoad: true } } };
   const { command, args, env } = bridge;
-  return { mcpServers: { lumen: { command, args, env: { ...env, LUMEN_USERDATA: userData, LUMEN_ENGINE: tag } } } };
+  return { mcpServers: { lumen: { command, args, env: { ...env, LUMEN_USERDATA: userData, LUMEN_ENGINE: tag }, alwaysLoad: true } } };
 }
 
 // A kept CLI serves the next message only if that message wants the same binary, session, model,

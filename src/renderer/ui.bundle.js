@@ -3077,6 +3077,8 @@ explain describe list find give compare difference summarize summary write rewri
 
 
 
+
+
 const THRESHOLD = 5;
 
 
@@ -3147,6 +3149,16 @@ const ABOUT_AI = [
 
 const REWORK_ANSWER = /\b(?:make|keep|write|say|put|turn|change) (?:this|that|it) (?:shorter|longer|simpler|better|clearer|more|less|into|a bit|bullet|formal|casual|funnier|nicer)\b|\b(?:do|write|redo|rewrite|code|build|implement|make) (?:this|that|it) (?:in|with|using|as|for|but)\b|\b(?:shorten|lengthen|rephrase|reword|expand|elaborate on|add to|continue|extend|redo|repeat|rerun) (?:this|that|it)\b/i;
 
+
+
+const ITEM = String.raw`(?:(?:number|no\.?|question|problem|exercise|part|item|prob|ques|q)\s*#?\s*\(?\d{1,3}[a-z]?\)?|#\d{1,3}[a-z]?)`;
+const ITEM_RULES = [
+  [new RegExp(String.raw`\b(?:solve|explain|answer|do|work(?: out| through| on)?|redo|check|grade|figure out|walk me through|walk through|go over|help(?: me)?(?: with| on| out with)?|show me|tell me|find|how (?:do|would|can|should) (?:i|you|we) (?:do|solve|answer|work|approach))\b[^.?!]{0,25}(?<!\w)${ITEM}`, 'i'), 6, 'an item on the page'],
+  [new RegExp(String.raw`\bwhat(?:'s| is| are)? (?:the |my |a )?(?:answer|answers|solution|result|value|final answer|correct (?:answer|option)|right (?:answer|option))\b[^.?!]{0,14}(?<!\w)${ITEM}`, 'i'), 6, 'the answer to an item'],
+  [new RegExp(String.raw`\bwhat (?:is|does|do|are)\b[^.?!]{0,15}(?<!\w)${ITEM}\b[^.?!]{0,12}\b(?:ask|asking|say|says|mean|want|wants|about)\b`, 'i'), 6, 'what an item asks'],
+  [new RegExp(String.raw`(?<!\w)${ITEM}\b[^.?!]{0,12}\b(?:answer|solution|solve|asking|says?)\b`, 'i'), 5, 'an item and its answer'],
+];
+
 const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
 function lastAssistant(lastTurns) {
@@ -3155,7 +3167,7 @@ function lastAssistant(lastTurns) {
   return '';
 }
 
-function wantsScreen(text, { hasSelection = false, lastTurns = [] } = {}) {
+function wantsScreen(text, { hasSelection = false, lastTurns = [], hasPage = false } = {}) {
   const t = clean(text);
   if (t.length < 3 || t.length > 600) return { screen: false, reason: t ? 'too long to be a pointer' : 'empty', score: 0 };
   if (t.startsWith('/')) return { screen: false, reason: 'a command', score: 0 };
@@ -3163,6 +3175,11 @@ function wantsScreen(text, { hasSelection = false, lastTurns = [] } = {}) {
   const why = [];
   for (const [re, weight, label] of POSITIVE) {
     if (re.test(t)) { score += weight; why.push(label); }
+  }
+  if (hasPage) {
+    for (const [re, weight, label] of ITEM_RULES) {
+      if (re.test(t)) { score += weight; why.push(label); break; }
+    }
   }
 
   let nouns = 0;
