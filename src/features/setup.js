@@ -16,7 +16,7 @@ const registrationIcon = (exe) => (instance.isInstalledExe() ? instance.appIcon(
 const CLIENT_KEY = 'Software\\Clients\\StartMenuInternet\\Lumen';
 // Only Lumen itself may be registered: node.exe or a stock electron.exe (a script or test that got this far) would
 // become the program Windows hands every link to. One did: links, and a terminal's SSO sign-in, went to node.exe.
-const registrableExe = (exe) => !/^(node|electron)(\.exe)?$/i.test(path.basename(String(exe || '')));
+const registrableExe = (exe) => !/^(node|electron)(\.exe)?$/i.test(path.win32.basename(String(exe || ''))); // (a Windows path on every platform: the tests run on Linux too)
 
 function reg(args) {
   return new Promise((resolve) => execFile('reg', args, { windowsHide: true, timeout: 5000 }, (err, stdout) => resolve(err ? null : String(stdout))));
