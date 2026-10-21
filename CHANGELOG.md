@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Live previews of Word and other apps work again.** The chat's card for the AI working in Word, Excel or another program showed one picture at most, then stopped updating, once any web-page card had finished in that chat. The card now tells Lumen it is on screen for programs too, so their window keeps updating live while the AI works.
+
 ## 0.5.63 (2026-10-21)
 
 - **The AI reaches for Word, Excel, PowerPoint and your other apps on its own when your files are involved.** Say "fix the typos in my essay", attach a .docx, have a .docx open in a Lumen tab, or let the AI list your Downloads, and it now works in the document through Word (opened so you can watch) instead of just reading the file or clicking around. The same goes for Excel (.xlsx), PowerPoint (.pptx), MATLAB, SolidWorks and a few more: the AI can ask to open a document in the app that owns it (a card still asks first, and it never opens programs, scripts or files in your credentials folders). A Google Doc in front is left to the Google Docs tools.

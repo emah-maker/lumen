@@ -541,6 +541,35 @@ process.stdin.on('data', async (d) => {
   check('"Allowed automatically" rows are small rows in the card\'s step list (the one before the first step moved in), not lines between cards', synth.notes.length === 2 && /^Allowed automatically: reading/.test(synth.notes[0]) && synth.loose === 0, J(synth));
   check('a paused program says so in the status bar, and the card says Done when the turn ends', /^Paused/.test(synth.paused) && /^Done/.test(synth.done), J([synth.paused, synth.done]));
 
+  // ---- a program's card keeps its live picture running after a browser card finished: the chat tells main a card is on screen for app cards too
+  // (before, only cards with a browser step were watched, so once a browser card ended the window reported "no card on screen" and Word / other apps got no live frames)
+  await ui.evaluate(async () => {
+    const host = Object.assign(document.createElement('div'), { id: 'sl-vis-a' });
+    host.style.cssText = 'position:fixed;top:0;left:0;width:420px;z-index:99999';
+    document.body.append(host);
+    const opts = { messages: host, append: (n) => host.append(n), task: '' };
+    const turn = { cards: [], card: null, plain: null, working: null };
+    const row = window.stepUI.add(turn, { name: 'navigate', input: { url: 'https://example.com/' }, id: 'v1', label: 'Opening example.com' }, opts);
+    window.stepUI.done(turn, row, { id: 'v1', ok: true });
+    window.stepUI.finalize(turn, { type: 'done' });
+    await new Promise((r) => setTimeout(r, 400)); // (the "left the screen" report waits 150 ms)
+  });
+  const visAfterBrowser = await app.evaluate(() => global.__thumbsState.visible());
+  await ui.evaluate(async () => {
+    const host = Object.assign(document.createElement('div'), { id: 'sl-vis-b' });
+    host.style.cssText = 'position:fixed;top:0;left:0;width:420px;z-index:99999';
+    document.getElementById('sl-vis-a').remove();
+    document.body.append(host);
+    const opts = { messages: host, append: (n) => host.append(n), task: '' };
+    window.__slVisTurn = { turn: { cards: [], card: null, plain: null, working: null }, opts };
+    window.stepUI.add(window.__slVisTurn.turn, { name: 'word', input: { action: 'read' }, id: 'v2', label: 'Reading Report.docx' }, opts);
+    window.stepUI.desktop(window.__slVisTurn.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-vis', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'working', task: 'Reading Report.docx', thumbnail: null }, opts);
+    await new Promise((r) => setTimeout(r, 100));
+  });
+  const visApp = await app.evaluate(() => global.__thumbsState.visible());
+  await ui.evaluate(() => { window.stepUI.finalize(window.__slVisTurn.turn, { type: 'done' }); document.getElementById('sl-vis-b')?.remove(); delete window.__slVisTurn; });
+  check('a Word or other program card reports itself on screen, even after a browser card finished in the same chat (its live picture runs)', visAfterBrowser === false && visApp === true, J({ visAfterBrowser, visApp }));
+
   // ---- Word work: the same card, with the document as its preview (Word's window, or a page of the paragraphs around the change when the window cannot be shown),
   // the document's name as the chip, the step in words, "Done" at the end. (A fake capture: a drawn picture stands in for Word's window.)
   await app.evaluate(({ ipcMain }) => { global.__wordOpened = []; ipcMain.removeHandler('desktop:open'); ipcMain.handle('desktop:open', (_e, id) => { global.__wordOpened.push(id); return true; }); }); // (the chip asks main to show Word: main's answer is recorded)
