@@ -3056,7 +3056,7 @@ const mcpSteps = new Map(); // step id -> row
 const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
 
 // ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
-// A pill per app that is working (or paused), with Stop and Take over; and a bar under the toolbar when an app that has not been allowed
+// A pill per app that is working (or paused), with Stop and Take over; and a pill like the update one (Allow this time / Deny) when an app that has not been allowed
 // yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
 (() => {
   const pills = $('external-pills');
@@ -3083,9 +3083,18 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     if (bar.dataset.promptId === ask.id) return;
     bar.dataset.promptId = ask.id;
     const answer = (decision) => window.assistant.externalApps.answer(ask.id, decision);
-    bar.replaceChildren(el('span', 'infobar-text', t('external.wants', { client: ask.name })),
-      button('primary', t('external.allow'), () => answer('allow')),
-      button('', t('external.deny'), () => answer('deny')));
+    const full = t('external.wants', { client: ask.name }); // (the whole warning: on hover and for screen readers; the pill shows the short form)
+    const dot = el('span', 'update-dot'); dot.setAttribute('aria-hidden', 'true');
+    // The sentence in three parts around the app's name, so a compact toolbar can keep just the name (external-apps.css).
+    const MARK = '⁣'; // (an invisible separator no translation or app name contains)
+    const [before = '', after = ''] = t('external.wantsShort', { client: MARK }).split(MARK);
+    const words = el('span', 'update-text external-ask-text');
+    words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
+    bar.replaceChildren(dot, words,
+      button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
+      button('external-ask-btn', t('external.deny'), () => answer('deny')));
+    bar.title = full;
+    bar.setAttribute('aria-description', full);
     bar.hidden = false;
   }
   window.assistant.externalApps.on(render);

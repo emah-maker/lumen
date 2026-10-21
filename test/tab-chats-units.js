@@ -341,6 +341,15 @@ const J = (v) => JSON.stringify(v);
 
 // ---- tab marks and following
 {
+  { // a chat carried into many tabs marks only the tab it works in and the tab you have open (not every tab that once used it)
+    const tabs = [1, 2, 3, 4, 5];
+    const shown = (workTab, openTab, opts = {}) => tabs.filter((t) => TC.markHere({ tabId: t, workTab, open: t === openTab, ...opts }));
+    check('mark place: working in tab 3 while you look at tab 1: only 3 and 1', J(shown(3, 1)) === J([1, 3]), J(shown(3, 1)));
+    check('mark place: working in the tab you have open: only that one', J(shown(2, 2)) === J([2]), J(shown(2, 2)));
+    check('mark place: no tab known yet: only the open tab', J(shown(null, 4)) === J([4]), J(shown(null, 4)));
+    check('mark place: the chat page or a pinned chat always shows its own mark', TC.markHere({ tabId: 9, workTab: 3, open: false, own: true }) === true);
+    check('mark place: a tab that only used the chat earlier shows nothing', TC.markHere({ tabId: 5, workTab: 3, open: false }) === false);
+  }
   check('mark: working', TC.tabStatus({ run: 'running' }) === 'running');
   check('mark: waiting its turn', TC.tabStatus({ run: 'queued' }) === 'waiting');
   check('mark: finished and not viewed', TC.tabStatus({ unread: true }) === 'done');

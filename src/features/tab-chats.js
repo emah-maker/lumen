@@ -227,6 +227,14 @@ function tabStatus({ run = null, approvals = 0, unread = false } = {}) {
   return null;
 }
 
+// Which of a chat's tabs show its mark (spinner, waiting ring, check, "!"). A chat carried into many tabs is bound to each of them, but the mark
+// goes only where it means something: the tab the chat's run works in (or last worked in) and the tab the user has open with it in front.
+// A tab that merely used the chat earlier shows nothing. workTab: run.tabId ?? run.homeTab while it runs, the last one after; open: the tab is
+// the one in front in its window; own: the chat page itself, or a chat pinned to this tab (always its own place).
+function markHere({ tabId, workTab = null, open = false, own = false } = {}) {
+  return own || open || (workTab != null && tabId === workTab);
+}
+
 // A chat's row in the history list: what the chat is doing and where it lives.
 // `here`: it is bound to the tab the list was opened from.
 function chatPlace({ tabId = null, here = false } = {}) {
@@ -251,4 +259,4 @@ function followPlan({ tabId, chatOf, claimed, openChatId = null, openIdle = true
   return { fresh: true };
 }
 
-module.exports = { DEFAULT_MAX_RUNS, MAX_RUNS_LIMIT, clampRuns, createBindings, createRunSlots, slotKind, resolveToolTab, mayTakeFront, tabStatus, chatPlace, followPlan };
+module.exports = { DEFAULT_MAX_RUNS, MAX_RUNS_LIMIT, clampRuns, createBindings, createRunSlots, slotKind, resolveToolTab, mayTakeFront, tabStatus, markHere, chatPlace, followPlan };

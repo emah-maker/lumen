@@ -13,6 +13,7 @@
       <button class="icon-btn new-tab" id="new-tab" title="New tab (Ctrl+T)" aria-label="New tab" data-i18n-title="toolbar.newTab.title" data-i18n-aria-label="toolbar.newTab">
         <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg>
       </button>
+      <div class="drag-gutter" id="drag-gutter" aria-hidden="true"></div><!-- window-drag area that never shrinks away (styles.css); it grows, so the buttons after it stay pinned at the right of the strip, left of the window controls -->
       <!-- [ai manners] hide / show the tabs the AI opened: shown only while there are some (or while hidden), with their count; the name stays, aria-pressed says the state -->
       <button class="icon-btn hide-ai-tabs" id="hide-ai-tabs" type="button" title="Hide tabs the AI opened" aria-label="Hide tabs the AI opened" aria-haspopup="menu" aria-pressed="false" data-i18n-title="sidebar.hideAiTabs" data-i18n-aria-label="sidebar.hideAiTabs" hidden>
         <svg viewBox="0 0 16 16"><path d="M2.5 6.5h11M2.5 6.5v6h11v-6M2.5 6.5V4.5h4l1 2"/><path class="slash" d="M3 14L13 3"/></svg>
@@ -31,7 +32,6 @@
       <button class="icon-btn tab-search-btn" id="tab-search" type="button" title="Search tabs (Ctrl+Shift+A)" aria-label="Search tabs" data-i18n-title="tabSearch.title" data-i18n-aria-label="tabSearch.label" aria-haspopup="dialog" aria-expanded="false">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg>
       </button>
-      <div class="drag-gutter" id="drag-gutter" aria-hidden="true"></div><!-- window-drag area that never shrinks away (styles.css) -->
     </div>
 
     <nav class="toolbar" aria-label="Toolbar" data-i18n-aria-label="toolbar.label">
@@ -76,6 +76,7 @@
           <button type="button" id="agent-stop" title="Stop" data-i18n-title="agent.stop"><svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true"><rect class="solid" x="4.5" y="4.5" width="7" height="7" rx="1.5"/></svg><span class="btn-label" data-i18n="agent.stop">Stop</span></button>
         </div>
         <div class="external-pills" id="external-pills" hidden></div><!-- [external apps] "<app> is using Lumen" with Stop and Take over (renderer/app.js) -->
+        <div class="update-pill external-ask" id="external-bar" role="group" aria-label="An app wants to use Lumen" data-i18n-aria-label="external.region" hidden></div><!-- [external apps] "<app> wants to use Lumen" with Allow this time and Deny, a pill like the update one (renderer/app.js) -->
         <button class="icon-btn focus-btn" id="focus-btn" type="button" title="Focus mode" aria-label="Focus mode" aria-haspopup="menu" data-i18n-title="focus.button" data-i18n-aria-label="focus.button"><!-- [focus] a menu to start focus mode; while it is on, the time left (renderer/focus.js) -->
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle class="dot" cx="8" cy="8" r="1.6"/></svg>
           <span class="focus-time" id="focus-time" hidden></span>
@@ -116,7 +117,6 @@
     </div>
     </div>
     <div class="infobar" id="translate-bar" role="region" aria-label="Translate this page" data-i18n-aria-label="translate.region" hidden></div>
-    <div class="infobar" id="external-bar" role="region" aria-label="An app wants to use Lumen" data-i18n-aria-label="external.region" hidden></div><!-- [external apps] "<app> wants to use Lumen": Allow / Deny -->
     <div class="infobar" id="password-bar" role="region" aria-label="Save password" data-i18n-aria-label="passwords.region" hidden></div><!-- [passwords] renderer/passwords.js -->
     <div class="loadbar" id="loadbar" hidden></div>
   </header>

@@ -355,7 +355,7 @@ const fakeModel = (app) => app.evaluate(() => {
   const neutral = await openTab(`${base}/neutral`); await waitFor(async () => (await active()) === neutral);
   await finish('S');
   check('its tool read the home tab (not the tab it was shown in)', (await tc(() => global.__seen.S)) === 'S1', await tc(() => global.__seen.S));
-  check('finished while neither tab was in front: both tabs say done', await waitFor(async () => (await mark(S.t1)) === 'done' && (await mark(S.t2)) === 'done') && await waitFor(async () => (await stripMark(S.t1)) === 'done' && (await stripMark(S.t2)) === 'done'), `${await mark(S.t1)} ${await mark(S.t2)}`);
+  check('finished while neither tab was in front: the tab it worked in says done, the other tab that shows the chat has no mark (only the working tab and the open tab are marked)', await waitFor(async () => (await mark(S.t1)) === 'done' && (await mark(S.t2)) === null) && await waitFor(async () => (await stripMark(S.t1)) === 'done' && !(await stripMark(S.t2))), `${await mark(S.t1)} ${await mark(S.t2)} ${await stripMark(S.t2)}`);
   await ui.evaluate((id) => window.assistant.chats.showTab(id), S.id);
   check('a click on a shared chat from a tab that does not show it goes to the home tab', await waitFor(async () => (await active()) === S.t1), await active());
   await ui.evaluate((id) => window.assistant.chats.showTab(id), S.id);
