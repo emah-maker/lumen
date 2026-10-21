@@ -371,7 +371,7 @@ const launch = (profile) => electron.launch({
     check('none of them appears in the strip, and the chip says "3 hidden"', m.s.ids.length === 1 && m.s.ids[0] === userTab && m.hidden === 3 && m.s.chip === '3 hidden' && m.ok, JSON.stringify(m));
 
     // one comes to the front (the AI shows it): it is shown, not counted as hidden, and the button says so
-    const n4 = await aiOpen(`${base}/s4`, { show: true });
+    const n4 = await app3.evaluate((_e, u) => global.__agent.inTask(null, undefined, async () => global.__agent.browser.openTab(u, { ai: true, show: true }).id, [{ role: 'user', content: 'show me that page' }]), `${base}/s4`); // (the user's own words ask to see it: the AI may bring a tab forward only then)
     await waitFor(async () => (await app3.evaluate(() => global.__windows.list()[0].activeId)) === n4);
     m = await matches(w1);
     check('the AI tab in front is in the strip with its mark, and the others stay out', m.s.ids.includes(n4) && m.s.ai.includes(n4) && m.s.front === n4 && m.s.ids.length === 2 && m.hidden === 3, JSON.stringify(m));

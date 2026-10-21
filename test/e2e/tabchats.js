@@ -195,7 +195,7 @@ const fakeModel = (app) => app.evaluate(() => {
   const tabR = await tc(() => global.__agent.browser.openTab('about:blank', { background: true }).id);
   await tc((_e, r) => { global.__switchTarget.SW2 = r; }, tabR);
   const tabS2 = await openTab(`${base}/sw2`); await waitFor(async () => (await active()) === tabS2);
-  await send('chat-SW2: go');
+  await send('chat-SW2: switch to that tab');
   await waitFor(() => tc(() => global.__seen.SW2 !== undefined));
   await sleep(300);
   const chatS2 = await chatOfTab(tabS2);

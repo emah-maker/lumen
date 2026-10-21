@@ -234,11 +234,16 @@ function guardsFocus({ pageFocused = false, userInputAt = 0, now = Date.now(), r
   return Boolean(pageFocused) || (Boolean(userInputAt) && now - userInputAt < recent);
 }
 
-// May open_tab / switch_tab bring a tab to the front? Never by default: only when the tool asked to show it and
-// the user is looking at the run's own tab (they are watching this chat work: tab-chats.js mayTakeFront).
-function showsTab({ show = false, runTabId = null, activeId = null } = {}) {
-  return show === true && runTabId != null && runTabId === activeId;
+// May open_tab / switch_tab bring a tab to the front? Never by default: only when the tool asked to show it, the user is looking at the run's
+// own tab (they are watching this chat work: tab-chats.js mayTakeFront), AND the user's own latest message asked to see or go to a tab. The model
+// asking to show a page is not enough: it switched the user's view to the pages it worked in while they were reading their own tab.
+function showsTab({ show = false, asked = false, runTabId = null, activeId = null } = {}) {
+  return show === true && asked === true && runTabId != null && runTabId === activeId;
 }
+// Did the user's words ask to be taken to a tab or page ("go to", "switch to", "show me", "take me to", "open ... for me", "bring up")? Only
+// the user's own text counts (never a page's or the model's).
+const SHOW_ASK = /\b(go to|switch (me )?to|take me to|bring (it |that |the \w+ )?(up|to the front)|show me|pull up|open (it |that |this |them |the \w+ )?(up )?(for me|in front|so i can see)|let me see|jump to)\b/i;
+function userAskedToSee(text) { return typeof text === 'string' && text.length < 4000 && SHOW_ASK.test(text); }
 
 // ---- which keys and clicks came from the AI
 // A tool's sendInputEvent runs inside agentInput(wc, fn); the page view's key and mouse handlers (main.js) ask
@@ -300,6 +305,6 @@ module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, focusAfterAiClose, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
-  closeVerdict, closeCard, closeKept, closeGranted, CLOSE_NO_CHAT, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab,
+  closeVerdict, closeCard, closeKept, closeGranted, CLOSE_NO_CHAT, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };

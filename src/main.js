@@ -8517,6 +8517,8 @@ const agentActiveTab = () => {
 // worked in); Undo reopening a tab it closed is not that.
 // [ai manners] Settings → AI → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
 const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
+// [ai manners] the run's latest user message asked to see or go to a tab (manners.showsTab): only then may its open_tab / switch_tab come to the front
+const userAskedToSee = () => { try { const m = agent.currentScope()?.chat; for (let i = (m?.length || 0) - 1; i >= 0; i--) { const x = m[i]; if (x?.role !== 'user') continue; const text = typeof x.content === 'string' ? x.content : Array.isArray(x.content) ? x.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : ''; if (!text.trim()) continue; return manners.userAskedToSee(text); } } catch { /* no run */ } return false; };
 const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.tabId ?? activeId) : activeId; };
 const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
 const agentOpenTab = (url, opts = {}) => {
@@ -8527,7 +8529,7 @@ const agentOpenTab = (url, opts = {}) => {
   // opening a tab, the test hooks) gets a plain openTab: in front unless it asked for the background.
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
-  const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : !rest.background));
+  const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), asked: userAskedToSee(), runTabId: runOwnTabId(), activeId }) : !rest.background));
   const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: { ...runOf(), keep: keep === true } } : {}) }); // (keep: left open when the run ends)
   const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
@@ -8537,7 +8539,7 @@ const agentOpenTab = (url, opts = {}) => {
 const agentSwitchTab = (id, opts = {}) => {
   if (mcpCall()) { const t = tabs.find((x) => x.id === id); return Boolean(t && !agentOffLimits(t) && switchTab(id)); } // (its own window's tab: really in front there)
   const fromPage = chatPageRt?.runTarget() != null && pageRunHere(); // ([parallel chats] the page's own run only)
-  if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true && !stayOnUsersTab(), runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
+  if (!fromPage && (opts && 'show' in opts ? manners.showsTab({ show: opts.show === true && !stayOnUsersTab(), asked: userAskedToSee(), runTabId: runOwnTabId(), activeId }) : true)) { // (no `show`: a plain switch, not the AI's tool)
     const aiCall = Boolean(opts && 'show' in opts && agent.currentScope()); // only a run's switch_tab passes `show`
     const ok = aiCall ? asAiSwitch(() => switchTab(id)) : switchTab(id);
     if (ok && aiCall) bindRunChatTo(id);
