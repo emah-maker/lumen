@@ -11,26 +11,39 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+let giveUp = async (why) => { console.log(`FAIL  ${why}`); process.exit(1); };
 (async () => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Nothing here may wait forever: every renderer / main-process call and the whole run are bounded and fail with a message that names the step.
+  let step = 'starting'; let app = null; let ui = null;
+  const bound = (p, what, ms = 20000) => { let t; return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`timed out after ${ms / 1000}s: ${what} (step: ${step})`)), ms); })]).finally(() => clearTimeout(t)); };
+  giveUp = async (why) => {
+    console.log(`FAIL  ${why}`);
+    const probe = async (n, f) => { try { await bound(f(), n, 3000); console.log(`  ${n}: responds`); } catch (e) { console.log(`  ${n}: ${e.message}`); } };
+    if (app) { await probe('main process', () => app.evaluate(() => 1)); await probe('window renderer', () => ui.evaluate(() => 1)); try { app.process().kill(); } catch {} }
+    process.exit(1);
+  };
+  const watchdog = setTimeout(() => giveUp(`the whole suite took longer than 240s (step: ${step})`), 240000); watchdog.unref();
   const server = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html'); r.end(`<title>Page ${q.url.slice(1)}</title><p>x</p>`); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tab-icons-'));
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile } });
-  const ui = await app.firstWindow();
-  await ui.waitForSelector('.tab');
+  app = await bound(electron.launch({ args: [path.join(__dirname, '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile } }), 'launching the app', 60000);
+  ui = await bound(app.firstWindow(), 'the first window', 30000);
+  await ui.waitForSelector('.tab', { timeout: 30000 });
+  for (const target of [app, ui]) { const ev = target.evaluate.bind(target); target.evaluate = (f, a) => bound(ev(f, a), `${target === app ? 'main' : 'renderer'} call`); }
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 920));
   await ui.evaluate(() => window.assistant.setAutoGroup(false));
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));
-  const open = (u) => app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u, { background: true }); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 4000); }); return t.id; }, u);
-  const setting = (k, v) => app.evaluate((_e, [k, v]) => global.__settings.backend.set(k, v), [k, v]);
+  const open = (u) => { step = `opening ${u}`; return app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u, { background: true }); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 4000); }); return t.id; }, u); };
+  const setting = (k, v) => { step = `setting ${k}`; return app.evaluate((_e, [k, v]) => global.__settings.backend.set(k, v), [k, v]); };
 
   // Every tab shows sound (the second one muted), the AI sparkle and the chat spinner; `o` says which are pinned / split / active.
   const fake = async (o) => {
+    step = `faking tab states ${JSON.stringify(o)}`;
     await ui.evaluate((o) => {
       window.__fo = o;
       if (!window.__origRTN) {
@@ -65,6 +78,7 @@ const os = require('os');
   const pages = [];
   for (let i = 0; i < 4; i++) pages.push(await open(`${base}/${i}`));
   const verify = async (name) => {
+    step = `checking ${name}`;
     const rows = await measure();
     check(`${name}: tabs with a speaker were measured`, rows.length >= 2, rows.length);
     for (const r of rows) {
@@ -99,6 +113,7 @@ const os = require('os');
   // A group chip beside tabs whose chat is working: the chip and the first tab keep apart, a title is shown whole enough to read or not at all,
   // and the working ring is the accent colour (never an error red).
   const groupCase = async (name, o) => {
+    step = `group case ${name}`;
     await fake({ ...o, group: true });
     const g = await ui.evaluate(() => {
       const chip = document.querySelector('#tabs .group-label'); const tabs = [...document.querySelectorAll('#tabs .tab.grouped')];
@@ -118,8 +133,8 @@ const os = require('os');
   await groupCase('group, squeezed', { pinned: [], split: {}, active: 0, reading: 1 });
   for (const [mode, layout] of [['group, side', 'side']]) { await setting('tabLayout', layout); await sleep(1000); await groupCase(mode, { pinned: [], split: {}, active: 0, reading: 1 }); }
   check('no page errors', errors.length === 0, errors.join(' | '));
-  await app.close();
+  step = 'closing the app'; await bound(app.close(), 'closing the app', 20000).catch(() => { try { app.process().kill(); } catch {} });
   server.close();
   console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
   process.exit(failures ? 1 : 0);
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => { console.log(`FAIL  ${e.message}`); return giveUp('the suite stopped on an error'); });

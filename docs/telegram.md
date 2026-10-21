@@ -22,6 +22,20 @@ Only that one chat can use the bot. Messages from anyone else are ignored, with 
 - `/status` lists the tasks you started from Telegram that are still running. `/stop` stops the latest one. `/help` lists the commands.
 - The task also shows in the sidebar's **Background tasks** panel, like one you made in Lumen.
 
+## Send files and links from your phone
+
+- **Photos and files.** Send a photo, a video, a voice note or any file to your bot. Lumen saves it to **Downloads/From phone** and replies **Saved to Lumen**. In Lumen, the tab strip shows a toast with **Attach to chat**. It puts the file in the sidebar's composer, like a file you dropped there. If you wrote a caption on the phone, it goes into the empty prompt, and nothing is sent until you press Send. Several files sent together share one toast. With Lumen in the background, a system notification says a file came.
+- Telegram compresses photos. To keep the original, send it as a **File** in Telegram.
+- A bot can download files up to **20 MB**. Bigger ones are refused, and the bot says so.
+- Programs and scripts (`.pkg`, `.dmg`, `.app`, `.command`, `.sh`, `.exe` …) only get **Show in Finder**: Lumen never opens or attaches them. On macOS every saved file is marked as downloaded, so Gatekeeper checks it before it runs.
+- **Links.** A message that is only a link (or `/open <link>`) opens it in a new tab in Lumen, behind the one you're on. To have the AI work on a link instead, send `/background <request>`.
+- **The AI.** With **Let the AI use files on this computer** on, the AI finds these files as the `phone` folder: "summarize the PDF I just sent from my phone".
+- **Save photos and files I send to the bot** (on) turns this off. The bot then only takes text requests.
+
+## Send to phone
+
+**Send to phone** is in a page's right-click menu, the page tools menu and a finished download's menu. It sends the page's title and link, or the file, to your paired chat. Files can be up to **50 MB** (Telegram's limit for a bot). It is shown only while a chat is paired, and only your own click uses it: no AI tool can send anything this way.
+
 ## What the task may do
 
 Exactly what a background task you make in Lumen may do:
@@ -36,7 +50,7 @@ Exactly what a background task you make in Lumen may do:
 
 ## Privacy
 
-Your messages to the bot, the results, and the approval questions (which name the site and what the AI wants to do there) pass through Telegram's servers. Use it only for requests you are fine sending through Telegram. The token is encrypted on your computer; the paired chat's id and name and the bot's username are kept in `settings.json`. See [PRIVACY.md](../PRIVACY.md).
+Your messages to the bot, the results, the approval questions (which name the site and what the AI wants to do there), and files and links sent either way pass through Telegram's servers. Use it only for requests you are fine sending through Telegram. The token is encrypted on your computer; the paired chat's id and name and the bot's username are kept in `settings.json`. See [PRIVACY.md](../PRIVACY.md).
 
 ## When it doesn't answer
 

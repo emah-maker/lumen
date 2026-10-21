@@ -398,23 +398,97 @@ function verifyChecksums(manifest, actual) {
 
 // ------------------------------------------------------------------------------------------------------------ parallel checks
 
-// Suites whose numbers depend on a quiet machine: they run alone, after everything else.
-const PERF_SENSITIVE = ['perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'overlay-first-perf', 'page-load-stall', 'igpu-perf'];
+// Suites whose numbers depend on a quiet machine: they run alone, after everything else. The first group is what release.js has always
+// held back; the second is every other suite with a wall-clock budget (a latency, a frame rate, "no main-process task over N ms").
+const PERF_SENSITIVE = [
+  'perf-budget', 'step-labels', 'settings-open-perf', 'files-perf', 'overlay-first-perf', 'page-load-stall', 'igpu-perf',
+  'mcp-perf', 'tab-switch-perf', 'chat-tab-speed', 'chat-save-stall', 'desktop-apps', 'music-react', 'project-folders', 'pptx-shapes', 'tools', 'files-ai', 'gpu-health', 'video-frames',
+];
 const isPerfSensitive = (name) => PERF_SENSITIVE.includes(name);
 
+// What makes an Electron suite unsafe to run beside another one: it binds a fixed port, uses the one OS clipboard, or looks at the whole machine
+// (every window, every process, every screen). [reason, pattern over the suite's source].
+const SHARED_RESOURCE_PATTERNS = [
+  ['a fixed port', /\bPORT\s*=\s*\d{3,5}\b|\.listen\(\s*\d{3,5}\b|remote-debugging-port=\d|\b(?:43917|47821|9222)\b|REDIRECT_PORT|REDIRECT_URI/],
+  ['the OS clipboard', /\bclipboard\.(?:write|read)\w*\(|Set-Clipboard|Get-Clipboard/],
+  ['machine-wide window or process lists', /\btasklist\b|Get-CimInstance|Get-Process\b|\bnetstat\b|EnumWindows|\bps -/],
+  ['screen capture', /desktopCapturer|getDisplayMedia/],
+];
+
+// Why a suite must run alone (a list of reasons, [] when it may share the machine): the patterns above over its source, plus anything named in
+// `known` ({ name: reason }) that a pattern cannot see.
+const KNOWN_EXCLUSIVE = {};
+function sharedResources(name, source, known = KNOWN_EXCLUSIVE) {
+  const why = SHARED_RESOURCE_PATTERNS.filter(([, re]) => re.test(source || '')).map(([r]) => r);
+  if (known[name]) why.push(known[name]);
+  return why;
+}
+
 // Stages ([{ name, kind: 'plain' | 'electron' }]) into phases of lanes: lanes of one phase run at the same time, phases one after another.
-// Parallel: [pure-node stages | other Electron suites], then the perf-sensitive ones alone. Serial: one lane in the old order, perf-sensitive last.
-function planLanes(stages, { serial = false } = {}) {
+// A lane is { stages, jobs, kind }: `jobs` stages of it run at once (the Electron lane's concurrency; always 1 for the pure-node lane).
+//   Parallel: [pure-node stages | the other Electron suites, `electronJobs` at a time], then the shared-resource suites one at a time and alone,
+//   then the perf-sensitive ones alone. Serial, or electronJobs 1: one lane in the old order (no overlap, so nothing needs to run alone), perf last.
+// `exclusive` is a predicate over a suite name (see sharedResources).
+function planLanes(stages, { serial = false, electronJobs = 1, exclusive = () => false } = {}) {
   const pure = stages.filter((s) => s.kind === 'plain');
-  const electron = stages.filter((s) => s.kind === 'electron' && !isPerfSensitive(s.name));
-  const perf = stages.filter((s) => s.kind === 'electron' && isPerfSensitive(s.name)).sort((a, b) => PERF_SENSITIVE.indexOf(a.name) - PERF_SENSITIVE.indexOf(b.name));
-  const phases = serial ? [[[...pure, ...electron]], [perf]] : [[pure, electron], [perf]];
-  return phases.map((lanes) => lanes.filter((l) => l.length)).filter((lanes) => lanes.length);
+  const isPerf = (s) => isPerfSensitive(s.name);
+  const perf = stages.filter((s) => s.kind === 'electron' && isPerf(s)).sort((a, b) => PERF_SENSITIVE.indexOf(a.name) - PERF_SENSITIVE.indexOf(b.name));
+  const rest = stages.filter((s) => s.kind === 'electron' && !isPerf(s));
+  const jobs = Math.max(1, Math.floor(electronJobs) || 1);
+  const lane = (list, n, kind) => ({ stages: list, jobs: n, kind });
+  let phases;
+  if (serial) phases = [[lane([...pure, ...rest], 1, 'pure')], [lane(perf, 1, 'electron')]];
+  else if (jobs === 1) phases = [[lane(pure, 1, 'pure'), lane(rest, 1, 'electron')], [lane(perf, 1, 'electron')]];
+  else {
+    const alone = rest.filter((s) => exclusive(s.name));
+    phases = [[lane(pure, 1, 'pure'), lane(rest.filter((s) => !exclusive(s.name)), jobs, 'electron')], [lane(alone, 1, 'electron')], [lane(perf, 1, 'electron')]];
+  }
+  return phases.map((lanes) => lanes.filter((l) => l.stages.length)).filter((lanes) => lanes.length);
+}
+
+// How many Electron suites run at once by default: min(3, one per 4 cores, one per 10 GB of RAM), at least 1.
+function electronJobs({ cpus, ramGb }) {
+  return Math.max(1, Math.min(3, Math.floor(cpus / 4), Math.floor(ramGb / 10)));
 }
 
 // How many unit suites test-units.js runs at once: leave cores for a concurrent Electron lane, never fewer than 2 or more than 8.
-function unitJobs({ cpus, withElectron }) {
-  return Math.max(2, Math.min(8, Math.floor(cpus / (withElectron ? 4 : 2))));
+function unitJobs({ cpus, withElectron, electronJobs: ej = 1 }) {
+  return Math.max(2, Math.min(8, Math.floor(cpus / (withElectron ? Math.max(4, ej + 2) : 2))));
+}
+
+// ----------------------------------------------------------------------------------------------------------- which suites a release runs
+
+// The suites every default release runs: the app starts, its main surfaces draw, nothing logs an error, the budgets hold.
+const CORE_SUITES = ['smoke', 'basics', 'no-errors', 'ui', 'settings', 'tabstrip', 'browser', 'first-run', 'relaunch', 'perf-budget'];
+
+const stemOf = (file) => file.replace(/^.*\//, '').replace(/\.[^.]+$/, '').replace(/-units$/, '');
+
+// A default release's Electron suites: the core set plus the suites related to the files changed since the last release tag.
+// changed: repo paths; electron: the candidate suite names; sources: { name: the suite's source }. Related when the suite is itself a changed
+// test file, its source mentions a changed module by path ("features/spotify-view") or by file name ("spotify-view.js"), or its name starts
+// with the changed file's name or the other way round (src/renderer/settings.js -> settings, settings-open-perf; at least 4 letters).
+// Returns { names, reasons: { name: why }, full }: `full` is true when a build, dependency or workflow file changed, because then nothing
+// narrows the choice.
+function selectSuites({ changed, electron, sources, core = CORE_SUITES }) {
+  const reasons = {};
+  const add = (name, why) => { if (electron.includes(name) && !reasons[name]) reasons[name] = why; };
+  for (const c of core) add(c, 'core');
+  const files = changed.filter((f) => !/^(CHANGELOG\.md|docs\/|README)/.test(f));
+  const full = files.some((f) => /^(package(-lock)?\.json|scripts\/(build|bundle)|electron-builder|\.github\/)/.test(f));
+  for (const f of files) {
+    const stem = stemOf(f);
+    if (/^test\/[^/]+\.js$/.test(f)) add(f.slice(5, -3), `changed: ${f}`);
+    if (!/^src\//.test(f) || /bundle|\.html$|\.json$/.test(f)) continue;
+    const mod = f.replace(/^src\//, '').replace(/\.[^.]+$/, '');
+    for (const name of electron) {
+      if (reasons[name]) continue;
+      const src = sources[name] || '';
+      if (stem.length >= 4 && (name === stem || name.startsWith(`${stem}-`) || (stem.startsWith(`${name}-`) && name.length >= 4))) add(name, `named like ${f}`);
+      else if (src.includes(mod) || (stem.length >= 5 && src.includes(`${stem}.js`))) add(name, `uses ${f}`);
+    }
+  }
+  const names = electron.filter((n) => reasons[n]);
+  return { names, reasons, full };
 }
 
 // ----------------------------------------------------------------------------------------------------------------- node_modules
@@ -458,7 +532,7 @@ function releasePlan({ version, date, opts, counts = {} }) {
   add('prepare', `fold the notes of any burned version (tag pushed, release never published) into Unreleased; CHANGELOG "## Unreleased" -> "## ${version} (${date})"; npm version ${version} --no-git-tag-version; node --check src/main.js; commit "Release ${version}"`);
   const early = !opts.noPreflight && !opts.checksOnly;
   if (early) add('preflight', `push release-${version} and dispatch release.yml on it (workflow_dispatch: builds win + mac and runs their tests, publishes nothing)`);
-  add('checks', `${counts.stages || '?'} stages: ${opts.serialChecks ? 'one after another' : 'pure-node lane (units in parallel, acceptance, lint) alongside the Electron lane; perf-sensitive suites (' + PERF_SENSITIVE.join(', ') + ') alone at the end'}; the Electron lock is ${opts.holdLock ? 'held while Electron runs' : 'taken per suite'}`, early);
+  add('checks', `${counts.stages || '?'} stages: ${opts.serialChecks ? 'one after another' : 'pure-node lane (units in parallel, acceptance, lint) alongside the Electron lane (' + (counts.electronJobs || 1) + ' suite(s) at a time; suites sharing a port, the clipboard or the machine run alone); perf-sensitive suites (' + PERF_SENSITIVE.join(', ') + ') alone at the end'}; the Electron lock is ${opts.holdLock ? 'held while Electron runs' : 'taken per suite'}`, early);
   if (opts.checksOnly) { add('stop', 'stop here (--checks-only): nothing pushed; --resume ships it'); return p; }
   add('pr', `push release-${version} (retried), gh pr create "Release ${version}"`);
   add('ci', (opts.noSkipCi ? 'wait for CI on the PR head' : 'skip the wait for the PR\'s CI when the commit is verified to be only the CHANGELOG cut and the version fields and CI passed on its base commit; otherwise wait for CI') + (opts.noPreflight ? '' : '. Wait for the preflight run to pass'));
@@ -473,7 +547,7 @@ module.exports = {
   sectionVersion, findBurned, foldBurned,
   RELEASE_FILES, ciSkipVerdict,
   pickPreflightRun, runVerdict, buildManifest, artifactsReusable, verifyChecksums,
-  PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs,
+  PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs, electronJobs, sharedResources, SHARED_RESOURCE_PATTERNS, KNOWN_EXCLUSIVE, CORE_SUITES, selectSuites,
   STAGES, stageDone, stagesLeft, nodeModulesMatch, releasePlan,
   parseChangelog, mergeChangelog, cutChangelog, changelogSection,
   readSuites, mergeSuiteList, splitSuiteFile,
