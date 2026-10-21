@@ -197,6 +197,20 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     check('every tab gets the visual zoom limits, again after each navigation', /function pinchZoom\(wc\)/.test(backend) && /setVisualZoomLevelLimits\(1, max\)/.test(backend) && (backend.match(/pinchZoom\(wc\);/g) || []).length >= 2);
   }
 
+  { // a home folder behind a link (macOS: /var/... is /private/var/...; a junction here): a link into its ~/.ssh is still refused
+    const realHome = path.join(home, 'real-home');
+    fs.mkdirSync(path.join(realHome, '.ssh'), { recursive: true });
+    fs.mkdirSync(path.join(realHome, 'Documents'));
+    fs.writeFileSync(path.join(realHome, '.ssh', 'id_notes.txt'), 'x');
+    const linkHome = path.join(home, 'link-home');
+    try {
+      fs.symlinkSync(realHome, linkHome, 'junction');
+      fs.symlinkSync(path.join(realHome, '.ssh', 'id_notes.txt'), path.join(realHome, 'Documents', 'notes.txt'));
+      check('a home behind a link: a link into its ~/.ssh is judged by where it goes', /credentials/.test(String(throws(() => D.checkedPath(path.join(linkHome, 'Documents', 'notes.txt'), 'file', { home: linkHome })))), throws(() => D.checkedPath(path.join(linkHome, 'Documents', 'notes.txt'), 'file', { home: linkHome })));
+      check('a home behind a link: ~/.ssh itself is refused too', /credentials/.test(String(throws(() => D.checkedPath(path.join(linkHome, '.ssh', 'id_notes.txt'), 'file', { home: linkHome })))));
+    } catch (e) { console.log(`SKIP  a home behind a link (${e.code || e.message})`); } // (no right to make a file link on this machine)
+  }
+
   fs.rmSync(home, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
