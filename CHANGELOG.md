@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.65 (2026-10-21)
+
 - **A question about the page in front of you is answered from that page, without looking things up.** With a PDF open at question 3, asking "what is the answer for number 4" made Claude Code search for a tool, take a 27-second screenshot, list your tabs and open the same PDF in a second tab. Now "solve number 4", "explain question 3" and similar words count as pointing at the page you have open, and the message carries the page on screen and the next one (about a page or two of text, not the first pages of the whole PDF) with a screenshot, so the AI answers straight away, on every AI. A summary still reads the document from its start. If the AI does ask to open the file you are already looking at, no second tab opens. Claude Code also gets Lumen's tools up front, which saves its lookup step the first time it needs one.
 - **A formula that ends in a space before its closing $ is drawn as math.** An AI answer such as "$\sigma = 0 - (<0) = $ positive" showed the raw dollar signs and LaTeX, often in a table cell. A formula with a LaTeX command such as \sigma now counts even with that space; prices like "$5 and $ 10" still stay plain text.
 - **The AI's screenshot no longer times out when two chats are working.** With a chat running in each of two tabs, one tab that stopped answering for a while (a heavy page, a script that ran long, an alert) made the other chat's screenshots wait behind it until they timed out. Each chat's screenshots now go on while the other tab is stuck.
