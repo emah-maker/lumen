@@ -5,7 +5,7 @@
 // - Names are cleaned (upload-files.js cleanName) and never overwrite: "photo.jpg", then "photo (2).jpg".
 // - On macOS a saved file is marked quarantined (com.apple.quarantine), the way a browser download is, so Gatekeeper
 //   checks it before it runs. A program or script (isRisky) is only ever shown in Finder: never opened or attached.
-// Pure apart from deps (fs and the quarantine call are injected: test/phone-inbox-units.js).
+// Pure apart from deps (fs and the quarantine call are injected: test/units/phone-inbox-units.js).
 const path = require('path');
 const { cleanName } = require('./upload-files');
 const { RISKY_TYPES } = require('./downloads');

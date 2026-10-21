@@ -1,5 +1,5 @@
 // Device access for WebHID, WebUSB and Web Serial: what a site may be handed, and which devices the user chose for it.
-// Everything here is a plain function of its inputs (test/device-permissions-units.js runs it in plain Node);
+// Everything here is a plain function of its inputs (test/units/device-permissions-units.js runs it in plain Node);
 // features/device-chooser.js wires it to the session and draws the picker.
 //
 // Identity: Electron's deviceId / portId change every time a device is plugged in, so a grant is remembered by what

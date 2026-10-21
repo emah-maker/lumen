@@ -1,5 +1,5 @@
 // Routines: a saved prompt that runs as a background task on a calendar schedule ("every weekday at
-// 8:00: give me a news brief"). The pure part (no Electron, unit-tested in test/routines-units.js): the
+// 8:00: give me a news brief"). The pure part (no Electron, unit-tested in test/units/routines-units.js): the
 // schedule model, next-run math in local time, the scheduler's plan (what is due, what is skipped, when
 // to wake next), the run history and a small parser for "every weekday at 8am ..." in the composer.
 //

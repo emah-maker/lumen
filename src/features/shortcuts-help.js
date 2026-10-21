@@ -4,7 +4,7 @@
 // list in Lumen's own dialog overlay (dialogs.showNotes, the card What's New uses), one section per
 // area. The list is data here, written for the platform it runs on (⌘ and ⌥ on macOS, Ctrl and Alt
 // elsewhere), so the sheet and the tests read the same table. Keep it in step with handleShortcut()
-// in main.js and the accelerators on its menus: test/shortcuts-help-units.js fails when a menu accelerator or a handled key is missing here.
+// in main.js and the accelerators on its menus: test/units/shortcuts-help-units.js fails when a menu accelerator or a handled key is missing here.
 //
 // Ctrl+Enter means one thing everywhere: "send what is typed in this box now". On the new-tab page it asks the AI, in the sidebar chat box
 // it stops a running reply and sends now. The Meeting helper has its own key (Ctrl+Shift+E) and no longer shares it.

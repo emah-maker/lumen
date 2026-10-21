@@ -1,7 +1,7 @@
 // [widgets] The Routines card for the home page: what the user's scheduled routines will do next and what they did last,
 // shaped small from the runner's view (background-runner.js routineView). Text and numbers only: the page sets all of it with
 // textContent and formats the times itself (in the page's language), so nothing here is markup or a locale string.
-// Pure (no Electron, no clock of its own): main.js hands shape() the view, test/routines-card-units.js runs it.
+// Pure (no Electron, no clock of its own): main.js hands shape() the view, test/units/routines-card-units.js runs it.
 //
 //   shape(view)       { enabled, offline, counts: { total, on, waitingApproval }, upcoming: [{ id, title, nextRun }],
 //                       latest: [{ id, title, status, at, trigger, snippet, error, unseen, waiting }] }

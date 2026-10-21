@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: unlimited-setting). Run alone: node scripts/test-acceptance.js chat-unlimited-runs
+// ACCEPTANCE (feature: unlimited-setting). Run alone: node scripts/test/test-acceptance.js chat-unlimited-runs
 //
 // Settings > AI > "Chats working at once" (maxChatRuns): 0 means no limit, and it is the default. Any other value
 // still caps the chats working at once, with the rest waiting their turn. Plain Node, no fakes needed.

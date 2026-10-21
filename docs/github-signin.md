@@ -34,4 +34,4 @@ If your organisation uses OAuth app restrictions, approve the app under Organiza
 
 ## Tests
 
-`test/github-signin-units.js` (runs in `test/units.js`) covers the module and the whole flow against stand-ins for `github.com` and `api.github.com` on 127.0.0.1: sign in and the card filling in, the pending and `slow_down` sequence, expired and denied codes, the gh CLI (a stub `gh` first on a temp `PATH`), sign out, the token shared with the connector, and a revoked token. `test/github-units.js` covers the card's lists.
+`test/units/github-signin-units.js` (runs in `test/units/units.js`) covers the module and the whole flow against stand-ins for `github.com` and `api.github.com` on 127.0.0.1: sign in and the card filling in, the pending and `slow_down` sequence, expired and denied codes, the gh CLI (a stub `gh` first on a temp `PATH`), sign out, the token shared with the connector, and a revoked token. `test/units/github-units.js` covers the card's lists.

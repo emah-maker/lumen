@@ -1,5 +1,5 @@
 // Rules that keep an outside agent (MCP client) off the user's window, tabs, focus and clipboard.
-// Pure helpers (main.js and ai/agent.js wire them to real windows and tabs; test/agent-hands-off-units.js covers them).
+// Pure helpers (main.js and ai/agent.js wire them to real windows and tabs; test/units/agent-hands-off-units.js covers them).
 //   resolveRun(...)       which window a tool call runs in; an outside agent's call whose window is gone does NOT fall back to the user's
 //   foreignTabIds(...)    tab ids a call named that are not in the agent's own window (the user's tabs, or another window's)
 //   foreignTabText(...)   the refusal that names them

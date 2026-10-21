@@ -8,7 +8,7 @@
 // (browser/chrome-identity.js, the same everywhere, no per-host switching) gets through to "Couldn't find this
 // account" / the password step. So these hosts get no special identity any more; they stay listed because the ad
 // blocker leaves their pages alone (the risk check reads the logging traffic a blocked entry would remove).
-// Pure (no Electron): test/google-auth-identity-units.js.
+// Pure (no Electron): test/units/google-auth-identity-units.js.
 
 const HOST_SOURCE = '^(?:accounts\\.google\\.(?:com?\\.)?[a-z]{2,3}|accounts\\.youtube\\.com|gds\\.google\\.com)$'; // (\\. in a string: a literal dot in the RegExp)
 const HOST_RE = new RegExp(HOST_SOURCE, 'i');

@@ -1,7 +1,7 @@
 // The pure parts of the toolbar's extension buttons (Settings → Extensions → Show extensions in the toolbar, and the puzzle button's menu):
 // which extensions are pinned, in what order, and where each one shows. Like Chrome's puzzle menu, a pinned extension has its button in the
 // toolbar and the others are listed in the menu. A plain script in the UI (renderer/extensions-bar.js uses it); the settings backend loads it
-// with require() the first time a pin changes; test/ext-pins-units.js checks it.
+// with require() the first time a pin changes; test/units/ext-pins-units.js checks it.
 (function (root) {
   const MODES = ['pinned', 'all', 'none']; // Only the ones I pin | All pinned | Hide all
   const DEFAULT_MODE = 'pinned';

@@ -1,4 +1,4 @@
-// Pure helpers for the agent's tool loop (no Electron, unit-tested in test/units.js):
+// Pure helpers for the agent's tool loop (no Electron, unit-tested in test/units/units.js):
 // - RepeatDetector: notices a model repeating the same failing (or pointless) action and returns a
 //   note that tells it to change strategy. The note is appended to the tool result, nothing is blocked.
 // - withNote: appends a text note to a tool result (string or content blocks).

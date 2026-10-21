@@ -2,7 +2,7 @@
 // new chat, with a way back). Local and cautious: anything that reads like a follow-up ("why?", "make it
 // shorter", "what about Rust") stays, and so does any message sharing a word with the chat so far. Only a
 // message of its own, with nothing in common with the chat, counts as new. Plain script in the UI;
-// test/units.js loads it with require().
+// test/units/units.js loads it with require().
 (function (root) {
   const STOPWORDS = new Set(`a about above after again all also am an and any anything are as ask at be because been before being
 best better between both but by can cannot could did do does doing done down each even ever every few for from get gets getting give

@@ -1,5 +1,5 @@
 // The home page's own widget editor, the parts with no DOM and no Electron (renderer/newtab-setup.js draws
-// the forms; features/widgets.js stores what comes of them; test/widget-config-units.js covers this file):
+// the forms; features/widgets.js stores what comes of them; test/units/widget-config-units.js covers this file):
 //   - view(w): what the page may see of a Weather, World clock, Calendar or Feed card's settings. Place
 //     names, units, clock; never a calendar's address (it is often a private link), only its host.
 //   - mergeEdit(prev, cfg): the form's few fields laid over the card's saved settings, as the input

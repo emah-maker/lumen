@@ -1,4 +1,4 @@
-// Waking tabs ahead of the click (main.js does the Electron parts; test/tab-wake-units.js runs this): the hover
+// Waking tabs ahead of the click (main.js does the Electron parts; test/units/tab-wake-units.js runs this): the hover
 // intent that starts loading a placeholder or slept tab before it is clicked, which tabs to bring back in the
 // background after startup (and when to stop), and whether a tab that goes to sleep is frozen first. All pure.
 'use strict';

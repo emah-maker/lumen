@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: Codex as a sidebar chat engine, src/ai/codex.js). Run alone: node scripts/test-acceptance.js chat-parallel-codex
+// ACCEPTANCE (feature: Codex as a sidebar chat engine, src/ai/codex.js). Run alone: node scripts/test/test-acceptance.js chat-parallel-codex
 //
 // Codex chats in different tabs run at the same time. `codex exec` reads its MCP connection from <CODEX_HOME>/config.toml and its
 // token from an environment variable, and keeps its threads under CODEX_HOME, so each chat runs in a Codex home of its own

@@ -1,4 +1,4 @@
-// Fuzzy matching for tab search (renderer/tab-search.js). Plain script in the UI; test/units.js
+// Fuzzy matching for tab search (renderer/tab-search.js). Plain script in the UI; test/units/units.js
 // loads it with require().
 (function (root) {
   // How well `word` matches `text` (both lower case): a whole-word start beats a substring, which

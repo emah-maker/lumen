@@ -1,6 +1,6 @@
 // How long a step of the AI's work took, as the short text shown at the end of its row in the chat ("2.4s", "1m 05s").
 // Under a second shows nothing: most clicks and reads are that fast, and a "0.2s" on every row would only be noise.
-// Plain script in the UI; test/sidebar-ux2-units.js loads it with require().
+// Plain script in the UI; test/units/sidebar-ux2-units.js loads it with require().
 (function (root) {
   function format(ms) {
     if (!Number.isFinite(ms) || ms < 1000) return '';

@@ -51,13 +51,13 @@ If signing was requested (all values present) and anything fails to sign, the bu
 
 ## What the build does
 
-`scripts/signing.js` decides from the environment (`node scripts/signing.js --win` prints on/off, never a value). When on, `scripts/build.js` adds these electron-builder options for that build only:
+`scripts/release/signing.js` decides from the environment (`node scripts/release/signing.js --win` prints on/off, never a value). When on, `scripts/build/build.js` adds these electron-builder options for that build only:
 
 - `win.azureSignOptions`: `endpoint`, `codeSigningAccountName`, `certificateProfileName`, `publisherName` from the variables above. electron-builder installs the `TrustedSigning` PowerShell module and calls `Invoke-TrustedSigning`; the module reads `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` from the environment. Signatures use SHA-256 and Microsoft's RFC 3161 timestamp server (`http://timestamp.acs.microsoft.com`), so they stay valid after the short-lived certificate expires.
 - `win.signAndEditExecutable=true`: package.json keeps this `false` so the unsigned `Lumen.exe` is byte-identical to Electron's. When signing, electron-builder also applies Lumen's icon and version info to `Lumen.exe` and signs it, the Setup exe and the uninstaller.
 - `forceCodeSigning=true`: a file that cannot be signed fails the build instead of shipping unsigned.
-- **Widevine VMP signing moves after Authenticode** (`LUMEN_DEFER_VMP=1`): castlabs requires it in that order on Windows, and electron-builder signs after `scripts/after-pack.js`, so `scripts/after-sign.js` does it. It writes `.sig` files and does not modify the exe.
-- The "Lumen.exe matches the stock Electron binary" check in `scripts/build.js` is skipped for a signed build (the signature is the point); the release workflow's **Verify Windows signature** step replaces it.
+- **Widevine VMP signing moves after Authenticode** (`LUMEN_DEFER_VMP=1`): castlabs requires it in that order on Windows, and electron-builder signs after `scripts/release/after-pack.js`, so `scripts/release/after-sign.js` does it. It writes `.sig` files and does not modify the exe.
+- The "Lumen.exe matches the stock Electron binary" check in `scripts/build/build.js` is skipped for a signed build (the signature is the point); the release workflow's **Verify Windows signature** step replaces it.
 
 Local builds (`npm run dist`, `dist:win`) never have these values, so they are unchanged.
 

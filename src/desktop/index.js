@@ -6,7 +6,7 @@
 //   - while it works: a banner (The AI is using Word · Stop), Esc held or Ctrl+Alt+Esc stops it, the user touching the app pauses it,
 //     and the chat shows a card with the app, what it is doing and a live thumbnail.
 // This file is loaded on first use (agent.js), never at startup. Everything with a side effect comes in through `deps`, so
-// test/desktop-units.js drives it with fakes in plain Node and test/desktop-apps.js drives the real thing.
+// test/units/desktop-units.js drives it with fakes in plain Node and test/e2e/desktop-apps.js drives the real thing.
 'use strict';
 
 const policy = require('./policy');

@@ -1,4 +1,4 @@
-// Fixtures shared by test/ai-reads-sources-units.js and test/ai-reads-sources.js: a steam table as a PDF (cells written one text object each,
+// Fixtures shared by test/units/ai-reads-sources-units.js and test/e2e/ai-reads-sources.js: a steam table as a PDF (cells written one text object each,
 // the way Word does) and as an HTML page, served by a local http server (startServer -> { server, base }).
 const http = require('http');
 const zlib = require('zlib');

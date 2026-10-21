@@ -1041,7 +1041,7 @@ function create(deps) {
   return {
     init, shutdown, register, propose, subscribe, menuItems, state, overview, pendingCard, preview, create: createTask, run, stop, remove, approve, edit, setSchedule, setEnabled, tick, pump, saveNow, saveRoutine, routinePreview, runRoutines, routineView, routineAct, updateSettings,
     fireRoutine, checkEmail, syncWebhooks, webhookKey, webhookState,
-    // Test hooks (test/bgtasks.js, test/routines.js); nothing in the app itself uses these.
+    // Test hooks (test/e2e/bgtasks.js, test/e2e/routines.js); nothing in the app itself uses these.
     tasks: () => tasks, notifications: () => notifications, runtimes: () => runtimes, find,
     routineTimer: () => routineTimer, setOnline: (fn) => { onlineCheck = fn; },
   };

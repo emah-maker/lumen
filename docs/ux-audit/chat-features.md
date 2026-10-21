@@ -98,7 +98,7 @@ Five packages, ordered by value. Each is 1 to 3 hours. They overlap only where n
 
 ### WP1: Markdown correctness (fixes B1 to B6, B15; gap rows 7, 8, 9, 11, 13)
 Add block quotes, nested lists with a correct ordered-list numbering, task lists, rules, strikethrough, nested emphasis, backslash escapes, reference links and footnotes, `[n]` citation markers linked to their definitions; more highlight languages (html, xml, yaml, toml, diff, php, ruby, kotlin, swift); a code wrap toggle; a mermaid renderer loaded lazily from `renderer/vendor/`; a table fit mode.
-Files: `src/renderer/markdown.js`, `src/renderer/highlight.js`, `src/renderer/styles.css` (code and table rules), new vendor file for mermaid, tests `test/markdown-*-units.js`. Touches `chat-core.js` only at `decorateCode` (`:1237`).
+Files: `src/renderer/markdown.js`, `src/renderer/highlight.js`, `src/renderer/styles.css` (code and table rules), new vendor file for mermaid, tests `test/units/markdown-*-units.js`. Touches `chat-core.js` only at `decorateCode` (`:1237`).
 
 ### WP2: Message actions and history fidelity (B7, B8, B13, B17 partly; rows 1, 2, 3, 4, 14, 16, 18, 19, 20, 41)
 Save the model, time and thinking with each reply; show timestamps and the model after reopening; Continue after Stop; regenerate that keeps versions with a ‹ 2/3 › switch; edit on any earlier user message (starts a branch); copy on user bubbles; thumbs (stored locally); Ctrl+Shift+C. Put the new UI in a new file `src/renderer/chat-actions.js` so `chat-core.js` changes stay at the hooks.

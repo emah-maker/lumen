@@ -1,5 +1,5 @@
 // A small CSL-like citation formatter: APA 7, MLA 9, Chicago (author-date, 17th), IEEE, plus BibTeX and RIS export. No
-// dependencies, Electron-free, pure functions, so test/research-units.js checks every style against known-correct examples.
+// dependencies, Electron-free, pure functions, so test/units/research-units.js checks every style against known-correct examples.
 //
 // Input: one source record as the Research board keeps it (src/ai/research-board.js; the scholarly APIs' works have the same
 // fields): { type, title, authors: [{ family, given } | { literal }], year, month, day, venue (journal / container / site),

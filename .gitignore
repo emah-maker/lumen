@@ -10,7 +10,7 @@ shot-*.png
 # (the project's Claude Code settings are shared: the docs-check Stop hook, CLAUDE.md "Docs")
 !.claude/settings.json
 out/
-# The GitHub Pages site, built by scripts/build-site.js
+# The GitHub Pages site, built by scripts/build/build-site.js
 _site/
 .DS_Store
 Thumbs.db
@@ -20,7 +20,7 @@ profiles/
 user-data/
 userData/
 lumen-profile*/
-# Lumen's built-in Google OAuth client, written by scripts/build.js from LUMEN_GOOGLE_CLIENT_ID / _SECRET
+# Lumen's built-in Google OAuth client, written by scripts/build/build.js from LUMEN_GOOGLE_CLIENT_ID / _SECRET
 src/features/google-client.json
 docs/ux-audit/**/*.png
 docs/ux-audit/shots/

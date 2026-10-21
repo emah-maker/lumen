@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: parallel Antigravity chats). Run alone: node scripts/test-acceptance.js chat-parallel-agy
+// ACCEPTANCE (feature: parallel Antigravity chats). Run alone: node scripts/test/test-acceptance.js chat-parallel-agy
 //
 // Antigravity chats in different tabs run at the same time. agy reads its MCP connection (Lumen's token) from a config file
 // under its HOME and keeps its conversations there too, so each chat runs in a home folder of its own

@@ -14,7 +14,7 @@ Some gaps are already being handled elsewhere, so they're marked and not built h
 
 ## Added in this round
 
-Each item is wired into its menus, has a shortcut where browsers usually have one, has strings in `src/locales/en.json`, and is covered by `test/basics.js` (real app) and `test/basics-units.js` (pure logic).
+Each item is wired into its menus, has a shortcut where browsers usually have one, has strings in `src/locales/en.json`, and is covered by `test/e2e/basics.js` (real app) and `test/units/basics-units.js` (pure logic).
 
 | Feature | How to use it |
 |---|---|
@@ -97,4 +97,4 @@ The biggest gaps worth the work, roughly in order:
 3. **Media controls** for tabs playing audio (M).
 4. **Profiles** (L): when there's demand.
 
-Known housekeeping: `npm run lint` reports 16 errors that already fail on `main`: browser-side globals in `src/browser/chrome-identity.js` and `src/browser/google-auth-identity.js`, two renderer globals in `src/renderer/app.js`, and one in `test/windows.js`.
+Known housekeeping: `npm run lint` reports 16 errors that already fail on `main`: browser-side globals in `src/browser/chrome-identity.js` and `src/browser/google-auth-identity.js`, two renderer globals in `src/renderer/app.js`, and one in `test/e2e/windows.js`.

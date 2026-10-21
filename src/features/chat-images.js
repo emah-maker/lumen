@@ -1,5 +1,5 @@
 // Images a user sends to the AI, in main: which ones a request may carry, and what to tell the user when
-// some are left out or the model can't see them. Pure functions, so test/chat-images-units.js runs them in
+// some are left out or the model can't see them. Pure functions, so test/units/chat-images-units.js runs them in
 // plain Node. The renderer (renderer/chat-core.js) downsizes and converts first; this is the check at the door.
 //
 // Privacy: images only ever travel in the request of the model the user picked (or its CLI engine) and,

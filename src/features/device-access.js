@@ -7,7 +7,7 @@
 // The site still gets a file only through upload_file, so the first upload to a site in a chat still shows its card
 // naming the files (unless the user chose Auto-allow or Bypass). Some places are never reachable, whatever the model
 // passes: Lumen's own profile (cookies, tokens, saved passwords), ssh/gpg/cloud credentials, the macOS keychains, and
-// .env files. Everything here is a plain function of its inputs (plus the file system), so test/device-access-units.js
+// .env files. Everything here is a plain function of its inputs (plus the file system), so test/units/device-access-units.js
 // runs it in plain Node.
 
 const fs = require('fs');

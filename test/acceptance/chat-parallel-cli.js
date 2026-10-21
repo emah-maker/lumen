@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: parallel-cli-chats). Run alone: node scripts/test-acceptance.js chat-parallel-cli
+// ACCEPTANCE (feature: parallel-cli-chats). Run alone: node scripts/test/test-acceptance.js chat-parallel-cli
 //
 // Claude Code / Grok Build chats in different tabs run at the same time. Each CLI run has its own MCP connection to
 // Lumen (its own tag/token): a tool call that comes in on run A's connection acts for chat A, in tab A, and shows on
@@ -25,7 +25,7 @@ const J = (v) => JSON.stringify(v);
 
 // ---- the setting's description no longer promises that the CLI engines take turns
 {
-  const en = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'src','locales', 'en.json'), 'utf8'));
+  const en = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
   check('settings text: "Chats working at once" no longer says Claude Code and Grok Build take turns', !/take turns/i.test(en['settings.ai.maxChatRunsDesc'] || ''), en['settings.ai.maxChatRunsDesc']);
 }
 

@@ -1,5 +1,5 @@
 // The pure parts of the side tab list (Settings → Tabs → Tab layout: Side): the saved width and fold, and where a dragged tab would land.
-// A plain script in the UI (renderer/side-tabs.js uses it); test/side-tabs-units.js loads it with require().
+// A plain script in the UI (renderer/side-tabs.js uses it); test/units/side-tabs-units.js loads it with require().
 (function (root) {
   const MIN = 160;
   const MAX = 420;

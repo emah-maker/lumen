@@ -160,7 +160,7 @@ function prioritize(items) {
 // `A <b>quick</b> brown <a>fox</a> jumps.` is four text nodes. Sent one by one the engine sees four
 // fragments with no context, so the nodes of one block (items with the same `g` from the page's collect) are
 // joined into one segment, a numbered marker ` ⟦1⟧ ` standing at each seam, and the reply is cut at the markers
-// again. Measured against the real engine (test/translate-seam-real.js): numbered ⟦n⟧ came back intact in
+// again. Measured against the real engine (test/e2e/translate-seam-real.js): numbered ⟦n⟧ came back intact in
 // 8 of 8 sentences; a private-use pair only 5 of 8, and it garbled the words beside it. A reply whose
 // markers don't add up is not trusted: that segment goes back to one request per node, and after
 // SEAM_FAILS segments in a row do that the run (and the language pair, for the session) stops grouping.

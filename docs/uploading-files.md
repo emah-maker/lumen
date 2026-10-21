@@ -33,4 +33,4 @@ By default the AI can never name a file on your computer. A page can try to talk
 - Drop zones that only listen for a drag-and-drop event and never open a file chooser, and the browser's file-picker API (`showOpenFilePicker`).
 - Reading file contents: attaching a PDF or text file does not show it to the AI.
 
-Code: `src/features/upload-files.js` (refs, store, `accept`, the field finder), `src/ai/agent.js` (`uploadFile`, the cards), `src/ai/page-scripts.js` (`uploadProbe`, `uploadReport`), `src/main.js` (`uploads:stash`, `agent:upload-choose`), `src/renderer/chat-core.js` (chips and cards). Tests: `test/upload-files-units.js`, `test/uploads.js`.
+Code: `src/features/upload-files.js` (refs, store, `accept`, the field finder), `src/ai/agent.js` (`uploadFile`, the cards), `src/ai/page-scripts.js` (`uploadProbe`, `uploadReport`), `src/main.js` (`uploads:stash`, `agent:upload-choose`), `src/renderer/chat-core.js` (chips and cards). Tests: `test/units/upload-files-units.js`, `test/e2e/uploads.js`.

@@ -1,5 +1,5 @@
 // Round 14 sets of the rater: a high-school senior, a restaurant owner, a K-pop fan learning Korean, a PCT thru-hiker, and probes of words that name
-// several things (python, mercury, bank, chicken ...). [title, url] rows. test/organize-units.js
+// several things (python, mercury, bank, chicken ...). [title, url] rows. test/units/organize-units.js
 module.exports = {
   "student": [
     ["Common App - Dashboard","https://apply.commonapp.org/dashboard"],

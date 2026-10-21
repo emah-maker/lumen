@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: send-now). Run alone: node scripts/test-acceptance.js chat-send-now
+// ACCEPTANCE (feature: send-now). Run alone: node scripts/test/test-acceptance.js chat-send-now
 //
 // "Send now": while a reply is still coming, the user sends the next message at once. The current run is stopped
 // (its CLI turn interrupted or its process ended), the partial reply stays in the chat marked as interrupted, and the

@@ -5,7 +5,7 @@
 //  - "Hey, can you please summarize https://example.com/a/very/long/path?x=1" becomes "Summarize example.com/a/very...";
 //  - a request about "this page" and nothing else names the page ("Summarize this page · Lumen docs"), since every starter chip
 //    would otherwise give the same title.
-// Used by features/chat-store.js autoTitle; test/sidebar-ux2-units.js.
+// Used by features/chat-store.js autoTitle; test/units/sidebar-ux2-units.js.
 
 const TITLE_CHARS = 60;
 // A skill's message (<skill_request ...>) as the words the user sees: "Research skill: what they typed" (renderer/step-labels.js, already loaded).

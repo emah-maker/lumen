@@ -4,7 +4,7 @@
 // clipboard tools; on a Mac: window managers, Grammarly) makes Chromium switch accessibility on for the whole app, and from then on
 // every page keeps a full accessibility tree, with a box for each run of text. On a big page (Canvas, a web mail, a dashboard) each focus
 // change, sidebar open or close and window switch rebuilt it: the page's main thread was busy for seconds, and the main process, which
-// receives the tree, stopped answering ("Lumen is not responding"). Measured on a 50,000-element page (test/a11y-mode.js): 1.5 to 1.8 s
+// receives the tree, stopped answering ("Lumen is not responding"). Measured on a 50,000-element page (test/e2e/a11y-mode.js): 1.5 to 1.8 s
 // of main-process stall per change with the full set, 5 ms with web pages left out.
 //
 // Modes:

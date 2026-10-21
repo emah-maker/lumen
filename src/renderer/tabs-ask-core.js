@@ -1,6 +1,6 @@
 // The logic behind "@" in the composer (renderer/tabs-ask.js): finding the mention being typed,
 // filtering the tab picker, and the chips above the composer. No DOM. A plain script in the UI;
-// test/units.js loads it with require().
+// test/units/units.js loads it with require().
 (function (root) {
   const MAX_QUERY = 30;
 

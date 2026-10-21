@@ -1,5 +1,5 @@
 // [desktop apps] What the AI may and may not do in other programs on this computer (Settings > AI, "Let the AI use other apps on
-// this computer"). Pure functions of their inputs, so test/desktop-units.js runs them in plain Node.
+// this computer"). Pure functions of their inputs, so test/units/desktop-units.js runs them in plain Node.
 //
 // Three layers, checked in this order for every call:
 //   1. never: windows the AI is never given, whatever the settings or the user's answers say (blockedReason). The AI is told plainly.

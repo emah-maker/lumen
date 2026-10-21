@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: reply-done-sooner). Run alone: node scripts/test-acceptance.js chat-reply-done
+// ACCEPTANCE (feature: reply-done-sooner). Run alone: node scripts/test/test-acceptance.js chat-reply-done
 //
 // A Claude Code reply is shown as complete as soon as its text is (the model call's end_turn): the sidebar gets a
 // 'reply_complete' event, long before the CLI's `result` line (the fake CLI delays it 700 ms; the real one 0.8-1.1 s).

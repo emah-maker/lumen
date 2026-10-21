@@ -1,4 +1,4 @@
-// A tiny MCP server over stdio for test/mcpclient.js: one JSON-RPC message per line.
+// A tiny MCP server over stdio for test/e2e/mcpclient.js: one JSON-RPC message per line.
 // Tools: echo (returns its text), env (what it can see: environment names, a probe variable's value,
 // its working folder), fail (an isError result). Every tools/call is appended to MCP_FAKE_LOG, if
 // set, so the test can tell whether a call reached the server.

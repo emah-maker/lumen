@@ -1,5 +1,5 @@
 // What the AI button (and Ctrl+J) does when it opens the sidebar (app.js): start a new chat, or leave the chat as it is.
-// A plain script in the UI; test/sidebar-open-units.js loads it with require().
+// A plain script in the UI; test/units/sidebar-open-units.js loads it with require().
 //   'keep'   leave the sidebar on the chat it shows (the setting is off, or the open request carries an intent: a chat to show,
 //            a task or run that needs an OK, a notification, an agent event; or `busy`: this tab's chat waits for an OK, so its
 //            approval card shows whatever the setting says. A chat that is only working or finished unread does NOT keep the

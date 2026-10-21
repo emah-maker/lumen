@@ -1,7 +1,7 @@
 // What a GitHub widget shows: its per-widget settings (validated), the searches it asks api.github.com,
 // how GitHub's answers (and refusals: a bad token, rate limits) are read, and the display data the card
 // gets. Pure functions, no network and no Electron: features/widgets.js does the fetching, and
-// test/github-units.js exercises all of this on its own. The token never comes near this file.
+// test/units/github-units.js exercises all of this on its own. The token never comes near this file.
 'use strict';
 
 const MAXES = [5, 10, 20]; // items per list; one search page each, so this is also the paging cap

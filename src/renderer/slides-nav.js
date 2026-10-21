@@ -1,4 +1,4 @@
-// The slide viewer's numbering, kept apart from the page so plain Node can test it (test/slides-nav-units.js).
+// The slide viewer's numbering, kept apart from the page so plain Node can test it (test/units/slides-nav-units.js).
 // Loaded by slides.html before slides.js (window.lumenSlidesNav); also a CommonJS module.
 (function (root) {
   // What the slide-number box holds -> a slide number from 1 to count (out-of-range numbers are clamped), or null when it is not a number.

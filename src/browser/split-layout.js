@@ -1,4 +1,4 @@
-// Split view's pure rules (main.js does the Electron parts; test/split-view-units.js runs this): where the two page views go inside the
+// Split view's pure rules (main.js does the Electron parts; test/units/split-view-units.js runs this): where the two page views go inside the
 // page area, how a divider position becomes a ratio, which side a tab dropped on the page's right edge goes to, and the pair bookkeeping.
 'use strict';
 

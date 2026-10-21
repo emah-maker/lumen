@@ -151,7 +151,7 @@ const run = (bin, args) => new Promise((resolve, reject) => {
 
 // Which programs run from inside `dir` (their exe is in the install folder: an AI assistant's Lumen.exe bridge, a bundled tool), as
 // [{ pid, exe }]. Only the process list is read (Win32_Process.ExecutablePath), never another process's memory; [] when it can't be told.
-// This runs here, in the running Lumen, after a swap failed: the swap helper itself runs no script host (test/units.js).
+// This runs here, in the running Lumen, after a swap failed: the swap helper itself runs no script host (test/units/units.js).
 // (A program that merely has its working directory in the install is not listed; Lumen no longer starts any such program: ai/cli-utils.js.)
 const HOLDERS_SCRIPT = '$d = $env:LUMEN_SWAP_DIR.TrimEnd([char]92) + [char]92; Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { [string]$_.ProcessId + [char]9 + $_.ExecutablePath }';
 async function holders(dir, { platform = process.platform, exec } = {}) {
@@ -706,7 +706,7 @@ function createUpdates(deps) {
     });
   }
 
-  // Tests (test/updates.js, test/updates-units.js) swap in a stand-in updater and stager and pretend
+  // Tests (test/e2e/updates.js, test/units/updates-units.js) swap in a stand-in updater and stager and pretend
   // to be a given kind of install.
   const testHooks = deps.test ? {
     useUpdater: (u) => { clearTimeout(timer); updater = lookOnly(u); wire(u); },

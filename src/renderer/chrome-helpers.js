@@ -1,4 +1,4 @@
-// Small pure helpers for the browser chrome (app.js), kept apart so test/chrome-ux-units.js can load them with require().
+// Small pure helpers for the browser chrome (app.js), kept apart so test/units/chrome-ux-units.js can load them with require().
 (function (root) {
   // An address on this computer itself (localhost, 127.x.x.x, [::1], name.localhost). Browsers treat it as safe to talk to
   // without encryption: nothing crosses a network, so "Not secure" would be a false alarm on a developer's own server.

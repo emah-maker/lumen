@@ -39,4 +39,4 @@ Under a reply that edited a field or an editor, **Undo the AI's edits on this pa
 - A script can do anything; a wipe it does in a way Lumen can't read in advance is caught afterwards.
 - Restoring an editor from its copy brings back the content and formatting, not the editor's own internal state. Prefer the editor's undo or the site's history for a document that matters.
 
-The code is `src/ai/content-guard.js`; tests are `test/content-guard-units.js` and `test/content-guard.js`.
+The code is `src/ai/content-guard.js`; tests are `test/units/content-guard-units.js` and `test/e2e/content-guard.js`.

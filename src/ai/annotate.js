@@ -13,7 +13,7 @@
 // never blocks those); label text is never parsed as markup and colours come from the fixed PALETTE.
 //
 // overlayMain() is a plain function that is also sent to the page as source text, so it must not use anything outside
-// itself. test/annotate-units.js runs it against a fake DOM.
+// itself. test/units/annotate-units.js runs it against a fake DOM.
 
 const MAX_MARKS = 20; // per call
 const MAX_TOTAL = 30; // on the page at once (the oldest go)

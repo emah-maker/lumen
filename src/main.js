@@ -7,7 +7,7 @@ const TEST = require('./test-mode').isTest();
 // Never run from the install folder (the Start-menu shortcut starts us there): a program we start would inherit it and Windows would keep the next update from renaming the folder for as long as it runs (ai/cli-utils.js).
 try { require('./ai/cli-utils').leaveInstallDir(); } catch { /* stays where it is */ }
 if (TEST) require('./test-mode').standInWebStore(); // (an extension test's download server: before the extension library loads and keeps its fetch)
-const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/perf-budget.js)
+const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/e2e/perf-budget.js)
 if (TEST) global.__perf = perf;
 // A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
 // throwaway folder. First, before anything reads userData ("--mcp" is only the stdio bridge and sets its own below).
@@ -214,10 +214,10 @@ app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.p
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
 app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
-if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/tabui.js)
+if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/e2e/tabui.js)
 
 // Playwright's electron.launch adds Chromium switches that turn the component updater off (--disable-component-update, --disable-background-networking), so
-// Widevine never installs or registers in a test run: a music site then reports "no protected audio". A live run that needs real playback (test/live-spotify.js)
+// Widevine never installs or registers in a test run: a music site then reports "no protected audio". A live run that needs real playback (test/e2e/live-spotify.js)
 // asks for them back with LUMEN_TEST_WIDEVINE=1. Tests only; a normal launch never has those switches.
 if (TEST && process.env.LUMEN_TEST_WIDEVINE === '1') for (const sw of ['disable-component-update', 'disable-background-networking']) app.commandLine.removeSwitch(sw);
 
@@ -239,7 +239,7 @@ if (!TEST && (app.isPackaged || process.env.LUMEN_DEV_REAL_PROFILE === '1')) {
 }
 // (A test run, electron.exe from a checkout, takes an ID of its own: it must not share the installed Lumen's taskbar
 // group or the name Windows shows on its notifications.)
-// (The stock electron binary made to look packaged, test/hardening.js, is a test too: its own ID, and no relaunch, which
+// (The stock electron binary made to look packaged, test/e2e/hardening.js, is a test too: its own ID, and no relaunch, which
 // would start electron.exe on a temp entry script the test has already deleted: "Error launching app" on the user's screen.)
 if (app.isPackaged && !instance.isInstalledExe()) app.relaunch = () => {};
 if (process.platform === 'win32') app.setAppUserModelId(TEST || !instance.isInstalledExe() ? `${APP_ID}.test` : APP_ID); // taskbar grouping, notifications
@@ -267,7 +267,7 @@ function isSettingsSender(event) {
 const PRIVILEGED_IPC = /^(settings|openrouter|spotify|cli|import|mcp|automation|claudecode|antigravity|codex|skills|macros|connectors):/;
 // Everything preload.js sends or invokes (the browser UI's own bridge): these answer only the UI's
 // top-level renderer/index.html document, never a page that somehow got into that window or a frame
-// inside it. test/hardening.js checks this list against preload.js.
+// inside it. test/e2e/hardening.js checks this list against preload.js.
 const UI_ONLY_IPC = new Set([
   'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
@@ -2191,7 +2191,7 @@ function paintBackgrounds(rec) {
 }
 // A page kept out of Chromium's background state (setBackgroundThrottling(false): a tab kept ready, features/tab-ready.js, or one a run works in, syncRunTabs)
 // must not be SHOWN in that state: its video layers stay on the last frame they presented (a playing video froze or went black, with the page's clock,
-// captions and controls working; test/video-frames.js). So the page goes back to the normal state just before its view is shown, and is kept out of it
+// captions and controls working; test/e2e/video-frames.js). So the page goes back to the normal state just before its view is shown, and is kept out of it
 // again when the view is hidden. (A tab kept ready is boosted again by the next tab-ready sync, as it already is after any switch.)
 function releaseKeptPage(tab) {
   try { const wc = tab.view.webContents; if (!wc.isDestroyed() && !wc.backgroundThrottling) wc.setBackgroundThrottling(true); } catch { /* gone */ }
@@ -2368,7 +2368,7 @@ const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 // as refreshNewTabs does), and another is made a moment later. Thrown away if the page settings changed.
 let spareNewTab = null; // { view, prefs, ready, at }
 let newTabUsedAt = Date.now(); // when a new tab last took (or asked for) the spare: an unused one is dropped after spare-policy IDLE_MS
-let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure-app-perf.js)
+let spareForTest = Boolean(TEST && process.env.LUMEN_TEST_SPARES); // tests: off unless asked (test/perf-newtab.js, scripts/measure/measure-newtab.js measure it); LUMEN_TEST_SPARES=1 lets the real policy decide (scripts/measure/measure-app-perf.js)
 const sparePolicy = require('./features/spare-policy'); // one spare only, after start-up has settled, dropped when memory is tight
 let spareForced = false; // tests: make one regardless of start-up state
 // One scheduler for the always-on housekeeping timers and one shared memory sample (features/scheduler.js). While every
@@ -2437,7 +2437,7 @@ const spareSoon = () => setTimeout(makeSpareNewTab, 100).unref?.();
 // for someone who uses the chat page (one opened or restored in the last half hour), one at a time, and dropped while memory is tight.
 let spareChat = null; // { view, prefs, locale, committed, at }
 let chatPageUsedAt = 0; // when a chat page was last opened (or found in the restored session)
-let spareChatForTest = false; // tests: off unless asked (test/chat-tab-speed.js)
+let spareChatForTest = false; // tests: off unless asked (test/e2e/chat-tab-speed.js)
 const SPARE_CHAT_IDLE_MS = 30 * 60 * 1000;
 function closeSpareChat() {
   const s = spareChat;
@@ -3433,7 +3433,7 @@ ipcMain.on('tab:down', (event, id) => {
 // Chromium parks a hidden tab's renderer at background priority (and, on Windows 11, in efficiency mode), so the first frame after a pause is slow.
 // The tab under the pointer, and the latest few background tabs, are kept out of that state (setBackgroundThrottling(false)), within limits: see tab-ready.js.
 const tabReady = lazy(() => require('./features/tab-ready'));
-let readyForTest = false; // tests leave it off unless one turns it on (test/tab-ready.js)
+let readyForTest = false; // tests leave it off unless one turns it on (test/e2e/tab-ready.js)
 const readyOn = () => !TEST || readyForTest;
 const readies = new Map(); // window record -> { ctl, hoverId, intent, timer }
 function readyFor(rec) {
@@ -4475,7 +4475,7 @@ function scheduleAiTopics() {
 
 // "Organize Tabs" (tab menu, Tab Groups, and the strip's button) is organizeTabs: the local organizer groups, and with "Use AI to
 // name and group topics" on a model only refines that result in place. It never proposes the groups itself.
-const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/capture-media.js call
+const organizeByTopic = organizeTabs; // the name the test hook (__organizeByTopic) and scripts/measure/capture-media.js call
 // "Merge Similar Groups": groups with alike names (and related tabs) become one. One step of undo.
 function mergeGroups() {
   if (tabGroups.mergeGroups()) sendTabs();
@@ -5244,7 +5244,7 @@ managers.setup();
 // When each site last stored cookies: lets Clear browsing data honour a time range for them.
 const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
-if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/reading-list.js
+if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/e2e/reading-list.js
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
@@ -5728,7 +5728,7 @@ function keepPendingProject(id) {
 // A project can have a real folder; its chats are mirrored there as Markdown files (plain text, NOT encrypted: the project's settings say
 // so), and a folder can be where the AI works (a chat's own pick, else its project's). All file work is async and never on the saving path:
 // a change schedules a write ~2 s after the last one, and the writes run one after another with the main thread free between them.
-// Loaded on first use (a project's folder, a chat's work folder, a mirror write), not at startup (test/perf-budget.js counts startup modules).
+// Loaded on first use (a project's folder, a chat's work folder, a mirror write), not at startup (test/e2e/perf-budget.js counts startup modules).
 let projectFoldersMod = null;
 const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= require('./features/project-folders'))[key] });
 let documentsOverride = null; // TEST only (global.__projectFolders.setDocuments): the Documents folder of a test is never the user's own
@@ -6574,7 +6574,7 @@ ipcMain.handle('tabs:side', async (_e, o) => {
   const p = readSettings();
   return { width: p.sideTabsWidth, collapsed: p.sideTabsCollapsed === true };
 });
-if (TEST) global.__contentBounds = () => ({ ...contentBounds, view: tabs.find((x) => x.id === activeId && alive(x))?.view.getBounds() || null }); // (test/side-tabs.js: where the page area is, and where the front tab's view really is)
+if (TEST) global.__contentBounds = () => ({ ...contentBounds, view: tabs.find((x) => x.id === activeId && alive(x))?.view.getBounds() || null }); // (test/e2e/side-tabs.js: where the page area is, and where the front tab's view really is)
 if (TEST) global.__stripMenu = () => ({ pops: stripMenuPops.slice(), items: stripMenuTemplate().map((i) => ({ label: i.label || '', checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) })) });
 if (TEST) global.__hideAiMenu = () => hideAiMenuTemplate().map((i) => ({ label: i.label || '', type: i.type || 'normal', enabled: i.enabled !== false, checked: Boolean(i.checked), run: () => i.click?.({ checked: !i.checked }) }));
 ipcMain.handle('chats:close-tabs', async (_e, id) => { aiClosingNote(curRec); const r =await aiTabsClose({ chatId: String(id) }); aiCloseNote(r.rec || curRec, r); return r; });
@@ -8036,7 +8036,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: titleBarOverlay() }),
     webPreferences: {
-      preload: path.join(__dirname, 'preload', 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/bundle-preload.js)
+      preload: path.join(__dirname, 'preload', 'preload.bundle.js'), // preload.js with the toolbar element inlined (scripts/build/bundle-preload.js)
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -8901,7 +8901,7 @@ const agent = new Agent({
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
-  homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/files-ai.js)
+  homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
   imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
@@ -8991,7 +8991,7 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
-// Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/usage.js).
+// Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/e2e/usage.js).
 const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
@@ -9255,14 +9255,14 @@ if (TEST) {
   global.__closedTabs = () => closedTabs.slice();
   global.__closedWindows = () => closedWindows.length;
   global.__reopenLastClosed = reopenLastClosed;
-  // The tab strip's right-click menu (test/tabmenu.js): its items as { label, enabled }, and with
+  // The tab strip's right-click menu (test/e2e/tabmenu.js): its items as { label, enabled }, and with
   // `label`, that item clicked.
   global.__tabMenu = (id, label) => {
     const items = (tabMenuTemplate(id) || []).filter((i) => i.label);
     if (label) items.find((i) => i.label === label)?.click();
     return items.map((i) => ({ label: i.label, enabled: i.enabled !== false }));
   };
-  global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/chrome-ux.js: separators and shortcut hints too)
+  global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/e2e/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
   global.__connectors = connectorsFacade;
@@ -9827,7 +9827,7 @@ let gpuHealth = null;
 const sendAllUis = (channel, payload) => { for (const rec of winRecs) if (rcAlive(rec) && !rec.win.webContents.isDestroyed()) rec.win.webContents.send(channel, payload); };
 const earlyGpuLoss = []; // a GPU loss before the module is loaded is replayed to it
 app.on('child-process-gone', (_e, details) => { if (!gpuHealth && details?.type === 'GPU') earlyGpuLoss.push(details); });
-// Loaded a few seconds after the window is up, not at startup (the startup module budget, test/perf-budget.js).
+// Loaded a few seconds after the window is up, not at startup (the startup module budget, test/e2e/perf-budget.js).
 app.whenReady().then(() => setTimeout(() => {
   gpuHealth = require('./features/gpu-health').install({
     app, screen, version: app.getVersion(), log: (m) => console.warn(m),
@@ -10254,7 +10254,7 @@ ipcMain.on('pages:strings', (event) => {
   event.returnValue = event.senderFrame?.url?.toLowerCase().startsWith(RENDERER_PAGES) ? { locale: i18n().locale, strings: i18n().strings } : { locale: 'en', strings: {} };
 });
 ipcMain.handle('settings:strings',() => ({ locale: i18n().locale, strings: i18n().strings }));
-if (TEST) global.__i18n = () => i18n(); // test/a11y.js
+if (TEST) global.__i18n = () => i18n(); // test/e2e/a11y.js
 // "This file was moved or deleted" (features/session-files.js): the page is a tab's own, and the file is the one its address names.
 const missingFileOf = (event) => (event.senderFrame === event.sender.mainFrame ? sessionFiles.missingTarget(event.senderFrame?.url, ERROR_URL) : '');
 ipcMain.on('missingfile:folder', (event) => {

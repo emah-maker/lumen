@@ -12,7 +12,7 @@
 //     there means no dialog control, and handle_dialog says so).
 // Capture starts when a tab is first watched (the AI's first tool call there), so a first get_console / get_network can only
 // show what happened since then, and the output says so.
-// Pure formatting and policy live here too (no Electron needed), so test/page-debug-units.js runs them with fakes.
+// Pure formatting and policy live here too (no Electron needed), so test/units/page-debug-units.js runs them with fakes.
 
 const { IdleTracker } = require('./idle-tracker');
 

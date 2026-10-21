@@ -1,6 +1,6 @@
 // [memory] Settings → AI and agents → Memory: short notes the sidebar AI keeps between chats (what the user told it about
 // themselves, and standing requests), like ChatGPT's memories or Claude Code's auto memory. Electron-free, so
-// test/memory-units.js runs it in plain Node; main.js gives it the keychain (encrypt/decrypt) and the chat store's search.
+// test/units/memory-units.js runs it in plain Node; main.js gives it the keychain (encrypt/decrypt) and the chat store's search.
 //
 // One file in the profile, memory.json, encrypted the same way the chats are (the OS keychain). With no keychain nothing
 // is kept. A file that can't be read (locked, another machine's keys) is never written over: the store goes read-only.

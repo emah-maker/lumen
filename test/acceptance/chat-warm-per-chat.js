@@ -1,4 +1,4 @@
-// ACCEPTANCE (feature: warm-per-chat). Run alone: node scripts/test-acceptance.js chat-warm-per-chat
+// ACCEPTANCE (feature: warm-per-chat). Run alone: node scripts/test/test-acceptance.js chat-warm-per-chat
 //
 // Each tab chat on Claude Code gets an engine of its own (features/warm-chats.js), whose CLI process stays warm between
 // that chat's messages with its own MCP token, also while another chat runs. It is freed when the chat is deleted or its

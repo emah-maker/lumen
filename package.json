@@ -8,18 +8,18 @@
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
     "start": "electron .",
-    "dist": "node scripts/build.js",
-    "test": "node scripts/test-all.js",
-    "test:units": "node scripts/test-units.js",
-    "test:acceptance": "node scripts/test-acceptance.js",
-    "land": "node scripts/land.js",
-    "release": "node scripts/release.js",
+    "dist": "node scripts/build/build.js",
+    "test": "node scripts/test/test-all.js",
+    "test:units": "node scripts/test/test-units.js",
+    "test:acceptance": "node scripts/test/test-acceptance.js",
+    "land": "node scripts/release/land.js",
+    "release": "node scripts/release/release.js",
     "lint": "eslint .",
-    "measure": "node scripts/measure-perf.js",
-    "check:package": "node scripts/check-package.js",
-    "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows.ps1",
-    "dist:win": "node scripts/build.js --win",
-    "dist:mac": "node scripts/build.js --mac"
+    "measure": "node scripts/measure/measure-perf.js",
+    "check:package": "node scripts/build/check-package.js",
+    "install_app": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build/install-windows.ps1",
+    "dist:win": "node scripts/build/build.js --win",
+    "dist:mac": "node scripts/build/build.js --mac"
   },
   "license": "GPL-3.0-or-later",
   "dependencies": {
@@ -145,8 +145,8 @@
     "electronDownload": {
       "mirror": "https://github.com/castlabs/electron-releases/releases/download/"
     },
-    "afterPack": "scripts/after-pack.js",
-    "afterSign": "scripts/after-sign.js",
+    "afterPack": "scripts/release/after-pack.js",
+    "afterSign": "scripts/release/after-sign.js",
     "protocols": [
       {
         "name": "Web page",

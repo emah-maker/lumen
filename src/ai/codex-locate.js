@@ -7,7 +7,7 @@
 // this also reads the machine + user PATH from the registry (Windows) and asks the login shell (macOS/Linux).
 //
 // Everything that touches the machine goes through `seams` (fs, env, exec, registry, shell PATH) so
-// test/codex-units.js can run every install layout without a real Codex.
+// test/units/codex-units.js can run every install layout without a real Codex.
 //
 //   locateCodex(options)         -> { found: true, command, args, env?, path, kind, version, source } | { found: false, ... }
 //   buildInvocation(spec, argv)  -> { file, args, options } to hand to execFile / spawn, never through a shell string

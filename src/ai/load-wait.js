@@ -1,5 +1,5 @@
 // When has a page loaded "enough"? The decision behind navigate's and read_urls' `wait` option, pure so it is unit-testable
-// (test/read-speed-units.js); agent.js loadPage feeds it a probe of the page (document.readyState, visible text length,
+// (test/units/read-speed-units.js); agent.js loadPage feeds it a probe of the page (document.readyState, visible text length,
 // time since the last network resource finished) every ~150 ms.
 //   interactive  the DOM is parsed (dom-ready) AND already shows real text; a page that has not painted any yet
 //                (a JS app shell, a splash) keeps waiting for the full load, so the old behaviour is the fallback

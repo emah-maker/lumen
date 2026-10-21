@@ -19,7 +19,7 @@
 //   A message that is only a link, or "/open <url>", opens a tab (deps.openUrl) instead of starting a task.
 // - [phone files] sendToChat sends a link or a file (sendDocument, at most 50 MB) to the owner's chat. Only the user's own
 //   clicks call it (main.js Send to phone): no AI tool reaches it.
-// Pure apart from deps (fetch is injected: test/telegram-units.js runs it against a fake Bot API).
+// Pure apart from deps (fetch is injected: test/units/telegram-units.js runs it against a fake Bot API).
 const crypto = require('crypto');
 
 const API = 'https://api.telegram.org';
@@ -602,7 +602,7 @@ function create(deps) {
 
   return {
     refresh, shutdown, register, status, setToken, startPairing, cancelPairing, unpair, removeBot, sendToChat, paired,
-    // Test hooks (test/telegram-units.js)
+    // Test hooks (test/units/telegram-units.js)
     pollOnce, handleUpdate, onTaskEvent, settled: () => sendChain, running: () => Boolean(loop), pairCode: () => pair?.code || null,
   };
 }

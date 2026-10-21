@@ -1,4 +1,4 @@
-// Evaluation sessions for Organize (scripts/eval-organize.js): realistic tab sets with the grouping a person
+// Evaluation sessions for Organize (scripts/measure/eval-organize.js): realistic tab sets with the grouping a person
 // would expect. group: the label (null = should stay loose); names: words a good group name contains.
 // Titles and URLs only, the worst case for the local organizer.
 const T = (title, url, group) => ({ title, url, group });
@@ -123,7 +123,7 @@ const sessions = [
   },
 ];
 const more = require("./organize-eval-more");
-// Sessions where tabs show files (PDFs and slides in the viewers, files from disk, web PDFs): scored beside the rest by scripts/eval-organize.js and
-// test/organize-eval-units.js, apart from `sessions` (scripts/eval-organize-ai.js has cached model answers for those only).
+// Sessions where tabs show files (PDFs and slides in the viewers, files from disk, web PDFs): scored beside the rest by scripts/measure/eval-organize.js and
+// test/units/organize-eval-units.js, apart from `sessions` (scripts/measure/eval-organize-ai.js has cached model answers for those only).
 const files = require('./organize-files');
 module.exports = { sessions: [...sessions, ...more.sessions], base: sessions, files: files.sessions };

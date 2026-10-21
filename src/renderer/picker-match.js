@@ -1,4 +1,4 @@
-// Matching for the model picker's search (renderer/picker.js). A plain script in the UI; test/units.js loads it
+// Matching for the model picker's search (renderer/picker.js). A plain script in the UI; test/units/units.js loads it
 // with require().
 //
 // A query word matches a field when it starts at the start of a word there, punctuation ignored on both sides:

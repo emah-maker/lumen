@@ -1,7 +1,7 @@
 // read_page mode "outline": a cheap map of a page to navigate by before a full read: its headings, its links
 // grouped by landmark (main, article, nav, footer, ...), a repeated block (a results list or card grid) and the
 // next-page link. outlineDom walks a DOM (or the DOM-like tree page-markdown.js parses, which is how
-// test/page-reading-units.js runs it on HTML strings) and returns plain data; formatOutline turns that into the
+// test/units/page-reading-units.js runs it on HTML strings) and returns plain data; formatOutline turns that into the
 // text the model reads. outlineDom is self-contained (agent code serializes it into the page, like snapshot.js's
 // extractData): it may only use its own arguments and the standard DOM, nothing from this module.
 

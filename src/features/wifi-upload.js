@@ -13,7 +13,7 @@
 //   nothing). At most 2 GB a file, 8 GB a session, 2 uploads at once; never into the last 1 GB of free disk.
 // - The page has a strict CSP (no outside anything), no-referrer (the key is in the address) and no-store.
 // Plain HTTP: anyone on the same network who can watch its traffic could see the files (Settings and the sheet say to use it
-// on networks you trust). Pure apart from deps: test/wifi-upload-units.js runs it on 127.0.0.1 (allowLoopback).
+// on networks you trust). Pure apart from deps: test/units/wifi-upload-units.js runs it on 127.0.0.1 (allowLoopback).
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');

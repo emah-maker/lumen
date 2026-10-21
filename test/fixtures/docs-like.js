@@ -1,4 +1,4 @@
-// A page that behaves like a Google Doc as far as the `document` tool can tell (test/document-tool.js): an editable body whose caret lives
+// A page that behaves like a Google Doc as far as the `document` tool can tell (test/e2e/document-tool.js): an editable body whose caret lives
 // in the page, the editor's shortcuts (Ctrl+F Find, Ctrl+H Find and replace, Ctrl+Alt+0-6 styles, Ctrl+Shift+Down/Up by paragraph), and
 // an export (/document/d/<id>/export?format=txt|html) that follows the document a moment AFTER an edit, as Docs' saved copy does.
 // Not Google Docs: it only mimics the keyboard and the export, so the tool's logic can be tested offline.
