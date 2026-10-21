@@ -135,11 +135,16 @@ function shortcutsIn(dir) {
 function fixShortcutIcons(app, shell, exists = fs.existsSync, appId = null) {
   if (process.platform !== 'win32' || !app.isPackaged || !isInstalledExe()) return;
   const exe = path.resolve(process.execPath).toLowerCase();
+  const startMenu = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs').toLowerCase();
+  const ownLumenLnk = (f) => { try { return exists(f) && path.resolve(shell.readShortcutLink(f).target || '').toLowerCase() === exe; } catch { return false; } }; // (this install's own Lumen.lnk, not another copy's)
   for (const dir of shortcutDirs(app)) {
     for (const file of shortcutsIn(dir)) {
       try {
         const link = shell.readShortcutLink(file);
         if (path.resolve(link.target || '').toLowerCase() !== exe) continue;
+        // A Start menu "Electron.lnk" to this exe (left by an old build) next to this install's Lumen.lnk is removed, not repaired: with Lumen's app ID it named
+        // Lumen "Electron" in Start and search (Windows picks one shortcut's name per app ID). Only in the user's own Start menu, never a pin or the desktop.
+        if (path.basename(file).toLowerCase() === 'electron.lnk' && path.dirname(file).toLowerCase() === startMenu && ownLumenLnk(path.join(path.dirname(file), 'Lumen.lnk'))) { fs.rmSync(file, { force: true }); continue; }
         const icon = String(link.icon || '').replace(/,s*-?d+$/, '');
         const fix = {};
         if (!(/.ico$/i.test(icon) && exists(icon))) Object.assign(fix, { icon: appIcon(), iconIndex: 0 });

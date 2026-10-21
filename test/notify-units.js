@@ -68,6 +68,16 @@ if (process.platform === 'win32') {
   writes.length = 0;
   fixShortcutIcons({ isPackaged: true, getPath: (n) => (n === 'desktop' ? desktop : dir) }, sweepShell, () => true, appId);
   check('shortcut: the sweep fixes a wrong ID on a shortcut whose icon is fine', writes.some((w) => w.f === path.join(desktop, 'Lumen.lnk') && w.o.appUserModelId === appId && !('icon' in w.o)), JSON.stringify(writes));
+  // a stray Start menu Electron.lnk to this exe (it named Lumen "Electron" in Start): removed when this install's Lumen.lnk is there; on the desktop it is only repaired
+  for (const f of [path.join(programs, 'Electron.lnk'), path.join(programs, 'Lumen.lnk'), path.join(desktop, 'Electron.lnk')]) fs.writeFileSync(f, '');
+  writes.length = 0;
+  fixShortcutIcons({ isPackaged: true, getPath: (n) => (n === 'desktop' ? desktop : dir) }, sweepShell, fs.existsSync, appId);
+  check('shortcut: a stray Electron.lnk in the Start menu is removed when this install’s Lumen.lnk is there, and nothing is written to it', !fs.existsSync(path.join(programs, 'Electron.lnk')) && fs.existsSync(path.join(programs, 'Lumen.lnk')) && !writes.some((w) => /Programs[\\/]Electron\.lnk$/.test(w.f)), JSON.stringify(writes));
+  check('shortcut: an Electron.lnk on the desktop is left (repaired, not removed)', fs.existsSync(path.join(desktop, 'Electron.lnk')));
+  fs.rmSync(path.join(programs, 'Lumen.lnk'));
+  fs.writeFileSync(path.join(programs, 'Electron.lnk'), '');
+  fixShortcutIcons({ isPackaged: true, getPath: (n) => (n === 'desktop' ? desktop : dir) }, sweepShell, fs.existsSync, appId);
+  check('shortcut: without Lumen.lnk the Electron.lnk stays (it is then the only Start menu entry)', fs.existsSync(path.join(programs, 'Electron.lnk')));
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 });
 }
 
