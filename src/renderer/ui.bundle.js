@@ -143,7 +143,10 @@
         const body = s.slice(i + 1, j);
         const mathy = /[_^]/.test(s[i + 1]) || /\\[A-Za-z]/.test(body) || /^[A-Za-z]$/.test(body);
         const next = s[j + 1] || '';
-        return !/\s/.test(s[j - 1]) && next !== '$' && (!/[A-Za-z0-9]/.test(next) || mathy) ? j : -1;
+
+
+        const spacedOk = !/\s/.test(s[j - 1]) || /\\[A-Za-z]/.test(body);
+        return spacedOk && next !== '$' && (!/[A-Za-z0-9]/.test(next) || mathy) ? j : -1;
       }
     }
     return -1;
