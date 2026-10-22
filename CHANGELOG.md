@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **A message after a few stopped replies is answered with what you asked in them.** Asking Claude Code for "7 review packets", stopping it to add "interleave the topics", stopping again to add "use the homeworks on Canvas", then saying "make each one take 1-2 hours" got "I can't tell what each one means": once a stopped reply had shown some text, only that cut-off text went along with the next message, and the asks before it were left to a session that had been interrupted mid-turn and might not hold them. The next message now carries every ask from the stopped exchanges right before it, on Claude Code, Grok Build, Antigravity and Codex.
+- **Closing the AI's tabs no longer closes a window.** "Close them" under a reply, and Close tabs the AI opened, closed each tab the same way Ctrl+W does, so a window holding only the AI's tabs closed along with its last one. That window now stays open with a new tab. Closing a window's last tab yourself still closes the window, as in Chrome.
 
 ## 0.5.65 (2026-10-21)
 

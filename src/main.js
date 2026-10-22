@@ -3929,7 +3929,9 @@ function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
     // Closing a window's last tab (Ctrl+W, its ✕, the tab menu: `closing`, set by requestCloseTab) closes the
     // window, as in Chrome: hidden at once (no frame of an empty strip over the page), then closed. A page that
     // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
-    if (user || tab.closing) {
+    // Nor to "Close them" / Close tabs the AI opened (tab.aiClosing): those close the AI's tabs, not the user's window,
+    // even when they were all the window had. (An agent's own window still goes with its last tab.)
+    if ((user || tab.closing) && !(tab.aiClosing && !user && !curRec?.agent)) {
       const rec = curRec;
       sendTabs();
       try { rec.win.hide(); } catch {}
@@ -3971,7 +3973,7 @@ function aiWorkingTabAfterClose(tab) {
 // closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
 function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
-  if (!alive(tab)) { closeTab(id, { user: true }); return; }
+  if (!alive(tab)) { closeTab(id, { user: !tab?.aiClosing }); return; } // (a sleeping tab closed for the AI is not the user closing their window's last tab)
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.pendingCloseTitle = tab.view.webContents.getTitle() || ''; // [tab chips] (the page is gone by the time closeTab runs)
   tab.pendingCloseHistory = navSnapshot(tab); // (the page is gone by the time closeTab runs)
