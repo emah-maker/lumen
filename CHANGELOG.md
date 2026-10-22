@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Closing the AI's tabs no longer closes a window.** "Close them" under a reply, and Close tabs the AI opened, closed each tab the same way Ctrl+W does, so a window holding only the AI's tabs closed along with its last one. That window now stays open with a new tab. Closing a window's last tab yourself still closes the window, as in Chrome.
+
 ## 0.5.65 (2026-10-21)
 
 - **The AI no longer switches you to other tabs while you are on a tab.** It used to bring the tabs it opened or moved to into view whenever it thought it had something to show, even while you were reading your own tab. Now it keeps working in background tabs and only brings one to the front when your own message asks for it (“go to…”, “switch to…”, “show me…”, “open it for me”). Settings → AI → **Bring tabs the AI opened to the front** still turns that off completely.

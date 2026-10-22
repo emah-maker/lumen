@@ -230,6 +230,20 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   check('...and the reply says what closed, with Undo', Boolean(kRow), await rowText());
   check('...the user\'s own tabs are still open', (await hasUrl('/user')) && (await hasUrl('/mine')), JSON.stringify(await urlsNow()));
 
+  // ---- 9. A second window whose only tab is the AI's (the AI's tab torn off into its own window, say): Close tabs the AI opened leaves
+  // that window open with a new tab, as the AI closing a tab never closes the user's window.
+  const kId = (await marks()).find((y) => y.url.endsWith('/K-1'))?.id;
+  const mainWin = await app.evaluate(() => global.__windows.list().find((w) => w.current)?.windowId ?? global.__windows.list()[0].windowId);
+  await app.evaluate((_e, a) => global.__windows.tearOff(a.w, a.id, { x: 300, y: 300 }), { w: mainWin, id: kId });
+  const lone = await waitFor(() => app.evaluate((_e, w) => global.__windows.list().find((x) => x.windowId !== w && x.tabs.length === 1 && x.tabs[0].url.endsWith('/K-1'))?.windowId, mainWin));
+  const loneTab = await app.evaluate((_e, w) => global.__windows.list().find((x) => x.windowId === w)?.tabs[0].id, lone);
+  check('(set up) the AI\'s tab is alone in a window of its own', Boolean(lone), JSON.stringify(await app.evaluate(() => global.__windows.list().map((w) => w.tabs.length))));
+  await app.evaluate((_e, id) => { const tab = global.__aiTabs.tab(id); tab.userMoved = false; tab.openedBy = { runId: 4242, chatId: null, at: Date.now() }; }, loneTab);
+  const lastClose = await app.evaluate((_e, id) => { global.__tabChats.bindings.unbindTab(id); return global.__aiTabs.close({ runId: 4242 }); }, loneTab); // (the chat it came with lets go of it: a window with no chat of its own)
+  check('(set up) its tab closed', lastClose.closed === 1, JSON.stringify(lastClose));
+  const loneAfter = await waitFor(() => app.evaluate((_e, w) => { const win = global.__windows.list().find((x) => x.windowId === w); return win && win.tabs.length === 1 && win.tabs[0].id !== undefined && win; }, lone), 6000);
+  check('closing the only tab of a window, for the AI, keeps the window open with a new tab', Boolean(loneAfter) && !loneAfter.tabs.some((t) => t.id === loneTab || t.url.endsWith('/K-1')), JSON.stringify({ loneAfter, windows: await app.evaluate(() => global.__windows.list().map((w) => ({ id: w.windowId, n: w.tabs.length }))) }));
+
   check('no script errors in the UI', errors.length === 0, errors.join(' | '));
   await app.close();
   server.close();
