@@ -287,6 +287,28 @@ function fakeClaudeCode({ delay = () => 0, gone = new Set() } = {}) {
     check('no reply: ...and the turns the session answered are not', !p3.includes('q1 hello there') && !p3.includes('cc reply 1'), p3.slice(0, 500));
   }
 
+  // Stop after the CLI said something, add a detail, stop again, ...: the resumed session may hold none of those asks (its
+  // process was interrupted or killed mid-turn), so the message after them carries them, not only the last cut-off reply.
+  for (const said of ['partial words', '']) {
+    const agent = newAgent();
+    const calls = [];
+    agent.engines = { claudecode: { warm() {}, release() {}, async run(opts) {
+      calls.push({ resume: opts.resume, prompt: opts.prompt });
+      for (let i = 0; i < 200 && !opts.signal.aborted; i++) await sleep(5);
+      return opts.signal.aborted ? { text: said, sessionId: opts.sessionId, stopped: true } : { text: 'answer', sessionId: opts.sessionId };
+    } } };
+    const m = chat('claudecode:sonnet');
+    const asks = ['create 7 review packets for mech of mats', 'i mean interleave the topics', 'go on canvas and download all the homeworks'];
+    for (const text of asks) { const p = run(agent, m, text); await sleep(40); agent.stop(); await p; }
+    await run(agent, m, 'try to make each one take 1-2 hours');
+    const last = calls[calls.length - 1].prompt;
+    const kind = said ? 'with partial replies' : 'before any reply';
+    check(`stopped ${kind}: the next message carries every stopped ask`, asks.every((a) => last.split(a).length === 2), last.slice(0, 800));
+    check(`stopped ${kind}: ...before the new message`, asks.every((a) => last.indexOf(a) < last.indexOf('try to make each one')), last.slice(0, 800));
+    await run(agent, m, 'thanks');
+    check(`stopped ${kind}: once answered, they are not repeated`, !asks.some((a) => calls[calls.length - 1].prompt.includes(a)), calls[calls.length - 1].prompt.slice(0, 300));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
