@@ -7441,12 +7441,24 @@ const INTERRUPTED = '\n\n[This reply was interrupted.]';
 const interrupted = (text) => `${text.trimEnd()}${INTERRUPTED}`;
 // After Stop or Send now cut a CLI reply off, a resumed session may not hold what it said (its process was ended
 // mid-stream), so the next message carries it: the model then knows what the user saw before writing this.
+// Nor may it hold what the user asked in that stopped exchange, or in the stopped ones right before it (stop, add a
+// detail, stop again, ...): those asks ride along too, else the message after them is answered with no idea what
+// "each one" or "these" are.
+const interruptedText = (m) => {
+  const text = m?.role === 'assistant' && Array.isArray(m.content) ? m.content.find((b) => b.type === 'text')?.text : '';
+  return text && text.endsWith(INTERRUPTED) ? text : '';
+};
+const INTERRUPTED_ASKS_CHARS = 12000;
 function interruptedNote(messages) {
-  const prev = messages[messages.length - 2];
-  const text = prev?.role === 'assistant' && Array.isArray(prev.content) ? prev.content.find((b) => b.type === 'text')?.text : '';
-  if (!text || !text.endsWith(INTERRUPTED)) return '';
+  const text = interruptedText(messages[messages.length - 2]);
+  if (!text) return '';
   const said = text.slice(0, -INTERRUPTED.length).trim().slice(-4000);
-  return `<interrupted_reply>\nThe user stopped your previous reply partway and sent the message below instead. What you had said so far:\n${said}\n</interrupted_reply>\n\n`;
+  let start = messages.length - 3;
+  while (start >= 2 && messages[start]?.role === 'user' && interruptedText(messages[start - 1])) start -= 2;
+  const items = messages[start]?.role === 'user' ? transcriptFor(messages.slice(start, -2), null) : [];
+  const asks = items.some((it) => it.role === 'user') ? handoffTurns(items.map((it) => (it.role === 'user' ? it : { ...it, by: 'You (stopped partway)', text: it.text.replace(INTERRUPTED, '') })), INTERRUPTED_ASKS_CHARS) : '';
+  const before = asks ? `What the user asked in the stopped exchange${items.filter((it) => it.role === 'user').length > 1 ? 's' : ''} (your session may not have it; answer the message below with it in mind):\n${asks}\n\n` : '';
+  return `<interrupted_reply>\nThe user stopped your previous reply partway and sent the message below instead. ${before}What you had said so far:\n${said}\n</interrupted_reply>\n\n`;
 }
 // A CLI engine's reply as the history keeps it: one cut off by Stop (or Send now) carries the same marker.
 const cliReplyText = (out) => (out.stopped ? interrupted(out.text) : out.text);

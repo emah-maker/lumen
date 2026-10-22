@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A message after a few stopped replies is answered with what you asked in them.** Asking Claude Code for "7 review packets", stopping it to add "interleave the topics", stopping again to add "use the homeworks on Canvas", then saying "make each one take 1-2 hours" got "I can't tell what each one means": once a stopped reply had shown some text, only that cut-off text went along with the next message, and the asks before it were left to a session that had been interrupted mid-turn and might not hold them. The next message now carries every ask from the stopped exchanges right before it, on Claude Code, Grok Build, Antigravity and Codex.
+
 ## 0.5.65 (2026-10-21)
 
 - **The AI no longer switches you to other tabs while you are on a tab.** It used to bring the tabs it opened or moved to into view whenever it thought it had something to show, even while you were reading your own tab. Now it keeps working in background tabs and only brings one to the front when your own message asks for it (“go to…”, “switch to…”, “show me…”, “open it for me”). Settings → AI → **Bring tabs the AI opened to the front** still turns that off completely.
