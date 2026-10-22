@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Tab finishes what you're typing in the chat box.** Pause while typing a message and a faster, cheaper model (Claude Haiku, GPT mini or Gemini Flash, from the API key you use) guesses how it goes on, using the last few messages of the chat, and shows the rest in grey. Tab takes it, Ctrl+Right (Option+Right on a Mac) takes one word, and typing the same letters keeps the rest. Any other key, Esc or a click drops it, and Tab works as before when nothing is shown. There is no guess while the "/" or "@" menus are open or for a "/" command. Claude Code and the other command-line AIs are never started for it: a chat on one uses a connected API model, or shows no guess. The tokens show under Usage, not in the chat's totals. Turn it off in Settings → AI → **Tab to finish what I'm typing**.
+
 ## 0.5.65 (2026-10-21)
 
 - **The AI no longer switches you to other tabs while you are on a tab.** It used to bring the tabs it opened or moved to into view whenever it thought it had something to show, even while you were reading your own tab. Now it keeps working in background tabs and only brings one to the front when your own message asks for it (“go to…”, “switch to…”, “show me…”, “open it for me”). Settings → AI → **Bring tabs the AI opened to the front** still turns that off completely.

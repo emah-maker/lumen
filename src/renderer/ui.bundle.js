@@ -14742,6 +14742,168 @@ $('agent-stop')?.addEventListener('click', () => {
   });
 })();
 ;
+// ---- chat-autocomplete.js
+
+
+
+
+
+
+
+(function (root) {
+  const DELAY_MS = 450;
+  const CACHE = 40;
+
+
+  function createCore({ request, cancel = () => {}, render = () => {}, delayMs = DELAY_MS, timers = { set: setTimeout, clear: clearTimeout }, wants = () => true }) {
+    let ghost = '';
+    let base = null;
+    let timer = null;
+    let seq = 0;
+    const cache = new Map();
+    const show = (text) => { if (text !== ghost) { ghost = text; render(ghost); } };
+    const drop = () => { timers.clear(timer); timer = null; if (seq) { seq++; cancel(); } base = null; show(''); };
+    const remember = (prefix, text) => { cache.delete(prefix); cache.set(prefix, text); while (cache.size > CACHE) cache.delete(cache.keys().next().value); };
+    function ask(value) {
+      const mine = ++seq;
+      return Promise.resolve(request(value)).then((r) => {
+        if (mine !== seq) return;
+        seq = 0;
+        const text = r?.ok ? String(r.text || '') : '';
+        remember(value, text);
+        if (text) { base = value; show(text); }
+      }, () => { if (mine === seq) seq = 0; });
+    }
+    return {
+      get ghost() { return ghost; },
+      get base() { return base; },
+
+      input(value, { atEnd = true, blocked = false } = {}) {
+
+        if (ghost && base != null && atEnd && !blocked && value.length > base.length && value.startsWith(base) && ghost.startsWith(value.slice(base.length))) {
+          const rest = ghost.slice(value.length - base.length);
+          timers.clear(timer); timer = null;
+          base = value;
+          if (rest) { show(rest); return; }
+        }
+        drop();
+        if (blocked || !atEnd || !wants(value)) return;
+        if (cache.has(value)) { const text = cache.get(value); if (text) { base = value; show(text); } return; }
+        timer = timers.set(() => { timer = null; ask(value); }, delayMs);
+      },
+
+      accept() {
+        if (!ghost) return null;
+        const text = ghost;
+        drop();
+        return text;
+      },
+
+      acceptWord() {
+        if (!ghost || base == null) return null;
+        const word = /^\s*\S+/.exec(ghost)?.[0] || ghost;
+        const rest = ghost.slice(word.length);
+        base += word;
+        show(rest);
+        if (!rest) base = null;
+        return word;
+      },
+      dismiss: drop,
+      reset() { cache.clear(); drop(); },
+    };
+  }
+
+  const api = { createCore, DELAY_MS };
+  if (typeof module === 'object' && module.exports) { module.exports = api; return; }
+  root.chatAutocomplete = api;
+
+
+  const prompt = document.getElementById('prompt');
+  const assistant = window.assistant;
+  if (!prompt || !assistant || typeof assistant.autocomplete !== 'function') return;
+  const shownMenu = () => [...document.querySelectorAll('#tabs-picker, .slash-menu, #slash-menu')].some((el) => !el.hidden && el.offsetParent !== null);
+  const atEnd = () => prompt.selectionStart === prompt.value.length && prompt.selectionEnd === prompt.value.length;
+
+
+  const layer = document.createElement('div');
+  layer.className = 'autocomplete-layer';
+  layer.setAttribute('aria-hidden', 'true');
+  const typed = document.createElement('span');
+  typed.className = 'autocomplete-typed';
+  const ghostEl = document.createElement('span');
+  ghostEl.className = 'autocomplete-ghost';
+  const hint = document.createElement('span');
+  hint.className = 'autocomplete-hint';
+  hint.textContent = 'Tab';
+  layer.append(typed, ghostEl, hint);
+  prompt.insertAdjacentElement('afterend', layer);
+  const COPIED = ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform', 'tabSize',
+    'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'boxSizing', 'direction'];
+  function place() {
+    const cs = getComputedStyle(prompt);
+    for (const k of COPIED) layer.style[k] = cs[k];
+    layer.style.left = `${prompt.offsetLeft}px`;
+    layer.style.top = `${prompt.offsetTop}px`;
+    layer.style.width = `${prompt.offsetWidth}px`;
+    layer.style.height = `${prompt.offsetHeight}px`;
+    layer.scrollTop = prompt.scrollTop;
+  }
+  function render(ghost) {
+    if (!ghost) { layer.hidden = true; ghostEl.textContent = ''; return; }
+    typed.textContent = prompt.value;
+    ghostEl.textContent = ghost;
+    layer.hidden = false;
+    place();
+  }
+  layer.hidden = true;
+
+  const core = createCore({
+    request: (prefix) => assistant.autocomplete(prefix),
+    cancel: () => { try { assistant.autocompleteCancel?.(); } catch {} },
+    render,
+    wants: (value) => value.replace(/\s/g, '').length >= 3 && !/^\s*\//.test(value),
+  });
+  root.chatAutocomplete.core = core;
+
+  let inserting = false;
+  const insert = (text) => {
+    inserting = true;
+    try {
+      prompt.setRangeText(text, prompt.value.length, prompt.value.length, 'end');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    } finally { inserting = false; }
+    if (core.ghost) render(core.ghost);
+  };
+  prompt.addEventListener('input', (e) => {
+    if (inserting) return;
+    if (e.isComposing) { core.dismiss(); return; }
+    core.input(prompt.value, { atEnd: atEnd(), blocked: shownMenu() });
+  });
+  prompt.addEventListener('keydown', (e) => {
+    if (!core.ghost || e.isComposing) return;
+    if (shownMenu()) { core.dismiss(); return; }
+    const wordKey = e.key === 'ArrowRight' && (navigator.platform.startsWith('Mac') ? e.altKey : e.ctrlKey) && !e.shiftKey;
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && atEnd()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const text = core.accept();
+      if (text) insert(text);
+    } else if (wordKey && atEnd()) {
+      e.preventDefault();
+      const word = core.acceptWord();
+      if (word) insert(word);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      core.dismiss();
+    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Enter'].includes(e.key)) core.dismiss();
+  });
+  prompt.addEventListener('scroll', () => { if (core.ghost) layer.scrollTop = prompt.scrollTop; }, { passive: true });
+  for (const type of ['blur', 'mousedown', 'cut', 'paste', 'drop']) prompt.addEventListener(type, () => core.dismiss());
+  document.getElementById('composer')?.addEventListener('submit', () => core.dismiss(), { capture: true });
+  window.addEventListener('resize', () => { if (core.ghost) place(); }, { passive: true });
+})(this);
+;
 // ---- ../ai/plan-mode.js
 
 

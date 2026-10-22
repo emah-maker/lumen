@@ -277,7 +277,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -11036,6 +11036,30 @@ ipcMain.handle('agent:btw', async (event, id, text) => {
   }
 });
 ipcMain.on('agent:btw-cancel', (event, id) => { btwRuns.get(`${event.sender.id}:${id}`)?.abort(); });
+// [autocomplete] Tab to finish the message being typed: a guess at the rest of `prefix` from the open chat (agent.js autocomplete). One guess per
+// view at a time: a newer one (or agent:autocomplete-cancel) stops the one before. Off in Settings > AI, with the AI off, or on a site the AI is kept off.
+const autocompleteRuns = new Map(); // sender id -> AbortController
+ipcMain.handle('agent:autocomplete', async (event, prefix) => {
+  if (typeof prefix !== 'string' || readSettings().chatAutocomplete === false) return { ok: false, error: 'off', text: '' };
+  autocompleteRuns.get(event.sender.id)?.abort();
+  const ctrl = new AbortController();
+  autocompleteRuns.set(event.sender.id, ctrl);
+  // (read-only: the sender's chat and tab are read without taking the open chat from another window)
+  const { messages, tab } = readForSender(event, () => {
+    const at = agentActiveTab();
+    const url = at?.webContents && !at.webContents.isDestroyed?.() ? at.webContents.getURL() : '';
+    return { messages: agent.messages, tab: at && url && !aiSites.isOff(url) ? { title: at.webContents.getTitle() } : null };
+  });
+  try {
+    const r = await agent.autocomplete({ messages, tab, prefix, signal: ctrl.signal });
+    return { ok: r.ok, text: r.text || '', error: r.error };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200), text: '' };
+  } finally {
+    if (autocompleteRuns.get(event.sender.id) === ctrl) autocompleteRuns.delete(event.sender.id);
+  }
+});
+ipcMain.on('agent:autocomplete-cancel', (event) => { autocompleteRuns.get(event.sender.id)?.abort(); });
 // New chat; `temporary`: one that is never saved (chats:temporary).
 function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);

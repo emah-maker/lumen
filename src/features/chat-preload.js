@@ -38,6 +38,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task
     btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
     onBtw: on('agent:btw-event'),
+    autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''), // [autocomplete] (as the sidebar's)
+    autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
     // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
     images: {
       data: (id) => ipcRenderer.invoke('images:data', id),
