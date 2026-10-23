@@ -2,11 +2,15 @@
 // the user will finish what they typed, given the last few turns of the chat. The guess shows as grey text after the caret
 // (renderer/chat-autocomplete.js) and Tab takes it. It never touches the chat: no message, no step, no usage in the chat's totals
 // (the tokens go to the app's usage log only).
-// Which model guesses: the same choice as /btw (btw.js plan): the chat's provider on its cheaper sibling (Claude Haiku, GPT mini, Gemini
-// Flash), or, for a chat on an engine (Claude Code, Grok Build, ...), a connected API model. With no API model connected there is no guess:
-// an engine's one-shot would start the CLI with its tools and session for every pause in typing.
+// Which model guesses (plan below): only the provider the chat itself uses, on its cheaper sibling (Claude Haiku, GPT mini, Gemini Flash).
+// What is typed is never sent to a company the user did not pick for that chat. A chat on an engine (Claude Code, Grok Build, Codex,
+// Antigravity) has no API of its own, so there is no guess, unless the API key of the engine's own vendor is connected (Claude Code and an
+// Anthropic key): an engine's one-shot would start the CLI with its tools and session for every pause in typing. A chat on 'auto' is
+// resolved to the real model by the caller first (agent.js autocomplete); 'auto' itself is never sent to a provider.
 // Electron-free (the model call is injected), so test/units/autocomplete-units.js covers it in plain Node.
-const btw = require('./btw');
+const { helperModel } = require('./subagents');
+const fallback = require('./fallback');
+const autoModel = require('./auto-model');
 
 const PREFIX_CHARS = 2000; // what was typed, at most (its end: that is where the guess goes)
 const MIN_PREFIX = 3; // fewer non-space characters than this: no guess
@@ -29,6 +33,21 @@ function wants(prefix) {
   if (/^\s*\//.test(text)) return false; // a slash command: its own menu completes it
   if (text.length > PREFIX_CHARS * 4) return false;
   return true;
+}
+
+// Which model guesses. `chatModel`: the chat's concrete model id ('' when unknown or unresolved); `options`: the connected models.
+// Returns { model (the cheaper sibling), own (the model it is a sibling of), engine } or null: no request at all.
+function plan({ chatModel, options = [], mode = 'auto' }) {
+  const chat = String(chatModel || '');
+  if (!chat || autoModel.isAuto(chat)) return null;
+  if (!fallback.isEngine(chat)) return { model: helperModel(chat, mode), own: chat, engine: null };
+  const apiOption = (o) => o?.id && !o.more && !String(o.id).endsWith(':__more') && !fallback.isEngine(o.id) && o.signedIn !== false && !(o.badges || []).includes('sign in');
+  const list = (options || []).filter(apiOption);
+  for (const vendor of fallback.relatedOf(fallback.providerOf(chat))) {
+    const own = list.find((o) => fallback.providerOf(o.id) === vendor)?.id;
+    if (own) return { model: helperModel(own, mode), own, engine: chat };
+  }
+  return null;
 }
 
 function buildMessages({ transcript = '', prefix, tab = null }) {
@@ -71,10 +90,10 @@ function clean(raw, prefix) {
 
 // One guess. `call(model, { system, messages, signal, maxTokens })` -> an Anthropic-shaped message { content, usage }.
 // `onUsage(message, model)`: told about the call that answered. Never throws: { ok, text, model?, error? }.
-async function run({ chatModel, defaultModel, options, mode, transcript, tab, prefix, call, onUsage = () => {}, signal, timeMs = TIME_MS }) {
+async function run({ chatModel, options, mode, transcript, tab, prefix, call, onUsage = () => {}, signal, timeMs = TIME_MS }) {
   if (!wants(prefix)) return { ok: false, error: 'short', text: '' };
-  const picked = btw.plan({ chatModel, defaultModel, options, mode });
-  if (!picked) return { ok: false, error: 'no-provider', text: '' };
+  const picked = plan({ chatModel, options, mode });
+  if (!picked || autoModel.isAuto(picked.model)) return { ok: false, error: 'no-provider', text: '' };
   if (signal?.aborted) return { ok: false, error: 'stopped', text: '' };
   const ctrl = new AbortController();
   const outer = () => ctrl.abort();
@@ -106,4 +125,4 @@ async function run({ chatModel, defaultModel, options, mode, transcript, tab, pr
   }
 }
 
-module.exports = { SYSTEM, PREFIX_CHARS, MIN_PREFIX, MAX_TOKENS, MAX_CHARS, TIME_MS, wants, buildMessages, clean, run };
+module.exports = { SYSTEM, PREFIX_CHARS, MIN_PREFIX, MAX_TOKENS, MAX_CHARS, TIME_MS, wants, plan, buildMessages, clean, run };

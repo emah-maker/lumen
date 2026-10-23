@@ -505,7 +505,7 @@ async function snapshotRuns() {
   let lines = ['# Shop', '[1] button "Add"'];
   let url = 'https://a.test/';
   const wc = { id: 901, isDestroyed: () => false, getURL: () => url };
-  const agent = { requireTab: () => wc, browser: { aiOff: () => false }, allowStep: async () => {}, execute: async () => { lines = ['# Shop', '[1] button "Add"', 'Cart: 1 item']; return 'Clicked element 1.'; } };
+  const agent = { requireTab: () => wc, browser: { aiOff: () => false }, allowStep: async () => {}, stopCheck: () => {}, signalAborted: () => false, execute: async () => { lines = ['# Shop', '[1] button "Add"', 'Cart: 1 item']; return 'Clicked element 1.'; } };
   const scriptsSeen = [];
   const h = (dedupe) => ({ scripts: { readPage: () => '' }, dedupe: () => dedupe, runScript: async (_wc, s) => { scriptsSeen.push(s); return { lines: [...lines], totalLines: lines.length, elements: 1, startLine: 0, clipped: false }; } });
   const a = await snap.execute(agent, 'read_page', { mode: 'compact' }, h(true));

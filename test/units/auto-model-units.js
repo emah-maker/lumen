@@ -82,7 +82,19 @@ check('a provider cooling down takes all its models out', (() => {
   cd.mark('claudecode:sonnet', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 600e3 });
   return !r(q, { cooldowns: cd }).id.startsWith('claudecode:') && !r({ prompt: heavyBrief }, { cooldowns: cd }).id.startsWith('claudecode:');
 })());
-check('everything cooling: no model, said plainly', (() => { const cd = fallback.createCooldowns(); cd.mark('claude-haiku-5-5', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 1e6 }); const x = r(q, { options: claude, cooldowns: cd }); return x.id === null && /no model/.test(x.reason); })());
+check('nothing connected: no model, said plainly', (() => { const cd = fallback.createCooldowns(); const x = r(q, { options: [], cooldowns: cd }); return x.id === null && /no model/.test(x.reason); })());
+check('everything cooling: Auto uses the model whose cooldown ends soonest, not an error', (() => {
+  const cd = fallback.createCooldowns();
+  cd.mark('claude-haiku-5-5', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 1e6 });
+  const one = r(q, { options: claude, cooldowns: cd });
+  const two = fallback.createCooldowns();
+  const now = Date.now();
+  two.mark('claude-sonnet-5', { kind: 'limit', scope: 'provider', resetsAt: now + 3600e3 });
+  two.mark('openai:gpt-5.6', { kind: 'limit', scope: 'provider', resetsAt: now + 600e3 });
+  const pair = r(q, { options: [...claude, ...openai], cooldowns: two, at: now });
+  return /^claude-/.test(one.id || '') && pair.id?.startsWith('openai:') && pair.candidates.every((id) => id.startsWith('openai:'));
+})());
+check('everything cooling, a provider-scoped Auto: still no model (the fallback hands the turn to another provider)', (() => { const cd = fallback.createCooldowns(); cd.mark('claude-haiku-5-5', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 1e6 }); return r(q, { options: [...claude, ...openai], cooldowns: cd, scope: 'claude' }).id === null; })());
 check('CLI engines left out when another chat is running', !r(q, { allowEngines: false }).id.startsWith('claudecode:') && !r({ prompt: heavyBrief }, { allowEngines: false }).id.startsWith('claudecode:'));
 check('scope keeps Auto inside one provider', r(q, { scope: 'openai' }).id === 'openai:gpt-5.6-mini' && r({ prompt: heavyBrief }, { scope: 'claudecode' }).id === 'claudecode:opus');
 

@@ -2835,7 +2835,7 @@
   "settings.ai.sidebarNewChat": "Sidebar button starts a new chat",
   "settings.ai.sidebarNewChatDesc": "Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.",
   "settings.ai.autocomplete": "Tab to finish what I’m typing",
-  "settings.ai.autocompleteDesc": "As you type in the chat box, a faster, cheaper model guesses how your message goes on and shows it in grey. Press Tab to take it, or Ctrl+Right (Option+Right on a Mac) for one word; keep typing to ignore it. It reads the last few messages of the chat. Needs an API key model (Claude Code and the other command-line AIs are not used for it); its tokens show under Usage.",
+  "settings.ai.autocompleteDesc": "As you type in the chat box, a faster, cheaper model guesses how your message goes on and shows it in grey. Press Tab to take it, or Ctrl+Right (Option+Right on a Mac) for one word; keep typing to ignore it. While you type, your draft, the last few messages of the chat and the tab title go to the AI company of this chat, and only to it. Needs an API key: a chat on Claude Code or another command-line AI gets no suggestion unless a key from the same company is saved. Turn this off and nothing is sent while you type. Its tokens show under Usage.",
   "settings.ai.oneChatPerTab": "One chat per tab",
   "settings.ai.oneChatPerTabDesc": "Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.",
   "offers.title": "New in Lumen: want to turn these on?",

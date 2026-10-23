@@ -8914,6 +8914,7 @@ const agent = new Agent({
   codexFullAccess: () => readSettings().codexFullAccess === true, // [full access] ai/codex.js FULL_ON
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
+  chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings > AI > Tab to finish what I'm typing (agent.js autocomplete)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
   memory: { // [memory] Settings → AI and agents → Memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,

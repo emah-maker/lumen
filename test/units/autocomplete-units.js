@@ -1,6 +1,8 @@
 // [autocomplete] Tab to finish the message being typed, plain Node (no Electron, no network): the guess's prompt and cleanup
 // (ai/autocomplete.js), which model makes it, and the chat box's core (renderer/chat-autocomplete.js createCore): the pause before
 // asking, a newer prefix stopping the older guess, typing through a guess, Tab / Ctrl+Right taking it, and what drops it.
+const fs = require('fs');
+const path = require('path');
 const lib = require('../../src/ai/autocomplete');
 const { createCore } = require('../../src/renderer/chat-autocomplete');
 
@@ -67,6 +69,110 @@ for (const [label, raw, prefix, want] of cases) check(`clean: ${label}`, lib.cle
     ctrl.abort();
     const stopped = await p;
     check('run: a newer keystroke stops it', !stopped.ok && stopped.error === 'stopped', J(stopped));
+  }
+
+  // ---- privacy: what is typed only goes to the provider the chat itself uses (#744, #746 follow-up)
+  {
+    const seen = [];
+    const call = async (model) => { seen.push(model); return { content: [{ type: 'text', text: ' more' }] }; };
+    const KEYS = [{ id: 'openai:gpt-5.6' }, { id: 'xai:grok-4' }];
+    for (const engine of ['claudecode:default', 'codex:default', 'grokbuild:default', 'antigravity:default']) {
+      const r = await lib.run({ chatModel: engine, options: [], prefix: 'make each one', call });
+      check(`privacy: a ${engine} chat with no key of its own vendor makes no request`, !r.ok && r.error === 'no-provider' && seen.length === 0, J(r));
+    }
+    // (other vendors' keys are connected, but the chat is Claude Code's: nothing goes to OpenAI or xAI)
+    const other = await lib.run({ chatModel: 'claudecode:default', options: KEYS, prefix: 'make each one', call });
+    check('privacy: a Claude Code chat never sends to another company\'s API, even when its key is connected', !other.ok && seen.length === 0, J({ other, seen }));
+    const codexOther = await lib.run({ chatModel: 'codex:default', options: [{ id: 'claude-sonnet-5-5' }, { id: 'xai:grok-4' }], prefix: 'make each one', call });
+    check('privacy: a Codex chat with no OpenAI key makes no request', !codexOther.ok && seen.length === 0, J(codexOther));
+    const same = await lib.run({ chatModel: 'codex:default', options: [{ id: 'claude-sonnet-5-5' }, { id: 'openai:gpt-5.6' }], prefix: 'make each one', call });
+    check('privacy: a Codex chat with an OpenAI key uses OpenAI (same vendor), on the mini', same.ok && J(seen) === J(['openai:gpt-5.6-mini']), J(seen));
+    seen.length = 0;
+    const anth = await lib.run({ chatModel: 'claudecode:sonnet', options: [{ id: 'claude-opus-5-5' }, { id: 'openai:gpt-5.6' }], prefix: 'make each one', call });
+    check('privacy: a Claude Code chat with an Anthropic key uses Anthropic only', anth.ok && J(seen) === J(['claude-haiku-5-5']), J(seen));
+    seen.length = 0;
+    const own = await lib.run({ chatModel: 'xai:grok-4', options: KEYS, prefix: 'make each one', call });
+    check('privacy: an API chat stays on its own provider', own.ok && J(seen) === J(['xai:grok-4']), J(seen));
+    seen.length = 0;
+    // (the engine row and the "More models" row are not API keys)
+    const rows = await lib.run({ chatModel: 'claudecode:default', options: [{ id: 'openrouter:__more' }, { id: 'claudecode:default' }], prefix: 'make each one', call });
+    check('privacy: engine and "more models" rows are not an API to send to', !rows.ok && seen.length === 0, J(rows));
+  }
+
+  // ---- 'auto' is never sent as a model
+  {
+    const seen = [];
+    const call = async (model) => { seen.push(model); return { content: [{ type: 'text', text: ' more' }] }; };
+    for (const chatModel of ['auto', 'openai:auto', 'claudecode:auto', '']) {
+      const r = await lib.run({ chatModel, options: [{ id: 'claude-opus-5-5' }], prefix: 'make each one', call });
+      check(`auto: an unresolved ${J(chatModel)} makes no request`, !r.ok && r.error === 'no-provider' && seen.length === 0, J(r));
+    }
+    check('auto: plan never returns auto', lib.plan({ chatModel: 'auto' }) === null && lib.plan({ chatModel: 'openai:auto' }) === null);
+    const btw = require('../../src/ai/btw');
+    const bp = btw.plan({ chatModel: 'auto', defaultModel: 'auto', options: [{ id: 'openai:gpt-5.6' }] });
+    check('auto: /btw does not send auto either (it takes a connected API model, or none)', bp?.model === 'openai:gpt-5.6-mini' && btw.plan({ chatModel: 'auto', defaultModel: 'auto', options: [] }) === null, J(bp));
+  }
+
+  // ---- agent.autocomplete: 'auto' resolved by Auto's own router, the setting, and the real request
+  {
+    const providers = require('../../src/ai/providers');
+    const { Agent } = require('../../src/ai/agent');
+    const OPTIONS = [{ id: 'claude-opus-5-5', label: 'Opus' }, { id: 'openai:gpt-5.6', label: 'GPT' }, { id: 'claudecode:default', label: 'Claude Code' }];
+    const sent = [];
+    const client = { messages: { create: async (params) => { sent.push(params.model); return { content: [{ type: 'text', text: ' like 1-2 hours' }], usage: { input_tokens: 5, output_tokens: 3 } }; } } };
+    const routes = [];
+    const make = ({ model = 'auto', route, on = true, options = OPTIONS, getKey = () => 'sk-test' } = {}) => {
+      const browser = { fallbackOptions: () => options, effectiveModel: (x) => x, ...(route ? { autoRoute: (a) => { routes.push(a); return route(a); } } : {}), ...(on === 'unset' ? {} : { chatAutocomplete: () => on }) };
+      const agent = new Agent(browser, () => client, () => ({ model }), getKey);
+      const chat = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+      chat.settings = { model: 'auto' };
+      return { agent, chat };
+    };
+    const ask = ({ agent, chat }) => agent.autocomplete({ messages: chat, prefix: 'make each one take' });
+    let m = make({ route: () => ({ id: 'claude-sonnet-5-5' }) });
+    let r = await ask(m);
+    check('agent: a chat on auto asks Auto\'s router for a quick job, with the chat\'s scope', r.ok && routes.length === 1 && routes[0].request.kind === 'quick' && routes[0].scope === null, J(routes));
+    check('agent: ...and sends the real model (the cheap sibling), never auto', J(sent) === J(['claude-haiku-5-5']) && r.model === 'claude-haiku-5-5', J({ sent, r }));
+    sent.length = 0; routes.length = 0;
+    m = make({ route: () => ({ id: null, reason: 'Auto: no model is available right now' }) });
+    r = await ask(m);
+    check('agent: auto with nothing to resolve to makes no request', !r.ok && r.error === 'no-provider' && sent.length === 0, J({ r, sent }));
+    m = make({ route: () => ({ id: 'claudecode:sonnet' }), options: [OPTIONS[1], OPTIONS[2]] });
+    r = await ask(m);
+    check('agent: auto that lands on a CLI engine makes no request without that vendor\'s key', !r.ok && sent.length === 0, J({ r, sent }));
+    m = make({ model: 'openai:auto', route: (a) => ({ id: a.scope === 'openai' ? 'openai:gpt-5.6' : null }) });
+    m.chat.settings = { model: 'openai:auto' };
+    const realStream = providers.streamTurn;
+    const viaProviders = [];
+    providers.streamTurn = async (a) => { viaProviders.push(a.model); return { content: [{ type: 'text', text: ' more' }], usage: { prompt_tokens: 3, completion_tokens: 1 } }; };
+    try { r = await ask(m); } finally { providers.streamTurn = realStream; }
+    check('agent: a provider\'s own Auto resolves inside that provider', r.ok && J(viaProviders) === J(['gpt-5.6-mini']) && sent.length === 0, J({ r, viaProviders }));
+    m = make({ route: () => { throw new Error('boom'); } });
+    r = await ask(m);
+    check('agent: a router that throws makes no request', !r.ok && sent.length === 0, J({ r, sent }));
+    // no pick in the chat: the user's default (on auto here) is resolved the same way
+    m = make({ model: 'auto', route: () => ({ id: 'claude-opus-5-5' }) });
+    m.chat.settings = {};
+    r = await ask(m);
+    check('agent: no model saved in the chat falls back to the default, resolved too', r.ok && sent.at(-1) === 'claude-haiku-5-5', J(sent));
+    sent.length = 0;
+    // a concrete chat model never asks the router
+    routes.length = 0;
+    m = make({ model: 'claude-opus-5-5', route: () => ({ id: 'openai:gpt-5.6' }) });
+    m.chat.settings = { model: 'claude-opus-5-5' };
+    r = await ask(m);
+    check('agent: a chat on a concrete model does not use the router', r.ok && routes.length === 0 && J(sent) === J(['claude-haiku-5-5']), J({ routes, sent }));
+    sent.length = 0;
+    m = make({ model: 'claude-opus-5-5', on: false });
+    m.chat.settings = { model: 'claude-opus-5-5' };
+    r = await ask(m);
+    check('agent: with the setting off there is no request', !r.ok && r.error === 'off' && sent.length === 0, J({ r, sent }));
+    m = make({ model: 'claude-opus-5-5', on: 'unset' });
+    m.chat.settings = { model: 'claude-opus-5-5' };
+    check('agent: on by default for an API chat', (await ask(m)).ok && sent.length === 1, J(sent));
+    // the setting itself: main.js turns off only on an explicit false
+    const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+    check('setting: main.js passes chatAutocomplete through (off only when false) and the IPC checks it too', /chatAutocomplete: \(\) => readSettings\(\)\.chatAutocomplete !== false/.test(main) && /readSettings\(\)\.chatAutocomplete === false\) return \{ ok: false, error: 'off'/.test(main));
   }
 
   // ---- the chat box's core, with fake timers
