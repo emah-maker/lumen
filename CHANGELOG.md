@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A saved file Lumen can't read is no longer replaced by an empty one.** If your routines and scheduled tasks, skills, macros or MCP servers file could not be read (an unreadable or half-written file, or a keychain that had changed), Lumen used to treat it as "none yet" and save over it, losing everything in it. Now only a file that is missing starts fresh. Any other failure keeps the file as it is, sets a copy aside (`<file>.corrupt-<time>`) and doesn't save over it. Lumen also no longer clears old pictures, uploads, AI conversation folders or project files when the chat list was empty, unreadable or rebuilt this session, since a damaged History index would otherwise cost every chat its pictures and every project its files. The MCP servers file is now written with a temporary file and a rename, like the others. Tests: `test/units/safe-load-units.js`.
+
 ## 0.5.66 (2026-10-23)
 
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.

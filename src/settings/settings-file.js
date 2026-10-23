@@ -56,6 +56,20 @@ async function loadJsonAsync(file) {
   return {};
 }
 
+// For a store with its own format (encrypted, or a list). A missing file is { missing: true }: starting empty is right. A file that
+// can't be read, parsed or decrypted is copied to <file>.corrupt-<time> and answers { failed: true }: the caller must not treat the
+// empty state as real, nor save over the original (and nothing may be purged because of it).
+function readStoreFile(file, parse = (text) => JSON.parse(text)) {
+  const failed = (error) => {
+    try { fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
+    console.error(`[lumen] ${path.basename(file)} was unreadable; a copy was kept and it will not be overwritten (${error?.message || error})`);
+    return { failed: true, error };
+  };
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch (error) { return error?.code === 'ENOENT' ? { missing: true } : failed(error); }
+  try { return { data: parse(text) }; } catch (error) { return failed(error); }
+}
+
 // `space`: the JSON indent (settings.json is read by people; the big data files pass 0).
 function writeJsonAtomic(file, data, space = 2) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -121,4 +135,4 @@ function writeJsonAtomicAsync(file, data, stillLatest = () => true, space = 2) {
   return chain;
 }
 
-module.exports = { loadJson, loadJsonAsync, writeJsonAtomic, writeJsonAtomicAsync };
+module.exports = { readStoreFile, loadJson, loadJsonAsync, writeJsonAtomic, writeJsonAtomicAsync };

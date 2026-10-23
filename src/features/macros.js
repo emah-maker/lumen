@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readStoreFile } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 const shortcutsHelp = require('./shortcuts-help');
 
 const FORMAT = 'lumen-macros';
@@ -516,7 +517,9 @@ function reviewImport(text, existing = [], { platform = process.platform } = {})
 
 function createStore({ file, now = Date.now, platform = process.platform }) {
   let state = null;
+  let unreadable = false; // macros.json exists but could not be read: it is never overwritten
   const write = () => {
+    if (unreadable) throw new Error('macros.json could not be read, so changes are not saved (a copy of it was kept)');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ version: 1, macros: state.macros }, null, 2));
@@ -524,8 +527,9 @@ function createStore({ file, now = Date.now, platform = process.platform }) {
   };
   function load() {
     if (state) return state;
-    let data = {};
-    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none yet, or unreadable: start empty */ }
+    const r = readStoreFile(file); // no file yet: start empty
+    if (r.failed) unreadable = true;
+    const data = r.data && typeof r.data === 'object' ? r.data : {};
     const macros = [];
     for (const raw of Array.isArray(data.macros) ? data.macros : []) {
       if (macros.length >= MAX_MACROS) break;

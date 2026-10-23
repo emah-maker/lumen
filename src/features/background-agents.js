@@ -9,6 +9,7 @@
 // Stored like saved chats (features/chat-store.js): one file, encrypted with the OS keychain, and with
 // no keychain nothing is written (results can hold page data). Written atomically, capped at 50 tasks.
 const fs = require('fs');
+const { readStoreFile } = require('../settings/settings-file');
 const path = require('path');
 const crypto = require('crypto');
 const tlds = require('../browser/tlds');
@@ -544,18 +545,19 @@ const unseenCount = (tasks) => tasks.filter((t) => t.unseen === true && !ACTIVE.
 // ---- store
 
 function createTaskStore({ file, encrypt, decrypt, available = () => true, limit = LIMITS.tasks }) {
+  let unreadable = false; // the file exists but could not be read here: what is on disk is never overwritten
   function load() {
-    try {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-      const body = data.enc ? JSON.parse(decrypt(data.enc)) : data;
-      return capTasks((Array.isArray(body.tasks) ? body.tasks : []).map(sanitizeTask).filter(Boolean), limit);
-    } catch {
-      return []; // none yet, or unreadable on this machine
-    }
+    const r = readStoreFile(file, (text) => {
+      const data = JSON.parse(text);
+      return data.enc ? JSON.parse(decrypt(data.enc)) : data;
+    });
+    if (r.failed) { unreadable = true; return []; }
+    const body = r.data || {}; // (no file yet: empty)
+    return capTasks((Array.isArray(body.tasks) ? body.tasks : []).map(sanitizeTask).filter(Boolean), limit);
   }
-  // Returns false when nothing could be kept (no keychain).
+  // Returns false when nothing could be kept (no keychain, or the saved file could not be read).
   function save(tasks) {
-    if (!available()) return false;
+    if (!available() || unreadable) return false;
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ v: 1, enc: encrypt(JSON.stringify({ tasks: capTasks(tasks, limit) })) }));

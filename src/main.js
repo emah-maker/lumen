@@ -11511,7 +11511,8 @@ function projectFiles() {
     available: () => safeStorage.isEncryptionAvailable(),
   });
   // Folders of projects that are gone (Lumen quit inside a delete's Undo time) are removed, a while after the first use.
-  setTimeout(() => { try { projectFilesStore.purgeOrphans(new Set([...chats().projects().map((p) => p.id), ...pendingProjectDeletes.keys()])).catch(() => {}); } catch { /* next time */ } }, 8000).unref?.();
+  // (Not when the project list may be incomplete: an unreadable or rebuilt chat index would otherwise cost every project its files.)
+  setTimeout(() => { try { if (chats().trusted()) projectFilesStore.purgeOrphans(new Set([...chats().projects().map((p) => p.id), ...pendingProjectDeletes.keys()])).catch(() => {}); } catch { /* next time */ } }, 8000).unref?.();
   return projectFilesStore;
 }
 const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
@@ -11948,12 +11949,14 @@ ipcMain.handle('agent:upload-choose', async (event, approvalId) => {
   return agent.pickUpload(id, paths);
 });
 setTimeout(() => {
-  try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
-  try { uploads().sweep(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to sweep */ } // [uploads] old pending files, files of chats that are gone
+  // Never when the chat list may be incomplete (empty, unreadable or rebuilt): that would delete every chat's pictures and uploads.
+  const listTrusted = () => { try { return chats().trusted() && chats().list().length > 0; } catch { return false; } };
+  if (listTrusted()) try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
+  if (listTrusted()) try { uploads().sweep(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to sweep */ } // [uploads] old pending files, files of chats that are gone
   // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
   try {
-    if (chats().list().length) {
+    if (listTrusted()) {
       const keep = new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean));
       require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), keep).catch(() => {});
       require('./ai/codex').pruneChatHomes(app.getPath('userData'), keep).catch(() => {}); // Codex homes (threads) likewise
