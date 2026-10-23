@@ -41,7 +41,8 @@ function resolvePath(raw, { home = os.homedir() } = {}) {
   }
   if (text.includes('\0')) throw new DeviceAccessError('That path is not valid.');
   if (/^\\\\|^\/\/[^/]/.test(text)) throw new DeviceAccessError('Network paths are not used.');
-  const named = NAMED[text.toLowerCase()];
+  const key = text.toLowerCase();
+  const named = Object.hasOwn(NAMED, key) ? NAMED[key] : undefined;
   if (named !== undefined) return path.join(home, named);
   if (text === '~') return home;
   if (text.startsWith('~/') || text.startsWith('~\\')) text = path.join(home, text.slice(2));

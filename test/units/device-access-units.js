@@ -39,6 +39,7 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     const r = (raw) => D.resolvePath(raw, opts);
     check('~/, file://, quoted, bare-name and relative forms all land under the home folder', r('~/Desktop/a.png') === path.join(home, 'Desktop/a.png') && r(`file://${home}/Desktop/a%20b.png`) === path.join(home, 'Desktop/a b.png') && r(`"${home}/x"`) === path.join(home, 'x') && r('desktop') === path.join(home, 'Desktop') && r('Downloads/f.pdf') === path.join(home, 'Downloads/f.pdf') && r('~') === home, J([r('~/Desktop/a.png'), r('desktop')]));
     check('dot-dots are normalized away (the block list sees the real place)', r('~/Desktop/../.ssh/id_ed25519') === path.join(home, '.ssh/id_ed25519'));
+    check('names that exist on Object.prototype are plain folders under home, not a TypeError', ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__'].every((v) => r(v) === path.join(home, v)), J(['constructor', '__proto__'].map((v) => { try { return r(v); } catch (e) { return e.message; } })));
     check('empty, NUL and network paths are refused', ['', '  ', 'a\0b', '//server/share/x', '\\\\server\\share'].every((v) => throws(() => r(v))), J(['', 'a\0b'].map((v) => throws(() => r(v)))));
   }
 
