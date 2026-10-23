@@ -863,6 +863,7 @@ ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point =
 const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) }));
 
 // "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
+const { crashBurst } = require('./features/crash-cap');
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
   file: () => path.join(app.getPath('userData'), 'running'),
   readSettings: () => readSettings(),
@@ -2785,8 +2786,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (tab.managerPage === 'chat') {
       console.error(`[lumen] chat page process gone (${details.reason}, exit ${details.exitCode ?? '?'}); reloading it`);
       const now = Date.now();
-      tab.chatCrashes = (tab.chatCrashes || []).filter((at) => now - at < 60e3).concat(now);
-      if (tab.chatCrashes.length <= 3) { setImmediate(() => { if (!wc.isDestroyed() && tabs.includes(tab)) wc.reload(); }); return; }
+      const burst = crashBurst(tab.chatCrashes, now);
+      tab.chatCrashes = burst.times;
+      if (burst.reload) { setImmediate(() => { if (!wc.isDestroyed() && tabs.includes(tab)) wc.reload(); }); return; }
     }
     const failedUrl = tab.lastUrl || '';
     tab.hungAsked = false;
@@ -8142,11 +8144,32 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
-  // dead window. The tabs themselves live in their own processes and are unaffected.
+  // dead window. The tabs themselves live in their own processes and are unaffected. Capped like the chat page.
+  let uiCrashes = [];
+  let uiCrashAsked = false;
   w.webContents.on('render-process-gone', (_e, details) => {
     if (details.reason === 'clean-exit' || !ui()) return;
-    console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
-    ui().reload();
+    const burst = crashBurst(uiCrashes, Date.now());
+    uiCrashes = burst.times;
+    if (burst.reload) {
+      console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
+      ui().reload();
+      return;
+    }
+    // Three crashes in a minute: it crashes as it loads, so reloading again would only loop. Stop and offer a restart instead.
+    console.error(`[lumen] browser UI process gone (${details.reason}) ${burst.times.length} times in a minute; not reloading it again`);
+    if (uiCrashAsked) return;
+    uiCrashAsked = true;
+    dialogs.showMessageBox(win, {
+      type: 'error', buttons: [t('uiCrash.restart'), t('uiCrash.safe'), t('uiCrash.later')], defaultId: 0, cancelId: 2,
+      message: t('uiCrash.title'),
+      detail: t('uiCrash.detail'),
+    }).then(({ response, cancelled }) => {
+      uiCrashAsked = false;
+      if (cancelled || response > 1) return;
+      if (TEST) { global.__uiCrashRestarts = (global.__uiCrashRestarts || 0) + 1; global.__uiCrashRestartSafe = response === 1; return; }
+      relaunchLumen(response === 1);
+    }).catch(() => { uiCrashAsked = false; });
   });
   let uiHungAsked = false;
   w.webContents.on('unresponsive', () => {
@@ -9857,10 +9880,13 @@ app.whenReady().then(() => setTimeout(() => {
 ipcMain.on('gpu:restart', (_e, safe) => {
   if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; global.__gpuRestartSafe = safe === true; return; } // tests check the click, not a relaunch
   // safe: this run only, hardware acceleration off (--lumen-safe-gpu, settings-backend.js applyAtLaunch); the next normal start is hardware again
-  const args = process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu');
-  app.relaunch({ args: safe === true ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
-  app.quit();
+  relaunchLumen(safe === true);
 });
+function relaunchLumen(safe) {
+  const args = process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu');
+  app.relaunch({ args: safe ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
+  app.quit();
+}
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy
