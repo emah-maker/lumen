@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Stop now really stops a tool that is already running.** Pressing Stop while the AI was part way through filling in a form used to leave the rest of the fields filled and the form submitted, and a batch kept clicking and typing; the same went for Claude Code, Codex, Grok Build and Antigravity chats. Now no step runs after Stop: the remaining fields, the submit, the next batch step, typing and dragging are all skipped. Stop in one chat never touches another chat that is running. Test: `test/units/stop-cancels-tools-units.js`.
+- **One dropped connection no longer locks an Auto chat out for 15 minutes.** With a single AI connected, a Wi-Fi blip or an error with no status ("terminated", a reset connection) marked the whole provider as down for 15 minutes, and the next message on Auto said "no model is available right now". Such a failure with nowhere else to go now leaves the provider alone for a moment only. And when every model Auto could use is waiting out a limit or an outage, it now uses the one that comes back first instead of stopping. Rate limits and usage limits still keep a provider out of the way for other chats. Tests: `test/units/auto-agent-units.js`, `test/units/auto-model-units.js`.
 
 ## 0.5.66 (2026-10-23)
 

@@ -2355,11 +2355,17 @@ class Agent {
     if (info.kind !== 'limit' && info.kind !== 'unreachable') return null;
     // An engine's own process failing (it would not start, it exited) is not a verdict on the service: the next message tries it again.
     const own = fallback.isEngine(current) && info.kind === 'unreachable';
+    const held = fallback.shared.entry(current);
     fallback.shared.mark(current, own ? { ...info, scope: 'provider', brief: true } : info);
     tried.add(current);
     const options = this.browser.fallbackOptions();
     const choice = fallback.choose({ current, options, cooldowns: fallback.shared, allowEngines, tried: [...tried], need: { chars: historyChars(messages), images: hasImages(messages) } });
-    if (!choice) return null;
+    if (!choice) {
+      // Nothing to hand over to, and no HTTP status (a dropped connection, "terminated", a Wi-Fi blip): the next message retries this
+      // provider at once. Marked for 15 minutes it would leave an Auto chat with no model at all.
+      if (info.kind === 'unreachable' && (info.status ?? null) === null && !own && !held) { fallback.shared.clear(current); fallback.shared.mark(current, { ...info, brief: true }); }
+      return null;
+    }
     const next = choice.id;
     if (!settings.fallbackFrom) settings.fallbackFrom = current;
     settings.fallbackSession = fallback.SESSION;

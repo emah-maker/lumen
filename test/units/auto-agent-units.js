@@ -199,6 +199,45 @@ const notices = (log) => log.events.filter((e) => e.type === 'notice').map((e) =
     check('an image in the message: a model that can see it', log.ran[0].model === 'claude-sonnet-5', J(log.ran));
   }
 
+
+  {
+    const claudeOnly = OPTS.filter((o) => /^claude-/.test(o.id));
+    const providerOf = (id) => fallback.providerOf(id);
+    fallback.shared.clear();
+    let { agent, log } = makeAgent({ options: claudeOnly });
+    let messages = fresh();
+    await once(agent, messages, 'hi', log);
+    const before = Date.now();
+    const next = agent.failoverFor(messages, new Error('terminated'), () => {}, { tried: new Set(), allowEngines: false });
+    const left = fallback.shared.until(log.ran[0].model, before) - before;
+    check('a blip (no HTTP status) with no other provider: no stand-in, and the provider is left alone only briefly', next === null && left > 0 && left <= fallback.COOLDOWN.brief + 50, J({ next, left }));
+    await once(agent, messages, 'hi again', log);
+    check('the next Auto turn still gets a model (not "no model is available")', log.ran.length === 2 && /^claude-/.test(log.ran[1].model), J(log.ran));
+    fallback.shared.clear();
+    ({ agent, log } = makeAgent({ options: claudeOnly }));
+    messages = fresh('claude-sonnet-5');
+    agent.failoverFor(messages, Object.assign(new Error('Service Unavailable'), { status: 503 }), () => {}, { tried: new Set(), allowEngines: false });
+    check('a 5xx keeps the full outage cooldown', fallback.shared.until('claude-sonnet-5') - Date.now() > fallback.COOLDOWN.unreachable - 5e3);
+    // every candidate cooling (a real limit): Auto uses the one that resets first instead of failing
+    fallback.shared.clear();
+    ({ agent, log } = makeAgent({ options: OPTS.filter((o) => /^(claude-|openai:)/.test(o.id)) }));
+    fallback.shared.mark('claude-sonnet-5', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 3600e3, exact: true });
+    fallback.shared.mark('openai:gpt-5.6', { kind: 'limit', scope: 'provider', resetsAt: Date.now() + 600e3, exact: true });
+    await once(agent, fresh(), 'hi', log);
+    check('every provider limited: Auto goes to the provider whose limit resets first', log.ran.length === 1 && providerOf(log.ran[0].model) === 'openai', J(log.ran));
+    // a real 429 still cools for minutes; a plan usage limit cools the whole provider, and the next chat prefers the other one
+    fallback.shared.clear();
+    ({ agent, log } = makeAgent({ options: OPTS.filter((o) => /^(claude-|openai:)/.test(o.id)) }));
+    const stand = agent.failoverFor(fresh('claude-sonnet-5'), api('RateLimitError', 429, 'rate_limit_error', 'rate limited'), () => {}, { tried: new Set(), allowEngines: false });
+    check('a real 429: cooled for minutes (not the brief blip cooldown) and a stand-in answers', Boolean(stand) && fallback.shared.until('claude-sonnet-5') - Date.now() > fallback.COOLDOWN.rate - 5e3, String(stand));
+    fallback.shared.clear();
+    const limited = agent.failoverFor(fresh('claude-sonnet-5'), new Error('Claude usage limit reached'), () => {}, { tried: new Set(), allowEngines: false });
+    check('a usage limit: the whole provider is cooled and the other provider answers', providerOf(limited || '') === 'openai' && fallback.shared.cooling('claude-haiku-5-5'), String(limited));
+    await once(agent, fresh(), 'hi', log);
+    check('another chat on Auto routes around the limited provider', providerOf(log.ran[0].model) === 'openai', J(log.ran));
+    fallback.shared.clear();
+  }
+
   if (failures) { console.log(`\n${failures} auto-agent check(s) failed`); process.exit(1); }
   console.log('\nAll auto-agent checks passed');
 })().catch((err) => { console.error(err); process.exit(1); });
