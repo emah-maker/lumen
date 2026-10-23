@@ -132,5 +132,33 @@ check('markdown stays safe: no raw HTML, no javascript: links', () => {
   assert.ok(!/href="javascript/.test(html) && !/<a [^>]*on\w+=/.test(html), html);
 });
 
+// Reply text is a key: names that exist on Object.prototype must not reach inherited values
+check('proto: [^constructor], [^__proto__], [^toString] with no note render as text and do not throw', () => {
+  for (const id of ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']) {
+    const html = r('See[^' + id + '] here');
+    assert.ok(!/fn-ref/.test(html), html);
+    assert.ok(!/native code|object Object/.test(html), html);
+  }
+});
+check('proto: [constructor], [x][constructor], [__proto__] with no definition make no link', () => {
+  for (const src of ['[constructor]', '[x][constructor]', '[__proto__]', '[toString][]', '[x][__proto__]']) {
+    const html = r(src);
+    assert.ok(!/<a /.test(html), src + ' -> ' + html);
+    assert.ok(!/native code|object Object/.test(html), html);
+  }
+});
+check('proto: definitions named like prototype keys work as ordinary ones', () => {
+  assert.match(r('[hi][__proto__]\n\n[__proto__]: https://example.com/p'), /<a href="https:\/\/example.com\/p">hi<\/a>/);
+  assert.match(r('a[^constructor]\n\n[^constructor]: the note'), /fn-ref[^>]*title="the note"/);
+  assert.match(r('[constructor]: https://x.test/\n\n[constructor]'), /<a [^>]*href="https:\/\/x.test\/"/);
+  assert.doesNotThrow(() => r('[__proto__]: x\n\n[^__proto__]: y\n\n[__proto__] [^__proto__]'));
+});
+check('proto: normal footnotes and reference links still work', () => {
+  const html = r('Claim[^1] and [site][a].\n\n[^1]: Source text\n[a]: https://example.com/');
+  assert.match(html, /<sup class="fn-ref" data-fn="1" title="Source text">1<\/sup>/);
+  assert.match(html, /<a href="https:\/\/example.com\/">site<\/a>/);
+  assert.match(html, /<section class="footnotes"><ol><li>Source text<\/li><\/ol><\/section>/);
+});
+
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log('markdown blocks: all passed');

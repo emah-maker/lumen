@@ -28,7 +28,7 @@
   // Temml (168 KB) loads the first time a reply has math, not at start-up (and mhchem, 35 KB, the first time one has
   // chemistry); formulas drawn before it arrives show their source for that moment and are then typeset in place.
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
-  const loads = {};
+  const loads = Object.create(null);
   function load(name, file, after) {
     if (loads[name] || typeof document === 'undefined' || !here) return;
     loads[name] = 'loading';
@@ -620,8 +620,8 @@
   // [1]: https://… (reference links, which also back [1] citations) and [^1]: … (footnotes) are read out of the text
   // (outside code fences) and removed from it; the rest renders with them in CTX.
   function takeDefinitions(lines) {
-    const refs = {};
-    const notes = {};
+    const refs = Object.create(null); // keyed by reply text: no inherited keys ("constructor", "__proto__")
+    const notes = Object.create(null);
     const keep = [];
     let fenced = false;
     for (let n = 0; n < lines.length; n++) {
