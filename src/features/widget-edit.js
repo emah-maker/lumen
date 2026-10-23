@@ -406,12 +406,21 @@ function placeToast({ size, view, obstacles = [], base, margin = 16, gap = 10 })
 function isTypingTarget(node) {
   return Boolean(node) && (/^(INPUT|TEXTAREA|SELECT)$/.test(node.tagName || '') || node.isContentEditable === true);
 }
+// A plain "/" on the new tab page jumps to the search box, unless the key belongs to text: the event came from (or the focus is in) a field,
+// a select or a contenteditable, also inside a shadow root (composedPath sees through open ones), or a modifier is held or an IME is composing.
+function isSlashShortcut(e, active) {
+  if (!e || e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.keyCode === 229 || e.defaultPrevented) return false;
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+  if (path.some(isTypingTarget) || isTypingTarget(e.target) || isTypingTarget(active)) return false;
+  for (let n = active; n && n.shadowRoot && n.shadowRoot.activeElement; n = n.shadowRoot.activeElement) if (isTypingTarget(n.shadowRoot.activeElement)) return false;
+  return true;
+}
 // The platform's modifier for the Undo hint: "Cmd" on a Mac, else "Ctrl".
 function undoHint(platform) {
   return (/mac|iphone|ipad/i.test(String(platform || '')) ? 'Cmd' : 'Ctrl') + '+Z';
 }
 
-const api = { isTypingTarget, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, matchesFilter, setupNote, SETUP_NOTES, PICKER_GROUPS, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
+const api = { isTypingTarget, isSlashShortcut, undoHint, STRINGS, TYPE_INFO, text, createHistory, survivesEditExit, timedOut, undoPlan, guides, pickerEntries, matchesFilter, setupNote, SETUP_NOTES, PICKER_GROUPS, rectKey, holdBase, holdItems, placePanel, placeToast, overlapArea };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetEdit = api;
 })();
