@@ -10535,7 +10535,12 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
   }
   wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext });
 });
-ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSelection'));
+ipcMain.on('find:stop', (_e, close) => { // closing the bar keeps the match selected and hands the keyboard back to the page; an emptied field clears it
+  const wc = activeTab()?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  wc.stopFindInPage(close ? 'keepSelection' : 'clearSelection');
+  if (close) wc.focus();
+});
 
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');

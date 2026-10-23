@@ -504,7 +504,7 @@ contextBridge.exposeInMainWorld('browser', {
   forward: () => ipcRenderer.send('nav:forward'),
   reload: () => ipcRenderer.send('nav:reload'),
   find: (text, options) => ipcRenderer.send('find:start', text, options),
-  stopFind: () => ipcRenderer.send('find:stop'),
+  stopFind: (close) => ipcRenderer.send('find:stop', Boolean(close)),
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),

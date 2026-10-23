@@ -454,7 +454,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .omnibox input::placeholder { color: var(--muted); }
 .omnibox input:focus-visible { box-shadow: none; }
 .omnibox:has(input:focus) {
-  justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised); transform: scale(1.012);
+  justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised);
   box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
 }
 .omnibox:has(input:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k))); }
@@ -1608,7 +1608,9 @@ body.split-dragging { user-select: none; cursor: col-resize; }
   height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--accent-soft); color: var(--accent-text);
   font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
 }
-#update-action:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+#update-action:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--accent); }
+#update-action:disabled { opacity: .6; cursor: default; }
+#update-pill .update-text { font-variant-numeric: tabular-nums; }
 .update-dismiss {
   width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: var(--r-lg);
   background: transparent; color: var(--muted); font-size: 14px; line-height: 1;

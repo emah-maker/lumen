@@ -53,3 +53,4 @@ if (params.get('kind') === 'missingfile' && window.lumenMissingFile) {
   searchButton.textContent = window.t('errorPage.missingFile.showFolder');
   searchButton.onclick = () => window.lumenMissingFile.showInFolder();
 }
+if (!retry.hidden) retry.focus(); // the likely next step is one Enter away (as the unloaded page does)
