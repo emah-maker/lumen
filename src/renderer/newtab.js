@@ -318,9 +318,9 @@ function render() {
   window.newtabSize?.fit?.(); // and once more with the cards as they are now
 }
 
-// "/" jumps to the search field, like many sites; typing elsewhere is left alone.
+// "/" jumps to the search field, like many sites; typing in any field, textarea, select or editable area (or composing with an IME) is left alone.
 document.addEventListener('keydown', (e) => {
-  if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  if (window.WidgetEdit.isSlashShortcut(e, document.activeElement)) {
     e.preventDefault();
     document.getElementById('q').focus();
   }
