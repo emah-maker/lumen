@@ -41,7 +41,9 @@
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   let applying = false; // a click's apply() is still running: a double click must not start a second
+  let last = null; // the newest state, to re-render the label when a click starts applying
   function render(u) {
+    last = u;
     // Copies that install the update themselves: swapping in place, or installing into Applications (relocate).
     const own = u.canSelfUpdate || Boolean(u.relocate);
     const ready = u.status === 'downloaded' && own;
@@ -56,7 +58,7 @@
     const retrying = busy && Boolean(u.retrying); // a download that dropped is being tried again
     const key = moveFailed ? '' : ready ? 'updates.ready' : retrying ? 'updates.retrying' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
-    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
+    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: Math.floor(u.progress || 0) });
     // The short reason: on hover (title) and for keyboard, touch and screen-reader users (aria-description). A failed
     // swap reads as the same sentence Settings shows.
     const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
@@ -65,13 +67,14 @@
     action.hidden = busy && u.queued; // queued: nothing left to click
     action.disabled = applying || Boolean(u.checking); // a re-check (Try again) is running: the old status stays underneath
     iconPath.setAttribute('d', ready || busy || failed || moveFailed ? ICON_RETRY : ICON_DOWNLOAD);
-    label.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    label.textContent = u.checking ? window.t('updates.checking') : applying && (ready || busy) ? window.t('updates.restarting') : ready ? window.t('updates.restart') : busy ? window.t('updates.restartWhenReady') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => {
     if (applying) return;
     applying = true;
     action.disabled = true;
+    if (last) render(last);
     let next = null;
     try { next = await api.apply(); } catch {} finally { applying = false; }
     if (!next) next = await api.state().catch(() => null);
