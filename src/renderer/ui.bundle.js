@@ -8305,7 +8305,7 @@ function startChat() {
 
   function defaultSuggestion(typed, items, { completed = false } = {}) {
     if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return ['history', 'site', 'tab'].includes(items[0].kind) ? 0 : -1;
+    return ['history', 'site'].includes(items[0].kind) ? 0 : -1;
   }
 
   const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
@@ -10438,7 +10438,6 @@ function hideSuggestions() {
 }
 
 
-const sameAddress = (a, b) => String(a).replace(/#.*$/, '').replace(/\/$/, '') === String(b).replace(/#.*$/, '').replace(/\/$/, '');
 function matchOpenTabs(text) {
   const q = text.toLowerCase();
   const state = lastTabState;
@@ -10465,14 +10464,9 @@ async function updateSuggestions(typed, deleting) {
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
 
-  const extraTabs = [];
-  for (const tab of matchOpenTabs(text)) {
-    const row = { kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') };
-    const at = visited.findIndex((v) => v.kind !== 'tab' && sameAddress(v.go, tab.url));
-    if (at >= 0) visited[at] = row;
-    else if (extraTabs.length < 2) extraTabs.push(row);
-  }
-  visited.push(...extraTabs);
+
+  const tabRows = matchOpenTabs(text).slice(0, 2).map((tab) => ({ kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') }));
+  visited.splice(Math.min(1, visited.length), 0, ...tabRows);
   const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
 
   suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };

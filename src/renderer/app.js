@@ -2122,7 +2122,6 @@ function hideSuggestions() {
 }
 
 // Open tabs (not the one in front) whose title or address has what was typed: "Switch to tab" rows.
-const sameAddress = (a, b) => String(a).replace(/#.*$/, '').replace(/\/$/, '') === String(b).replace(/#.*$/, '').replace(/\/$/, '');
 function matchOpenTabs(text) {
   const q = text.toLowerCase();
   const state = lastTabState;
@@ -2148,15 +2147,10 @@ async function updateSuggestions(typed, deleting) {
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
   const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
-  // A page that is open in another tab says "Switch to tab" in its own row (in place of its History row); other open tabs that match follow.
-  const extraTabs = [];
-  for (const tab of matchOpenTabs(text)) {
-    const row = { kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') };
-    const at = visited.findIndex((v) => v.kind !== 'tab' && sameAddress(v.go, tab.url));
-    if (at >= 0) visited[at] = row;
-    else if (extraTabs.length < 2) extraTabs.push(row);
-  }
-  visited.push(...extraTabs);
+  // Open tabs that match are extra "Switch to tab" rows after the top row: never pre-selected and never in place of a History row, so Enter
+  // still goes where it always did; an arrow key or a click picks one.
+  const tabRows = matchOpenTabs(text).slice(0, 2).map((tab) => ({ kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') }));
+  visited.splice(Math.min(1, visited.length), 0, ...tabRows);
   const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
   // The top page from history is pre-selected (Enter goes to it, as in Chrome), unless what is typed is an address or was completed in place.
   suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
