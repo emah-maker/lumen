@@ -10,7 +10,7 @@
   const CACHE = 40;
 
   // request(prefix) -> Promise<{ ok, text, error }>; cancel(): stop the request in flight; render(ghost): show or clear the grey text.
-  function createCore({ request, cancel = () => {}, render = () => {}, delayMs = DELAY_MS, timers = { set: setTimeout, clear: clearTimeout }, wants = () => true }) {
+  function createCore({ request, cancel = () => {}, render = () => {}, delayMs = DELAY_MS, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) } /* (called as timers.set(...): a bare setTimeout there throws "Illegal invocation" in the browser) */, wants = () => true }) {
     let ghost = ''; // the grey text shown after `base`
     let base = null; // the composer text the ghost goes after
     let timer = null;

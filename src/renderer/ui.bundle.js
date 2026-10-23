@@ -14755,7 +14755,7 @@ $('agent-stop')?.addEventListener('click', () => {
   const CACHE = 40;
 
 
-  function createCore({ request, cancel = () => {}, render = () => {}, delayMs = DELAY_MS, timers = { set: setTimeout, clear: clearTimeout }, wants = () => true }) {
+  function createCore({ request, cancel = () => {}, render = () => {}, delayMs = DELAY_MS, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) } , wants = () => true }) {
     let ghost = '';
     let base = null;
     let timer = null;

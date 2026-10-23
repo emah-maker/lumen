@@ -145,6 +145,22 @@ for (const [label, raw, prefix, want] of cases) check(`clean: ${label}`, lib.cle
     check('core: a guess that never comes shows nothing', failing.core.ghost === '');
   }
 
+  // ---- the default timers, as the browser calls them: setTimeout/clearTimeout called on another object throw "Illegal invocation" there
+  {
+    const real = { set: globalThis.setTimeout, clear: globalThis.clearTimeout };
+    const strict = (fn) => function (...a) { if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation'); return fn(...a); };
+    globalThis.setTimeout = strict(real.set);
+    globalThis.clearTimeout = strict(real.clear);
+    let err = null;
+    try {
+      const core = createCore({ request: async () => ({ ok: true, text: ' more' }), delayMs: 1 });
+      core.input('hello there');
+      core.input('hello there!');
+      core.dismiss();
+    } catch (e) { err = e; } finally { globalThis.setTimeout = real.set; globalThis.clearTimeout = real.clear; }
+    check('core: the default timers work when called the way the browser checks them (no "Illegal invocation")', !err, String(err));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
