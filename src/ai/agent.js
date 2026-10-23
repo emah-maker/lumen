@@ -1769,8 +1769,12 @@ class Agent {
   inTask(tabId, signal, fn, chat = null, log = null, meta = null) {
     const scope = { ...(meta || {}), tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
+    const letGo = () => { try { pageDebugShared.releaseHeldFor(scope); } catch {} }; // [held dialog] a confirm/prompt held for this run goes to the user when it is stopped or ends
+    try { signal?.addEventListener?.('abort', letGo, { once: true }); } catch {}
     if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
     return taskScope.run(scope, fn).finally(() => {
+      letGo();
+      try { signal?.removeEventListener?.('abort', letGo); } catch {}
       this.scopes.delete(scope);
       if (this.runScope === scope) this.runScope = null;
       try { this.browser.research?.finish(scope); } catch {} // research tabs stay open; only the "reading" marker goes
@@ -6550,7 +6554,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     let call = () => this.executeGuarded(name, input);
     if (AI_NAV_TOOLS.has(name)) { const inner = call; call = () => dbg.withAiNavigation(wc, inner); }
     let result;
-    if (cap) cap.busy++; // (a page dialog opened now is the AI's: page-debug.js pageDialog)
+    if (cap) { cap.busy++; cap.lastScope = taskScope.getStore() || null; } // (a page dialog opened now is the AI's: page-debug.js pageDialog)
     try {
       result = safe ? await call() : await dbg.race(wc, call());
     } catch (err) {
@@ -6558,7 +6562,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
       if (head && err && typeof err.message === 'string') err.message = `${head}${err.message}`;
       throw err;
     } finally {
-      if (cap) { cap.busy--; cap.lastAiAt = cap.now(); }
+      if (cap) { cap.busy--; cap.lastAiAt = cap.now(); cap.lastScope = taskScope.getStore() || cap.lastScope; }
     }
     if (result && typeof result === 'object' && !Array.isArray(result) && result.dialog) return blocked(); // (the abandoned call settles on its own)
     const head = dbg.headerFor(wc);
