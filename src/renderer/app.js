@@ -2206,7 +2206,7 @@ function chooseSuggestion(item, fallback) {
     hideSuggestions();
     dropAddressDraft();
     addressDirty = false;
-    window.browser.switchTab(item.tabId, true);
+    window.browser.switchTab(item.tabId);
     address.blur();
   } else navigate(item ? item.go : fallback);
 }
