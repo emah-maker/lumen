@@ -309,6 +309,78 @@ function fakeClaudeCode({ delay = () => 0, gone = new Set() } = {}) {
     check(`stopped ${kind}: once answered, they are not repeated`, !asks.some((a) => calls[calls.length - 1].prompt.includes(a)), calls[calls.length - 1].prompt.slice(0, 300));
   }
 
+  // The same for Grok Build, Codex and Antigravity (they once dropped it): an ask that got no reply (failed, or stopped before any
+  // text) is repeated with the next message, on a new session and on a resumed one, once; Claude Code's wording is the same.
+  for (const [engineKey, model, label] of [['grokbuild', 'grokbuild:default', 'grok'], ['codex', 'codex:default', 'codex'], ['antigravity', 'antigravity:default', 'antigravity']]) {
+    const build = (fails, stops = new Set()) => {
+      const agent = newAgent();
+      agent.browser.antigravityFullAccess = () => false;
+      agent.browser.codexFullAccess = () => false;
+      const calls = [];
+      agent.engines = { [engineKey]: {
+        prepare: async () => ({}),
+        async run(opts) {
+          const ask = [...opts.prompt.matchAll(/q\d/g)].pop()?.[0];
+          calls.push({ sessionId: opts.sessionId, prompt: opts.prompt });
+          if (stops.has(ask)) { for (let i = 0; i < 200 && !opts.signal.aborted; i++) await sleep(5); return { text: '', sessionId: opts.sessionId || `${label}-s`, stopped: true }; }
+          if (fails.has(ask)) return { text: '', sessionId: opts.sessionId || null, failed: true };
+          return { text: `${label} reply ${calls.length}`, sessionId: opts.sessionId || `${label}-s` };
+        },
+      } };
+      return { agent, calls };
+    };
+    // a failed first message, then the next (new session)
+    const a = build(new Set(['q1']));
+    const ma = chat(model);
+    await run(a.agent, ma, 'q1 my first words');
+    await run(a.agent, ma, 'q2 what did I say');
+    const pa = a.calls[1].prompt;
+    check(`${label} no reply: a failed first message is repeated with the next one`, pa.indexOf('<earlier_conversation>') === 0 && pa.includes('User: q1 my first words') && /got no reply/.test(pa) && pa.indexOf('q1 my first') < pa.indexOf('q2 what'), pa.slice(0, 400));
+    await run(a.agent, ma, 'q3 and now');
+    check(`${label} no reply: once answered, it is not repeated`, !a.calls[2].prompt.includes('got no reply') && !a.calls[2].prompt.includes('q1 my first words'), a.calls[2].prompt.slice(0, 300));
+    // a failed message in the middle of a resumed session
+    const b = build(new Set(['q2']));
+    const mb = chat(model);
+    await run(b.agent, mb, 'q1 hello there');
+    await run(b.agent, mb, 'q2 this one fails');
+    await run(b.agent, mb, 'q3 the next');
+    const pb = b.calls[2].prompt;
+    check(`${label} no reply: a resumed session is told once, without turns it answered`, Boolean(b.calls[2].sessionId) && pb.includes('User: q2 this one fails') && pb.split('q2 this one fails').length === 2 && !pb.includes('q1 hello there') && !pb.includes(`${label} reply 1`), pb.slice(0, 500));
+    await run(b.agent, mb, 'q4 more');
+    check(`${label} no reply: ...and not again after the next answer`, !b.calls[3].prompt.includes('q2 this one fails') && !b.calls[3].prompt.includes('got no reply'), b.calls[3].prompt.slice(0, 300));
+    // stopped before any reply, then stopped again, then a message (all three engines resume the session from the first stop on)
+    const c = build(new Set(), new Set(['q2', 'q3']));
+    const mc = chat(model);
+    await run(c.agent, mc, 'q1 start');
+    for (const text of ['q2 first stopped ask', 'q3 second stopped ask']) { const p = run(c.agent, mc, text); await sleep(40); c.agent.stop(); await p; }
+    await run(c.agent, mc, 'q4 finally');
+    const pc = c.calls[c.calls.length - 1].prompt;
+    check(`${label} stopped before any reply: the next message carries both asks`, ['q2 first stopped ask', 'q3 second stopped ask'].every((t) => pc.split(t).length === 2) && pc.indexOf('q3 second') < pc.indexOf('q4 finally'), pc.slice(0, 600));
+    await run(c.agent, mc, 'q5 thanks');
+    check(`${label} stopped before any reply: once answered, they are not repeated`, !/q2 first stopped|q3 second stopped/.test(c.calls[c.calls.length - 1].prompt), c.calls[c.calls.length - 1].prompt.slice(0, 300));
+    // the very first message stopped, on a chat that has no session yet
+    const d = build(new Set(), new Set(['q1']));
+    const md = chat(model);
+    const pd = run(d.agent, md, 'q1 stopped at once'); await sleep(40); d.agent.stop(); await pd;
+    await run(d.agent, md, 'q2 try again');
+    check(`${label} stopped first message: the next one carries it`, d.calls[d.calls.length - 1].prompt.includes('User: q1 stopped at once') && d.calls[d.calls.length - 1].prompt.indexOf('<earlier_conversation>') === 0, d.calls[d.calls.length - 1].prompt.slice(0, 400));
+  }
+  // Claude Code is unchanged: same note, same place.
+  {
+    const agent = newAgent();
+    const calls = [];
+    agent.engines = { claudecode: { warm() {}, release() {}, async run(opts) {
+      calls.push(opts.prompt);
+      if (/q1/.test(opts.prompt) && !/q2/.test(opts.prompt)) return { text: '', sessionId: null, failed: true };
+      return { text: 'cc ok', sessionId: opts.sessionId };
+    } } };
+    const m = chat('claudecode:sonnet');
+    await run(agent, m, 'q1 first fails');
+    await run(agent, m, 'q2 second');
+    const p = calls[1];
+    check('claude code no reply: unchanged (the ask, then the new message, once)', p.indexOf('<earlier_conversation>') === 0 && p.includes('got no reply from you') && p.split('q1 first fails').length === 2 && p.indexOf('q1 first') < p.indexOf('q2 second'), p.slice(0, 400));
+  }
+
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });
