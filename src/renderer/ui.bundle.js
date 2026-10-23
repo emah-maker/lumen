@@ -8305,7 +8305,7 @@ function startChat() {
 
   function defaultSuggestion(typed, items, { completed = false } = {}) {
     if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return items[0].kind === 'history' ? 0 : -1;
+    return ['history', 'site', 'tab'].includes(items[0].kind) ? 0 : -1;
   }
 
   const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
@@ -10404,9 +10404,24 @@ function renderSuggestions() {
       width: r.width + SUGGEST_PAD.x * 2,
       height: suggest.items.length * 36 + 10 + SUGGEST_PAD.top + SUGGEST_PAD.bottom,
     },
-    { items: suggest.items.map(({ kind, title, detail }) => ({ kind, title, detail })), selected: suggest.selected, listId: ++suggestListId },
+    { items: suggest.items.map(({ kind, title, detail, badge }) => ({ kind, title, detail, badge })), selected: suggest.selected, listId: ++suggestListId, query: suggest.typed.trim() },
   );
   shownSuggestions = { id: suggestListId, items: suggest.items };
+  announceSuggestions();
+}
+
+
+
+let suggestLiveTimer = null;
+function announceSuggestions(selectedOnly = false) {
+  const live = $('suggest-live');
+  const n = suggest.items.length;
+  address.setAttribute('aria-expanded', String(n > 0));
+  if (!live) return;
+  const item = suggest.items[suggest.selected];
+  const say = selectedOnly ? (item ? `${item.badge ? `${item.badge}: ` : ''}${item.title}` : '') : n ? t(n === 1 ? 'address.suggestions.one' : 'address.suggestions.other', { count: n }) : '';
+  clearTimeout(suggestLiveTimer);
+  suggestLiveTimer = setTimeout(() => { live.textContent = say; }, 120);
 }
 
 
@@ -10419,6 +10434,16 @@ function hideSuggestions() {
   suggestSeq++;
   suggest = { items: [], selected: -1, typed: '' };
   window.browser.hideSuggestions();
+  announceSuggestions();
+}
+
+
+const sameAddress = (a, b) => String(a).replace(/#.*$/, '').replace(/\/$/, '') === String(b).replace(/#.*$/, '').replace(/\/$/, '');
+function matchOpenTabs(text) {
+  const q = text.toLowerCase();
+  const state = lastTabState;
+  if (!state || !q) return [];
+  return state.tabs.filter((x) => x.id !== state.activeId && /^https?:/i.test(x.url || '') && ((x.title || '').toLowerCase().includes(q) || prettyUrl(x.url).split(/[?#]/)[0].toLowerCase().includes(q))).slice(0, 3);
 }
 
 async function updateSuggestions(typed, deleting) {
@@ -10438,7 +10463,16 @@ async function updateSuggestions(typed, deleting) {
   }
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
-  const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+  const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+
+  const extraTabs = [];
+  for (const tab of matchOpenTabs(text)) {
+    const row = { kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') };
+    const at = visited.findIndex((v) => v.kind !== 'tab' && sameAddress(v.go, tab.url));
+    if (at >= 0) visited[at] = row;
+    else if (extraTabs.length < 2) extraTabs.push(row);
+  }
+  visited.push(...extraTabs);
   const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
 
   suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
@@ -10452,6 +10486,7 @@ function moveSelection(step) {
   const item = suggest.items[suggest.selected];
   address.value = !item ? suggest.typed : item.kind === 'search' ? item.title : item.go;
   renderSuggestions();
+  announceSuggestions(true);
 }
 
 
@@ -10482,10 +10517,20 @@ function navigate(target) {
   address.blur();
 }
 
+function chooseSuggestion(item, fallback) {
+  if (item?.tabId != null && lastTabState?.tabs.some((x) => x.id === item.tabId)) {
+    hideSuggestions();
+    dropAddressDraft();
+    addressDirty = false;
+    window.browser.switchTab(item.tabId, true);
+    address.blur();
+  } else navigate(item ? item.go : fallback);
+}
+
 window.browser.onSuggestionPicked(({ index, listId }) => {
   if (listId !== shownSuggestions.id) return;
   const item = shownSuggestions.items[index];
-  if (item) navigate(item.go);
+  if (item) chooseSuggestion(item);
 });
 
 address.addEventListener('input', (e) => {
@@ -10565,7 +10610,7 @@ address.addEventListener('keydown', (e) => {
 $('omnibox').addEventListener('submit', (e) => {
   e.preventDefault();
   const item = suggest.items[suggest.selected];
-  navigate(item ? item.go : address.value.trim());
+  chooseSuggestion(item, address.value.trim());
 });
 
 $('back').onclick = () => window.browser.back();
@@ -11252,11 +11297,12 @@ const downloadsBtn = $('downloads');
 const RING = 2 * Math.PI * 10;
 let downloadStates = new Map();
 let pulseTimer = null;
+const failedDownloads = new Set();
 
 window.browser.onDownloads?.((list) => {
   if (!Array.isArray(list)) return;
   downloadsBtn.hidden = !list.length;
-  if (!list.length) { downloadStates = new Map(); downloadsBtn.classList.remove('progressing', 'finished'); return; }
+  if (!list.length) { downloadStates = new Map(); failedDownloads.clear(); downloadsBtn.classList.remove('progressing', 'finished', 'failed'); return; }
   const active = list.filter((d) => d.state === 'progressing');
   const sized = active.filter((d) => d.total > 0);
   const total = sized.reduce((s, d) => s + d.total, 0);
@@ -11266,6 +11312,8 @@ window.browser.onDownloads?.((list) => {
   downloadsBtn.querySelector('.ring-bar').style.strokeDashoffset = String(RING * (1 - fraction));
 
   const justFinished = list.some((d) => d.state === 'completed' && downloadStates.get(d.id) === 'progressing');
+  for (const d of list) { if (d.state === 'interrupted' && downloadStates.get(d.id) === 'progressing') failedDownloads.add(d.id); else if (d.state !== 'interrupted') failedDownloads.delete(d.id); }
+  downloadsBtn.classList.toggle('failed', failedDownloads.size > 0);
   downloadStates = new Map(list.map((d) => [d.id, d.state]));
   if (justFinished) {
     downloadsBtn.classList.remove('finished');
@@ -11283,6 +11331,8 @@ window.browser.onDownloads?.((list) => {
 });
 for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
+  failedDownloads.clear();
+  downloadsBtn.classList.remove('failed');
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
 };

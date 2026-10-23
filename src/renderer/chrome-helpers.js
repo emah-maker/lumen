@@ -25,7 +25,7 @@
   // inline completion (Enter goes to that), or the first row is only "search for ...", which Enter does anyway.
   function defaultSuggestion(typed, items, { completed = false } = {}) {
     if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return items[0].kind === 'history' ? 0 : -1;
+    return ['history', 'site', 'tab'].includes(items[0].kind) ? 0 : -1;
   }
 
   const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
