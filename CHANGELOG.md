@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.66 (2026-10-23)
+
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.
 
 - **A message after a few stopped replies is answered with what you asked in them.** Asking Claude Code for "7 review packets", stopping it to add "interleave the topics", stopping again to add "use the homeworks on Canvas", then saying "make each one take 1-2 hours" got "I can't tell what each one means": once a stopped reply had shown some text, only that cut-off text went along with the next message, and the asks before it were left to a session that had been interrupted mid-turn and might not hold them. The next message now carries every ask from the stopped exchanges right before it, on Claude Code, Grok Build, Antigravity and Codex.
