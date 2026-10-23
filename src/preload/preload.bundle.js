@@ -518,6 +518,7 @@ contextBridge.exposeInMainWorld('browser', {
   onAttachImage: on('attach-image'),
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
+  onWindowFullscreen: on('window-fullscreen'),
   onAgentsPending: on('agents:pending'),
   focusPendingAgent: () => ipcRenderer.send('agents:focus-pending'),
   onAgentWindow: on('agent-window'),

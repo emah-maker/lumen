@@ -9578,7 +9578,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
@@ -9867,7 +9867,7 @@ function fillHoverCard(el) {
   hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
-  hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host;
+  hostEl.textContent = tab.isolated && host ? t('tabs.isolatedHost', { host }) : host;
   if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · ');
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · ');
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · ');
@@ -9940,6 +9940,9 @@ $('tabs').addEventListener('pointerover', (e) => {
   hoverTab(el);
 });
 $('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
+
+$('tabs').addEventListener('focusin', (e) => { const el = e.target.closest?.('.tab'); if (el && e.target === el && el.matches(':focus-visible')) hoverTab(el); });
+$('tabs').addEventListener('focusout', (e) => { if (e.target.closest?.('.tab') && !$('tabs').contains(e.relatedTarget)) hideHoverCard(); });
 $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
@@ -11306,6 +11309,7 @@ downloadsBtn.onclick = () => {
 
 
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+window.browser.onWindowFullscreen?.((on) => document.body.classList.toggle('window-fullscreen', Boolean(on)));
 
 window.browser.onAgentsPending?.(({ count } = {}) => {
   const b = $('agents-pending');

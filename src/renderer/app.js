@@ -1262,7 +1262,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
@@ -1551,7 +1551,7 @@ function fillHoverCard(el) {
   hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
-  hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
+  hostEl.textContent = tab.isolated && host ? t('tabs.isolatedHost', { host }) : host; // opened by the AI in its own empty session
   if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
@@ -1624,6 +1624,9 @@ $('tabs').addEventListener('pointerover', (e) => {
   hoverTab(el);
 });
 $('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
+// Keyboard focus shows the card too (only :focus-visible: a click's focus is not a request for it), and leaving the strip's tab hides it.
+$('tabs').addEventListener('focusin', (e) => { const el = e.target.closest?.('.tab'); if (el && e.target === el && el.matches(':focus-visible')) hoverTab(el); });
+$('tabs').addEventListener('focusout', (e) => { if (e.target.closest?.('.tab') && !$('tabs').contains(e.relatedTarget)) hideHoverCard(); });
 $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
@@ -2990,6 +2993,7 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+window.browser.onWindowFullscreen?.((on) => document.body.classList.toggle('window-fullscreen', Boolean(on)));
 // [agents out of sight] The one passive place for an outside agent's approvals: a count in the toolbar. It opens nothing by itself.
 window.browser.onAgentsPending?.(({ count } = {}) => {
   const b = $('agents-pending');
