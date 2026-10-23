@@ -4268,6 +4268,31 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/btw]
 
+  // ---- [autocomplete] Tab to finish the message being typed (ai/autocomplete.js): one small tool-less guess from the last few turns of
+  // `messages` and what was typed (`prefix`). Reads the chat, never changes it; the tokens go to the app's usage log, not the chat's totals.
+  // Returns autocomplete.run's result: { ok, text, model?, error? }.
+  async autocomplete({ messages, tab = null, prefix, signal }) {
+    const lib = require('./autocomplete'); // (lazy: only once someone types in the chat box)
+    const settings = messages?.settings || {};
+    const transcript = (() => { try { return handoffTurns(transcriptFor(messages || []).slice(-6), 4000); } catch { return ''; } })();
+    const call = async (model, { system, messages: sent, signal: sig, maxTokens }) => {
+      const { provider, model: id } = providers.splitModel(model);
+      if (provider === 'anthropic') return this.getClient().messages.create({ model: id, max_tokens: maxTokens, system, messages: sent }, { signal: sig });
+      const apiKey = this.getKey(provider);
+      if (!apiKey) throw new Error(`No ${providers.PROVIDERS[provider].label} API key.`);
+      return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages: sent, tools: [], signal: sig, emit: () => {}, noTools: true });
+    };
+    return lib.run({
+      chatModel: settings.model || '',
+      defaultModel: this.getOptions().model || '',
+      options: this.fallbackOptionsList(),
+      mode: 'auto', // (always the cheaper sibling: a guess per pause in typing)
+      transcript, tab, prefix, signal, call,
+      onUsage: (message, model) => { if (message?.usage) this.reportApi(providers.splitModel(model).provider, { model, usage: message.usage }); },
+    });
+  }
+  // ---- [/autocomplete]
+
   // ---- [research] find_sources and research_board (ai/research-tools.js). find_sources only talks to public scholarly APIs (no key,
   // no cookies, only the AI's query leaves; in a chat that has read a page the query goes through the same OK card as web_search).
   // The board is the chat's settings.research: saved with the chat, shown in the sidebar's Research board panel (main.js research:*).

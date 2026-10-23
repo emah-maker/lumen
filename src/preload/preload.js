@@ -179,6 +179,8 @@ contextBridge.exposeInMainWorld('assistant', {
   btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text), // /btw: a side question answered beside the running task (features/btw-side.js); streamed through onBtw
   btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
   onBtw: on('agent:btw-event'),
+  autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''), // [autocomplete] a guess at the rest of the message being typed (renderer/chat-autocomplete.js)
+  autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
   // The chat history list (renderer/chats.js)
   // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
   images: {

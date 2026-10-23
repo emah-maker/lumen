@@ -917,6 +917,13 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
   field-sizing: content; min-height: 60px; max-height: max(60px, 40vh); } /* roomy: two or three lines from the start, growing to about 40% of the height, then it scrolls */
 .composer textarea::placeholder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea:focus-visible { box-shadow: none; } /* the whole composer takes the ring */
+/* [autocomplete] The guess after the caret (renderer/chat-autocomplete.js): a copy of the box's text, invisible, then the guess in grey, laid
+   exactly over the box (its font, padding and scroll are copied by script). Clicks go through to the box. */
+.composer .autocomplete-layer { position: absolute; margin: 0; border-style: solid; border-color: transparent; pointer-events: none; overflow: hidden;
+  white-space: pre-wrap; overflow-wrap: break-word; color: transparent; z-index: 1; }
+.composer .autocomplete-layer[hidden] { display: none; }
+.composer .autocomplete-ghost { color: var(--muted); }
+.composer .autocomplete-hint { margin-left: 6px; padding: 0 5px; border-radius: var(--r-sm); font-size: 0.75em; color: var(--muted); box-shadow: 0 0 0 1px var(--hairline); vertical-align: 1px; }
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .send {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;

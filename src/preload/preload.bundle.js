@@ -588,6 +588,8 @@ contextBridge.exposeInMainWorld('assistant', {
   btw: (id, text) => ipcRenderer.invoke('agent:btw', id, text),
   btwCancel: (id) => ipcRenderer.send('agent:btw-cancel', id),
   onBtw: on('agent:btw-event'),
+  autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''),
+  autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
 
   images: {
     data: (id) => ipcRenderer.invoke('images:data', id),
