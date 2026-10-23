@@ -409,17 +409,15 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
   const file = path.join(userData, CONFIG_FILE);
   const dir = path.join(userData, 'mcp-servers');
   const connections = new Map(); // id -> Connection
-  let unreadable = false; // mcp-servers.json exists but could not be read: it is never overwritten
   let servers = load();
 
   function load() {
     const r = readStoreFile(file); // no file yet: no servers
-    if (r.failed) { unreadable = true; return []; }
+    if (r.failed) return []; // (a copy was kept; the user's next change still saves)
     const data = r.data || {};
     return Array.isArray(data.servers) ? data.servers.filter((s) => s && typeof s.id === 'string' && cleanName(s.name)) : [];
   }
   function persist() {
-    if (unreadable) throw new Error('mcp-servers.json could not be read, so changes are not saved (a copy of it was kept)');
     fs.mkdirSync(userData, { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ servers }, null, 2), { mode: 0o600 });

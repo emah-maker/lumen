@@ -420,14 +420,14 @@ function createLearning({ now = Date.now, max = 50 } = {}) {
 
 function createStore({ file, now = Date.now }) {
   let state = null; // { skills: [], known: [builtin names seen], removed: [builtin ids the user deleted] }
-  let unreadable = false; // skills.json exists but could not be read: it is never overwritten
+  let unreadable = false; // skills.json exists but could not be read: the start-up write of built-ins is skipped, the user's own changes still save
   const freshBuiltin = (b) => normalizeSkill({ ...b, id: builtinId(b.name), source: 'builtin', createdAt: 0 }, { now }).skill;
   const write = () => {
-    if (unreadable) throw new Error('skills.json could not be read, so changes are not saved (a copy of it was kept)');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ version: 1, skills: state.skills, known: state.known }, null, 2));
     fs.renameSync(tmp, file); // never a half-written file
+    unreadable = false; // (only the user's own save, delete or add gets here after a failed read: a copy of the old file was kept)
   };
   function load() {
     if (state) return state;

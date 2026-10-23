@@ -61,7 +61,13 @@ async function loadJsonAsync(file) {
 // empty state as real, nor save over the original (and nothing may be purged because of it).
 function readStoreFile(file, parse = (text) => JSON.parse(text)) {
   const failed = (error) => {
-    try { fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`); } catch {}
+    try {
+      // One copy per distinct content: a file that stays broken is not copied again on every launch.
+      const bytes = fs.readFileSync(file);
+      const prefix = `${path.basename(file)}.corrupt-`;
+      const same = fs.readdirSync(path.dirname(file)).some((n) => { try { return n.startsWith(prefix) && fs.readFileSync(path.join(path.dirname(file), n)).equals(bytes); } catch { return false; } });
+      if (!same) fs.writeFileSync(`${file}.corrupt-${Date.now()}`, bytes);
+    } catch {}
     console.error(`[lumen] ${path.basename(file)} was unreadable; a copy was kept and it will not be overwritten (${error?.message || error})`);
     return { failed: true, error };
   };
