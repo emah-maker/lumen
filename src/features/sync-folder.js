@@ -201,7 +201,7 @@ function createSyncService(deps) {
   async function connect() {
     const secret = loadPassphrase();
     if (!secret) throw new core.SyncError('no-passphrase', 'The sync passphrase is not on this computer');
-    const opened = await core.openFolder(root, secret);
+    const opened = await core.openFolder(root, secret, { create: false }); // (enable made or joined the set: a set gone since is reported, not made again)
     const state = loadState();
     engine = core.createEngine({
       dirs: opened.dirs, key: opened.key, deviceId: state.deviceId, deviceName: deps.deviceName || os.hostname(), platform: process.platform, appVersion: deps.appVersion || '',
