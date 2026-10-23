@@ -4,7 +4,8 @@
 .tab-search-btn svg { width: 14px; height: 14px; }
 .tab-search-btn[aria-expanded="true"] { background: var(--hover); }
 
-.tab-audio { flex: none; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: var(--r-xs); background: transparent; color: var(--muted); cursor: default; }
+.tab-audio { position: relative; flex: none; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: var(--r-xs); background: transparent; color: var(--muted); cursor: default; }
+.tab-audio::before { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, var(--hit-min)); height: max(100%, var(--hit-min)); transform: translate(-50%, -50%); } /* (the look stays small; the hit area is at least var(--hit-min)) */
 .tab-audio:hover { background: var(--hover); color: var(--text); }
 .tab-audio svg, .tab-search-audio svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .tab-audio svg path:first-child, .tab-search-audio svg path:first-child { fill: currentColor; }

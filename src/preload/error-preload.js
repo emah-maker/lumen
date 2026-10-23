@@ -15,6 +15,10 @@ if (location.protocol === 'file:' && /\/renderer\/error\.html$/.test(location.pa
     choose: () => ipcRenderer.send('missingfile:choose'),
   });
 }
+// The crashed page (kind=crashed): Reload for a page that is not on the web (a new tab, settings, a file) asks main to reload the tab.
+if (location.protocol === 'file:' && /\/renderer\/error\.html$/.test(location.pathname) && /[?&]kind=crashed\b/.test(location.search)) {
+  contextBridge.exposeInMainWorld('lumenCrashed', { reload: () => ipcRenderer.send('crashed:reload') });
+}
 // The focus block page (renderer/focus-block.html, features/focus.js): the time left, "I need this for school" and End focus. Main answers only that page
 // in a tab's top frame, and takes the site from the page's own address.
 if (location.protocol === 'file:' && /\/renderer\/focus-block\.html$/.test(location.pathname)) {

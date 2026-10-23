@@ -53,16 +53,16 @@ const PAGE = '<!doctype html><title>permissions</title><body>permissions</body>'
     return out;
   })()`);
   const same = (got, want) => Object.entries(want).every(([k, v]) => got[k] === v);
-  // Answer the permission prompt Lumen shows (1 = Allow, 0 = Don't Allow).
-  const answer = async (response) => {
+  // Answer the permission prompt Lumen shows (1 = Allow, 0 = Don't Allow, -1 = Esc). "Remember my choice" is ticked by default, as in the dialog.
+  const answer = async (response, remember = true) => {
     const id = await waitFor(() => app.evaluate(() => global.__dialogs.currentId()));
     if (!id) return false;
-    await app.evaluate((_e, [i, r]) => global.__dialogs.respond({ id: i, response: r }), [id, response]);
+    await app.evaluate((_e, [i, r, k]) => global.__dialogs.respond({ id: i, response: r, checkboxChecked: k }), [id, response, remember]);
     return true;
   };
-  const askNotifications = (response) => async () => {
+  const askNotifications = (response, remember = true) => async () => {
     await page('window.__result = null; Notification.requestPermission().then((r) => { window.__result = r; }); 1');
-    const answered = await answer(response);
+    const answered = await answer(response, remember);
     const result = await waitFor(() => page('window.__result'));
     return { answered, result };
   };
@@ -115,6 +115,15 @@ const PAGE = '<!doctype html><title>permissions</title><body>permissions</body>'
   check("a PermissionStatus made earlier fired 'change' with 'denied'", await waitFor(() => page("window.__changes.includes('denied')")), JSON.stringify(await page('window.__changes')));
   await load(ip);
   check('the first origin is still granted', await reads().then((r) => r.notification === 'granted' && r.notifications === 'granted'), JSON.stringify(await reads()));
+
+  // ---- Esc and an unticked "Remember my choice": this request is refused (or answered), nothing is stored
+  await load(other);
+  const esc = await askNotifications(-1)();
+  check('Esc on the prompt refuses the request', esc.answered && esc.result !== 'granted', JSON.stringify(esc));
+  const stored = (o) => app.evaluate((_e, k) => global.__settings.permissions.has(k), `${o.slice(0, -1)}|notifications`);
+  check('Esc remembers nothing: no decision is stored for the origin', !(await stored(other)), 'stored');
+  const once = await askNotifications(1, false)();
+  check('Allow with "Remember my choice" unticked answers this request but stores nothing', once.answered && once.result === 'granted' && !(await stored(other)), JSON.stringify(once));
 
   // ---- geolocation: the same rules through a different API (Allow here; the position itself may not be available)
   await load(other);
