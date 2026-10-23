@@ -154,6 +154,7 @@ class TabCapture {
     this.waiters = new Set(); // called when a dialog is held
     this.busy = 0; // AI tool calls running on this tab (agent.js executeDebugged)
     this.lastAiAt = 0; // when the last one ended
+    this.lastScope = null; // the run (agent.js taskScope) whose tool call touched this tab last: it owns a dialog held now
   }
 
   // The AI is working in the tab: a tool call is running there, or one ended in the last AI_DIALOG_MS (a click's dialog can
@@ -207,6 +208,7 @@ class PageDebug {
     this.opts = { now, consoleCap, requestCap };
     this.byWc = new WeakMap(); // webContents -> TabCapture
     this.sessions = new Map(); // session -> Map(webContents id -> TabCapture)
+    this.heldCaps = new Set(); // captures that may hold one of Lumen's own dialogs for a run (releaseHeldFor)
   }
 
   captureOf(wc) { return wc ? this.byWc.get(wc) || null : null; }
@@ -235,6 +237,8 @@ class PageDebug {
     const ses = (() => { try { return wc.session; } catch { return null; } })();
     if (ses?.webRequest) this.join(ses, id, cap);
     wc.once('destroyed', () => {
+      cap.release({ settle: true }); // a closed tab answers its held dialog "no": the page's call never stays open
+      this.heldCaps.delete(cap);
       for (const fn of [...cap.waiters]) fn(null);
       if (ses) this.leave(ses, id);
     });
@@ -291,21 +295,42 @@ class PageDebug {
   // respond(accept, promptText) answers the page. -> true when it is the AI's to handle (the AI is working in the tab:
   // TabCapture.aiActive), with the same policy as a CDP dialog (an alert accepted and noted, a confirm/prompt held for
   // handle_dialog); false: the user's overlay shows it as before.
-  pageDialog(wc, { kind, message, defaultValue } = {}, respond) {
+  // `toUser()` (optional) shows the dialog to the user the normal way, answering the page itself: used when the run that holds
+  // it ends (releaseHeldFor).
+  pageDialog(wc, { kind, message, defaultValue } = {}, respond, toUser) {
     const cap = this.captureOf(wc);
     if (!cap || !cap.aiActive() || typeof respond !== 'function') return false;
     const type = kind === 'confirm' || kind === 'prompt' ? kind : 'alert';
-    const dialog = { type, message: String(message ?? ''), defaultPrompt: String(defaultValue ?? ''), respond };
+    const dialog = { type, message: String(message ?? ''), defaultPrompt: String(defaultValue ?? ''), respond, toUser: typeof toUser === 'function' ? toUser : null, owner: cap.lastScope };
     const action = dialogPolicy({ type, aiNavigating: cap.aiNav > 0 });
     if (action === 'hold') {
       cap.release({ settle: true }); // (one page cannot have two open; a stale one is answered "no")
       cap.hold(dialog);
+      this.heldCaps.add(cap);
       return true;
     }
     respond(action === 'accept');
     cap.note({ ...dialog, action });
     cap.addConsole({ level: 'warning', text: `[dialog] ${dialogNote({ ...dialog, action })}`, line: 0, source: '' });
     return true;
+  }
+
+  // The run `scope` ended or was stopped: a confirm/prompt it held for handle_dialog is let go, or the page's blocked call would
+  // hang for good. The tab is still open: the user gets the dialog as if the AI had never held it; otherwise it is answered "no".
+  // Another run's held dialog is left alone.
+  releaseHeldFor(scope) {
+    if (!scope) return;
+    for (const cap of [...this.heldCaps]) {
+      const d = cap.dialog;
+      if (!d) { this.heldCaps.delete(cap); continue; }
+      if (d.owner !== scope || !d.respond) continue;
+      cap.release();
+      this.heldCaps.delete(cap);
+      let alive = false;
+      try { alive = Boolean(d.toUser) && !cap.wc.isDestroyed?.(); } catch { /* gone */ }
+      if (alive) { try { d.toUser(); continue; } catch { /* fall through: answer it */ } }
+      try { d.respond(false); } catch { /* the page is gone */ }
+    }
   }
 
   async answer(cap, dialog, accept, promptText) {
@@ -376,7 +401,19 @@ class PageDebug {
   }
 }
 
+// A sync-IPC handler (ipcMain.on + sendSync) must always set event.returnValue, or the renderer is blocked for good: a throw
+// answers with fallback(...args).
+function replyOnThrow(handler, fallback, onError = () => {}) {
+  return (event, ...args) => {
+    try { return handler(event, ...args); } catch (err) {
+      try { onError(err); } catch { /* logging only */ }
+      try { event.returnValue = fallback(...args); } catch { /* the renderer is gone */ }
+    }
+  };
+}
+
 module.exports = {
+  replyOnThrow,
   PageDebug, TabCapture, Ring, normalizeConsole, sourceName, typeLabel, displayUrl, selectConsole, selectNetwork, consoleLine, networkLine,
   dialogPolicy, dialogHeader, dialogNote, dialogText, clock, CONSOLE_CAP, REQUEST_CAP, DEFAULT_LINES, MAX_LINES,
 };

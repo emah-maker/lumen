@@ -59,6 +59,7 @@ const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Past
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
 const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
+const { replyOnThrow } = require('./ai/page-debug');
 const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
 const { describeUsage, contextView } = require('./features/chat-usage');
@@ -863,6 +864,7 @@ ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point =
 const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) }));
 
 // "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
+const crashBurst = (...args) => require('./features/crash-cap').crashBurst(...args); // (loaded with the first crash)
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
   file: () => path.join(app.getPath('userData'), 'running'),
   readSettings: () => readSettings(),
@@ -1046,14 +1048,24 @@ function pageDialogEntry(wc) {
 }
 // `sendSync`: the page stays blocked until `event.returnValue` is set, exactly like the real
 // alert()/confirm()/prompt(). Only tabs and popups (default session) get this preload at all.
-ipcMain.on('page-dialog', (event, req) => {
+const pageDialogCancelled = (req) => (req?.kind === 'confirm' ? false : req?.kind === 'prompt' ? null : undefined);
+ipcMain.on('page-dialog', replyOnThrow((event, req) => {
   const wc = event.sender;
-  const silence = () => { event.returnValue = req.kind === 'confirm' ? false : req.kind === 'prompt' ? null : undefined; };
+  const silence = () => { event.returnValue = pageDialogCancelled(req); };
   if (dialogs.isOwnView(wc)) return silence(); // ignore requests from the overlay itself
   // [page debug] The AI is working in this tab: its alert is accepted and noted, a confirm/prompt waits for handle_dialog (ai/page-debug.js).
+  // If the run that holds it ends or is stopped first, the user gets it through showToUser (page-debug.js releaseHeldFor).
   const respond = (accept, text) => { event.returnValue = req.kind === 'confirm' ? accept === true : req.kind === 'prompt' ? (accept === true ? String(text ?? req.defaultValue ?? '') : null) : undefined; };
-  if (pageDebugShared.pageDialog(wc, req, respond)) return;
+  if (pageDebugShared.pageDialog(wc, req, respond, () => showToUser(event, req))) return;
   if (agentContents.has(wc)) return silence(); // [agent window] alert is dismissed, confirm says no, prompt cancels: nothing waits for a person who is not there
+  showToUser(event, req);
+}, pageDialogCancelled, (err) => console.error('[lumen] page-dialog:', err)));
+// The user's overlay for a page's alert/confirm/prompt; the page's blocked call returns with the answer. Any failure answers it "cancel".
+function showToUser(event, req) {
+  const wc = event.sender;
+  const silence = () => { event.returnValue = pageDialogCancelled(req); };
+  const failed = (err) => { console.error('[lumen] page-dialog:', err); silence(); };
+  try {
   const entry = pageDialogEntry(wc);
   if (entry.muted) return silence();
   entry.count += 1;
@@ -1072,17 +1084,18 @@ ipcMain.on('page-dialog', (event, req) => {
     dialogs.ask({
       title, message: req.message, fields: [{ name: 'value', value: req.defaultValue || '' }],
       buttons: [t('dialog.cancel'), t('dialog.ok')], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
-    }).then(({ response, values, checkboxChecked }) => finish(response === 1 && values ? values.value : null, checkboxChecked));
+    }).then(({ response, values, checkboxChecked }) => finish(response === 1 && values ? values.value : null, checkboxChecked), failed);
   } else if (req.kind === 'confirm') {
     dialogs.showMessageBox(win, {
       title, message: req.message, buttons: [t('dialog.cancel'), t('dialog.ok')], defaultId: 1, cancelId: 0, owner: wc, checkboxLabel,
-    }).then(({ response, checkboxChecked }) => finish(response === 1, checkboxChecked));
+    }).then(({ response, checkboxChecked }) => finish(response === 1, checkboxChecked), failed);
   } else {
     dialogs.showMessageBox(win, {
       title, message: req.message, buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0, owner: wc, checkboxLabel,
-    }).then(({ checkboxChecked }) => finish(undefined, checkboxChecked));
+    }).then(({ checkboxChecked }) => finish(undefined, checkboxChecked), failed);
   }
-});
+  } catch (err) { failed(err); }
+}
 // A site's notification clicked (page-dialogs-preload.js): its tab comes to the front, in whichever window holds it, like Chrome.
 ipcMain.on('page-notification:click', (event) => {
   const wc = event.sender;
@@ -2785,8 +2798,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (tab.managerPage === 'chat') {
       console.error(`[lumen] chat page process gone (${details.reason}, exit ${details.exitCode ?? '?'}); reloading it`);
       const now = Date.now();
-      tab.chatCrashes = (tab.chatCrashes || []).filter((at) => now - at < 60e3).concat(now);
-      if (tab.chatCrashes.length <= 3) { setImmediate(() => { if (!wc.isDestroyed() && tabs.includes(tab)) wc.reload(); }); return; }
+      const burst = crashBurst(tab.chatCrashes, now);
+      tab.chatCrashes = burst.times;
+      if (burst.reload) { setImmediate(() => { if (!wc.isDestroyed() && tabs.includes(tab)) wc.reload(); }); return; }
     }
     const failedUrl = tab.lastUrl || '';
     tab.hungAsked = false;
@@ -8142,11 +8156,32 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
-  // dead window. The tabs themselves live in their own processes and are unaffected.
+  // dead window. The tabs themselves live in their own processes and are unaffected. Capped like the chat page.
+  let uiCrashes = [];
+  let uiCrashAsked = false;
   w.webContents.on('render-process-gone', (_e, details) => {
     if (details.reason === 'clean-exit' || !ui()) return;
-    console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
-    ui().reload();
+    const burst = crashBurst(uiCrashes, Date.now());
+    uiCrashes = burst.times;
+    if (burst.reload) {
+      console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
+      ui().reload();
+      return;
+    }
+    // Three crashes in a minute: it crashes as it loads, so reloading again would only loop. Stop and offer a restart instead.
+    console.error(`[lumen] browser UI process gone (${details.reason}) ${burst.times.length} times in a minute; not reloading it again`);
+    if (uiCrashAsked) return;
+    uiCrashAsked = true;
+    dialogs.showMessageBox(win, {
+      type: 'error', buttons: [t('uiCrash.restart'), t('uiCrash.safe'), t('uiCrash.later')], defaultId: 0, cancelId: 2,
+      message: t('uiCrash.title'),
+      detail: t('uiCrash.detail'),
+    }).then(({ response, cancelled }) => {
+      uiCrashAsked = false;
+      if (cancelled || response > 1) return;
+      if (TEST) { global.__uiCrashRestarts = (global.__uiCrashRestarts || 0) + 1; global.__uiCrashRestartSafe = response === 1; return; }
+      relaunchLumen(response === 1);
+    }).catch(() => { uiCrashAsked = false; });
   });
   let uiHungAsked = false;
   w.webContents.on('unresponsive', () => {
@@ -9857,10 +9892,13 @@ app.whenReady().then(() => setTimeout(() => {
 ipcMain.on('gpu:restart', (_e, safe) => {
   if (TEST) { global.__gpuRestarts = (global.__gpuRestarts || 0) + 1; global.__gpuRestartSafe = safe === true; return; } // tests check the click, not a relaunch
   // safe: this run only, hardware acceleration off (--lumen-safe-gpu, settings-backend.js applyAtLaunch); the next normal start is hardware again
+  relaunchLumen(safe === true);
+});
+function relaunchLumen(safe) {
   const args = process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu');
   app.relaunch({ args: safe === true ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
   app.quit();
-});
+}
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy
