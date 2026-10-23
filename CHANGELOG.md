@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can no longer press Ctrl+Shift+Escape or Ctrl+Escape on Windows by spelling Esc out.** The list of shortcuts the AI is never allowed to send in other programs (Task Manager, the Start menu, Alt+F4, Ctrl+Alt+Delete, the Windows key, and the Mac equivalents) only caught some spellings: `ctrl+shift+esc` was refused but `ctrl+shift+escape` and `ctrl+escape` were sent. Key names are now normalized once before the list is checked (esc/escape, del/delete, return/enter, ctrl/control, alt/option, win/meta/cmd, any case, `+` or `-` between keys, spaces around `+`, any modifier order), on Windows and macOS alike. `ctrl++` (zoom in) can now be pressed too, as can `plus` and `minus`. New test file `test/units/desktop-keys-units.js`.
+
 ## 0.5.66 (2026-10-23)
 
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.
