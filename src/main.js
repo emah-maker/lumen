@@ -863,7 +863,7 @@ ipcMain.on('page-info:open', (_e, point) => openPageInfo(point && typeof point =
 const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShortcutsHelp({ t, showNotes: (opts) => dialogs.showNotes(opts) }));
 
 // "Lumen didn't shut down correctly": offers the last run's tabs when the startup setting wouldn't bring them back (features/crash-recovery.js).
-const { crashBurst } = require('./features/crash-cap');
+const crashBurst = (...args) => require('./features/crash-cap').crashBurst(...args); // (loaded with the first crash)
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
   file: () => path.join(app.getPath('userData'), 'running'),
   readSettings: () => readSettings(),
