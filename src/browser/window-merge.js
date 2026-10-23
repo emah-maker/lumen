@@ -21,7 +21,8 @@ const liveTabs = (w) => (w.tabs || []).filter((t) => !t.closing);
 // A click that was sent just as the toast faded still arrives, hence the short grace.
 const NOTE_MS = 9000;
 const UNDO_GRACE_MS = 500;
-const undoValid = (at, now = Date.now()) => Number.isFinite(at) && now - at >= 0 && now - at < NOTE_MS + UNDO_GRACE_MS;
+const UNDO_MS = 60000; // how long main keeps the merge undoable: the strip hides the note on its own timer (and holds it while hovered or focused), so Undo never outlives the button
+const undoValid = (at, now = Date.now()) => Number.isFinite(at) && now - at >= 0 && now - at < UNDO_MS;
 
 // Whether a tab goes along, and in what state. `alive`: its page is running; `sleeping`: put to sleep (it wakes
 // when shown); neither: restored but not loaded yet, which still has an address and moves like a sleeping tab.
@@ -176,4 +177,4 @@ function undoPlan(entries, liveIds) {
   return out.filter((w) => w.ids.length);
 }
 
-module.exports = { NOTE_MS, UNDO_GRACE_MS, undoValid, describeTab, releaseFlags, blocker, availability, eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };
+module.exports = { NOTE_MS, UNDO_GRACE_MS, UNDO_MS, undoValid, describeTab, releaseFlags, blocker, availability, eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };
