@@ -9884,7 +9884,7 @@ ipcMain.on('gpu:restart', (_e, safe) => {
 });
 function relaunchLumen(safe) {
   const args = process.argv.slice(1).filter((a) => a !== '--lumen-safe-gpu');
-  app.relaunch({ args: safe ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
+  app.relaunch({ args: safe === true ? [...args, '--lumen-safe-gpu'] : args }); // before-quit saves the session, as for every other restart
   app.quit();
 }
 const settingsBackend = settingsPage.create({
