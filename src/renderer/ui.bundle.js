@@ -72,7 +72,7 @@
 
 
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
-  const loads = {};
+  const loads = Object.create(null);
   function load(name, file, after) {
     if (loads[name] || typeof document === 'undefined' || !here) return;
     loads[name] = 'loading';
@@ -664,8 +664,8 @@
 
 
   function takeDefinitions(lines) {
-    const refs = {};
-    const notes = {};
+    const refs = Object.create(null);
+    const notes = Object.create(null);
     const keep = [];
     let fenced = false;
     for (let n = 0; n < lines.length; n++) {
