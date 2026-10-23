@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **One dropped connection no longer locks an Auto chat out for 15 minutes.** With a single AI connected, a Wi-Fi blip or an error with no status ("terminated", a reset connection) marked the whole provider as down for 15 minutes, and the next message on Auto said "no model is available right now". Such a failure with nowhere else to go now leaves the provider alone for a moment only. And when every model Auto could use is waiting out a limit or an outage, it now uses the one that comes back first instead of stopping. Rate limits and usage limits still keep a provider out of the way for other chats. Tests: `test/units/auto-agent-units.js`, `test/units/auto-model-units.js`.
+
 ## 0.5.66 (2026-10-23)
 
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.

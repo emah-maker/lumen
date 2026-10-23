@@ -220,7 +220,14 @@ function fitCost(option, need, options) {
 // one the user was on before). previous: { id, tier } of the chat's last Auto turn.
 function route({ options = [], request = {}, prefer = [], last = null, exclude = [], denied = null, cooldowns = null, at = Date.now(), allowEngines = true, scope = null, need = null } = {}) {
   need = need || needFor(request);
-  const list = candidatesOf(options, need, { exclude, denied, cooldowns, at, allowEngines, scope });
+  let list = candidatesOf(options, need, { exclude, denied, cooldowns, at, allowEngines, scope });
+  // Every candidate is cooling: Auto still answers, from the one whose cooldown ends first (a model that is really out of usage fails and
+  // fails over as usual). A provider's own Auto keeps returning nothing here: routeOrFallBack hands that turn to another provider.
+  if (!list.length && !scope && cooldowns) {
+    const waiting = candidatesOf(options, need, { exclude, denied, cooldowns: null, at, allowEngines, scope });
+    const soonest = Math.min(...waiting.map((o) => cooldowns.until(o.id, at)));
+    list = waiting.filter((o) => cooldowns.until(o.id, at) === soonest);
+  }
   if (!list.length) return { id: null, tier: need.tier, need, why: need.why, label: 'Auto', scope, reason: scope ? `Auto: no ${scopeName(scope)} model is available right now` : 'Auto: no model is available right now', candidates: [] };
   const home = (prefer || []).filter(Boolean);
   const score = (o, index) => {
