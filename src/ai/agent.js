@@ -4232,6 +4232,7 @@ ${prompt}` : prompt), historyImages: [] };
   async btw({ messages, tab = null, question, signal, onText = () => {}, emit = () => {} }) {
     const settings = messages?.settings || {};
     const options = this.fallbackOptionsList();
+    const chatModel = this.resolveAuto(settings.model || ''); // (on 'auto' the model Auto would pick, never 'auto' itself)
     const transcript = (() => { try { return earlierText(messages || [], transcriptFor(messages || [])); } catch { return ''; } })();
     const call = async (model, { system, messages: sent, signal: sig, onText: text }) => {
       const { provider, model: id } = providers.splitModel(model);
@@ -4245,8 +4246,8 @@ ${prompt}` : prompt), historyImages: [] };
       return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages: sent, tools: [], signal: sig, emit: (e) => { if (e?.type === 'text') text(e.text); }, noTools: true });
     };
     const result = await btwLib.run({
-      chatModel: settings.model || '',
-      defaultModel: this.getOptions().model || '',
+      chatModel,
+      defaultModel: this.resolveAuto(this.getOptions().model || ''),
       options,
       mode: this.browser.subagentModel?.() === 'same' ? 'same' : 'auto',
       transcript, tab, question, signal, onText, call,
@@ -4268,12 +4269,21 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/btw]
 
+  // 'auto' / '<provider>:auto' -> the concrete model Auto picks for a quick job (the router's cheap tier), '' when none can answer. Any other id as is.
+  resolveAuto(model) {
+    if (!autoModel.isAuto(model)) return String(model || '');
+    try { return this.browser.autoRoute?.({ request: { kind: 'quick', prompt: '' }, last: null, allowEngines: true, scope: autoModel.scopeOf(model) })?.id || ''; } catch { return ''; }
+  }
+
   // ---- [autocomplete] Tab to finish the message being typed (ai/autocomplete.js): one small tool-less guess from the last few turns of
   // `messages` and what was typed (`prefix`). Reads the chat, never changes it; the tokens go to the app's usage log, not the chat's totals.
   // Returns autocomplete.run's result: { ok, text, model?, error? }.
   async autocomplete({ messages, tab = null, prefix, signal }) {
+    if (this.browser.chatAutocomplete?.() === false) return { ok: false, error: 'off', text: '' }; // Settings > AI > Tab to finish what I'm typing
     const lib = require('./autocomplete'); // (lazy: only once someone types in the chat box)
     const settings = messages?.settings || {};
+    // The chat's model. On 'auto' (or a provider's 'openai:auto') it is the model Auto would pick for a quick job (its cheap tier), or none.
+    const chatModel = this.resolveAuto(settings.model || this.getOptions().model || '');
     const transcript = (() => { try { return handoffTurns(transcriptFor(messages || []).slice(-6), 4000); } catch { return ''; } })();
     const call = async (model, { system, messages: sent, signal: sig, maxTokens }) => {
       const { provider, model: id } = providers.splitModel(model);
@@ -4283,8 +4293,7 @@ ${prompt}` : prompt), historyImages: [] };
       return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages: sent, tools: [], signal: sig, emit: () => {}, noTools: true });
     };
     return lib.run({
-      chatModel: settings.model || '',
-      defaultModel: this.getOptions().model || '',
+      chatModel,
       options: this.fallbackOptionsList(),
       mode: 'auto', // (always the cheaper sibling: a guess per pause in typing)
       transcript, tab, prefix, signal, call,

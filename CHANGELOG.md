@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Tab-to-finish no longer sends what you type to an AI company you didn't pick for that chat, and no longer fires failing requests on Auto.** While you typed, the chat box sent your draft, the last few messages and the tab title to a model, and for a chat on Claude Code, Codex, Grok Build or Antigravity it chose another company's API key to do it. Now it goes only to the provider the chat itself uses: those chats get no suggestion unless an API key from the same company is saved (an Anthropic key for Claude Code), and nothing is sent for them otherwise. A chat on **Auto** (the default on a new profile) used to ask the API for a model called "auto" at every pause, and failed each time; it now uses the model Auto would pick for a quick job, or sends nothing when none can answer. `/btw` no longer sends "auto" as a model either. PRIVACY.md now says plainly what is sent while you type, to whom, and that Settings → AI → **Tab to finish what I'm typing** turns it off, and its claim that nothing is sent to an AI until you ask is corrected. Tests: `test/units/autocomplete-units.js`.
+
 ## 0.5.66 (2026-10-23)
 
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.
