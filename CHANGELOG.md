@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Stop now really stops a tool that is already running.** Pressing Stop while the AI was part way through filling in a form used to leave the rest of the fields filled and the form submitted, and a batch kept clicking and typing; the same went for Claude Code, Codex, Grok Build and Antigravity chats. Now no step runs after Stop: the remaining fields, the submit, the next batch step, typing and dragging are all skipped. Stop in one chat never touches another chat that is running. Test: `test/units/stop-cancels-tools-units.js`.
+
 ## 0.5.66 (2026-10-23)
 
 - **Sync no longer starts over when its folder goes missing for a moment.** If the Lumen Sync folder in your sync folder was moved, deleted, or not yet downloaded by your cloud drive, Lumen's next try could quietly make a brand-new sync set there with a new key, so your other computers would stop matching. Now Settings → Sync says the folder isn't there, and syncing picks up again once it's back.
