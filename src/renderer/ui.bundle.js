@@ -10092,7 +10092,18 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (phoneNote) window.browser.phoneNoteAction?.(phoneNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
   }
   organizeBtn.after(note);
-  setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000);
+
+  let left = Number.isFinite(ttl) ? ttl : 9000;
+  let timer = 0, armedAt = 0, hovered = false, focused = false;
+  const arm = () => { armedAt = Date.now(); timer = setTimeout(() => note.remove(), left); };
+  const sync = () => {
+    if (hovered || focused) { if (timer) { clearTimeout(timer); timer = 0; left = Math.max(2000, left - (Date.now() - armedAt)); } } else if (!timer && note.isConnected) arm();
+  };
+  note.addEventListener('pointerenter', () => { hovered = true; sync(); });
+  note.addEventListener('pointerleave', () => { hovered = false; sync(); });
+  note.addEventListener('focusin', () => { focused = true; sync(); });
+  note.addEventListener('focusout', (e) => { if (!note.contains(e.relatedTarget)) { focused = false; sync(); } });
+  arm();
 });
 
 
@@ -10653,6 +10664,7 @@ function openFind(opts) {
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
+  syncFindButtons(0);
   findInput.focus();
   findInput.select();
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -10662,10 +10674,13 @@ function closeFind() {
   if (findbar.hidden || !findbar.classList.contains('open')) return;
   findbar.classList.remove('open', 'no-match');
   $('find-count').textContent = '';
-  window.browser.stopFind();
+  window.browser.stopFind(true);
   clearTimeout(findHideTimer);
   findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, motionReduced() ? 0 : 420);
 }
+
+
+function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
   if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
@@ -10675,6 +10690,7 @@ window.browser.onOpenFind(openFind);
 window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
   $('find-count').textContent = findInput.value ? (matches ? t('find.count', { current: activeMatchOrdinal, total: matches }) : t('find.none')) : '';
   findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
+  syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -10683,11 +10699,12 @@ findInput.addEventListener('input', () => {
     $('find-count').textContent = '';
     findbar.classList.remove('no-match');
   }
+  syncFindButtons(0);
 });
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); findStep(!e.shiftKey); }
-  else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
+findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeFind(); } });
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;
@@ -16159,7 +16176,9 @@ const tabSearch = (() => {
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   let applying = false;
+  let last = null;
   function render(u) {
+    last = u;
 
     const own = u.canSelfUpdate || Boolean(u.relocate);
     const ready = u.status === 'downloaded' && own;
@@ -16174,7 +16193,7 @@ const tabSearch = (() => {
     const retrying = busy && Boolean(u.retrying);
     const key = moveFailed ? '' : ready ? 'updates.ready' : retrying ? 'updates.retrying' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
-    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
+    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: Math.floor(u.progress || 0) });
 
 
     const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
@@ -16183,13 +16202,14 @@ const tabSearch = (() => {
     action.hidden = busy && u.queued;
     action.disabled = applying || Boolean(u.checking);
     iconPath.setAttribute('d', ready || busy || failed || moveFailed ? ICON_RETRY : ICON_DOWNLOAD);
-    label.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    label.textContent = u.checking ? window.t('updates.checking') : applying && (ready || busy) ? window.t('updates.restarting') : ready ? window.t('updates.restart') : busy ? window.t('updates.restartWhenReady') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => {
     if (applying) return;
     applying = true;
     action.disabled = true;
+    if (last) render(last);
     let next = null;
     try { next = await api.apply(); } catch {} finally { applying = false; }
     if (!next) next = await api.state().catch(() => null);
