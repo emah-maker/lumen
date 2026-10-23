@@ -27,6 +27,7 @@ document.getElementById('message').textContent = crashed
 document.getElementById('code').textContent = desc ? `${desc}${params.get('code') ? ` (${params.get('code')})` : ''}` : '';
 const retry = document.getElementById('retry');
 if (/^https?:\/\//i.test(url)) retry.onclick = () => location.replace(url);
+else if (crashed && window.lumenCrashed) retry.onclick = () => window.lumenCrashed.reload(); // (a page that is not on the web: main reloads the tab)
 else retry.hidden = true;
 // A name that didn't resolve: main passes the default search engine's URL for the host, so the hint's
 // "search for the site instead" is one click (only an http(s) address is followed).
@@ -53,3 +54,4 @@ if (params.get('kind') === 'missingfile' && window.lumenMissingFile) {
   searchButton.textContent = window.t('errorPage.missingFile.showFolder');
   searchButton.onclick = () => window.lumenMissingFile.showInFolder();
 }
+if (!retry.hidden) retry.focus(); // the likely next step is one Enter away (as the unloaded page does)

@@ -132,6 +132,7 @@ button:active:not(:disabled) { transform: scale(0.94); }
   padding-right: max(140px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px));
   -webkit-app-region: drag;
 }
+body.window-fullscreen .tabstrip { padding-right: 8px; } /* (full screen: no window controls to clear) */
 .tabstrip button, .tab { -webkit-app-region: no-drag; }
 /* Window drag (title bar): everything in the strip that is not a tab or button drags the window, and
    double-click on it maximizes / restores (native, from the drag region). The gutter is the part that
@@ -458,7 +459,7 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .omnibox input::placeholder { color: var(--muted); }
 .omnibox input:focus-visible { box-shadow: none; } /* the field around it takes the ring */
 .omnibox:has(input:focus) {
-  justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised); transform: scale(1.012);
+  justify-content: flex-start; padding-left: 12px; padding-right: 12px; background: var(--surface-raised);
   box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k)));
 }
 .omnibox:has(input:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 6px 18px -10px rgb(0 0 0 / calc(0.5 * var(--shadow-k))); }
@@ -485,8 +486,6 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
   transition: opacity var(--t-fast) ease-out, color var(--t-fast) ease-out, background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
 }
 .omnibox-action svg { width: 14px; height: 14px; }
-.omnibox-action.reload { opacity: 0; }
-.omnibox:hover .omnibox-action.reload, .omnibox-action:focus-visible, body.tab-loading .omnibox-action.reload { opacity: 1; }
 .omnibox-action:hover { color: var(--text); background: var(--hover); }
 .reader svg { stroke-width: 1.3; }
 .reader[aria-pressed="true"] { color: var(--accent); }
@@ -504,10 +503,12 @@ body.zoomed .omnibox:not(:has(input:focus)) { padding-left: max(100px, calc(var(
 .star[aria-pressed="true"] svg { fill: currentColor; animation: star-pop var(--t-snappy) var(--spring-bouncy); }
 @keyframes star-pop { 0% { transform: scale(0.6) rotate(-18deg); } 100% { transform: none; } }
 .zoom-pill {
-  height: 20px; padding: 0 7px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--muted);
+  position: relative; height: 20px; padding: 0 7px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--muted);
   font-size: 11px; font-variant-numeric: tabular-nums; animation: pop-in var(--t-snappy) var(--spring-snappy);
 }
 .zoom-pill:hover { background: var(--hover); color: var(--text); }
+/* Small controls keep their look and get a hit area of at least var(--hit-min): a transparent box centred on the control. */
+.zoom-pill::before, .agents-pending::before, #agent-stop::before { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, var(--hit-min)); height: max(100%, var(--hit-min)); transform: translate(-50%, -50%); }
 @keyframes pop-in { from { opacity: 0; transform: scale(0.8); } }
 
 /* Visible sign that the AI is driving the current tab: a plain pill with a live dot. */
@@ -526,13 +527,13 @@ body.agent-active.agent-away:not(.mcp-active) .agent-pill { display: none; }
 }
 .agent-window-chip[hidden] { display: none; }
 /* [agents out of sight] approvals waiting in agent windows: a small count, never a card */
-.agents-pending { flex: none; min-width: 18px; height: 18px; padding: 0 5px; margin-right: 6px; border: 0; border-radius: var(--r-md); font-size: 11px; font-weight: 700; line-height: 18px; color: var(--on-warning); background: var(--warning); cursor: pointer; }
+.agents-pending { position: relative; flex: none; min-width: 18px; height: 18px; padding: 0 5px; margin-right: 6px; border: 0; border-radius: var(--r-md); font-size: 11px; font-weight: 700; line-height: 18px; color: var(--on-warning); background: var(--warning); cursor: pointer; }
 .agents-pending[hidden] { display: none; }
 @keyframes pill-in { from { opacity: 0; transform: translateX(8px); } }
 .agent-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .agent-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 1px solid var(--accent); animation: ping 1.6s var(--ease-out) infinite; }
 @keyframes ping { from { opacity: 0.9; transform: scale(0.5); } to { opacity: 0; transform: scale(1.8); } }
-#agent-stop { height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text); font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
+#agent-stop { position: relative; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text); font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out; }
 #agent-stop:hover { background: var(--hover); }
 
 /* Narrow window: the pills (this one and the update pill) go compact in steps, in extras.css (.toolbar-end[data-compact]),
@@ -1014,7 +1015,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .tabs-opt.active { background: var(--hover); }
 .tabs-opt-title { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs-opt-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tabs-opt-badge { margin-left: 6px; padding: 0 5px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--muted); font-size: 10px; }
+.tabs-opt-badge { margin-left: 6px; padding: 0 5px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--muted); font-size: var(--fs-xs); }
 .tabs-opt.quick { border-top: 1px solid var(--hairline); border-radius: 0 0 8px 8px; }
 .tabs-opt.quick + .tabs-opt.quick { border-top: none; border-radius: var(--r-md); }
 .msg-tabs { margin-top: 6px; font-size: 11px; opacity: 0.8; }
@@ -1077,7 +1078,7 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .attachment-remove svg { width: 8px; height: 8px; stroke-width: 2; }
 /* a file that is not a picture: its type, name and size in a chip */
 .attachment.attachment-file { width: auto; max-width: 100%; min-width: 96px; height: auto; min-height: 52px; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 8px 28px 8px 10px; background: var(--hover, rgba(127,127,127,.12)); }
-.attachment-ext { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--accent, currentColor); }
+.attachment-ext { font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; color: var(--accent, currentColor); }
 .attachment-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.25; }
 .attachment-size { font-size: 11px; color: var(--muted); }
 .attachment.attachment-file .attachment-remove { opacity: 1; top: 6px; right: 6px; background: transparent; color: var(--muted); backdrop-filter: none; }
@@ -1210,10 +1211,13 @@ textarea.approval-edit { font: 12px/1.45 ui-monospace, Consolas, monospace; max-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
-  .tab.ai-reading .tab-title, .tab-favicon.spinner, .step.running::before, .agent-dot::after, .loadbar::before, .download-btn.progressing .download-arrow { animation: none !important; }
+  .tab.ai-reading .tab-title, .step.running::before, .agent-dot::after, .download-btn.progressing .download-arrow { animation: none !important; }
+  /* The tab spinner and the load bar do not spin or sweep: they fade in and out slowly (a static full bar or a frozen ring reads as "done" or "stuck"). */
+  .tab-favicon.spinner, .loadbar::before { animation: calm-pulse 1.6s ease-in-out infinite !important; animation-duration: 1.6s !important; animation-iteration-count: infinite !important; }
   /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */
   .working::before { width: 100%; transform: none; background: var(--accent); animation: working-pulse 3.2s ease-in-out infinite !important; animation-duration: 3.2s !important; animation-iteration-count: infinite !important; }
-  .loadbar::before { transform: none; left: 0; width: 100%; opacity: 0.6; }
+  .loadbar::before { transform: none; left: 0; width: 100%; }
+  @keyframes calm-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   body.agent-active .viewport, body.agent-active .agent-pill { animation: none !important; }
   button:active:not(:disabled) { transform: none; }
   .omnibox:has(input:focus) { transform: none; }

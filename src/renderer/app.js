@@ -1262,7 +1262,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
@@ -1551,7 +1551,7 @@ function fillHoverCard(el) {
   hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
-  hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host; // opened by the AI in its own empty session
+  hostEl.textContent = tab.isolated && host ? t('tabs.isolatedHost', { host }) : host; // opened by the AI in its own empty session
   if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
@@ -1624,6 +1624,9 @@ $('tabs').addEventListener('pointerover', (e) => {
   hoverTab(el);
 });
 $('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
+// Keyboard focus shows the card too (only :focus-visible: a click's focus is not a request for it), and leaving the strip's tab hides it.
+$('tabs').addEventListener('focusin', (e) => { const el = e.target.closest?.('.tab'); if (el && e.target === el && el.matches(':focus-visible')) hoverTab(el); });
+$('tabs').addEventListener('focusout', (e) => { if (e.target.closest?.('.tab') && !$('tabs').contains(e.relatedTarget)) hideHoverCard(); });
 $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
@@ -1773,7 +1776,18 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (phoneNote) window.browser.phoneNoteAction?.(phoneNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } })); // ([ai manners] a close of the AI's tabs undoes itself) // (a merge's note brings its own wording)
   }
   organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
-  setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000); // main's undo window is the same length as the note's life
+  // The note stays while the pointer is over it or focus is inside (someone reading it or reaching for Undo); the clock resumes after, with at least 2 s left.
+  let left = Number.isFinite(ttl) ? ttl : 9000; // main's undo window is the same length as the note's life
+  let timer = 0, armedAt = 0, hovered = false, focused = false;
+  const arm = () => { armedAt = Date.now(); timer = setTimeout(() => note.remove(), left); };
+  const sync = () => {
+    if (hovered || focused) { if (timer) { clearTimeout(timer); timer = 0; left = Math.max(2000, left - (Date.now() - armedAt)); } } else if (!timer && note.isConnected) arm();
+  };
+  note.addEventListener('pointerenter', () => { hovered = true; sync(); });
+  note.addEventListener('pointerleave', () => { hovered = false; sync(); });
+  note.addEventListener('focusin', () => { focused = true; sync(); });
+  note.addEventListener('focusout', (e) => { if (!note.contains(e.relatedTarget)) { focused = false; sync(); } });
+  arm();
 });
 
 // State pushes arrive in bursts (a page loading fires title, favicon and loading updates back to back):
@@ -2373,6 +2387,7 @@ function openFind(opts) {
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
+  syncFindButtons(0);
   findInput.focus();
   findInput.select();
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -2382,10 +2397,13 @@ function closeFind() {
   if (findbar.hidden || !findbar.classList.contains('open')) return;
   findbar.classList.remove('open', 'no-match');
   $('find-count').textContent = '';
-  window.browser.stopFind();
+  window.browser.stopFind(true); // (keeps the selection and focuses the page)
   clearTimeout(findHideTimer);
   findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, motionReduced() ? 0 : 420);
 }
+
+// Previous/next do nothing with an empty field or no matches: they say so (disabled) instead of silently ignoring the click.
+function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
   if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
@@ -2395,6 +2413,7 @@ window.browser.onOpenFind(openFind);
 window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
   $('find-count').textContent = findInput.value ? (matches ? t('find.count', { current: activeMatchOrdinal, total: matches }) : t('find.none')) : '';
   findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
+  syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -2403,11 +2422,12 @@ findInput.addEventListener('input', () => {
     $('find-count').textContent = '';
     findbar.classList.remove('no-match');
   }
+  syncFindButtons(0); // off until the result for this text arrives
 });
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); findStep(!e.shiftKey); }
-  else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
+findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeFind(); } }); // anywhere in the bar (a button focused, say), not only the field
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;
@@ -3017,6 +3037,7 @@ downloadsBtn.onclick = () => {
 
 // Pause looping indicators (the live dot, the working line) while the window is in the background.
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+window.browser.onWindowFullscreen?.((on) => document.body.classList.toggle('window-fullscreen', Boolean(on)));
 // [agents out of sight] The one passive place for an outside agent's approvals: a count in the toolbar. It opens nothing by itself.
 window.browser.onAgentsPending?.(({ count } = {}) => {
   const b = $('agents-pending');

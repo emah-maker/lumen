@@ -89,7 +89,7 @@ contextBridge.exposeInMainWorld('browser', {
   forward: () => ipcRenderer.send('nav:forward'),
   reload: () => ipcRenderer.send('nav:reload'),
   find: (text, options) => ipcRenderer.send('find:start', text, options),
-  stopFind: () => ipcRenderer.send('find:stop'),
+  stopFind: (close) => ipcRenderer.send('find:stop', Boolean(close)),
   onFindResult: on('find:result'),
   onOpenFind: on('find:open'),
   onTabs: on('tabs'),
@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('browser', {
   onAttachImage: on('attach-image'), // a screenshot for the sidebar composer (features/screenshot.js)
   onAskFromHome: on('ask-from-home'),
   onWindowFocus: on('window-focus'),
+  onWindowFullscreen: on('window-fullscreen'), // the window entered or left full screen (the strip drops its caption reserve)
   onAgentsPending: on('agents:pending'), // how many outside-agent approvals wait in agent windows (toolbar badge)
   focusPendingAgent: () => ipcRenderer.send('agents:focus-pending'),
   onAgentWindow: on('agent-window'), // this window belongs to an outside agent (or no longer does: null)
