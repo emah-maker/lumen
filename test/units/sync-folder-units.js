@@ -222,6 +222,10 @@ const bk = (url, title, folder) => ({ url, title, ...(folder ? { folder } : {}) 
     const res = await B.service.syncNow();
     check('folder gone: Sync now reports it, with a code the page can explain', res === null && B.service.status().error?.code === 'no-folder', JSON.stringify(B.service.status().error));
     check('folder gone: Lumen stays usable and nothing local was touched', B.settings.bookmarks.length > 0 && B.history.size > 0);
+    // The next pass opens the folder again from scratch (the first one dropped its engine): it must not make a new sync set, with a
+    // new key, where the old one was (a cloud drive that has not downloaded it yet looks just like this).
+    const res2 = await B.service.syncNow();
+    check('folder gone: a second Sync now still reports it, and makes no new sync set in its place', res2 === null && B.service.status().error?.code === 'no-folder' && !fs.existsSync(path.join(cloud, core.DIR_NAME)), JSON.stringify({ error: B.service.status().error, made: fs.existsSync(path.join(cloud, core.DIR_NAME)) }));
     await moveDir(path.join(holder, core.DIR_NAME), path.join(cloud, core.DIR_NAME));
     await B.service.syncNow();
     check('folder gone: it recovers when the folder is back', B.service.status().error === null);

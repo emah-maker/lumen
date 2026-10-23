@@ -95,11 +95,14 @@ const saneKdf = (k) => k && Number.isInteger(k.N) && k.N >= 1024 && k.N <= 1 << 
 
 // Opens the sync set in `root` with the passphrase: creates it when the folder has none yet (needs a passphrase of 8+ characters),
 // otherwise checks the passphrase against the folder's check value. Returns { key, dirs, created }.
-async function openFolder(root, passphrase) {
+// `create: false` (reopening a set this computer already joined): a folder whose sync set is gone (its Lumen Sync folder moved,
+// deleted, or not downloaded yet by the cloud drive) is 'no-folder', never a new set made in its place with a new key.
+async function openFolder(root, passphrase, { create = true } = {}) {
   const dirs = dirsOf(root);
   let st;
   try { st = await fsp.stat(root); } catch { throw new SyncError('no-folder', 'The folder is not there'); }
   if (!st.isDirectory()) throw new SyncError('no-folder', 'That is not a folder');
+  if (!create) { try { await fsp.stat(dirs.meta); } catch { throw new SyncError('no-folder', 'The Lumen Sync folder is not there'); } }
   try {
     await fsp.mkdir(dirs.data, { recursive: true });
     await fsp.mkdir(dirs.devices, { recursive: true });
