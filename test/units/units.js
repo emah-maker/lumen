@@ -3702,6 +3702,16 @@ async function backgroundChatRuns() {
   const got = await TC.captureTab({ capturePage: async () => fakeImage(false) }).then((img) => !img.isEmpty(), () => false);
   const hidden = await TC.captureTab({ capturePage: async () => fakeImage(true), getZoomFactor: () => 1, debugger: { isAttached: () => false, attach() { throw new Error('no devtools here'); } } }).then(() => 'image', (err) => err.message);
   check('tab capture: an empty capture of a hidden tab is not handed back as a screenshot', got && /Could not take a screenshot/.test(hidden), hidden);
+  { // jpegSize: the size of a screencast frame, read from its header (a hand-made JPEG: SOI, an APP0, a DQT-like segment, DHT, then SOF0 / SOF2)
+    const seg = (marker, body) => Buffer.concat([Buffer.from([0xff, marker, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+    const sof = (marker, w, h) => seg(marker, Buffer.from([8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]));
+    const jpeg = (marker, w, h) => Buffer.concat([Buffer.from([0xff, 0xd8]), seg(0xe0, Buffer.alloc(14, 0x4a)), seg(0xc4, Buffer.alloc(17, 1)), sof(marker, w, h), Buffer.from([0xff, 0xda, 0, 2, 0xff, 0xd9])]);
+    const b64 = (b) => b.toString('base64');
+    check('tab capture: jpegSize reads the width and height of a baseline JPEG', JSON.stringify(TC.jpegSize(b64(jpeg(0xc0, 340, 212)))) === '{"width":340,"height":212}', JSON.stringify(TC.jpegSize(b64(jpeg(0xc0, 340, 212)))));
+    check('tab capture: jpegSize reads a progressive JPEG too, past a DHT segment (0xC4 is not a frame header)', JSON.stringify(TC.jpegSize(b64(jpeg(0xc2, 1280, 800)))) === '{"width":1280,"height":800}', JSON.stringify(TC.jpegSize(b64(jpeg(0xc2, 1280, 800)))));
+    check('tab capture: jpegSize is null for a PNG, plain text, an empty string, and a JPEG with no frame header', TC.jpegSize(b64(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]))) === null && TC.jpegSize(Buffer.from('not a picture at all').toString('base64')) === null && TC.jpegSize('') === null && TC.jpegSize(b64(Buffer.from([0xff, 0xd8, 0xff, 0xd9, 0, 0, 0, 0, 0, 0, 0, 0]))) === null, 'not null');
+    check('tab capture: jpegSize is null for a header cut short or a zero size, and never throws on junk', TC.jpegSize(b64(jpeg(0xc0, 340, 212).subarray(0, 30))) === null && TC.jpegSize(b64(jpeg(0xc0, 0, 0))) === null && TC.jpegSize(undefined) === null && TC.jpegSize(null) === null, 'result');
+  }
 
   // agent.js: a chat left mid-reply keeps running; two chats never drive one tab.
   const { Agent } = require('../../src/ai/agent');

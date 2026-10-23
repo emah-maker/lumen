@@ -115,7 +115,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
     await gone(K);
     check('split view: when the other side is the working tab, it is shown', await settle(J2), `${await active()} wanted ${J2}`);
 
-    // 7. the chat's activity card keeps a tab the AI closed: its icon and title chip, the last frame, marked closed; the chip reopens it
+    // 7. the chat's activity card keeps a tab the AI closed: its icon and title chip, the tab name row, marked closed; the chip reopens it
     await working([]);
     const T = await open('card-tab?T1');
     await waitFor(async () => app.evaluate((_e, id) => global.__aiTabs.tab(id)?.view?.webContents.getTitle().includes('card-tab'), T), 8000);
@@ -138,17 +138,17 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
       const img = wrap && wrap.querySelector('.tab-ref-icon img');
       const shot = c.querySelector('.act-shot');
       return {
-        shot: shot.dataset.tabClosed || '', mode: shot.dataset.mode || '', hidden: shot.hidden, frame: c.querySelector('.act-thumb').hasAttribute('src'),
+        shot: shot.dataset.tabClosed || '', mode: shot.dataset.mode || '', hidden: shot.hidden, frame: c.querySelector('.act-thumb').hasAttribute('src'), name: shot.querySelector('.act-site-name').textContent, btn: c.querySelector('.act-btn').hidden ? '' : c.querySelector('.act-btn').textContent,
         label: shot.dataset.closedLabel || '', state: (wrap && wrap.dataset.state) || '', icon: (img && img.getAttribute('src')) || '', title: (wrap && wrap.querySelector('.tab-ref-title').textContent) || '',
       };
     });
     const before = await waitFor(async () => { const s = await cardState(); return s.state === 'open' && s.icon && s; });
-    check('while the tab is open: the chip shows its icon, the frame is not marked closed', Boolean(before) && before.shot === '' && before.frame && /favicon[.]ico$/.test(before.icon), J(before || await cardState()));
+    check('while the tab is open: the chip shows its icon, the card is the tab\'s name row (no picture) not marked closed, and the button says "Go to tab"', Boolean(before) && before.shot === '' && before.frame === false && before.mode === 'site' && before.name === 'Reading Page card-tab' && before.btn === 'Go to tab' && /favicon[.]ico$/.test(before.icon), J(before || await cardState()));
     await aiClose(T);
     await gone(T);
     const after = await waitFor(async () => { const s = await cardState(); return s.state === 'closed' && s; });
     check('the AI closed it: the card keeps the chip (icon and title) marked closed', Boolean(after) && after.icon === before.icon && /card-tab/.test(after.title), J(after || await cardState()));
-    check('...and keeps the last frame, marked "closed", not blank', Boolean(after) && after.frame && after.mode === 'frame' && !after.hidden && after.shot === '1' && after.label === 'closed', J(after));
+    check('...and keeps the tab\'s name row, marked "closed", still with no picture, and the button now says "Reopen page"', Boolean(after) && after.frame === false && after.mode === 'site' && after.name === 'Reading Page card-tab' && !after.hidden && after.shot === '1' && after.label === 'closed' && after.btn === 'Reopen page', J(after));
     const entry = await app.evaluate((_e, id) => global.__tabChips.rt().describe(String(id)), T);
     check('main reports it closed, with its icon, reopenable', entry.state === 'closed' && entry.reopen === true && entry.favicon === before.icon, J(entry));
     const listBefore = await app.evaluate(() => global.__closedTabs().length);
