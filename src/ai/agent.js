@@ -1874,6 +1874,12 @@ class Agent {
     return Boolean(taskScope.getStore()?.signal?.aborted);
   }
 
+  // Throws once Stop was pressed for the run this call belongs to (its own scope, so another chat's tools go on).
+  // Multi-step tools call it before each step, so nothing more happens on the page after Stop.
+  stopCheck() {
+    if (this.signalAborted()) throw new Error('Stopped by the user.');
+  }
+
   // Serializable copy of the conversation, for saving between app launches.
   // `messages`: another chat's array (one left running, see detach), or the open chat's.
   snapshot(messages = this.messages) {
@@ -2349,11 +2355,17 @@ class Agent {
     if (info.kind !== 'limit' && info.kind !== 'unreachable') return null;
     // An engine's own process failing (it would not start, it exited) is not a verdict on the service: the next message tries it again.
     const own = fallback.isEngine(current) && info.kind === 'unreachable';
+    const held = fallback.shared.entry(current);
     fallback.shared.mark(current, own ? { ...info, scope: 'provider', brief: true } : info);
     tried.add(current);
     const options = this.browser.fallbackOptions();
     const choice = fallback.choose({ current, options, cooldowns: fallback.shared, allowEngines, tried: [...tried], need: { chars: historyChars(messages), images: hasImages(messages) } });
-    if (!choice) return null;
+    if (!choice) {
+      // Nothing to hand over to, and no HTTP status (a dropped connection, "terminated", a Wi-Fi blip): the next message retries this
+      // provider at once. Marked for 15 minutes it would leave an Auto chat with no model at all.
+      if (info.kind === 'unreachable' && (info.status ?? null) === null && !own && !held) { fallback.shared.clear(current); fallback.shared.mark(current, { ...info, brief: true }); }
+      return null;
+    }
     const next = choice.id;
     if (!settings.fallbackFrom) settings.fallbackFrom = current;
     settings.fallbackSession = fallback.SESSION;
@@ -6272,6 +6284,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     const wc = this.requireTab();
     const from = await this.dragPoint(wc, input, 'from');
     const to = await this.dragPoint(wc, input, 'to');
+    this.stopCheck(); // Stop while the points were being found: the mouse never goes down
     const dbg = wc.debugger;
     let attachedHere = false;
     if (!dbg.isAttached()) {
@@ -6478,6 +6491,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
   }
 
   async executeRaw(name, input) {
+    if (ACTING_TOOLS.has(name) || ACTING_TOOL_NAMES.has(name) || name === 'connector' || this.isExternalTool(name)) this.stopCheck(); // [stop] nothing acts after Stop (also each step of fill_form and batch)
     if (this.isExternalTool(name)) return this.runExternal(name, input); // [mcp client] no tab involved
     if (name === 'connector') return this.runConnector(input); // [connectors] no tab involved
     this.aiOffCheck(name, input);
@@ -6981,6 +6995,7 @@ ${same}
         const report = [];
         let lastId = null;
         for (const { label, value } of input.fields) {
+          this.stopCheck();
           try {
             const id = await this.resolveTarget(wc, label, 'field', false);
             lastId = id;
@@ -6999,6 +7014,7 @@ ${same}
               report.push(`${label}: ${result}`);
             }
           } catch (err) {
+            if (this.signalAborted()) throw err; // Stop is not a failed field
             report.push(`${label}: FAILED — ${err.message}`);
           }
         }
@@ -7010,6 +7026,7 @@ ${same}
           throw new Error(`${failed.length} of ${input.fields.length} fields failed (${names.join(', ')})${input.submit ? '; the form was NOT submitted' : ''}.${kept}\n${report.join('\n')}`);
         }
         if (input.submit && lastId !== null) {
+          this.stopCheck(); // Stop never submits the form
           const urlBefore = wc.getURL();
           const submitted = await this.elementRun(wc, lastId, scripts.submitForm, { missing: false });
           if (!submitted) this.pressKey(wc, 'Enter');
@@ -7118,6 +7135,7 @@ ${same}
           // Typed through the page's own focus (CDP insertText on the focused frame): no window or view takes the OS focus.
           // (Into an embedded frame through the DevTools session: Electron's insertText into a frame of another process crashed
           // the page. Those keys are marked as the AI's too.)
+          this.stopCheck(); // (Stop came while the field was being focused: nothing is typed)
           if (inFrame) await manners.agentInputAsync(wc, () => frames.insertText(wc, input.text));
           else await wc.insertText(input.text);
           if (input.press_enter) { // (while the typed-in field still has the page's focus)
