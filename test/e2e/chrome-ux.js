@@ -119,7 +119,7 @@ const os = require('os');
   await ui.keyboard.press('Control+A');
   await ui.keyboard.type('page');
   const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, typed: suggest.typed, kinds: suggest.items.map((i) => i.kind) })'); return s.typed === 'page' && s.kinds.length && s; }); // (not an earlier keystroke's list: 'p', 'pa' and 'pag' arrive first)
-  check('typing plain words pre-selects the first row when it is a page from history', pre && pre.kinds[0] === 'history' && pre.selected === 0, JSON.stringify(pre));
+  check('typing plain words pre-selects the first row when it is a page from history (or one already open: Switch to tab)', pre && ['history', 'tab'].includes(pre.kinds[0]) && pre.selected === 0, JSON.stringify(pre));
   await ui.keyboard.press('Enter');
   const went = await waitFor(async () => { const u = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); return u.startsWith(base) && !/google/.test(u) && u; });
   check('Enter goes to that page, not to a web search', Boolean(went), await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()));
