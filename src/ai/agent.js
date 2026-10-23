@@ -3210,15 +3210,17 @@ class Agent {
     const picked = engineModel(settings.model);
     // Switched to Grok Build mid-chat (or its session is gone): hand it the conversation so far, same as claudeCodeTurn.
     const handoff = () => {
-      if (messages.length <= 1) return { text: prompt, historyImages: [] };
+      const unanswered = unansweredBlock(messages);
+      if (messages.length <= 1 && !unanswered) return { text: prompt, historyImages: [] };
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = earlierText(messages, priorItems);
+      const earlier = [earlierText(messages, priorItems), unanswered].filter(Boolean).join('\n\n');
       return { text: earlier ? `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}` : prompt, historyImages: priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean) };
     };
-    // [chat history] A resumed session gets the turns other models answered since its last reply here.
+    // [chat history] A resumed session gets the turns other models answered since its last reply here, and the asks that got no reply.
     const catchUp = () => {
       const missed = handoffTurns(missedItems(messages, settings.gbSeen));
-      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}` : prompt), historyImages: [] };
+      const caught = [missed ? `${MISSED_NOTE}\n\n${missed}` : '', unansweredBlock(messages)].filter(Boolean).join('\n\n');
+      return { text: interruptedNote(messages) + (caught ? `<earlier_conversation>\n${caught}\n</earlier_conversation>\n\n${prompt}` : prompt), historyImages: [] };
     };
     const first = resume ? catchUp() : handoff();
     const fullAccess = this.browser.grokBuildFullAccess?.() === true; // [full access] Settings > AI (grok-build.js ARGS_FULL)
@@ -3313,16 +3315,18 @@ class Agent {
     const picked = engineModel(settings.model);
     let text = resume ? interruptedNote(messages) + prompt : prompt;
     let historyImages = [];
-    if (!resume && messages.length > 1) {
+    const unanswered = unansweredBlock(messages);
+    if (!resume && (messages.length > 1 || unanswered)) {
       // Switched to Antigravity mid-chat: hand it the conversation so far, same as grokBuildTurn.
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = earlierText(messages, priorItems);
+      const earlier = [earlierText(messages, priorItems), unanswered].filter(Boolean).join('\n\n');
       if (earlier) text = `<earlier_conversation>\n${earlier}\n</earlier_conversation>\n\n${prompt}`;
       historyImages = priorItems.flatMap((m) => m.images || []).map(parseImageDataUrl).filter(Boolean);
     } else if (resume) {
       // [chat history] A resumed conversation gets the turns other models answered since its last reply here.
       const missed = handoffTurns(missedItems(messages, settings.agySeen));
-      if (missed) text = `${interruptedNote(messages)}<earlier_conversation>\n${MISSED_NOTE}\n\n${missed}\n</earlier_conversation>\n\n${prompt}`;
+      const caught = [missed ? `${MISSED_NOTE}\n\n${missed}` : '', unanswered].filter(Boolean).join('\n\n');
+      if (caught) text = `${interruptedNote(messages)}<earlier_conversation>\n${caught}\n</earlier_conversation>\n\n${prompt}`;
     }
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
@@ -3379,9 +3383,10 @@ class Agent {
     const resume = Boolean(settings.cxSession);
     const picked = engineModel(settings.model);
     const handoff = () => {
-      if (messages.length <= 1) return { text: prompt, historyImages: [] };
+      const unanswered = unansweredBlock(messages);
+      if (messages.length <= 1 && !unanswered) return { text: prompt, historyImages: [] };
       const priorItems = transcriptFor(messages).slice(0, -1);
-      const earlier = earlierText(messages, priorItems);
+      const earlier = [earlierText(messages, priorItems), unanswered].filter(Boolean).join('\n\n');
       return { text: earlier ? `<earlier_conversation>
 ${earlier}
 </earlier_conversation>
@@ -3391,10 +3396,9 @@ ${prompt}` : prompt, historyImages: priorItems.flatMap((m) => m.images || []).ma
     // [chat history] A resumed thread gets the turns other models answered since its last reply here, and a note when its last reply was cut off.
     const catchUp = () => {
       const missed = handoffTurns(missedItems(messages, settings.cxSeen));
-      return { text: interruptedNote(messages) + (missed ? `<earlier_conversation>
-${MISSED_NOTE}
-
-${missed}
+      const caught = [missed ? `${MISSED_NOTE}\n\n${missed}` : '', unansweredBlock(messages)].filter(Boolean).join('\n\n');
+      return { text: interruptedNote(messages) + (caught ? `<earlier_conversation>
+${caught}
 </earlier_conversation>
 
 ${prompt}` : prompt), historyImages: [] };
