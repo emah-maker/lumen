@@ -14,6 +14,7 @@
 //    The card says which answered, and why it was not the engine.
 const { helperModel } = require('./subagents');
 const fallback = require('./fallback');
+const autoModel = require('./auto-model');
 
 const QUESTION_CHARS = 2000;
 const MAX_TOKENS = 1024;
@@ -61,7 +62,9 @@ function buildMessages({ transcript = '', tab = null, question }) {
 // `defaultModel`: the user's default. Returns { model (the cheaper sibling), own (the model it is a sibling of), engine
 // (the engine the chat is on, when it was not asked), viaDefault } or null when no API model is connected.
 function plan({ chatModel, defaultModel = '', options = [], mode = 'auto' }) {
-  const chat = String(chatModel || defaultModel || '');
+  // ('auto' is a pick, not a model: the caller resolves it, and one that was not is never sent as a model id)
+  const chat = [chatModel, defaultModel].map((m) => String(m || '')).find((m) => m && !autoModel.isAuto(m)) || '';
+  if (autoModel.isAuto(defaultModel)) defaultModel = '';
   const apiOption = (o) => o?.id && !o.more && !String(o.id).endsWith(':__more') && !fallback.isEngine(o.id) && o.signedIn !== false && !(o.badges || []).includes('sign in');
   const list = (options || []).filter(apiOption);
   if (chat && !fallback.isEngine(chat)) return { model: helperModel(chat, mode), own: chat, engine: null, viaDefault: false };
