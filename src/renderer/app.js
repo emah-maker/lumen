@@ -1776,7 +1776,18 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (phoneNote) window.browser.phoneNoteAction?.(phoneNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } })); // ([ai manners] a close of the AI's tabs undoes itself) // (a merge's note brings its own wording)
   }
   organizeBtn.after(note); // in the strip's own row: web pages cover everything below it
-  setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000); // main's undo window is the same length as the note's life
+  // The note stays while the pointer is over it or focus is inside (someone reading it or reaching for Undo); the clock resumes after, with at least 2 s left.
+  let left = Number.isFinite(ttl) ? ttl : 9000; // main's undo window is the same length as the note's life
+  let timer = 0, armedAt = 0, hovered = false, focused = false;
+  const arm = () => { armedAt = Date.now(); timer = setTimeout(() => note.remove(), left); };
+  const sync = () => {
+    if (hovered || focused) { if (timer) { clearTimeout(timer); timer = 0; left = Math.max(2000, left - (Date.now() - armedAt)); } } else if (!timer && note.isConnected) arm();
+  };
+  note.addEventListener('pointerenter', () => { hovered = true; sync(); });
+  note.addEventListener('pointerleave', () => { hovered = false; sync(); });
+  note.addEventListener('focusin', () => { focused = true; sync(); });
+  note.addEventListener('focusout', (e) => { if (!note.contains(e.relatedTarget)) { focused = false; sync(); } });
+  arm();
 });
 
 // State pushes arrive in bursts (a page loading fires title, favicon and loading updates back to back):
@@ -2337,6 +2348,7 @@ function openFind(opts) {
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
+  syncFindButtons(0);
   findInput.focus();
   findInput.select();
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -2346,10 +2358,13 @@ function closeFind() {
   if (findbar.hidden || !findbar.classList.contains('open')) return;
   findbar.classList.remove('open', 'no-match');
   $('find-count').textContent = '';
-  window.browser.stopFind();
+  window.browser.stopFind(true); // (keeps the selection and focuses the page)
   clearTimeout(findHideTimer);
   findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, motionReduced() ? 0 : 420);
 }
+
+// Previous/next do nothing with an empty field or no matches: they say so (disabled) instead of silently ignoring the click.
+function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
   if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
@@ -2359,6 +2374,7 @@ window.browser.onOpenFind(openFind);
 window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
   $('find-count').textContent = findInput.value ? (matches ? t('find.count', { current: activeMatchOrdinal, total: matches }) : t('find.none')) : '';
   findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
+  syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -2367,11 +2383,12 @@ findInput.addEventListener('input', () => {
     $('find-count').textContent = '';
     findbar.classList.remove('no-match');
   }
+  syncFindButtons(0); // off until the result for this text arrives
 });
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); findStep(!e.shiftKey); }
-  else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
+findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeFind(); } }); // anywhere in the bar (a button focused, say), not only the field
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;

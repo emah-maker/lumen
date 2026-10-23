@@ -101,7 +101,7 @@ check('the Bookmarks and Downloads pages load the Undo note', ['bookmarks', 'rea
     check('a missing translation falls back to English', EK.describe('ERR_CONNECTION_REFUSED', 'b.example', xx.t).title === '“b.example” refused to connect');
 
     // error.js end to end against stand-in elements: the crashed wording and the retry button.
-    const els = { retry: { textContent: '', hidden: false }, message: { textContent: '' }, hint: { textContent: '', hidden: true }, code: { textContent: '' } };
+    const els = { retry: { textContent: '', hidden: false, focus() {} }, message: { textContent: '' }, hint: { textContent: '', hidden: true }, code: { textContent: '' } };
     const h1 = { textContent: '' };
     const sandbox = {
       URLSearchParams, URL, location: { search: '?kind=crashed&url=https%3A%2F%2Fa.example%2F', replace() {} },
@@ -113,7 +113,7 @@ check('the Bookmarks and Downloads pages load the Undo note', ['bookmarks', 'rea
 
     // A name that doesn't resolve: main hands the error page the default engine's search URL and the page offers it.
     const run = (qs) => {
-      const e = { retry: { textContent: '', hidden: false }, message: { textContent: '' }, hint: { textContent: '', hidden: true }, code: { textContent: '' }, search: { textContent: '', hidden: true, onclick: null } };
+      const e = { retry: { textContent: '', hidden: false, focus() {} }, message: { textContent: '' }, hint: { textContent: '', hidden: true }, code: { textContent: '' }, search: { textContent: '', hidden: true, onclick: null } };
       const go = [];
       vm.runInNewContext(read('src/renderer/error.js'), { URLSearchParams, URL, location: { search: qs, replace: (u) => go.push(u) }, document: { title: '', getElementById: (id) => e[id], querySelector: () => ({ textContent: '' }) }, window: { t: xx.t, errorKinds: EK } });
       return { e, go };
