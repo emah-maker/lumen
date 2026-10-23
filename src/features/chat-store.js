@@ -153,6 +153,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return { chats, unreadable };
   }
+  // Set when this run had to rebuild the index from the chat files (it was unreadable, or missing while chats exist). What the
+  // rebuilt list lacks (projects, pins) is not "gone": nothing may be deleted because of it.
+  let rebuilt = false;
   function readIndex() {
     if (index) return index;
     let data = null;
@@ -168,6 +171,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
         data = outer.enc ? JSON.parse(decrypt(outer.enc)) : outer;
       } catch {
         // Unparseable or undecryptable: keep the file for inspection and rebuild from the chat files.
+        rebuilt = true;
         try { fs.renameSync(indexFile, `${indexFile}.corrupt-${Date.now()}`); } catch { return { current: null, chats: [], degraded: true }; }
       }
     }
@@ -179,6 +183,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     // No index (never written, or just set aside as corrupt): rebuild it from the chat files.
     const { chats, unreadable } = rebuildIndex();
+    if (chats.length) rebuilt = true; // (chat files without an index: the projects and anything else the index held are gone)
     if (!chats.length && unreadable) return { current: null, chats: [], degraded: true }; // chats exist but can't be read now: retry next call
     index = { current: null, chats };
     remember(index);
@@ -899,7 +904,9 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
-  return { list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
+  function trusted() { return !readIndex().degraded && !rebuilt; }
+  return { trusted, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

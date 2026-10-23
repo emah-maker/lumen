@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readStoreFile } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 const shortcutsHelp = require('./shortcuts-help');
 
 const FORMAT = 'lumen-macros';
@@ -524,8 +525,8 @@ function createStore({ file, now = Date.now, platform = process.platform }) {
   };
   function load() {
     if (state) return state;
-    let data = {};
-    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none yet, or unreadable: start empty */ }
+    const r = readStoreFile(file); // no file yet: start empty
+    const data = r.data && typeof r.data === 'object' ? r.data : {};
     const macros = [];
     for (const raw of Array.isArray(data.macros) ? data.macros : []) {
       if (macros.length >= MAX_MACROS) break;

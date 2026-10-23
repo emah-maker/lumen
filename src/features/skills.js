@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { readStoreFile } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 const skillMd = () => require('./skill-md'); // (loaded with the first SKILL.md, Claude Code skill or offer)
 
 const MAX_PROMPT = 8000;
@@ -419,17 +420,21 @@ function createLearning({ now = Date.now, max = 50 } = {}) {
 
 function createStore({ file, now = Date.now }) {
   let state = null; // { skills: [], known: [builtin names seen], removed: [builtin ids the user deleted] }
+  let unreadable = false; // skills.json exists but could not be read: the start-up write of built-ins is skipped, the user's own changes still save
   const freshBuiltin = (b) => normalizeSkill({ ...b, id: builtinId(b.name), source: 'builtin', createdAt: 0 }, { now }).skill;
   const write = () => {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ version: 1, skills: state.skills, known: state.known }, null, 2));
     fs.renameSync(tmp, file); // never a half-written file
+    unreadable = false; // (only the user's own save, delete or add gets here after a failed read: a copy of the old file was kept)
   };
   function load() {
     if (state) return state;
-    let data = {};
-    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none yet, or unreadable: start from the built-ins */ }
+    // No file yet: start from the built-ins. A file that can't be read is kept as it is: nothing is saved over it.
+    const r = readStoreFile(file);
+    if (r.failed) unreadable = true;
+    const data = r.data && typeof r.data === 'object' ? r.data : {};
     const skills = [];
     for (const raw of Array.isArray(data.skills) ? data.skills : []) {
       if (skills.length >= MAX_SKILLS) break;
@@ -449,7 +454,7 @@ function createStore({ file, now = Date.now }) {
       const fresh = freshBuiltin(b);
       if (!skills.some((s) => s.id === fresh.id) && !nameTaken(skills, fresh.name)) skills.push(fresh);
     }
-    if (changed || !fs.existsSync(file)) { try { write(); } catch { /* read-only profile: keep them in memory */ } }
+    if (!unreadable && (changed || !fs.existsSync(file))) { try { write(); } catch { /* read-only profile: keep them in memory */ } }
     return state;
   }
   const list = () => load().skills.map((s) => ({ ...s, inputs: [...s.inputs] }));

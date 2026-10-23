@@ -108,11 +108,14 @@ function create(deps) {
 
   // ---- persistence and UI updates
   let closed = false; // after the final save on quit, the runs being stopped must not overwrite it
+  // True once the user made a change (a new or edited task, a delete). Only that may replace a tasks file that could not be read
+  // (a copy was kept); a start-up or status save never does.
+  let deliberate = false;
   function saveNow() {
     clearTimeout(saveTimer);
     saveTimer = null;
     if (closed) return;
-    try { store.save(tasks); } catch (err) { console.error('[lumen] could not save background tasks:', err.message); }
+    try { if (store.save(tasks, { deliberate }) !== false) deliberate = false; } catch (err) { console.error('[lumen] could not save background tasks:', err.message); }
   }
   function saveSoon() {
     if (!saveTimer) saveTimer = setTimeout(saveNow, 400);
@@ -211,6 +214,7 @@ function create(deps) {
     // The user's MCP tools reach API models only (a CLI run has Lumen's browser tools and nothing else).
     const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(chosen), pageUrl, startUrl, now: now() });
     tasks.push(task);
+    deliberate = true;
     tasks = bg.capTasks(tasks);
     saveSoon();
     broadcast();
@@ -224,6 +228,7 @@ function create(deps) {
     const task = find(id);
     if (!task) return false;
     stop(id);
+    deliberate = true;
     tasks = tasks.filter((t) => t !== task);
     saveSoon();
     broadcast();
@@ -253,6 +258,7 @@ function create(deps) {
   function edit(id, patch, { andRun = false } = {}) {
     const task = find(id);
     if (!task) return { ok: false, error: 'No such task.' };
+    deliberate = true;
     let next;
     try { next = bg.applyEdit(task, patch, now()); } catch (err) { return { ok: false, error: err.message }; }
     Object.assign(task, next);
@@ -265,6 +271,7 @@ function create(deps) {
   function setSchedule(id, raw) {
     const task = find(id);
     if (!task) return { ok: false, error: 'No such task.' };
+    deliberate = true;
     let schedule;
     try {
       schedule = bg.normalizeSchedule(raw, now());
@@ -291,6 +298,7 @@ function create(deps) {
   function setEnabled(id, on) {
     const task = find(id);
     if (!task) return false;
+    deliberate = true;
     task.enabled = Boolean(on);
     if (task.routine && task.enabled) { task.routine.lastDue = now(); task.routine.inbox = routines.newInbox(); } // resuming doesn't run the times it was paused for (nor the mail that came meanwhile)
     touch(task);
@@ -431,6 +439,7 @@ function create(deps) {
     const task = find(id);
     if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
     const key = webhooks().newKey();
+    deliberate = true;
     task.routine.webhookHash = webhooks().hashKey(key);
     touch(task);
     saveNow();
@@ -456,6 +465,7 @@ function create(deps) {
     const task = find(spec.id);
     if (!task?.routine) throw new Error(deps.t('routines.error.missing'));
     if (bg.OCCUPYING.has(task.status)) throw new Error(deps.t('routines.error.busy'));
+    deliberate = true;
     const next = bg.applyEdit(task, { title: spec.title, prompt: spec.prompt, sites: [...(sites || task.allowedSites), ...(start ? [start] : [])] }, now());
     if (spec.model && spec.model !== task.model) {
       if (isLocalEngine(spec.model) && cliError(spec.model)) throw new Error(cliError(spec.model));

@@ -21,6 +21,7 @@ const { spawn } = require('../ai/cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { readStoreFile } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 const { lookup, killTree } = require('../ai/cli-utils');
 
 const PROTOCOL_VERSION = '2025-06-18';
@@ -411,14 +412,16 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
   let servers = load();
 
   function load() {
-    try {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-      return Array.isArray(data.servers) ? data.servers.filter((s) => s && typeof s.id === 'string' && cleanName(s.name)) : [];
-    } catch { return []; }
+    const r = readStoreFile(file); // no file yet: no servers
+    if (r.failed) return []; // (a copy was kept; the user's next change still saves)
+    const data = r.data || {};
+    return Array.isArray(data.servers) ? data.servers.filter((s) => s && typeof s.id === 'string' && cleanName(s.name)) : [];
   }
   function persist() {
     fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ servers }, null, 2), { mode: 0o600 });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ servers }, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file); // never a half-written file
   }
   const seal = (value) => {
     if (!secrets?.available()) throw new Error('This computer’s secure storage isn’t available, so secrets can’t be saved.');

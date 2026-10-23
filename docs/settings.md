@@ -13,6 +13,8 @@ Everything is stored in `settings.json` in Lumen's profile folder:
 
 The file is written atomically (a temp file renamed over the old one), and the previous good copy is kept as `settings.json.bak`. A file that can't be read falls back to the backup; if both are broken, the broken file is moved aside as `settings.json.corrupt-<time>` rather than overwritten.
 
+The same rule holds for the other files Lumen keeps: `background-tasks.json` (routines and scheduled tasks), `skills.json`, `macros.json` and `mcp-servers.json`. A missing file means a fresh start. A file that exists but can't be read, parsed or decrypted is copied to `<file>.corrupt-<time>` (once per distinct content), is not overwritten by Lumen's own start-up or status saves, and nothing is deleted on the strength of it. A change you make yourself (add, edit, delete) does write the file, since the copy is kept; with no keychain, routines are not written at all. Likewise old pictures, uploads, AI conversation folders and project files are not cleaned up when the chat list was empty, unreadable or rebuilt this run.
+
 API keys in `settings.json` are encrypted with the operating system's keychain. Without a keychain, keys aren't saved; use the environment variables instead.
 
 The tables below give each setting's key in `settings.json` and its default. Edit the file only while Lumen is closed: Lumen rewrites it while it runs. Values that aren't valid are ignored and the default is used.
