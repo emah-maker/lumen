@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A long chat opened by switching tabs now shows its end.** It sometimes stopped about 100 px short, with the "Jump to latest" button showing, and stayed that way on every later visit. The chat's bottom padding follows the chat box's height, which differs between tabs (a row of tab chips makes it taller): when it changed after the chat was drawn, the end moved down, the next scroll read the view as scrolled up, and the tab kept that position. A chat that follows its end now stays at the end when the box changes height. Test: `test/e2e/tab-switch-perf.js` ("the view still shows the end of the chat").
 - **"AI finished" notifications no longer show `[[tab:24]]`.** A tab the reply names reads as the tab's title, or "a tab" when the sentence already names it ("Opened Review_Packet_1.pdf (10 pages) in a tab."). The same goes for the in-app toast.
 
 ## 0.5.67 (2026-10-23)

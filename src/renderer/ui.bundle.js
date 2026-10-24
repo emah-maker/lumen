@@ -6445,7 +6445,7 @@ messages.addEventListener('click', (e) => {
 let composerHeight = -1;
 new ResizeObserver(() => {
   const height = $('composer').offsetHeight;
-  if (height !== composerHeight) { composerHeight = height; chatRoot.style.setProperty('--composer-h', `${height}px`); }
+  if (height !== composerHeight) { composerHeight = height; chatRoot.style.setProperty('--composer-h', `${height}px`); if (stuck && !restoring) messages.scrollTop = messages.scrollHeight; }
   if (height) flushLazyHistory();
   if (height && running) reconcile();
 }).observe($('composer'));
