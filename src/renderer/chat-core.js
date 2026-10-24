@@ -2996,7 +2996,7 @@ messages.addEventListener('click', (e) => {
 let composerHeight = -1;
 new ResizeObserver(() => {
   const height = $('composer').offsetHeight;
-  if (height !== composerHeight) { composerHeight = height; chatRoot.style.setProperty('--composer-h', `${height}px`); }
+  if (height !== composerHeight) { composerHeight = height; chatRoot.style.setProperty('--composer-h', `${height}px`); if (stuck && !restoring) messages.scrollTop = messages.scrollHeight; } // (the chat's bottom padding is the composer's height: a view following the end stays there. Left ~100 px up, the next scroll event read it as scrolled away and the tab kept that offset)
   if (height) flushLazyHistory(); // (the sidebar shown: the chat it was handed while hidden)
   if (height && running) reconcile(); // (the sidebar shown again: it may have missed the end of a run)
 }).observe($('composer'));
