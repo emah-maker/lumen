@@ -21,7 +21,7 @@ function buildConnectors() {
     if (c.reads.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can read: ' }), c.reads.join('; '), '.'));
     if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
     if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
-    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
     lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
     if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
     return lines;
@@ -46,7 +46,7 @@ function buildConnectors() {
       class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
       onclick: async () => {
         go.disabled = true;
-        go.textContent = c.id === 'gmail' ? 'Waiting for Google…' : 'Connecting…';
+        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : 'Connecting…';
         flash(msg, '');
         try {
           const input = Object.fromEntries(c.fields.map((f, i) => [f.id, inputs[i].value]));
@@ -65,7 +65,7 @@ function buildConnectors() {
 
   function cardFor(c, render) {
     const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token';
-    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && c.id === 'gmail'); // (Gmail's Google sign-in ended: connect it again)
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google')); // (a Google sign-in ended: connect it again)
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
     if (c.status === 'soon') {
@@ -73,7 +73,7 @@ function buildConnectors() {
     } else if (!connected || again) {
       buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
     }
-    if (c.status === 'needs-signin') {
+    if (c.status === 'needs-signin' && c.kind !== 'google') {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
     // Gmail: making drafts needs Google's gmail.compose permission, asked for only here (Lumen never sends).
@@ -98,7 +98,7 @@ function buildConnectors() {
     }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
-        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
         try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); } catch (err) { flash(note, clean(err), 'error'); }
       } }));
     }

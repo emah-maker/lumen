@@ -5625,7 +5625,8 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
-      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal });
+      const upload = input.app === 'drive' && input.action === 'upload' ? this.connectorUploadFile(input) : null; // [drive] the one local file this upload would send, checked like upload_file's
+      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload });
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
@@ -5646,6 +5647,7 @@ ${prompt}` : prompt), historyImages: [] };
       }
       if (sending) (this.sendVias ||= new WeakMap()).set(input, via); // call() sends only with this
       (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
+      if (upload) (this.connectorFiles ||= new WeakMap()).set(input, upload); // the file the user allowed on the card, and only that one
     }
     if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
@@ -5658,7 +5660,30 @@ ${prompt}` : prompt), historyImages: [] };
     const onWritten = emit ? ({ label, link }) => emit({ type: 'tool', name: 'connector_done', label, ...(link ? { link } : {}) }) : null; // a done step: "GitHub · Opened ada/x#7" with Open
     const sendVia = this.sendVias?.get(input) || '';
     this.sendVias?.delete(input);
-    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}) });
+    const file = this.connectorFiles?.get(input) || null;
+    this.connectorFiles?.delete(input);
+    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}), ...(file ? { file } : {}) });
+  }
+
+  // [drive] The local file a Google Drive upload sends: a chat attachment by ref (the same store as upload_file) or, only with "Let the AI
+  // use files on this computer", a path, through the same checks (no credentials folders, no Lumen profile, a regular file under the size
+  // cap). One file per call, so each file gets its own card. -> { name, type, size, path, mtimeMs }. The model never gets to name another file later:
+  // the card names this one and the upload is of exactly it (the provider looks again that it has not changed).
+  connectorUploadFile(input) {
+    const a = input.args || {};
+    if (Boolean(a.file) === Boolean(a.path)) throw new Error('Give exactly one of file (the ref of a file the user attached to this chat) or path (a file on this computer). Nothing was uploaded.');
+    let f;
+    if (a.file) {
+      if (!this.uploads) throw new Error('Attached files aren’t available here.');
+      try { [f] = this.uploads.resolve(taskScope.getStore()?.chatId, [a.file]); } catch (err) { throw new Error(String(err.message).replace(/upload_file only takes the refs/, 'file takes only the refs').replace(/Call upload_file without files and the user will be asked to choose one\./, 'Ask the user to attach the file, or to allow files on this computer and use path.')); }
+      try { f = { ...uploadFiles.describePicked(f.path), name: f.name }; } catch (err) { throw new Error(`${f.name}: ${err.message}`); }
+    } else {
+      [f] = this.localFiles([a.path]);
+    }
+    let mtimeMs = 0;
+    try { mtimeMs = require('fs').statSync(f.path).mtimeMs; } catch { /* the provider says it can't be read */ }
+    if (!a.name) input.args.name = f.name; // (the card shows the name it will have in Drive, which the user can change)
+    return { name: f.name, type: f.type, size: f.size, path: f.path, mtimeMs };
   }
 
   // [connectors] Gmail sending. recordTyped keeps what the user typed in this chat (never page, email or tool text: the only text a
