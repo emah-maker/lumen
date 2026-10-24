@@ -137,6 +137,13 @@
             : tr('btw.failed', 'That side question failed: {error}', { error: String(code || '').slice(0, 200) });
       card.body.classList.add('btw-error');
       card.body.textContent = card.text ? `${card.text}\n\n${reason}` : reason;
+      if (code !== 'no-provider' && code !== 'busy' && code !== 'stopped') { // a failure that may pass: one click asks again, in the same card
+        const retry = Object.assign(document.createElement('button'), { type: 'button', className: 'btw-retry', textContent: tr('btw.retry', 'Retry') });
+        retry.addEventListener('click', () => { retry.remove(); btwRun(id, card.question); });
+        card.foot.textContent = '';
+        card.foot.append(retry);
+        card.foot.hidden = false;
+      }
       return;
     }
     card.text = r.text || card.text;
@@ -149,6 +156,19 @@
         : tr('btw.via.engine', 'Answered by {model}, not {engine}: it can’t take a side question mid-task.', { model, engine }))
         : tr('btw.via', 'Answered by {model}', { model });
     card.foot.hidden = !card.foot.textContent;
+  }
+  // One call for a card (also the Retry button): the card goes back to its spinner and asks main again.
+  function btwRun(id, question) {
+    const card = btwCards.get(id);
+    if (!card) return;
+    card.done = false;
+    card.text = '';
+    card.el.setAttribute('aria-busy', 'true');
+    card.foot.hidden = true;
+    card.foot.textContent = '';
+    card.body.className = 'btw-body btw-waiting';
+    card.body.replaceChildren(Object.assign(document.createElement('span'), { className: 'btw-spinner' }), Object.assign(document.createElement('span'), { className: 'btw-thinking', textContent: tr('btw.thinking', 'Thinking…') }));
+    Promise.resolve(btwApi.btw(id, question)).then((r) => btwFinish(id, r), (err) => btwFinish(id, { ok: false, error: String(err?.message || err) }));
   }
   function btwStart(question) {
     if (!btwApi) return { ok: false, message: tr('btw.unavailable', '/btw is not available here.') };
@@ -170,11 +190,11 @@
     const foot = Object.assign(document.createElement('div'), { className: 'btw-foot', hidden: true });
     el.append(head, body, foot);
     el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); btwDismiss(id, { focus: true }); } });
-    btwCards.set(id, { el, body, foot, text: '', chatId: currentChat(), done: false });
+    btwCards.set(id, { el, body, foot, text: '', chatId: currentChat(), done: false, question });
     tray.append(el);
     btwSync();
     tray.scrollTop = tray.scrollHeight;
-    Promise.resolve(btwApi.btw(id, question)).then((r) => btwFinish(id, r), (err) => btwFinish(id, { ok: false, error: String(err?.message || err) }));
+    btwRun(id, question);
     return { ok: true };
   }
   // Esc in an empty composer dismisses the newest card first (the next Esc stops a running reply, as before).

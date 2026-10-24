@@ -316,7 +316,7 @@ contextBridge.exposeInMainWorld('assistant', {
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions] 'ask' | 'auto' | 'bypass'; no argument: just read it
-  helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents] true | false; no argument: just read it
+  helpers: (mode) => ipcRenderer.invoke('agent:helpers', mode), // [subagents] 'off' | 'auto' | 'on'; no argument: just read it
   preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on), // [prefer fractions] /fractions: true | false; no argument: just read it
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers] a helper card's Stop
   getSettings: () => ipcRenderer.invoke('settings:get'),

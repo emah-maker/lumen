@@ -50,6 +50,7 @@ const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const agentsQuiet = require('../features/agents-quiet');
 const screenIntent = require('./screen-intent');
+const helpersAuto = require('./helpers-auto'); // delegate in Auto mode: whether what the user asked has several independent parts
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
@@ -541,7 +542,7 @@ TOOLS.push({ ...research.FIND_SOURCES_TOOL, eager_input_streaming: true }); // [
 // while Settings > AI > "Let the AI use helpers" is on (requestFor / otherTurn leave it out otherwise).
 const DELEGATE_TOOL = {
   name: 'delegate',
-  description: 'Run 2-5 independent read-only jobs in parallel helpers (they read URLs and search, never act in tabs). tasks:[{task,urls?}], each self-contained. Returns each answer.',
+  description: 'Run 2-5 independent read-only jobs in parallel helpers (read URLs, search; never act in tabs). tasks:[{task,urls?}], each self-contained. Returns each answer. For 3+ items or long reads, not one page or dependent steps.',
   input_schema: {
     type: 'object',
     properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['task'] } } },
@@ -3996,7 +3997,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -4049,7 +4050,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -4262,8 +4263,17 @@ ${prompt}` : prompt), historyImages: [] };
   // else, so no click, text, form, tab, script or upload can come from one. The approval rules are the chat's own: a helper that has
   // read a page needs the user's OK for every new site it heads to (its own taint, started from the chat's), through the same cards
   // and the chat's approved sites; a redirect is checked by the same guard. Their tokens count in the chat's usage.
+  // Settings > AI > Helpers: off | auto | on (an older true / false is on / off; no value is auto, helpers-auto.js).
+  subagentsMode() {
+    try { return helpersAuto.modeOf(this.browser.subagents ? this.browser.subagents() : undefined); } catch { return 'auto'; }
+  }
+  // Helpers are not off: the CLI chats' helpers (their tool lives in their own MCP session, so Auto costs nothing there) and Grok's spawn_subagent.
   subagentsOn() {
-    return this.browser.subagents ? this.browser.subagents() !== false : true;
+    return this.subagentsMode() !== 'off';
+  }
+  // Whether this API chat's request lists delegate: On always; Auto when what the user has asked has several independent parts (helpers-auto.js).
+  helpersOffered(messages) {
+    try { return helpersAuto.offered(this.subagentsMode(), messages); } catch { return false; }
   }
 
   // One helper model call, in the shape of a Claude turn ({ content, stop_reason, model, usage }); noTools: answer in text.
@@ -4306,7 +4316,15 @@ ${prompt}` : prompt), historyImages: [] };
     const settings = messages?.settings || {};
     const options = this.fallbackOptionsList();
     const chatModel = this.resolveAuto(settings.model || ''); // (on 'auto' the model Auto would pick, never 'auto' itself)
-    const transcript = (() => { try { return earlierText(messages || [], transcriptFor(messages || [])); } catch { return ''; } })();
+    // Only the newest turns, clipped: the whole chat (up to 40,000 characters, plus every screenshot turned into a data URL) made the call slow.
+    const transcript = (() => {
+      try {
+        const all = messages || [];
+        const summary = String(compactLib.summaryOf(all) || '').slice(0, btwLib.SUMMARY_CHARS);
+        const turns = handoffTurns(transcriptFor(all.slice(-btwLib.RECENT_MESSAGES), null), btwLib.TRANSCRIPT_CHARS);
+        return [summary ? `Summary of the earlier conversation:\n${summary}` : '', btwLib.clipTail(turns)].filter(Boolean).join('\n\n');
+      } catch { return ''; }
+    })();
     const call = async (model, { system, messages: sent, signal: sig, onText: text }) => {
       const { provider, model: id } = providers.splitModel(model);
       if (provider === 'anthropic') {
@@ -4816,7 +4834,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
       if (name === 'parallel_tasks') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, actingHelpers().MAX_TASKS) : 0} browser jobs to helpers`; // [acting helpers]
-      if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
+      if (name === 'delegate') { const n = Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0; return this.subagentsMode() === 'auto' ? `Auto: using ${n} helper${n === 1 ? '' : 's'}` : `Handing ${n} jobs to helpers`; } // (Auto: the user sees why helpers were used)
       if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
       if (name === 'project_files') return projectCtx.stepLabel(input); // [project workspace]
@@ -5670,7 +5688,8 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
-      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal });
+      const upload = input.app === 'drive' && input.action === 'upload' ? this.connectorUploadFile(input) : null; // [drive] the one local file this upload would send, checked like upload_file's
+      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload });
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
@@ -5691,6 +5710,7 @@ ${prompt}` : prompt), historyImages: [] };
       }
       if (sending) (this.sendVias ||= new WeakMap()).set(input, via); // call() sends only with this
       (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
+      if (upload) (this.connectorFiles ||= new WeakMap()).set(input, upload); // the file the user allowed on the card, and only that one
     }
     if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
@@ -5703,7 +5723,30 @@ ${prompt}` : prompt), historyImages: [] };
     const onWritten = emit ? ({ label, link }) => emit({ type: 'tool', name: 'connector_done', label, ...(link ? { link } : {}) }) : null; // a done step: "GitHub · Opened ada/x#7" with Open
     const sendVia = this.sendVias?.get(input) || '';
     this.sendVias?.delete(input);
-    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}) });
+    const file = this.connectorFiles?.get(input) || null;
+    this.connectorFiles?.delete(input);
+    return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}), ...(file ? { file } : {}) });
+  }
+
+  // [drive] The local file a Google Drive upload sends: a chat attachment by ref (the same store as upload_file) or, only with "Let the AI
+  // use files on this computer", a path, through the same checks (no credentials folders, no Lumen profile, a regular file under the size
+  // cap). One file per call, so each file gets its own card. -> { name, type, size, path, mtimeMs }. The model never gets to name another file later:
+  // the card names this one and the upload is of exactly it (the provider looks again that it has not changed).
+  connectorUploadFile(input) {
+    const a = input.args || {};
+    if (Boolean(a.file) === Boolean(a.path)) throw new Error('Give exactly one of file (the ref of a file the user attached to this chat) or path (a file on this computer). Nothing was uploaded.');
+    let f;
+    if (a.file) {
+      if (!this.uploads) throw new Error('Attached files aren’t available here.');
+      try { [f] = this.uploads.resolve(taskScope.getStore()?.chatId, [a.file]); } catch (err) { throw new Error(String(err.message).replace(/upload_file only takes the refs/, 'file takes only the refs').replace(/Call upload_file without files and the user will be asked to choose one\./, 'Ask the user to attach the file, or to allow files on this computer and use path.')); }
+      try { f = { ...uploadFiles.describePicked(f.path), name: f.name }; } catch (err) { throw new Error(`${f.name}: ${err.message}`); }
+    } else {
+      [f] = this.localFiles([a.path]);
+    }
+    let mtimeMs = 0;
+    try { mtimeMs = require('fs').statSync(f.path).mtimeMs; } catch { /* the provider says it can't be read */ }
+    if (!a.name) input.args.name = f.name; // (the card shows the name it will have in Drive, which the user can change)
+    return { name: f.name, type: f.type, size: f.size, path: f.path, mtimeMs };
   }
 
   // [connectors] Gmail sending. recordTyped keeps what the user typed in this chat (never page, email or tool text: the only text a
