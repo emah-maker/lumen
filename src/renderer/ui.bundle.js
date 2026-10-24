@@ -3948,7 +3948,14 @@ const drafts = (() => { try { return window.chatDrafts.create(window.localStorag
 let pastes = [];
 let draftHold = true;
 let emptyOwner;
-const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+let shownTemporary = false;
+const tempChatShown = () => shownTemporary || Boolean(window.chatPageTools?.isTemporary?.());
+
+const saveDraft = () => {
+  if (draftHold) return;
+  if (tempChatShown()) { if (shownChatId) drafts?.clear(shownChatId); return; }
+  drafts?.set(shownChatId, { text: prompt.value, pastes });
+};
 
 prompt.addEventListener('blur', () => saveDraft());
 window.addEventListener('pagehide', () => saveDraft());
@@ -4028,7 +4035,8 @@ function applyView() {
 }
 function restoreDraft() {
   draftHold = false;
-  const d = drafts?.get(shownChatId);
+  if (tempChatShown() && shownChatId) drafts?.clear(shownChatId);
+  const d = tempChatShown() ? null : drafts?.get(shownChatId);
   if (d) {
     const carried = prompt.value.trim();
     prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
@@ -6376,13 +6384,15 @@ function applySync(view) {
   const unnamed = sameChat && !shownChatId;
   clearChatView({ keepBox: sameChat });
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
+  shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null;
   window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
-  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
-  if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined;
+
+  else if (view?.id && !view.temporary && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
+  if (emptyOwner !== undefined && view?.id && !view.temporary && !view.live && !view.items?.length) emptyOwner = undefined;
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
 
     lazyItems = view.items;
@@ -6593,6 +6603,7 @@ function clearChatView({ keepBox = false } = {}) {
     pendingOpen = null;
     attachments = [];
     draftHold = true;
+    shownTemporary = false;
     prompt.value = '';
     pastes = [];
     autosize();
