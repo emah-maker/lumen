@@ -8967,7 +8967,7 @@ const agent = new Agent({
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
-  subagents: () => readSettings().aiSubagents !== false, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
   actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings > AI > "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
@@ -12182,13 +12182,14 @@ ipcMain.handle('agent:permission-mode', (_e, mode) => {
   return permissionModes.modeOf(readSettings());
 });
 
-// [subagents] The sidebar's Helpers button (and Settings → AI): on | off. No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js subagentsOn).
-ipcMain.handle('agent:helpers', (_e, on) => {
-  if (typeof on === 'boolean') {
-    writeSettings({ ...readSettings(), aiSubagents: on });
+// [subagents] The sidebar's Helpers row (and Settings → AI): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
+ipcMain.handle('agent:helpers', (_e, mode) => {
+  const next = mode === true ? 'on' : mode === false ? 'off' : ['off', 'auto', 'on'].includes(mode) ? mode : null;
+  if (next) {
+    writeSettings({ ...readSettings(), aiSubagents: next });
     try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
   }
-  return readSettings().aiSubagents !== false;
+  return require('./ai/helpers-auto').modeOf(readSettings().aiSubagents);
 });
 
 // [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.

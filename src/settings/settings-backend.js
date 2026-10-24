@@ -150,7 +150,7 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
-  aiSubagents: true, // [ai] the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). The sidebar's Helpers button and Settings > AI are this one setting
+  aiSubagents: 'auto', // [ai] off | auto | on: the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). Auto offers the tool only for a request with several independent parts (ai/helpers-auto.js); an older true / false is on / off. The sidebar's Helpers row and Settings > AI are this one setting
   actingHelpers: false, // [ai] Settings > AI > "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
   aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
@@ -288,6 +288,7 @@ function validate(key, value) {
     case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
     case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
     case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
+    case 'aiSubagents': return value === true ? 'on' : value === false ? 'off' : pick(value, ['auto', 'on', 'off'], null); // (true / false: saved before Auto existed)
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
@@ -514,7 +515,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, extensionsToolbar: p.extensionsToolbar, extensionPins: p.extensionPins, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents !== false, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, extensionsToolbar: p.extensionsToolbar, extensionPins: p.extensionPins, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents, sidebarNewChat: p.sidebarNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
