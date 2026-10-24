@@ -62,7 +62,7 @@ const os = require('os');
     running: document.getElementById('send').classList.contains('stop'),
     streaming: document.querySelectorAll('.msg.assistant.streaming').length,
     working: document.querySelectorAll('.working').length,
-    queued: document.querySelectorAll('.notice.queued').length,
+    queued: document.querySelectorAll('.queued-bubble').length,
     stopped: [...document.querySelectorAll('.notice.stopped')].map((n) => n.textContent),
     prompt: document.getElementById('prompt').value,
     promptDisabled: document.getElementById('prompt').disabled,
@@ -76,7 +76,7 @@ const os = require('os');
   await send('FILECARD make the page');
   await ui.waitForSelector('.ai-files', { timeout: 10000 }).catch(() => {});
   await send('queued after the card');
-  await ui.waitForSelector('.notice.queued', { timeout: 5000 }).catch(() => {});
+  await ui.waitForSelector('.queued-bubble', { timeout: 5000 }).catch(() => {});
   let s = await state();
   check('a. the file card is under the text while the reply still runs, and the message waits', s.cards === 1 && s.running && s.queued === 1, JSON.stringify(s));
   check('a. the text before the card has no streaming dot (the card closed it)', s.streaming === 0, JSON.stringify(s));
@@ -94,7 +94,7 @@ const os = require('os');
   await send('STUCKHARD please');
   await ui.waitForFunction(() => /Working on it/.test(document.body.textContent) && document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 });
   await send('queued while stuck');
-  await ui.waitForSelector('.notice.queued', { timeout: 5000 });
+  await ui.waitForSelector('.queued-bubble', { timeout: 5000 });
   const stopAt = Date.now();
   await ui.click('#send'); // the Stop button
   const ended = await until(async () => { const x = await state(); return !x.running && x.stopped.length ? x : null; }, 3000);
@@ -112,8 +112,8 @@ const os = require('os');
   await send('STUCKSOFT go');
   await ui.waitForFunction(() => /Working on it/.test(document.body.textContent) && document.getElementById('send').classList.contains('stop'), null, { timeout: 10000 });
   await send('send this one now');
-  await ui.waitForSelector('.notice.queued', { timeout: 5000 });
-  await ui.locator('.notice.queued .queue-btn', { hasText: 'Send now' }).click();
+  await ui.waitForSelector('.queued-bubble', { timeout: 5000 });
+  await ui.locator('.queued-bubble .queue-btn', { hasText: 'Send now' }).click();
   await until(async () => /Answered: .*send this one now/.test((await state()).text) && !(await state()).running, 15000);
   s = await state();
   check('c. the stuck reply was stopped (marked interrupted)', s.stopped.some((t) => /Interrupted|Stopped/.test(t)), JSON.stringify(s));

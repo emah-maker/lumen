@@ -258,3 +258,9 @@ body.chat-page .error .btn { height: 30px; padding: 0 14px; font-size: 13px; box
 /* The composer's keys, said once under the box (not on a narrow window, where the on-screen keyboard has its own send). */
 body.chat-page .cp-hint::after { content: "\00a0\00b7\00a0"; }
 @media (max-width: 760px) { body.chat-page .cp-hint { display: none; } }
+
+/* A message waiting in the line (chat-actions.css), in the column; and the running pill over the composer's edge, above the jump pill */
+body.chat-page .queued-bubble { width: fit-content; max-width: min(85%, 560px); margin: var(--cp-4) 0 var(--cp-4) auto; padding: 10px var(--cp-3); border-radius: 20px; line-height: 1.5; }
+body.chat-page .queue-bar { margin: calc(var(--cp-2) * -1) 0 var(--cp-3) auto; }
+body.chat-page .run-pill { height: 34px; border-radius: 17px; font-size: 12.5px; }
+body.chat-page .run-pill[data-side="bottom"] { bottom: calc(var(--composer-h) + var(--cp-bottom) + var(--cp-3) + 40px); }

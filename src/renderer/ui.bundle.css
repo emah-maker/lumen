@@ -2374,6 +2374,39 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .helper-card-actions { display: flex; gap: 6px; margin-top: 4px; }
 .helper-card-tab { padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: none; font: inherit; color: var(--accent-text); cursor: pointer; }
 .helper-card-tab:disabled { cursor: default; color: var(--muted); }
+
+.msg.user[data-st], .queued-bubble { position: relative; }
+.msg-status { position: absolute; right: 6px; bottom: -15px; width: 12px; height: 12px; display: grid; place-items: center; color: var(--faint); }
+.msg-status svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+[data-st="read"] > .msg-status { color: var(--accent); }
+.msg.user[data-st] + .msg-user-actions .msg-user-tools { right: 22px; }
+.msg.user.clamped:not(.expanded) > .msg-status { display: none; }
+
+.queued-bubble { margin: 16px 0 20px 40px; padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: var(--field); box-shadow: inset 0 0 0 1px var(--border); white-space: pre-wrap; word-wrap: break-word; opacity: 0.66; transform-origin: bottom right; transition: opacity var(--t-fast) ease-out; animation: bubble-in var(--t-snappy) var(--spring-snappy); }
+.queued-bubble:hover, .queued-bubble:focus-within { opacity: 1; }
+.queue-meta { display: flex; align-items: center; gap: 6px; min-height: 20px; margin-top: 4px; color: var(--muted); font-size: 11.5px; white-space: normal; }
+.queue-actions { display: inline-flex; margin-left: auto; opacity: 0; transition: opacity var(--t-fast) ease-out; }
+.queued-bubble:hover .queue-actions, .queued-bubble:focus-within .queue-actions { opacity: 1; }
+@media (hover: none) { .queue-actions { opacity: 1; } }
+.queue-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: -8px 0 12px 40px; color: var(--muted); font-size: 12px; }
+.queue-bar .queue-btn { color: var(--accent-text); }
+
+.run-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: var(--z-float); display: flex; align-items: stretch; max-width: min(calc(100% - 24px), 420px); height: 32px; border-radius: 16px; overflow: hidden; background: var(--surface-raised); color: var(--text); font-size: 12px; box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--border); animation: fade-in var(--t-base) ease-out; }
+.run-pill[hidden] { display: none; }
+.run-pill[data-side="bottom"] { bottom: calc(var(--composer-h, 64px) + 16px + 10px + 40px); }
+.run-pill-main { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 0 10px 0 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.run-pill-main:hover, .run-pill-stop:hover { background: var(--hover); }
+.run-pill-main:focus-visible, .run-pill-stop:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.run-pill-ico { position: relative; flex: none; display: grid; place-items: center; width: 16px; height: 16px; color: var(--accent); }
+.run-pill-ico svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.run-pill-ico::after { content: ""; position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); animation: status-pulse 1.6s ease-in-out infinite; }
+.run-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-pill-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.run-pill-time:empty { display: none; }
+.run-pill-stop { flex: none; padding: 0 12px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--danger); font: inherit; font-weight: 600; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .run-pill, .run-pill-ico::after, .queued-bubble { animation: none; } }
+:root.pref-reduce-motion .run-pill, :root.pref-reduce-motion .run-pill-ico::after, :root.pref-reduce-motion .queued-bubble { animation: none; }
+@media (forced-colors: active) { .run-pill { border: 1px solid CanvasText; } .msg-status { color: CanvasText; } }
 /* ---- desktop-card.css */
 .msg.desktop-cards { display: flex; flex-direction: column; gap: 8px; background: transparent; padding-left: 0; padding-right: 0; box-shadow: none; }
 .desktop-card { display: flex; flex-direction: column; gap: 8px; max-width: 100%; padding: 10px; border-radius: var(--r-xl); background: var(--field); box-shadow: 0 0 0 1px var(--hairline); }
