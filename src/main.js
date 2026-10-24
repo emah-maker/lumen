@@ -45,6 +45,8 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
 // a second copy used to load the rest of this file's ~100 ms of modules first and took over 2 s to hand its links to the running one and leave.
 const singleInstance = process.argv.includes('--install-shortcuts') || require('./features/instance').acquireInstanceLock(app);
 if (!singleInstance) { app.quit(); return; } // (the running copy got our arguments through 'second-instance')
+// An update swap that Windows cut short (logoff, shutdown) leaves a journal next to the install: finish it, or put the old version back.
+if (process.platform === 'win32' && !TEST) { try { const p = require('path'); const dir = p.dirname(process.execPath); const j = p.join(p.dirname(dir), p.basename(dir) + '.swap.journal'); if (fs.existsSync(j)) require('./features/swap-helper').recover(j); } catch { /* the install is left as it is */ } }
 const path = require('path');
 // Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
 // each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
@@ -89,6 +91,7 @@ const switchTiming = lazy(() => require('./features/switch-timing').create({
       os: { release: os.release(), cpus: os.cpus().length, totalMemoryMB: Math.round(os.totalmem() / 1048576), freeMemoryMB: Math.round(os.freemem() / 1048576), onBattery: onBatteryNow() },
       launchSwitches: process.argv.slice(1).filter((a) => a.startsWith('--')).map((a) => a.split('=')[0]),
       keptReadyNow: readyState().map((r) => r.why),
+      mainErrors: mainErrorTail(), // the last lines of diagnostics/main-errors.log (no addresses, home folder removed)
     };
   },
 }));
@@ -250,8 +253,18 @@ if (process.platform === 'win32') app.setAppUserModelId(TEST || !instance.isInst
 
 // A stray error in the main process must not take the browser (and every open tab) down, or
 // pop Electron's raw error box: log it and keep going.
-process.on('uncaughtException', (err) => console.error('[lumen] uncaught exception:', err));
-process.on('unhandledRejection', (reason) => console.error('[lumen] unhandled rejection:', reason));
+function mainErrorTail() { try { return require('./features/error-log').create({ dir: () => path.join(app.getPath('userData'), 'diagnostics') }).tail(50); } catch { return []; } }
+// They are also appended to <userData>/diagnostics/main-errors.log (features/error-log.js, loaded on the first error), since a packaged build has no stderr.
+let mainErrorLog = null;
+function logMainError(kind, value) {
+  try {
+    mainErrorLog ||= require('./features/error-log').create({ dir: () => path.join(app.getPath('userData'), 'diagnostics') });
+    mainErrorLog.log(kind, value);
+  } catch { /* the log is best effort and must never throw out of an error handler */ }
+}
+if (TEST) global.__logMainError = logMainError;
+process.on('uncaughtException', (err) => { console.error('[lumen] uncaught exception:', err); logMainError('uncaughtException', err); });
+process.on('unhandledRejection', (reason) => { console.error('[lumen] unhandled rejection:', reason); logMainError('unhandledRejection', reason); });
 
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
@@ -2810,6 +2823,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // minute (a chat that crashes as it opens) fall through to the crashed page.
     if (tab.managerPage === 'chat') {
       console.error(`[lumen] chat page process gone (${details.reason}, exit ${details.exitCode ?? '?'}); reloading it`);
+      logMainError('chat-page-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}`);
       const now = Date.now();
       const burst = crashBurst(tab.chatCrashes, now);
       tab.chatCrashes = burst.times;
@@ -8190,11 +8204,13 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     uiCrashes = burst.times;
     if (burst.reload) {
       console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
+      logMainError('browser-ui-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}; reloading it`);
       ui().reload();
       return;
     }
     // Three crashes in a minute: it crashes as it loads, so reloading again would only loop. Stop and offer a restart instead.
     console.error(`[lumen] browser UI process gone (${details.reason}) ${burst.times.length} times in a minute; not reloading it again`);
+    logMainError('browser-ui-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}; ${burst.times.length} times in a minute, not reloading it again`);
     if (uiCrashAsked) return;
     uiCrashAsked = true;
     dialogs.showMessageBox(win, {
@@ -8977,6 +8993,7 @@ const agent = new Agent({
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
+  knownFolder: require('./features/device-access').makeKnown({ getPath: (n) => app.getPath(n), downloadDir: () => settingsBackend.downloadDir() }), // [device access] "desktop", "documents", "downloads"... where the system (OneDrive folder redirection) or Settings put them
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs

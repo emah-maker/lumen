@@ -607,6 +607,73 @@ function uploadCleanup(token) {
   })()`;
 }
 
+// ---- upload_file, the drop route (agent.js dropFiles)
+// Counts the files a drop on the page carries (the browser's own drag and drop first), and answers dragover/drop at the window when the page
+// did not, so a page with no drop target is never navigated to the dropped file.
+function dropProbeArm() {
+  return `(() => {
+    const rec = { seen: 0, handled: false };
+    const count = (e) => { rec.seen = Math.max(rec.seen, e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files.length : 0); };
+    const guard = (e) => { if (e.defaultPrevented) { if (e.type === 'drop') rec.handled = true; } else e.preventDefault(); };
+    rec.off = () => { document.removeEventListener('drop', count, true); window.removeEventListener('dragover', guard); window.removeEventListener('drop', guard); };
+    document.addEventListener('drop', count, true);
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    window.__claudeDrop = rec;
+    return true;
+  })()`;
+}
+function dropProbeRead() { return '(window.__claudeDrop ? { seen: window.__claudeDrop.seen, handled: window.__claudeDrop.handled } : { seen: 0, handled: false })'; }
+function dropProbeDisarm() { return '(() => { const r = window.__claudeDrop; if (r) { try { r.off(); } catch {} } delete window.__claudeDrop; delete window.__claudeDropFiles; return true; })()'; }
+function dropFilesReset() { return '(() => { window.__claudeDropFiles = []; if (window.__claudeDrop) window.__claudeDrop.handled = false; return true; })()'; }
+// Where a file drop could land, most likely first (CSS pixels): the page's main region, its lists, anything that says it takes drops, then the
+// middle of the page.
+function dropTargets() {
+  return `(() => {
+    const out = [];
+    const add = (x, y) => { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < innerWidth && y < innerHeight && !out.some((p) => Math.abs(p.x - x) < 12 && Math.abs(p.y - y) < 12)) out.push({ x, y }); };
+    const sel = '[role=main], main, [role=grid], [role=list], [role=listbox], [aria-label*=drop i], [class*=drop i], [id*=drop i], [data-dropzone]';
+    const seen = [];
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 80 || r.height < 60 || getComputedStyle(el).visibility === 'hidden') continue;
+      const x0 = Math.max(0, r.left), x1 = Math.min(innerWidth, r.right), y0 = Math.max(0, r.top), y1 = Math.min(innerHeight, r.bottom);
+      if (x1 - x0 > 40 && y1 - y0 > 40) seen.push({ area: (x1 - x0) * (y1 - y0), x: (x0 + x1) / 2, y: (y0 + y1) / 2 });
+    }
+    seen.sort((a, b) => b.area - a.area);
+    for (const s of seen.slice(0, 4)) add(s.x, s.y);
+    for (const [fx, fy] of [[0.6, 0.55], [0.5, 0.5], [0.6, 0.3], [0.5, 0.75], [0.8, 0.4]]) add(innerWidth * fx, innerHeight * fy);
+    return out.slice(0, 8);
+  })()`;
+}
+// Builds the files in the page and drops them (dragenter, dragover, drop) at each of the points until a drop is cancelled, which is what a drop
+// target does. One piece of a file (base64) is added by dropFilesAdd (first: it starts a new file; else it is appended to the last).
+function dropFilesAdd(name, type, b64, first) {
+  return `(() => {
+    const list = window.__claudeDropFiles = window.__claudeDropFiles || [];
+    if (${first ? 'true' : 'false'}) list.push({ name: ${JSON.stringify(name)}, type: ${JSON.stringify(type)}, parts: [] });
+    const bin = atob(${JSON.stringify(b64)});
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    list[list.length - 1].parts.push(bytes);
+    return true;
+  })()`;
+}
+function dropFilesSend(points) {
+  return `(() => {
+    const dt = new DataTransfer();
+    for (const f of window.__claudeDropFiles || []) dt.items.add(new File(f.parts, f.name, { type: f.type }));
+    for (const p of ${JSON.stringify(points)}) {
+      const target = document.elementFromPoint(p.x, p.y) || document.body;
+      const fire = (type) => target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt, clientX: p.x, clientY: p.y }));
+      fire('dragenter'); fire('dragover');
+      fire('drop');
+      if (window.__claudeDrop && window.__claudeDrop.handled) return true;
+    }
+    return false;
+  })()`;
+}
+
 // What read_page returns: the page's facts as JSON, then its text.
 function formatFull(page, extras = '') {
   const { text, ...rest } = page;
@@ -641,4 +708,4 @@ const glance = `(() => {
   return { title: document.title, focus };
 })()`;
 
-module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup };
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };

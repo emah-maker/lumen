@@ -14,6 +14,12 @@
 // `relaunch: false` is the quit-apply case (the user quit Lumen, so nothing is started afterwards, not
 // even the old version after a failure). Then a missing staged folder (already swapped, or cleaned up)
 // is a quiet no-op instead of an error.
+//
+// Crash recovery: Windows can end this detached helper (logoff, shutdown) between the two renames, which leaves no
+// install folder at all. So a small `<install>.swap.journal` (JSON: phase, paths, the entry moves made so far) is
+// written before the first rename, updated at every step and deleted when the swap is done or undone. recover() reads
+// it and finishes the swap if the staged update is complete, else puts the old install back. It runs at the next Lumen
+// start (main.js), and by hand with `Lumen.exe swap-helper.js recover <journal>` in Node mode (docs/install.md).
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -38,6 +44,40 @@ function checkExe(file, minBytes = MIN_EXE_BYTES) {
     return null;
   } catch (err) {
     return `${path.basename(file)} is missing (${err.code || err.message})`;
+  }
+}
+
+const JOURNAL_VERSION = 1;
+const STALE_BUSY_MS = 5 * 60e3; // a journal this old is never a swap still running (the helper finishes in seconds)
+const MESSAGE_INTERRUPTED = 'the update was interrupted, so the old version was put back';
+
+// Where the journal for an install folder lives: next to it, so it is found without knowing anything else.
+const journalPath = (dir) => path.join(path.dirname(dir), `${path.basename(dir)}.swap.journal`);
+
+// A journal writer. Writes are best effort (a journal that can't be written must not stop an update) and atomic (a temp file,
+// renamed over), so a reader never sees half a file. `state` is the JSON; set() merges into it and saves.
+function openJournal(file, state) {
+  const save = () => {
+    try {
+      fs.writeFileSync(`${file}.tmp`, JSON.stringify(state));
+      fs.renameSync(`${file}.tmp`, file);
+    } catch {}
+  };
+  return {
+    state,
+    set(patch) { Object.assign(state, patch); save(); },
+    save,
+    clear() { try { fs.rmSync(file, { force: true }); fs.rmSync(`${file}.tmp`, { force: true }); } catch {} },
+  };
+}
+
+function readJournal(file) {
+  try {
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const ok = j && j.version === JOURNAL_VERSION && ['dir', 'root', 'old', 'staging', 'exe'].every((k) => typeof j[k] === 'string' && j[k]) && Array.isArray(j.moves);
+    return ok ? j : null;
+  } catch {
+    return null;
   }
 }
 
@@ -81,37 +121,90 @@ function moveAside(old) {
 // of whose files is open. So when the folder itself won't move, the install is swapped entry by entry: every entry goes
 // into `old` (a locked folder is split into its entries, one level at a time), then every entry of the new version goes
 // into place. Whatever moved is journaled, so a failure puts everything back. Files are only ever renamed.
-function moveTree(from, to, journal, merge) {
+function moveTree(from, to, journal, merge, persist = () => {}) {
   const st = fs.lstatSync(from);
   if (!fs.existsSync(to)) {
-    try { fs.renameSync(from, to); journal.push([from, to]); return; } catch (err) { if (!st.isDirectory()) throw err; }
+    // the move is written down BEFORE it happens: a crash in between leaves a pair whose `to` isn't there, which undo skips
+    const pair = [from, to];
+    journal.push(pair);
+    persist();
+    try { fs.renameSync(from, to); return; } catch (err) { journal.splice(journal.indexOf(pair), 1); persist(); if (!st.isDirectory()) throw err; }
   } else if (!(merge && st.isDirectory() && fs.lstatSync(to).isDirectory())) {
     throw Object.assign(new Error(`${to} exists`), { code: 'EEXIST' });
   }
   // a folder that won't move whole (or one already in place, whose entries are merged in): its entries go one by one
   fs.mkdirSync(to, { recursive: true });
-  for (const e of fs.readdirSync(from)) moveTree(path.join(from, e), path.join(to, e), journal, merge);
+  for (const e of fs.readdirSync(from)) moveTree(path.join(from, e), path.join(to, e), journal, merge, persist);
   try { fs.rmdirSync(from); } catch {}
 }
 
+// Puts every journaled move back (newest first). True when nothing is left out of place.
 function undo(journal) {
-  for (const [from, to] of journal.reverse()) {
-    try { fs.mkdirSync(path.dirname(from), { recursive: true }); fs.renameSync(to, from); } catch {}
+  let ok = true;
+  for (const [from, to] of [...journal].reverse()) {
+    if (!fs.existsSync(to) || fs.existsSync(from)) continue; // never happened, or already back
+    try { fs.mkdirSync(path.dirname(from), { recursive: true }); fs.renameSync(to, from); } catch { ok = false; }
+  }
+  if (ok) journal.length = 0;
+  return ok;
+}
+
+// null when the install was swapped, else the error (everything is back where it was; err.undone says so). `jr` is the
+// journal (see openJournal): its phase is 'to-old' while the install's entries move into `old`, then 'to-new'. `merge`
+// is for a resumed swap, where a folder may already be half moved.
+function swapEntries(o, old, jr, merge = false) {
+  const moves = jr.state.moves || (jr.state.moves = []);
+  try {
+    fs.mkdirSync(old, { recursive: true });
+    if (jr.state.phase !== 'to-new') {
+      for (const e of fs.readdirSync(o.dir)) moveTree(path.join(o.dir, e), path.join(old, e), moves, merge, jr.save);
+      jr.set({ phase: 'to-new' });
+    }
+    for (const e of fs.readdirSync(o.root)) moveTree(path.join(o.root, e), path.join(o.dir, e), moves, true, jr.save);
+    return null;
+  } catch (err) {
+    const undone = undo(moves);
+    jr.set({ phase: 'to-old', moves });
+    return Object.assign(err, { undone });
   }
 }
 
-// null when the install was swapped, else the error (everything is back where it was).
-function swapEntries(o, old) {
-  const journal = [];
-  try {
-    fs.mkdirSync(old, { recursive: true });
-    for (const e of fs.readdirSync(o.dir)) moveTree(path.join(o.dir, e), path.join(old, e), journal, false);
-    for (const e of fs.readdirSync(o.root)) moveTree(path.join(o.root, e), path.join(o.dir, e), journal, true);
-    return null;
-  } catch (err) {
-    undo(journal);
-    return err;
+// Finishes or undoes a swap that was cut short, from its journal. Synchronous (Lumen runs it before anything else starts).
+// Returns 'none' (no journal), 'busy' (the helper is still at work), 'stale' (the install is in place: nothing was lost),
+// 'finished' (the staged update was complete and is now the install), 'rolled-back' (the old install was put back, and
+// `errFile` says so for Settings), 'lost' / 'failed' (nothing could be done: the journal stays for a later try).
+function recover(file, { isAlive = alive, now = Date.now() } = {}) {
+  if (!fs.existsSync(file)) return 'none';
+  const j = readJournal(file);
+  const jr = openJournal(file, j || {});
+  if (!j) { jr.clear(); return 'none'; }
+  let age = 0;
+  try { age = now - fs.statSync(file).mtimeMs; } catch {}
+  if (j.helperPid && j.helperPid !== process.pid && age < STALE_BUSY_MS && isAlive(j.helperPid)) return 'busy';
+  const has = (p) => fs.existsSync(p);
+  const staged = () => has(j.root) && !checkExe(path.join(j.root, path.basename(j.exe)), j.minBytes);
+  const done = (result) => { jr.clear(); return result; };
+  const noteRollback = () => { if (j.errFile) try { fs.writeFileSync(j.errFile, `${MESSAGE_INTERRUPTED}\n`); } catch {} return done('rolled-back'); };
+
+  if (j.mode !== 'entries') {
+    if (has(j.dir)) return done('stale'); // the install is there (the swap never began, finished, or was reinstalled over)
+    if (staged()) {
+      try { fs.renameSync(j.root, j.dir); return done('finished'); } catch {}
+    }
+    if (has(j.old)) {
+      try { fs.renameSync(j.old, j.dir); return noteRollback(); } catch { return 'failed'; }
+    }
+    return 'lost';
   }
+
+  // entry by entry: forward when the new entries are all still to come or already coming, else back
+  if (j.phase === 'to-new' || staged()) {
+    const o = { dir: j.dir, root: j.root };
+    if (!swapEntries(o, j.old, jr, true)) return done('finished');
+    if (jr.state.moves.length) return 'failed'; // some moves could not be undone either: keep the journal
+    return noteRollback();
+  }
+  return undo(j.moves) ? noteRollback() : 'failed';
 }
 
 // Folders from earlier entry-by-entry swaps whose running exe could not be deleted then (older Windows).
@@ -145,6 +238,8 @@ async function swap(o, start = launch) {
   const aside = moveAside(o.old);
   let old = o.old;
   let moved = false;
+  const jr = openJournal(o.journal || journalPath(o.dir), { version: JOURNAL_VERSION, helperPid: process.pid, mode: 'folder', phase: 'folder-old', dir: o.dir, root: o.root, old, staging: o.staging, exe: o.exe, errFile: o.errFile, minBytes: o.minBytes, moves: [] });
+  jr.save(); // before the first rename
   const deadline = Date.now() + lockMs; // (one bound for both ways of swapping)
   try {
     // (a virus scan holding a file lets go within moments; a running exe never does)
@@ -152,24 +247,27 @@ async function swap(o, start = launch) {
     moved = true;
   } catch {}
   if (moved) {
+    jr.set({ phase: 'folder-new' }); // the install is out of the way: from here a crash leaves no install folder
     try {
       await retry(() => fs.renameSync(o.root, o.dir), Math.min(lockMs, 2e3), retryMs);
     } catch {
-      try { fs.renameSync(o.old, o.dir); } catch {}
+      try { fs.renameSync(o.old, o.dir); jr.clear(); } catch {} // (the journal stays when the old install could not be put back)
       if (aside) rmQuick(aside);
       return fail();
     }
   } else {
     // something has files open in the install: swap it entry by entry (see swapEntries)
     if (fs.existsSync(old)) old = `${o.old}-${process.pid}`; // (a leftover that could not be deleted)
-    while (swapEntries(o, old)) {
+    jr.set({ mode: 'entries', phase: 'to-old', old, moves: [] });
+    for (let err; (err = swapEntries(o, old, jr)); await sleep(retryMs)) {
       if (Date.now() + retryMs > deadline) {
+        if (err.undone) jr.clear();
         if (aside) rmQuick(aside);
         return fail();
       }
-      await sleep(retryMs);
     }
   }
+  jr.clear(); // the swap is complete
   rmQuick(o.staging); // (what is left of it is small: the folder was renamed out)
   if (relaunch) start(o.exe, o.exeArgs);
   // The new Lumen is starting; the old install goes now, in this helper (detached, nobody waits for it).
@@ -188,10 +286,14 @@ function launch(exe, args = []) {
   spawn(exe, args, { detached: true, stdio: 'ignore', env, cwd: require('os').homedir() }).unref();
 }
 
-if (require.main === module) {
+if (require.main === module && process.argv[2] === 'recover') {
+  const result = recover(process.argv[3]);
+  console.log(result);
+  process.exit(['none', 'stale', 'finished', 'rolled-back'].includes(result) ? 0 : 1);
+} else if (require.main === module) {
   let opts;
   try { opts = JSON.parse(process.argv[2]); } catch { process.exit(2); }
   swap(opts).then(() => process.exit(0), () => process.exit(1));
 }
 
-module.exports = { swap, checkExe, MIN_EXE_BYTES, MESSAGE, POLL_MS, RETRY_MS, LOCK_WAIT_MS };
+module.exports = { swap, recover, journalPath, readJournal, MESSAGE_INTERRUPTED, checkExe, MIN_EXE_BYTES, MESSAGE, POLL_MS, RETRY_MS, LOCK_WAIT_MS };
