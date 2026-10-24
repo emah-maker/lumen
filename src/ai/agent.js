@@ -4253,7 +4253,15 @@ ${prompt}` : prompt), historyImages: [] };
     const settings = messages?.settings || {};
     const options = this.fallbackOptionsList();
     const chatModel = this.resolveAuto(settings.model || ''); // (on 'auto' the model Auto would pick, never 'auto' itself)
-    const transcript = (() => { try { return earlierText(messages || [], transcriptFor(messages || [])); } catch { return ''; } })();
+    // Only the newest turns, clipped: the whole chat (up to 40,000 characters, plus every screenshot turned into a data URL) made the call slow.
+    const transcript = (() => {
+      try {
+        const all = messages || [];
+        const summary = String(compactLib.summaryOf(all) || '').slice(0, btwLib.SUMMARY_CHARS);
+        const turns = handoffTurns(transcriptFor(all.slice(-btwLib.RECENT_MESSAGES), null), btwLib.TRANSCRIPT_CHARS);
+        return [summary ? `Summary of the earlier conversation:\n${summary}` : '', btwLib.clipTail(turns)].filter(Boolean).join('\n\n');
+      } catch { return ''; }
+    })();
     const call = async (model, { system, messages: sent, signal: sig, onText: text }) => {
       const { provider, model: id } = providers.splitModel(model);
       if (provider === 'anthropic') {
