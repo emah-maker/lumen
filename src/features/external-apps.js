@@ -19,6 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 const clientToken = require('../automation/client-token');
+const { readStoreFile, writeJsonAtomic } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 
 const APPS = {
   'claude-desktop': 'Claude Desktop',
@@ -39,10 +40,14 @@ const nameKey = (s) => cleanName(s).toLowerCase();
 
 function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), writeToken = writeTokenFile, safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let records = [];
-  try {
-    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (Array.isArray(saved?.apps)) records = saved.apps.filter((r) => r && typeof r.id === 'string' && typeof r.name === 'string');
-  } catch {}
+  // external-apps.json exists but could not be read: a copy was kept. Only the user's own change (add, revoke, the Ask switch)
+  // may replace it; the quiet "last used" save never does.
+  let unreadable = false;
+  {
+    const r = readStoreFile(file); // no file yet: no apps
+    if (r.failed) unreadable = true;
+    else if (Array.isArray(r.data?.apps)) records = r.data.apps.filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string');
+  }
   const temp = []; // unverified clients the user allowed for their session (never saved)
   const live = new Map(); // id -> { sessions: Set, busy, controller, paused, ranAt, timer }
   const queue = []; // prompts waiting for a free place among the MAX_PROMPTS
@@ -51,15 +56,16 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   let promptSeq = 0;
   let saveTimer = null;
 
-  const save = () => {
+  const save = (deliberate = true) => {
     clearTimer(saveTimer);
     saveTimer = null;
+    if (unreadable && !deliberate) return;
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ version: 1, apps: records }, null, 2), { mode: 0o600 });
+      writeJsonAtomic(file, { version: 1, apps: records }, 2, 0o600); // (tmp + rename: never a half-written file)
+      unreadable = false; // (a copy of the old file was set aside when it failed)
     } catch (err) { console.error('external apps:', err.message); }
   };
-  const saveSoon = () => { if (!saveTimer) { saveTimer = setTimer(save, 3000); saveTimer.unref?.(); } }; // (a last-used time is not worth a write per call)
+  const saveSoon = () => { if (!saveTimer) { saveTimer = setTimer(() => save(false), 3000); saveTimer.unref?.(); } }; // (a last-used time is not worth a write per call)
   const runtime = (id) => { let l = live.get(id); if (!l) { l = { sessions: new Set(), busy: 0, controller: new AbortController(), paused: false, ranAt: 0, timer: null, epoch: 0 }; live.set(id, l); } return l; };
   const byId = (id) => records.find((r) => r.id === id) || temp.find((r) => r.id === id) || null;
   const pub = (r) => {
@@ -300,7 +306,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   function disconnectAll() { for (const id of [...live.keys()]) { cut(id); runtimeDone(id); } onChange(); }
   // "Require a token for every app" went on: unverified clients are cut now.
   function disconnectUnverified() { for (const r of [...temp]) revoke(r.id); }
-  function flush() { if (saveTimer) save(); }
+  function flush() { if (saveTimer) save(false); }
 
   return { add, revoke, setAsk, list, get, identify, attach, detach, admit, answer, pendingPrompts, beginCall, stop, takeOver, resume, state, connectedCount, disconnectAll, disconnectUnverified, tokenFileOf, sessionsOf: (id) => [...(live.get(id)?.sessions || [])], flush, setPolicy: (fn) => { prefs.policy = fn; }, raw: () => records };
 }

@@ -17,11 +17,10 @@
 //   standingGrant(text) / oneOffGrant(text)   does one message of the user say sends are fine / ask for this send
 //   warnings({...})                the card's lines about recipients the user didn't type
 //   hold({ ms, timers, signal })   the undo window: { promise: 'go' | 'undo' | 'stop', undo() }
-//   createLog({ file, now })       the send log and the hourly limit
+//   createLog({ file, now, secrets }) the send log (sealed on disk) and the hourly limit
 'use strict';
-const fs = require('fs');
-const path = require('path');
 const GD = require('./gmail-drafts');
+const { readStoreFile, writeJsonAtomic } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 
 const SEND_PATH = '/users/me/messages/send';
 const MAX_PER_HOUR = 10;
@@ -123,14 +122,39 @@ function hold({ ms = UNDO_MS, timers = { setTimeout: (f, n) => setTimeout(f, n),
 }
 
 // ---- the send log and the hourly limit (userData/gmail-send-log.json: time, to, subject, how it was allowed)
-function createLog({ file, now = Date.now, maxPerHour = MAX_PER_HOUR }) {
+// The file is sealed with the OS's own encryption (`secrets`, as connectors.json's tokens are): { version: 2, sealed } holds the
+// list. An older plain file ({ version: 1, sends }) is read as it is and sealed on the next write. It is written tmp + rename.
+// A file that can't be read or opened is kept, with a copy set aside, and the limit fails closed: room() refuses every send
+// (a log that can't be read can't say how many went, and starting again from zero would lift the 10-an-hour cap).
+function createLog({ file, now = Date.now, maxPerHour = MAX_PER_HOUR, secrets = null }) {
   let entries = [];
-  try { const d = JSON.parse(fs.readFileSync(file, 'utf8')); if (Array.isArray(d?.sends)) entries = d.sends.filter((e) => e && Number.isFinite(e.at)); } catch { /* no log yet */ }
+  let unreadable = false;
+  const sealable = () => { try { return Boolean(secrets?.available()); } catch { return false; } };
+  const clean = (list) => (Array.isArray(list) ? list.filter((e) => e && Number.isFinite(e.at)) : []);
+  const r = readStoreFile(file, (text) => {
+    const d = JSON.parse(text);
+    if (typeof d?.sealed === 'string') {
+      if (!sealable()) throw new Error('the send log is sealed and this computer’s secure storage is not available');
+      return { sends: clean(JSON.parse(secrets.decrypt(d.sealed))?.sends), sealed: true };
+    }
+    if (!Array.isArray(d?.sends)) throw new Error('the send log has no list of sends');
+    return { sends: clean(d.sends), sealed: false };
+  }); // no file yet: no sends so far
+  if (r.failed) unreadable = true;
+  else if (r.data) entries = r.data.sends;
+  const save = () => {
+    if (unreadable) return; // (the original is kept as it is)
+    if (!sealable()) return; // (no keychain: it is never written as plain text; the limit still holds in memory this run)
+    try { writeJsonAtomic(file, { version: 2, sealed: secrets.encrypt(JSON.stringify({ sends: entries })) }, 0, 0o600); } catch { /* the limit still holds in memory */ }
+  };
+  if (r.data && !r.data.sealed && entries.length) save(); // (an older plain log is sealed now)
   const recent = () => entries.filter((e) => now() - e.at < 3600e3).length;
   return {
     recent,
+    unreadable: () => unreadable,
     // Throws when the hour's sends are used up (checked before a card, so nobody is asked for a send that can't go).
     room() {
+      if (unreadable) throw new SendError(`Lumen can’t read its list of sent emails, so it can’t check the limit of ${maxPerHour} an hour. Nothing was sent. Tell the user it can’t send right now.`);
       if (recent() >= maxPerHour) {
         const oldest = Math.min(...entries.filter((e) => now() - e.at < 3600e3).map((e) => e.at));
         const mins = Math.max(1, Math.ceil((oldest + 3600e3 - now()) / 60e3));
@@ -139,9 +163,10 @@ function createLog({ file, now = Date.now, maxPerHour = MAX_PER_HOUR }) {
     },
     // Written just before the request goes out: a send that gets no answer still counts.
     record({ to, subject, via }) {
+      if (unreadable) throw new SendError('Lumen can’t read its list of sent emails, so it can’t check the limit. Nothing was sent.');
       entries.push({ at: now(), to: String(to || '').slice(0, 300), subject: String(subject || '').slice(0, 200), via: via === 'chat' || via === 'message' ? 'typed' : 'card' });
       entries = entries.slice(-LOG_KEEP);
-      try { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify({ version: 1, sends: entries }, null, 2), { mode: 0o600 }); } catch { /* the limit still holds in memory */ }
+      save();
     },
     list: () => entries.slice().reverse().map((e) => ({ ...e })),
   };
