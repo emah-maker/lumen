@@ -1750,7 +1750,7 @@ body.split-dragging { user-select: none; cursor: col-resize; }
 .pref-gfx-light .composer { backdrop-filter: none; background: var(--surface-raised); }
 .pref-gfx-light .task-create, .pref-gfx-light .attachment-remove { backdrop-filter: none; }
 
-:root.pref-gfx-soft :is(.composer, .attachment-remove, .task-create, .pane-title) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+:root.pref-gfx-soft :is(.composer, .attachment-remove, .task-create, .pane-title, .run-pill) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
 .pref-gfx-soft .composer { transition: none; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 .pref-gfx-soft .composer:focus-within { box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
 .pref-gfx-soft .approval:not(.resolved):hover { transform: none; box-shadow: 0 0 0 1px var(--hairline); }

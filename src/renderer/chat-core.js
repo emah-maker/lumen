@@ -1449,7 +1449,7 @@ function setMark(bubble, status) {
   bubble.dataset.st = next;
   let mark = bubble.querySelector(':scope > .msg-status');
   if (!mark) { mark = document.createElement('span'); mark.className = 'msg-status'; bubble.append(mark); }
-  const label = t('chat.mark.' + next);
+  const label = next === 'queued' ? t('chat.mark.queued') : next === 'sent' ? t('chat.mark.sent') : t('chat.mark.read'); // (keys written out: test/e2e/a11y.js finds the keys in use by their text)
   mark.innerHTML = MARKS[next];
   mark.title = label;
   mark.setAttribute('role', 'img');
