@@ -147,7 +147,8 @@ function createLog({ file, now = Date.now, maxPerHour = MAX_PER_HOUR, secrets = 
     if (!sealable()) return; // (no keychain: it is never written as plain text; the limit still holds in memory this run)
     try { writeJsonAtomic(file, { version: 2, sealed: secrets.encrypt(JSON.stringify({ sends: entries })) }, 0, 0o600); } catch { /* the limit still holds in memory */ }
   };
-  if (r.data && !r.data.sealed && entries.length) save(); // (an older plain log is sealed now)
+  // An older plain log is sealed now. The write keeps the file it replaces as .bak, which here is the plain log: that copy goes.
+  if (r.data && !r.data.sealed && entries.length && sealable()) { save(); try { require('fs').rmSync(`${file}.bak`, { force: true }); } catch { /* best effort */ } }
   const recent = () => entries.filter((e) => now() - e.at < 3600e3).length;
   return {
     recent,

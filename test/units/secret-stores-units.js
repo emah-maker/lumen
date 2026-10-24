@@ -114,6 +114,7 @@ const noKeychain = { available: () => false, encrypt: () => { throw new Error('n
     const migrated = fs.readFileSync(file, 'utf8');
     check('send log: an older plain log is still counted', log.recent() === 1 && log.list()[0].subject === 'Plain subject');
     check('send log: ...and is sealed in place on read (no plain text left)', !/old@x\.org|Plain subject/.test(migrated) && mk().list()[0].to === 'old@x.org', migrated);
+    check('send log: ...and no plain copy is left beside it (.bak)', !fs.readdirSync(dir).some((f) => f.startsWith('gmail-send-log') && /old@x\.org|Plain subject/.test(fs.readFileSync(path.join(dir, f), 'utf8'))), fs.readdirSync(dir).join(', '));
     check('send log: no keychain: a plain log is read and not rewritten, a new send is kept in memory only', (() => { fs.writeFileSync(file, plain); const l = mk(noKeychain); l.record({ to: 'b@x.org', subject: 's', via: 'card' }); return l.recent() === 2 && fs.readFileSync(file, 'utf8') === plain; })());
 
     // the hourly limit
