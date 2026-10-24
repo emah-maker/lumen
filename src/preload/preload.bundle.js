@@ -724,7 +724,7 @@ contextBridge.exposeInMainWorld('assistant', {
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode),
-  helpers: (on) => ipcRenderer.invoke('agent:helpers', on),
+  helpers: (mode) => ipcRenderer.invoke('agent:helpers', mode),
   preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on),
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key),
   getSettings: () => ipcRenderer.invoke('settings:get'),

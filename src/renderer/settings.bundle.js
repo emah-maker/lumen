@@ -2616,7 +2616,7 @@ function buildConnectors() {
     if (c.reads.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can read: ' }), c.reads.join('; '), '.'));
     if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
     if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
-    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
     lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
     if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
     return lines;
@@ -2641,7 +2641,7 @@ function buildConnectors() {
       class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
       onclick: async () => {
         go.disabled = true;
-        go.textContent = c.id === 'gmail' ? 'Waiting for Google…' : 'Connecting…';
+        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : 'Connecting…';
         flash(msg, '');
         try {
           const input = Object.fromEntries(c.fields.map((f, i) => [f.id, inputs[i].value]));
@@ -2660,7 +2660,7 @@ function buildConnectors() {
 
   function cardFor(c, render) {
     const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token';
-    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && c.id === 'gmail');
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google'));
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
     if (c.status === 'soon') {
@@ -2668,7 +2668,7 @@ function buildConnectors() {
     } else if (!connected || again) {
       buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
     }
-    if (c.status === 'needs-signin') {
+    if (c.status === 'needs-signin' && c.kind !== 'google') {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
 
@@ -2693,7 +2693,7 @@ function buildConnectors() {
     }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
-        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
         try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); } catch (err) { flash(note, clean(err), 'error'); }
       } }));
     }
@@ -4404,7 +4404,8 @@ async function buildAi(card) {
     permissionRow,
     toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
     toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')),
-    toggle('aiSubagents', tr('settings.ai.subagents', 'Let the AI use helpers to work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a button in the sidebar.'), undefined, { fallback: true }),
+    select('aiSubagents', tr('settings.ai.subagents', 'Helpers that work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Auto offers helpers only when your request looks like that, so short questions stay cheap and quick. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a row in the sidebar.'),
+      ['auto', 'on', 'off'].map((v) => [v, tr(`settings.ai.subagents.${v}`, { auto: 'Auto', on: 'On', off: 'Off' }[v])])),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
     toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),

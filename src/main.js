@@ -6046,7 +6046,7 @@ const chatNotes = new Map();
 let chatNoteSeq = 0;
 function noteChatInApp(run, kind) {
   const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
-  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title, tabs: replyTabs(run) }, t);
   const token = ++chatNoteSeq;
   chatNotes.set(token, { run, kind, approvalTab: kind === 'approval' ? run.tabId ?? null : null });
   for (const old of chatNotes.keys()) { if (chatNotes.size <= 10) break; chatNotes.delete(old); }
@@ -6061,7 +6061,7 @@ ipcMain.handle('chat:open-note', (_e, token) => { const entry = chatNotes.get(Nu
 const notifyKeeper = notifyTarget.createKeeper();
 function showNotification(run, kind) {
   const title = chats().list().find((c) => c.id === run.chatId)?.title || '';
-  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title }, t);
+  const text = chatRunsLib.notification(kind, { reply: run.reply, error: run.error, summary: run.errorSummary, chat: title, tabs: replyTabs(run) }, t);
   try {
     const entry = { run, kind, approvalTab: kind === 'approval' ? run.tabId ?? null : null }; // (the tab an approval is about is the one the run was in when it asked)
     const n = TEST ? new (require('events'))() : new Notification({ title: text.title, body: text.body, silent: false });
@@ -8727,6 +8727,15 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     return [...hosts].filter(Boolean);
   },
   google: connectorsGoogle,
+  // Google Drive and Sheets: one Google sign-in in the user's own browser (features/connectors/google-auth.js). Lumen's built-in Google
+  // client, unless the user typed their own for the Gmail widget (that one wins, as it does there). Tests point it at 127.0.0.1.
+  workspace: {
+    builtin: () => require('./features/google-client').builtinClient(),
+    own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
+    openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+    canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
+    focusApp: () => focusWindow(),
+  },
   mcp: mcpClient,
   openSignIn: connectorsOpen,
   // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
@@ -8958,7 +8967,7 @@ const agent = new Agent({
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
-  subagents: () => readSettings().aiSubagents !== false, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
   actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings > AI > "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
@@ -10833,6 +10842,10 @@ ipcMain.handle('chips:info', (event, keys, snaps) => tabChips().infos(keys, snap
 ipcMain.handle('chips:watch', (event, keys) => chipsFor(event).watch(event.sender, keys));
 ipcMain.handle('chips:open', (event, request) => { syncToSender(event); return chipsFor(event).open(event.sender, request); });
 if (TEST) global.__tabChips = { rt: () => tabChips(), boot: () => require('./features/tab-chips').BOOT, closed: () => [...closedChipTabs] };
+function replyTabs(run) { // [tab chips] the tabs the reply names, for a notification's words (chat-runs.js tabWords)
+  try { const ids = tabMarker.idsIn(run.reply || ''); if (ids.length) noteRunTabs(run, ids); } catch { /* none */ }
+  return run.tabSnaps || null;
+}
 function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or as they last looked): kept with the reply
   const rt = tabChips();
   const snaps = (run.tabSnaps ||= {});
@@ -12169,13 +12182,14 @@ ipcMain.handle('agent:permission-mode', (_e, mode) => {
   return permissionModes.modeOf(readSettings());
 });
 
-// [subagents] The sidebar's Helpers button (and Settings → AI): on | off. No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js subagentsOn).
-ipcMain.handle('agent:helpers', (_e, on) => {
-  if (typeof on === 'boolean') {
-    writeSettings({ ...readSettings(), aiSubagents: on });
+// [subagents] The sidebar's Helpers row (and Settings → AI): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
+ipcMain.handle('agent:helpers', (_e, mode) => {
+  const next = mode === true ? 'on' : mode === false ? 'off' : ['off', 'auto', 'on'].includes(mode) ? mode : null;
+  if (next) {
+    writeSettings({ ...readSettings(), aiSubagents: next });
     try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
   }
-  return readSettings().aiSubagents !== false;
+  return require('./ai/helpers-auto').modeOf(readSettings().aiSubagents);
 });
 
 // [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.

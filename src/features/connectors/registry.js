@@ -13,6 +13,7 @@
 // kind: 'session' (the user's signed-in Lumen session, read through the site's own JSON endpoints),
 //       'token'   (the user pastes an API token or secret address; encrypted at rest),
 //       'oauth'   (Lumen's existing Google sign-in, shared with the Gmail widget),
+//       'google'  (Google Drive, Sheets: one Google sign-in in the user's own browser, each with its own `google.scopes`),
 //       'mcp'     (a preset that adds a known MCP server to Settings → Tools from MCP servers),
 //       'soon'    (shown, not available yet).
 'use strict';
@@ -38,6 +39,12 @@ const ONE_ADDRESS = /^[ \t]*(?:(?:"[^<>,"\\\r\n]{0,100}"|[^<>,"\\\r\n]{0,100})[ 
 const ADDRESSES = { test: (v) => { const parts = String(v).replace(/,[ \t]*$/, '').split(','); return parts.length <= 50 && parts.every((p) => ONE_ADDRESS.test(p)); } };
 // A Notion page id: 32 hex digits, with or without its dashes, or a notion.so address that ends in one.
 const NOTION_ID = /^(?:https:\/\/(?:www\.)?notion\.so\/[^\s?#]{0,300}?)?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}(?:[?#]\S{0,200})?$/i;
+
+const GOOGLE_API = 'https://www.googleapis.com/auth';
+const DRIVE_ID = /^[A-Za-z0-9_-]{1,100}$/; // a Drive file id (or "root"): plain characters, never a path or query
+const FILE_REF = /^f_[0-9a-f]{24}$/; // a chat attachment's opaque ref (features/upload-files.js)
+// A spreadsheet id, or the address of one (docs.google.com/spreadsheets/d/<id>/...); the provider takes the id out of it.
+const SHEET_ID = /^(?:https:\/\/docs\.google\.com\/spreadsheets\/d\/)?[A-Za-z0-9_-]{10,100}(?:[/?#]\S{0,200})?$/;
 
 const CONNECTORS = [
   {
@@ -106,8 +113,38 @@ const CONNECTORS = [
     },
   },
   {
-    id: 'drive', name: 'Google Drive and Docs', category: 'files', kind: 'soon', icon: { text: 'D', color: '#188038' },
-    summary: 'Find and read your files and documents.', fields: [], reads: [], does: [], actions: {},
+    // Drive and Sheets share one Google sign-in in the user's own browser (connectors/google-auth.js), each asking for its own scopes.
+    // drive.readonly (a restricted Google scope, like gmail.readonly) lets the AI search and read the user's existing files; drive.file
+    // (the files Lumen makes or uploads) is what the writes need. A local file goes up only through a card naming that one file.
+    id: 'drive', name: 'Google Drive', category: 'files', kind: 'google', icon: { text: 'D', color: '#188038' },
+    google: { scopes: [`${GOOGLE_API}/drive.readonly`, `${GOOGLE_API}/drive.file`] },
+    summary: 'Find and read your files and Google Docs, make folders, upload files and share a link.',
+    sessionNote: 'Signs in with Google in your own browser. Lumen asks Google to read your Drive files and to make or upload files (it can change only the files it makes or uploads itself, never your existing ones). One sign-in covers Drive and Sheets.',
+    fields: [],
+    reads: ['File names, folders and the text of documents you ask about (Google Docs, Slides, Sheets as text, text files)'],
+    does: ['Make a folder (asks you first)', 'Upload one file from this computer to a folder (asks you first, for each file)', 'Make a file viewable by anyone with its link (asks you first)'],
+    actions: {
+      files: { label: 'Find files', args: { query: str('words in the name or text; empty: recent files'), folder_id: str('only inside this folder (id)', { max: 100, pattern: DRIVE_ID }), max: int('how many, default 15', 1, 50) }, doc: 'Search Drive, or list a folder or the most recent files.' },
+      read: { label: 'Read a file', args: { id: str('file id from files', { required: true, max: 100, pattern: DRIVE_ID }) }, doc: 'The text of a Google Doc, Slide deck, Sheet (first tab) or a text file, with its link. Folders, PDFs and pictures give details only.' },
+      create_folder: { label: 'Make a folder', write: true, edit: ['name'], args: { name: str('the folder name', { required: true, max: 200, label: 'Folder name' }), parent_id: str('inside this folder (id); default My Drive', { max: 100, pattern: DRIVE_ID }) }, doc: 'Makes a folder. The user confirms first.' },
+      upload: { label: 'Upload a file', write: true, edit: ['name'], args: { file: str('ref (f_…) of a file the user attached to this chat', { max: 40, pattern: FILE_REF }), path: str('a file on this computer; only when the user allowed files on this computer', { max: 500 }), folder_id: str('into this folder (id); default My Drive', { max: 100, pattern: DRIVE_ID }), name: str('name in Drive; default the file’s own', { max: 200, label: 'Name in Drive' }) }, doc: 'Uploads ONE local file (a chat attachment by file, or a path). The user confirms each file on a card.' },
+      share_link: { label: 'Share by link', write: true, args: { id: str('file id', { required: true, max: 100, pattern: DRIVE_ID }) }, doc: 'Lets anyone with the link view one file Lumen made or uploaded, and gives the link. The user confirms first.' },
+    },
+  },
+  {
+    id: 'sheets', name: 'Google Sheets', category: 'files', kind: 'google', icon: { text: 'S', color: '#0f9d58' },
+    google: { scopes: [`${GOOGLE_API}/spreadsheets`] },
+    summary: 'Read a spreadsheet, add rows to it and make a new one.',
+    sessionNote: 'Signs in with Google in your own browser. Lumen asks Google to see and edit your spreadsheets; it only adds rows or makes sheets after you allow each one. One sign-in covers Drive and Sheets.',
+    fields: [],
+    reads: ['The tabs and cells of a spreadsheet you give the link or id of'],
+    does: ['Add rows to the end of a sheet (asks you first)', 'Make a new spreadsheet (asks you first)'],
+    actions: {
+      tabs: { label: 'List the tabs', args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }) }, doc: 'The spreadsheet’s title and its tabs with their sizes.' },
+      read: { label: 'Read cells', args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }), range: str('A1 range, e.g. Sheet1!A1:D20; default first tab A1:Z100', { max: 120 }) }, doc: 'Cell values as tab-separated rows.' },
+      append: { label: 'Add rows', write: true, edit: ['rows'], args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }), rows: text('one row per line, cells separated by |', 20000, { required: true, label: 'Rows' }), range: str('tab to add to, e.g. Sheet1; default first tab', { max: 120 }) }, doc: 'Adds rows after the last one (as plain text, never as formulas). The user confirms first.' },
+      create: { label: 'Make a spreadsheet', write: true, edit: ['title'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }) }, doc: 'Makes an empty spreadsheet and gives its link. The user confirms first.' },
+    },
   },
   {
     id: 'github', name: 'GitHub', category: 'work', kind: 'token', icon: { text: 'G', color: '#24292f' },

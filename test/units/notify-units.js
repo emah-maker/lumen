@@ -107,6 +107,10 @@ const n1 = notification('done', { reply: `Here you go: ${math}`, chat: raw`Solve
 check('chat finished: title and body show text', n1.title === 'Lumen finished: Here you go: x₂ ≈ 93.9%' && n1.body === 'Solve a/b = 2', JSON.stringify(n1));
 const n2 = notification('failed', { error: raw`Could not take \(\sqrt{-1}\)`, chat: raw`$\alpha$ test` });
 check('chat failed: error and body show text', noTex(n2.title) && n2.title.includes('√(-1)') && n2.body === 'α test', JSON.stringify(n2));
+const n4 = notification('done', { reply: 'Opened Review_Packet_1.pdf (10 pages) in [[tab:24]].' });
+check('chat finished: a tab marker is never shown as [[tab:ID]] (the sentence already names the tab: "a tab")', n4.title === 'Lumen finished: Opened Review_Packet_1.pdf (10 pages) in a tab.', n4.title);
+const n5 = notification('done', { reply: 'Your notes are in [[tab:7]] and [[tab:9]].', tabs: { 7: { t: 'Mech Notes' } } });
+check('chat finished: a tab marker reads as the tab title when it is known, "a tab" when not', n5.title === 'Lumen finished: Your notes are in Mech Notes and a tab.', n5.title);
 const n3 = notification('approval', { chat: raw`Is $x \ge 3$?` });
 check('chat needs an OK: the body shows text', n3.body === 'Is x ≥ 3?', JSON.stringify(n3));
 check('math on its own line after a heading and display math first both read as text', firstLine(raw`$$\frac{a+b}{2}$$` + '\nthen more') === '(a+b)/2' && firstLine('# Result\n' + raw`$E=mc^2$`) === 'Result', firstLine(raw`$$\frac{a+b}{2}$$`));
