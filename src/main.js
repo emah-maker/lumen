@@ -89,6 +89,7 @@ const switchTiming = lazy(() => require('./features/switch-timing').create({
       os: { release: os.release(), cpus: os.cpus().length, totalMemoryMB: Math.round(os.totalmem() / 1048576), freeMemoryMB: Math.round(os.freemem() / 1048576), onBattery: onBatteryNow() },
       launchSwitches: process.argv.slice(1).filter((a) => a.startsWith('--')).map((a) => a.split('=')[0]),
       keptReadyNow: readyState().map((r) => r.why),
+      mainErrors: mainErrorTail(), // the last lines of diagnostics/main-errors.log (no addresses, home folder removed)
     };
   },
 }));
@@ -250,8 +251,18 @@ if (process.platform === 'win32') app.setAppUserModelId(TEST || !instance.isInst
 
 // A stray error in the main process must not take the browser (and every open tab) down, or
 // pop Electron's raw error box: log it and keep going.
-process.on('uncaughtException', (err) => console.error('[lumen] uncaught exception:', err));
-process.on('unhandledRejection', (reason) => console.error('[lumen] unhandled rejection:', reason));
+function mainErrorTail() { try { return require('./features/error-log').create({ dir: () => path.join(app.getPath('userData'), 'diagnostics') }).tail(50); } catch { return []; } }
+// They are also appended to <userData>/diagnostics/main-errors.log (features/error-log.js, loaded on the first error), since a packaged build has no stderr.
+let mainErrorLog = null;
+function logMainError(kind, value) {
+  try {
+    mainErrorLog ||= require('./features/error-log').create({ dir: () => path.join(app.getPath('userData'), 'diagnostics') });
+    mainErrorLog.log(kind, value);
+  } catch { /* the log is best effort and must never throw out of an error handler */ }
+}
+if (TEST) global.__logMainError = logMainError;
+process.on('uncaughtException', (err) => { console.error('[lumen] uncaught exception:', err); logMainError('uncaughtException', err); });
+process.on('unhandledRejection', (reason) => { console.error('[lumen] unhandled rejection:', reason); logMainError('unhandledRejection', reason); });
 
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
@@ -2810,6 +2821,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // minute (a chat that crashes as it opens) fall through to the crashed page.
     if (tab.managerPage === 'chat') {
       console.error(`[lumen] chat page process gone (${details.reason}, exit ${details.exitCode ?? '?'}); reloading it`);
+      logMainError('chat-page-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}`);
       const now = Date.now();
       const burst = crashBurst(tab.chatCrashes, now);
       tab.chatCrashes = burst.times;
@@ -8190,11 +8202,13 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     uiCrashes = burst.times;
     if (burst.reload) {
       console.error(`[lumen] browser UI process gone (${details.reason}); reloading it`);
+      logMainError('browser-ui-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}; reloading it`);
       ui().reload();
       return;
     }
     // Three crashes in a minute: it crashes as it loads, so reloading again would only loop. Stop and offer a restart instead.
     console.error(`[lumen] browser UI process gone (${details.reason}) ${burst.times.length} times in a minute; not reloading it again`);
+    logMainError('browser-ui-process-gone', `${details.reason}, exit ${details.exitCode ?? '?'}; ${burst.times.length} times in a minute, not reloading it again`);
     if (uiCrashAsked) return;
     uiCrashAsked = true;
     dialogs.showMessageBox(win, {
