@@ -49,6 +49,7 @@ const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const agentsQuiet = require('../features/agents-quiet');
 const screenIntent = require('./screen-intent');
+const helpersAuto = require('./helpers-auto'); // delegate in Auto mode: whether what the user asked has several independent parts
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
@@ -539,7 +540,7 @@ TOOLS.push({ ...research.FIND_SOURCES_TOOL, eager_input_streaming: true }); // [
 // while Settings > AI > "Let the AI use helpers" is on (requestFor / otherTurn leave it out otherwise).
 const DELEGATE_TOOL = {
   name: 'delegate',
-  description: 'Run 2-5 independent read-only jobs in parallel helpers (they read URLs and search, never act in tabs). tasks:[{task,urls?}], each self-contained. Returns each answer.',
+  description: 'Run 2-5 independent read-only jobs in parallel helpers (read URLs, search; never act in tabs). tasks:[{task,urls?}], each self-contained. Returns each answer. For 3+ items or long reads, not one page or dependent steps.',
   input_schema: {
     type: 'object',
     properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['task'] } } },
@@ -3943,7 +3944,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.subagentsOn(), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -3996,7 +3997,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.subagentsOn() ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -4209,8 +4210,17 @@ ${prompt}` : prompt), historyImages: [] };
   // else, so no click, text, form, tab, script or upload can come from one. The approval rules are the chat's own: a helper that has
   // read a page needs the user's OK for every new site it heads to (its own taint, started from the chat's), through the same cards
   // and the chat's approved sites; a redirect is checked by the same guard. Their tokens count in the chat's usage.
+  // Settings > AI > Helpers: off | auto | on (an older true / false is on / off; no value is auto, helpers-auto.js).
+  subagentsMode() {
+    try { return helpersAuto.modeOf(this.browser.subagents ? this.browser.subagents() : undefined); } catch { return 'auto'; }
+  }
+  // Helpers are not off: the CLI chats' helpers (their tool lives in their own MCP session, so Auto costs nothing there) and Grok's spawn_subagent.
   subagentsOn() {
-    return this.browser.subagents ? this.browser.subagents() !== false : true;
+    return this.subagentsMode() !== 'off';
+  }
+  // Whether this API chat's request lists delegate: On always; Auto when what the user has asked has several independent parts (helpers-auto.js).
+  helpersOffered(messages) {
+    try { return helpersAuto.offered(this.subagentsMode(), messages); } catch { return false; }
   }
 
   // One helper model call, in the shape of a Claude turn ({ content, stop_reason, model, usage }); noTools: answer in text.
@@ -4763,7 +4773,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'video_overview') return 'Looking over the video';
       if (name === 'video_frames') return `Looking at ${Array.isArray(input.at) ? input.at.length : 1} moment${Array.isArray(input.at) && input.at.length !== 1 ? 's' : ''} of the video`;
       if (name === 'parallel_tasks') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, actingHelpers().MAX_TASKS) : 0} browser jobs to helpers`; // [acting helpers]
-      if (name === 'delegate') return `Handing ${Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0} jobs to helpers`;
+      if (name === 'delegate') { const n = Array.isArray(input.tasks) ? Math.min(input.tasks.length, subagents.MAX_TASKS) : 0; return this.subagentsMode() === 'auto' ? `Auto: using ${n} helper${n === 1 ? '' : 's'}` : `Handing ${n} jobs to helpers`; } // (Auto: the user sees why helpers were used)
       if (name === 'find_sources') return input.related ? `Following ${input.related === 'references' ? 'the references of' : 'the citations of'} a paper` : `Searching scholarly sources for ${quote(input.query || '')}`;
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
       if (name === 'project_files') return projectCtx.stepLabel(input); // [project workspace]

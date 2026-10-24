@@ -2183,22 +2183,25 @@ permButton.setAttribute('aria-expanded', 'false');
 // The same setting as Settings > AI > "Let the AI use helpers to work in parallel" (aiSubagents): main keeps it and tells every view,
 // so the two follow each other. Off: the next message is sent without the tool.
 const helpersButton = $('helpers-btn');
-let helpersOn = true;
+let helpersMode = 'auto'; // off | auto | on (Auto: the AI gets helpers for a request with several separate parts)
+const HELPERS_NEXT = { auto: 'on', on: 'off', off: 'auto' };
+const HELPERS_STATE = { auto: 'sidebar.state.auto', on: 'sidebar.state.on', off: 'sidebar.state.off' };
+const helpersModeOf = (v) => (v === true || v === 'on' ? 'on' : v === false || v === 'off' ? 'off' : 'auto');
 function renderHelpers() {
   if (!helpersButton) return;
-  helpersButton.setAttribute('aria-checked', String(helpersOn)); // a labelled row in the More menu: "Helpers  On"
-  helpersButton.title = t(helpersOn ? 'sidebar.helpers.on' : 'sidebar.helpers.off');
+  helpersButton.setAttribute('aria-checked', helpersMode === 'auto' ? 'mixed' : String(helpersMode === 'on')); // a labelled row in the More menu: "Helpers  Auto" (mixed: the AI decides)
+  helpersButton.title = t(`sidebar.helpers.${helpersMode}`);
   const state = $('helpers-state');
-  if (state) state.textContent = t(helpersOn ? 'sidebar.state.on' : 'sidebar.state.off');
+  if (state) state.textContent = t(HELPERS_STATE[helpersMode]);
 }
 if (helpersButton) {
   helpersButton.onclick = async () => {
-    const got = await window.assistant.helpers?.(!helpersOn);
-    if (typeof got === 'boolean') helpersOn = got;
+    const got = await window.assistant.helpers?.(HELPERS_NEXT[helpersMode]);
+    if (got != null) helpersMode = helpersModeOf(got);
     renderHelpers();
   };
-  window.addEventListener('lumen:helpers', (e) => { helpersOn = e.detail !== false; renderHelpers(); }); // Settings → AI changed it
-  window.assistant.helpers?.().then((on) => { if (typeof on === 'boolean') helpersOn = on; renderHelpers(); });
+  window.addEventListener('lumen:helpers', (e) => { helpersMode = helpersModeOf(e.detail); renderHelpers(); }); // Settings → AI changed it
+  window.assistant.helpers?.().then((mode) => { if (mode != null) helpersMode = helpersModeOf(mode); renderHelpers(); });
   renderHelpers();
 }
 

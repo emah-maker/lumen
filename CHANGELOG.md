@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Helpers now decide for themselves.** The Helpers switch in the sidebar's More menu and in Settings → AI and agents is now Off / Auto / On, and Auto is the default. In Auto the AI is offered helpers only when your request has several independent parts ("apply to these 10 jobs", "for each of these sites", "compare these five laptops", a list of links, research across several sources). Short questions, chat and single-page requests don't carry the helpers tool at all, which keeps them quicker and cheaper. The chat's step says "Auto: using 3 helpers" so you can see why. If you had Helpers switched on or off before, that choice is kept. Helpers still only read and search, at most five at a time, and never open tabs in your window.
+
 ## 0.5.67 (2026-10-23)
 
 - **Small polish across the toolbar, find bar and error page.** The update pill says "Restart when ready" while it is still downloading, "Restarting…" once you click, dims its button when it cannot be clicked, and no longer changes width with each percent. The address bar no longer grows slightly when focused. Closing the find bar (Esc anywhere in it, or Close) keeps the match selected and returns the keyboard to the page; Previous and Next are off when there are no matches. Sleeping tabs say "asleep" everywhere ("Asleep · click to wake"). The note after Organize or merge stays while you hover it or focus is inside it. The page-load error page focuses "Try again".
