@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI opens fewer tabs.** When a chat asks for a page that is already open in a tab, the AI now says so and reads that tab instead of opening a second copy (and switches to it if you asked to see it). A chat's own AI tab is reused for the next page when it is idle, instead of piling up new ones. Asking for "a new tab" still opens one, and your own tabs are never moved or navigated. The prompt also tells the AI to read the page or an open tab, or use read_urls, before opening a tab.
+
 ## 0.5.67 (2026-10-23)
 
 - **Small polish across the toolbar, find bar and error page.** The update pill says "Restart when ready" while it is still downloading, "Restarting…" once you click, dims its button when it cannot be clicked, and no longer changes width with each percent. The address bar no longer grows slightly when focused. Closing the find bar (Esc anywhere in it, or Close) keeps the match selected and returns the keyboard to the page; Previous and Next are off when there are no matches. Sleeping tabs say "asleep" everywhere ("Asleep · click to wake"). The note after Organize or merge stays while you hover it or focus is inside it. The page-load error page focuses "Try again".
