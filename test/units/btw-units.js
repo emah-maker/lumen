@@ -73,6 +73,29 @@ const OPTIONS = [
     check('run: a hard time limit', late.error === 'timeout');
   }
 
+  // ---- speed: first-token watchdog, trimmed context, time limit
+  {
+    check('limits: 30 s overall, a first token expected within 8 s', B.TIME_MS === 30000 && B.FIRST_TEXT_MS === 8000);
+    const long = Array.from({ length: 400 }, (_, i) => `User: question number ${i}\n\nAssistant: answer number ${i}`).join('\n\n');
+    const clipped = B.clipTail(long, 2000);
+    check('context: a long chat is cut to its newest turns at a turn boundary, with a note', clipped.length <= 2100 && /^\[… earlier messages left out …\]/.test(clipped) && /answer number 399$/.test(clipped) && /\n\n(User|Assistant): /.test(clipped.slice(40, 80)) && B.clipTail('short', 2000) === 'short', clipped.slice(0, 120));
+    // a model that never speaks: the attempt is dropped at firstTextMs and the chat's own model answers
+    const order = [];
+    const t0 = Date.now();
+    const stalled = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', firstTextMs: 40, call: (model, a) => { order.push(model); if (model === 'claude-haiku-5-5') return new Promise((_, rej) => a.signal.addEventListener('abort', () => rej(new Error('aborted')))); a.onText('fine'); return Promise.resolve({ content: [{ type: 'text', text: 'fine' }], usage: null }); } });
+    check('stall: a cheaper model silent past the first-token limit is dropped and the chat\'s own answers', stalled.ok && stalled.text === 'fine' && J(order) === '["claude-haiku-5-5","claude-opus-5-5"]' && Date.now() - t0 < 1000, J([stalled, order]));
+    const dead = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, mode: 'same', question: 'q', firstTextMs: 30, timeMs: 5000, call: (model, a) => new Promise((_, rej) => a.signal.addEventListener('abort', () => rej(new Error('aborted')))) });
+    check('stall: silent on every attempt is a timeout result (card shows the error), not a hang', dead.ok === false && dead.error === 'timeout', J(dead));
+    const mid = [];
+    const partial = await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', firstTextMs: 30, call: (model, a) => { mid.push(model); a.onText('Half'); return new Promise((_, rej) => a.signal.addEventListener('abort', () => rej(new Error('aborted')))); }, timeMs: 120 });
+    check('stall: once text has streamed it is never restarted; the overall limit ends it with the partial text', J(mid) === '["claude-haiku-5-5"]' && partial.error === 'timeout' && partial.text === 'Half', J([partial, mid]));
+    // latency with a mock that answers after 60 ms: the answer is not held up by anything else
+    const t1 = Date.now();
+    let first = 0;
+    await B.run({ chatModel: 'claude-opus-5-5', options: OPTIONS, question: 'q', onText: () => { if (!first) first = Date.now() - t1; }, call: async (m, a) => { await sleep(60); a.onText('x'); return { content: [{ type: 'text', text: 'x' }] }; } });
+    check('latency: first token arrives as soon as the model sends it (no extra waits in run)', first >= 55 && first < 400, first);
+  }
+
   // ---- Agent.btw beside a task in flight
   const fakeBrowser = (extra = {}) => ({ activeTab: () => null, tabById: () => null, listTabs: () => [], effectiveModel: (x) => x, aiOff: () => false, noTabReason: () => 'No tab open.', maxSteps: () => 0, fallbackOptions: () => OPTIONS, ...extra });
   const textStream = (message, onStart = () => {}) => ({ async *[Symbol.asyncIterator]() { await onStart(); yield { type: 'content_block_start', content_block: { type: 'text' } }; yield { type: 'content_block_delta', delta: { type: 'text_delta', text: message.content[0].text } }; }, finalMessage: async () => message });
@@ -113,6 +136,19 @@ const OPTIONS = [
     check('btw: after the task ends, the question and the answer are in no message the model will see again', !after.includes('which page was that') && !after.includes('It was the pricing page'), after.slice(0, 300));
     check('btw: the main task finished normally (not stopped, no error, no loop-guard notice)', events.some((e) => e.type === 'text' && /Task done/.test(e.text)) && !events.some((e) => e.type === 'error' || (e.type === 'notice' && /Stopped|stuck|repeat/i.test(e.text))), J(events.map((e) => e.type)));
     check('btw: the usage line counts both calls', describeUsage(chat.settings.usage).includes('tokens') && chat.settings.usage.turns === usageBefore + 2, J(chat.settings.usage));
+  }
+
+  // ---- a 300-message chat: the request carries a trimmed transcript, not the chat
+  {
+    const seen = [];
+    const client = { beta: { messages: { stream: (params) => { seen.push(params); return textStream({ content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, output_tokens: 1 } }); } } } };
+    const agent = new Agent(fakeBrowser(), () => client, () => ({ model: 'claude-opus-5-5' }));
+    const chat = [];
+    for (let i = 0; i < 300; i++) { chat.push(user(`user message ${i} ${'x'.repeat(300)}`)); chat.push(reply(`assistant message ${i} ${'y'.repeat(300)}`)); }
+    chat.settings = { model: 'claude-opus-5-5' };
+    const r = await agent.btw({ messages: chat, question: 'what now?' });
+    const sent = seen[0]?.messages?.[0]?.content || '';
+    check('trim: the request holds the newest turns and stays under the cap', r.ok && sent.includes('assistant message 299') && !sent.includes('user message 100 ') && sent.length < B.TRANSCRIPT_CHARS + 1500 + 1500, sent.length);
   }
 
   // ---- other providers, through providers.streamTurn, still without tools
@@ -159,6 +195,7 @@ const OPTIONS = [
       constructor(tag) { this.tag = tag; this.children = []; this.attrs = {}; this.handlers = {}; this.className = ''; this.textContent = ''; this.hidden = false; this.value = ''; this.classList = { add: (c) => { this.className += ` ${c}`; }, remove: (c) => { this.className = this.className.split(/\s+/).filter((x) => x && x !== c).join(' '); }, contains: (c) => this.className.split(/\s+/).includes(c) }; this.scrollTop = 0; this.scrollHeight = 0; }
       append(...n) { this.children.push(...n); }
       prepend(...n) { this.children.unshift(...n); }
+      replaceChildren(...n) { this.children = n; }
       remove() { this.removed = true; for (const parent of allEls) parent.children = parent.children.filter((c) => c !== this); }
       setAttribute(k, v) { this.attrs[k] = v; }
       removeAttribute(k) { delete this.attrs[k]; }
@@ -211,8 +248,21 @@ const OPTIONS = [
     check('card: Esc in an empty composer dismisses the newest card (and is not also Stop)', tray.children.length === 0 && tray.hidden === true && prevented >= 2);
     for (const h of prompt.handlers.keydown || []) h({ key: 'Escape', target: prompt, isComposing: false, preventDefault: () => { prevented += 10; }, stopImmediatePropagation: () => { prevented += 10; } });
     check('card: with no card left Esc is untouched (it stops a running reply as before)', prevented < 10);
+    cmd.run({ input: 'flaky', ask: () => {} });
+    const flakyId = calls.at(-1).id;
+    finishers[2]({ ok: false, error: 'timeout' });
+    await sleep(5);
+    const flaky = byId('composer').children[0].children.at(-1);
+    const retryBtn = flaky.children[2].children[0];
+    check('card: a timeout says so and offers Retry', /too long/.test(flaky.children[1].textContent) && flaky.children[1].className.includes('btw-error') && retryBtn && /Retry/.test(retryBtn.textContent), J(flaky.children[1].textContent));
+    const before = calls.length;
+    retryBtn.click();
+    check('card: Retry asks again in the same card, with a spinner, same question', calls.length === before + 1 && calls.at(-1).id === flakyId && calls.at(-1).q === 'flaky' && flaky.children[1].className.includes('btw-waiting') && flaky.attrs['aria-busy'] === 'true');
+    finishers[3]({ ok: true, text: 'Second time lucky.', name: 'Claude Haiku 5.5' });
+    await sleep(5);
+    check('card: ... and shows the answer when it works', /Second time lucky/.test(flaky.children[1].innerHTML));
     cmd.run({ input: 'fails', ask: () => {} });
-    finishers[2]({ ok: false, error: 'no-provider' });
+    finishers[4]({ ok: false, error: 'no-provider' });
     await sleep(5);
     check('card: no provider is said in plain words', /No API model is connected/.test(byId('composer').children[0].children.at(-1).children[1].textContent), J(byId('composer').children[0].children.map((c) => c.children[1]?.textContent)));
   }

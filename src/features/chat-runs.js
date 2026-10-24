@@ -58,14 +58,25 @@ function plan(kind, { settings, ...view } = {}) {
   return { os: bgPlan.os, unread: hidden };
 }
 
+// [tab chips] A reply's [[tab:ID]] markers as words: a notification can't show a chip. The tab's title (tabs: { id: { t } }, the run's
+// tabSnaps), or "a tab" when the title is unknown or the sentence already names it ("Opened X.pdf in X.pdf").
+function tabWords(text, tabs) {
+  const s = String(text || '');
+  if (!s.includes('[[tab:')) return s;
+  return require('../renderer/tab-marker').replace(s, (id) => { // (loaded only for a reply that names a tab: the start-up module budget)
+    const title = String((tabs && (tabs[id] || tabs[String(id)]))?.t || '').replace(/[\r\n\t[\]]+/g, ' ').trim();
+    return title && !s.includes(title) ? title : 'a tab';
+  });
+}
+
 // The system notification's text. t(key, vars) is the UI language (locales/en.json agent.notify.*).
 // summary: an error's short line (an engine's error event carries one), so the title is not a long sentence cut short.
-function notification(kind, { reply = '', error = '', chat = '', summary = '' } = {}, t = null) {
+function notification(kind, { reply = '', error = '', chat = '', summary = '', tabs = null } = {}, t = null) {
   const tr = (key, vars, english) => {
     const text = t ? t(key, vars) : '';
     return text && text !== key ? text : english;
   };
-  const line = firstLine(reply);
+  const line = firstLine(tabWords(reply, tabs));
   const body = notifyText(chat, 120); // (a chat's title can hold math too)
   if (kind === 'approval') return { title: tr('agent.notify.approval', {}, 'Lumen needs your OK'), body: body || tr('agent.notify.approvalBody', {}, 'Open the sidebar to answer.') };
   if (kind === 'failed') {

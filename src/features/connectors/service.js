@@ -14,6 +14,10 @@
 //  - Gmail sending is a second, separate switch (setSending, Settings → Gmail → Allow sending), off by default and only with drafts allowed:
 //    gmail.compose already covers it, so no new Google permission is ever asked for. The agent decides how each send is allowed
 //    (card or the user's typed permission, features/gmail-send.js); call() refuses a send nobody allowed, over 10 an hour, and logs each.
+//  - Google Drive and Google Sheets (kind 'google') share ONE Google sign-in (google-auth.js): its refresh token is sealed into
+//    connectors.json like any other secret ('google'), asked for in the user's own browser only when Connect is pressed, with each
+//    connector's own scopes (incremental). Every request gets a fresh access token; the last Google connector to be disconnected
+//    gives the grant back to Google.
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
 //  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
 //    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
@@ -33,15 +37,18 @@ const BASES = {
   github: 'https://api.github.com',
   todoist: 'https://api.todoist.com/api/v1',
   notion: 'https://api.notion.com/v1',
+  drive: 'https://www.googleapis.com/drive/v3',
+  sheets: 'https://sheets.googleapis.com/v4',
 };
 const GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F';
 const provider = (id) => require(`./providers/${id}`); // loaded when a connector is first used (not at startup)
 
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
-  google = null, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
+  google = null, workspace = {}, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
+  let googleSealed = ''; // the shared Google sign-in (Drive, Sheets), sealed
   let connected = load();
   const runtime = new Map(); // id -> 'ok' | 'needs-signin' | 'bad-token' (what the last request found)
   const cache = new Map(); // key -> { at, text }
@@ -51,12 +58,13 @@ function create({
       const data = JSON.parse(fs.readFileSync(file, 'utf8'));
       const out = {};
       for (const [id, e] of Object.entries(data?.connected || {})) if (registry.get(id) && e && typeof e === 'object') out[id] = e;
+      googleSealed = typeof data?.google?.secret === 'string' ? data.google.secret : '';
       return out;
     } catch { return {}; }
   }
   function persist() {
     fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ version: 1, connected }, null, 2), { mode: 0o600 });
+    fs.writeFileSync(file, JSON.stringify({ version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}) }, null, 2), { mode: 0o600 });
   }
   // Gmail sending: the switch is on, with the full sign-in and drafts still allowed (take the permission back at Google and it is off).
   function sendingOn() {
@@ -75,6 +83,14 @@ function create({
   };
   const open = (sealed) => { try { return sealed ? secrets.decrypt(sealed) : ''; } catch { return ''; } };
   changed();
+  // The shared Google sign-in, made on first use. A test hands in its own as workspace.auth.
+  let authStore = null;
+  const googleAuth = () => (authStore ||= workspace.auth || require('./google-auth').create({
+    getBlob: () => open(googleSealed),
+    setBlob: (value) => { googleSealed = value ? seal(value) : ''; persist(); },
+    fetch, endpoints, now, ...workspace,
+  }));
+  const googleIds = () => Object.keys(connected).filter((id) => registry.get(id)?.kind === 'google');
 
   // ---- requests
   const baseOf = (def, entry) => {
@@ -90,17 +106,20 @@ function create({
     const secret = entry.config?.shared ? String(shared[def.id]?.info?.()?.token || '') : open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
-      const signIn = def.kind === 'session' || def.id === 'gmail';
+      const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google';
       state(signIn ? 'needs-signin' : 'bad-token');
-      return new ConnectorError(signIn
+      return new ConnectorError(def.kind === 'google'
+        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → You and AI → Connectors.`
+        : signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
         : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → You and AI → Connectors.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
-      id: def.id, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
+      id: def.id, base, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
       google: def.id === 'gmail' ? google : null,
-      async http(target, { method = 'GET', query, json, headers = {}, accept = 'application/json', max = MAX_BODY, allowAuth = false } = {}) {
+      email: def.kind === 'google' ? entry.account || '' : '', // (the account a Google connector is signed in as)
+      async http(target, { method = 'GET', query, json, body, headers = {}, accept = 'application/json', max = MAX_BODY, allowAuth = false, timeout = TIMEOUT_MS } = {}) {
         let url;
         try { url = /^https?:\/\//i.test(target) ? new URL(target) : new URL(`${base}${target}`); } catch { throw new ConnectorError('That address isn’t valid.', 'args'); }
         const own = def.id === 'gcal' ? new URL(secret).origin : new URL(base).origin; // the calendar's address is its own service
@@ -112,14 +131,29 @@ function create({
         if (json !== undefined) h['Content-Type'] = 'application/json';
         if (signal?.aborted) throw new ConnectorError('Stopped.', 'other'); // (stopped before it began: nothing is sent)
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        const timer = setTimeout(() => controller.abort(), timeout);
         const onAbort = () => controller.abort();
         signal?.addEventListener?.('abort', onAbort, { once: true });
         let res;
         let text = '';
         let redirected = false;
         try {
-          res = await (def.kind === 'session' ? sessionFetch || fetch : fetch)(url.href, { method, headers: h, body: json !== undefined ? JSON.stringify(json) : undefined, redirect: 'manual', signal: controller.signal });
+          const payload = json !== undefined ? JSON.stringify(json) : body;
+          const send = () => (def.kind === 'session' ? sessionFetch || fetch : fetch)(url.href, { method, headers: h, body: payload, redirect: 'manual', signal: controller.signal });
+          if (def.kind === 'google') { // a Google connector: the shared sign-in's access token; one 401 (the token was refused: nothing was done) is tried again with a new one
+            const auth = googleAuth();
+            for (let attempt = 0; ; attempt++) {
+              try { h.Authorization = `Bearer ${await auth.access({ force: attempt > 0 })}`; } catch (err) {
+                if (err?.reconnect) throw authFail();
+                throw new ConnectorError(String(err?.message || err), 'other');
+              }
+              res = await send();
+              if (res.status === 401 && attempt === 0) { auth.invalidate(); try { await res.arrayBuffer(); } catch { /* unused */ } continue; }
+              break;
+            }
+          } else {
+            res = await send();
+          }
           const buf = Buffer.from(await res.arrayBuffer());
           if (buf.length > max) throw new ConnectorError(`${def.name} sent more than Lumen reads.`, 'other');
           text = buf.toString('utf8');
@@ -135,7 +169,7 @@ function create({
         if (redirected) res = { status: 302, headers: new Headers() };
         const status = res.type === 'opaqueredirect' ? 302 : res.status;
         if (def.kind === 'session' && !allowAuth && (status === 401 || status === 0 || (status >= 300 && status < 400))) throw authFail();
-        if (!allowAuth && def.kind === 'token' && status === 401) throw authFail();
+        if (!allowAuth && (def.kind === 'token' || def.kind === 'google') && status === 401) throw authFail();
         if (status >= 200 && status < 300) state('ok');
         return { status, ok: status >= 200 && status < 300, headers: res.headers, text };
       },
@@ -186,6 +220,7 @@ function create({
     if (!def || def.kind === 'soon') throw new Error('That one isn’t available yet.');
     if (def.kind === 'mcp') return connectMcp(def, input);
     if (def.id === 'gmail') return connectGmail(def);
+    if (def.kind === 'google') return connectGoogle(def);
     let entry;
     if (def.kind === 'session') {
       let domain = registry.cleanDomain(input.domain);
@@ -247,6 +282,26 @@ function create({
     return list();
   }
 
+  // Drive and Sheets: the shared Google sign-in, with this connector's scopes. When the grant already covers them (another Google
+  // connector asked for the same) the browser isn't opened again. Then one request proves it works (Drive's "about"; Sheets has none).
+  async function connectGoogle(def) {
+    const auth = googleAuth();
+    const scopes = def.google.scopes;
+    if (!auth.has(scopes)) await auth.signIn(scopes);
+    const entry = { at: now(), account: flat(auth.status().email, 80), config: {} };
+    const ctx = makeCtx(def, entry, null);
+    let probe;
+    try { probe = await provider(def.id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }); } catch (err) { throw new Error(err.message); }
+    if (probe.status === 401 || probe.status === 403) throw new Error(probe.message || `Google refused the request for ${def.name}. Press Connect again and allow everything it asks.`);
+    if (probe.status !== 200) throw new Error(`${def.name} answered ${probe.status}. Try again in a moment.`);
+    connected[def.id] = entry;
+    runtime.set(def.id, 'ok');
+    cache.clear();
+    persist();
+    changed();
+    return list();
+  }
+
   async function connectMcp(def, input) {
     if (!mcp) throw new Error('MCP servers aren’t available here.');
     const env = [];
@@ -301,6 +356,7 @@ function create({
     if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
     if (def.kind === 'mcp' && entry.config?.mcpId) { try { mcp?.remove(entry.config.mcpId); } catch { /* already gone */ } }
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
+    if (def.kind === 'google' && !googleIds().length) { try { await googleAuth().revoke(); } catch { /* the sign-in is forgotten here either way */ } } // the last Google connector: the grant goes back to Google
     changed();
     return list();
   }
@@ -342,7 +398,7 @@ function create({
   // What the confirm card says before a write: `detail` is everything it will send, `fixed` the part the user can't change
   // (where it goes) and `fields` the text the user can edit there (registry.editable). A provider may look up a name for
   // the card (Notion: the page's title), which is a read; when that fails the card shows the id instead.
-  async function describeWrite(input, { signal } = {}) { // signal: the run's, so Stop also stops the title lookup
+  async function describeWrite(input, { signal, file = null } = {}) { // signal: the run's, so Stop also stops the title lookup; file: the local file an upload sends ({ name, size, type })
     const def = registry.get(input.app);
     const args = input.args || {};
     const p = provider(def.id);
@@ -352,6 +408,7 @@ function create({
     }
     let names = {};
     if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
+    if (file) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
     if (input.action === 'send') { try { sendLog().room(); } catch (err) { const e = new Error(err.message); e.kind = 'other'; throw e; } } // (a send that can't go gets no card)
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);
@@ -371,7 +428,7 @@ function create({
 
   // A write's provider answers { text, link?, done }: `done` and `link` go to onWritten (the chat's step: "Gmail · Draft created", with
   // the link), the text to the AI. readOnly (a background task or routine) refuses a write before anything is sent.
-  async function call(input, { signal, readOnly = false, onWritten = null, sendVia = '' } = {}) {
+  async function call(input, { signal, readOnly = false, onWritten = null, sendVia = '', file = null } = {}) {
     const problem = validate(input);
     if (problem) throw new Error(problem);
     const def = registry.get(input.app);
@@ -393,7 +450,8 @@ function create({
     let text;
     try {
       const ctx = makeCtx(def, entry, signal);
-      if (sending) ctx.beforeSend = ({ to, subject }) => sendLog().record({ to, subject, via: sendVia }); // (written just before the request: a send with no answer still counts)
+      if (file) ctx.file = file; // (a Drive upload: the file the user allowed on the card, already checked by the agent)
+      if (sending) ctx.beforeSend =({ to, subject }) => sendLog().record({ to, subject, via: sendVia }); // (written just before the request: a send with no answer still counts)
       text = await provider(def.id).actions[input.action](ctx, args);
     } catch (err) {
       if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; }
