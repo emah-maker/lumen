@@ -45,6 +45,8 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
 // a second copy used to load the rest of this file's ~100 ms of modules first and took over 2 s to hand its links to the running one and leave.
 const singleInstance = process.argv.includes('--install-shortcuts') || require('./features/instance').acquireInstanceLock(app);
 if (!singleInstance) { app.quit(); return; } // (the running copy got our arguments through 'second-instance')
+// An update swap that Windows cut short (logoff, shutdown) leaves a journal next to the install: finish it, or put the old version back.
+if (process.platform === 'win32' && !TEST) { try { const p = require('path'); const dir = p.dirname(process.execPath); const j = p.join(p.dirname(dir), p.basename(dir) + '.swap.journal'); if (fs.existsSync(j)) require('./features/swap-helper').recover(j); } catch { /* the install is left as it is */ } }
 const path = require('path');
 // Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
 // each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
@@ -8991,6 +8993,7 @@ const agent = new Agent({
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
+  knownFolder: require('./features/device-access').makeKnown({ getPath: (n) => app.getPath(n), downloadDir: () => settingsBackend.downloadDir() }), // [device access] "desktop", "documents", "downloads"... where the system (OneDrive folder redirection) or Settings put them
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
