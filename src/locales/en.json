@@ -175,7 +175,6 @@
   "chat.imageN": "Image {n}",
   "chat.newTopic": "New topic, so this is a new chat.",
   "chat.newTopic.back": "Keep in last chat",
-  "chat.queued": "Sends when this reply finishes: “{text}”",
   "chat.setupAi": "Set up AI",
   "chat.setupNeeded": "Set up an AI in Settings to keep chatting.",
   "chat.thinking": "Thinking",
@@ -4434,5 +4433,15 @@
   "notes.addShort": "Notes",
   "notes.added": "Added to notes",
   "notes.addedShort": "Added",
-  "notes.addFailed": "Could not add to notes"
+  "notes.addFailed": "Could not add to notes",
+  "chat.queued.label": "Queued",
+  "chat.queued.nth": "Queued · {n}",
+  "chat.queued.count": "{n} messages waiting",
+  "chat.queued.sendAll": "Send all as one",
+  "chat.queued.sendAll.title": "Stop the reply and send the waiting messages together as one message",
+  "chat.mark.queued": "Queued",
+  "chat.mark.sent": "Sent",
+  "chat.mark.read": "Read by AI",
+  "runpill.label": "Running task",
+  "runpill.show": "Show what it is doing"
 }

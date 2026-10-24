@@ -2,7 +2,7 @@
 //
 // Every field is additive and optional: a chat file saved before this existed has none of it and loads exactly as before.
 //   message meta (kept beside a message, never inside its content, so no request carries it):
-//     { id, at, thinking, thinkingMs, tools: [{ label, ok }], auto: { label, reason }, feedback: 'up' | 'down' }
+//     { id, at, read, thinking, thinkingMs, tools: [{ label, ok }], auto: { label, reason }, feedback: 'up' | 'down' }
 //   forks (snapshot.forks): where the chat branched. A fork sits at the index of the user message whose exchange was asked
 //     again; `tails` holds every version of the chat from that index on, `cur` is the one that is live in `messages`
 //     (its slot is null). A tail is { messages, forks }: the forks inside it travel with it.
@@ -57,6 +57,7 @@ function cleanMeta(raw) {
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };
   if (raw.auto && typeof raw.auto === 'object' && typeof raw.auto.label === 'string') out.auto = { label: raw.auto.label.slice(0, 120), ...(typeof raw.auto.reason === 'string' ? { reason: raw.auto.reason.slice(0, 300) } : {}) };
   if (raw.feedback === 'up' || raw.feedback === 'down') out.feedback = raw.feedback;
+  if (raw.read === true) out.read = true; // a user message the AI answered (the chat's two-check mark)
   return Object.keys(out).length ? out : null;
 }
 

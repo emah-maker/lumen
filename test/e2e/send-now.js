@@ -71,7 +71,7 @@ const os = require('os');
   const after1 = await ui.evaluate(() => ({
     partial: [...document.querySelectorAll('.msg.assistant')].some((m) => /Partial answer so far/.test(m.textContent)),
     notice: [...document.querySelectorAll('.notice.stopped')].map((n) => n.textContent).pop() || '',
-    queued: document.querySelectorAll('.notice.queued').length,
+    queued: document.querySelectorAll('.queued-bubble').length,
     prompt: document.getElementById('prompt').value,
     sendNowHidden: document.getElementById('send-now').hidden,
   }));
@@ -97,12 +97,12 @@ const os = require('os');
   await startSlow('slow three');
   await ui.fill('#prompt', 'queued follow-up');
   await ui.press('#prompt', 'Enter');
-  await ui.waitForSelector('.notice.queued', { timeout: 5000 }).catch(() => {});
-  check('Enter while running queues the message (the reply goes on)', (await ui.locator('.notice.queued').count()) === 1 && (await running()), await ui.locator('.notice.queued').count());
-  await ui.locator('.notice.queued .queue-btn', { hasText: 'Send now' }).click();
+  await ui.waitForSelector('.queued-bubble', { timeout: 5000 }).catch(() => {});
+  check('Enter while running queues the message (the reply goes on)', (await ui.locator('.queued-bubble').count()) === 1 && (await running()), await ui.locator('.queued-bubble').count());
+  await ui.locator('.queued-bubble .queue-btn', { hasText: 'Send now' }).click();
   await waitAnswered('queued follow-up').catch(() => {});
   const req3 = await lastRequest();
-  check('a queued message\'s Send now stops the reply and sends it next', JSON.stringify(req3?.[req3.length - 1]).includes('queued follow-up') && (await app.evaluate(() => global.__aborted)) === 3 && (await ui.locator('.notice.queued').count()) === 0, JSON.stringify(req3?.slice(-2)));
+  check('a queued message\'s Send now stops the reply and sends it next', JSON.stringify(req3?.[req3.length - 1]).includes('queued follow-up') && (await app.evaluate(() => global.__aborted)) === 3 && (await ui.locator('.queued-bubble').count()) === 0, JSON.stringify(req3?.slice(-2)));
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

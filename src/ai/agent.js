@@ -1640,6 +1640,7 @@ function itemExtras(chatMessages, m, mi) {
   if (m.role === 'user') {
     const versions = branches.forkView(chatMessages, mi);
     if (versions) out.versions = versions;
+    if (meta.read) out.read = true;
     return out;
   }
   const model = producedBy.get(m);
@@ -2010,6 +2011,7 @@ class Agent {
       const m = messages[i];
       const meta = branches.getMeta(m);
       if (!meta?.id || !meta?.at) branches.setMeta(m, { id: meta?.id || branches.newId(), at: meta?.at || now });
+      if (m.role === 'user' && !meta?.read && messages.slice(i + 1).some((x) => x.role === 'assistant')) branches.setMeta(m, { read: true }); // the AI began its reply to it: the chat shows two checks, also after a restart
       if (m.role === 'assistant' && info.tabs) { const tabs = this.tabsOfReply(m, { tabs: info.tabs }); if (tabs) branches.setMeta(m, { tabs }); } // [tab chips] each reply that names tabs keeps how they looked
     }
     let last = -1;
