@@ -223,7 +223,7 @@ Replace an input/textarea/contenteditable value, pick a <select> option by label
 
 | Parameter | Type | Required |
 |---|---|---|
-| `element_id` | integer | yes |
+| `element_id` | integer |  |
 | `text` | string | yes |
 | `press_enter` | boolean |  |
 | `observe` | boolean |  |
@@ -260,13 +260,14 @@ Move the mouse over an element by its id from read_page, e.g. to open a hover me
 
 ### `upload_file`
 
-Put a file into a page's file upload: `element_id` is the file input, its label or button, or a drop zone (from `read_page` or `find`). `files` are refs of files the user attached to the chat (listed in the message as `<attached_files>`). `paths` are files on this computer (`~/Desktop/photo.png`, an absolute path or a `file://` address), accepted only while Settings > AI > "Let the AI use files on this computer" is on; Lumen's own profile, credentials folders (`~/.ssh`, `~/.aws`, keychains, ...) and `.env`/key files are always refused. Leave both out and the user is asked to choose a file with the OS picker. The first upload to a site in a chat shows a card naming the files (unless Auto-allow or Bypass is on). It does not submit the form. See [Uploading files for you](uploading-files.md).
+Put a file into a page's file upload: `element_id` is the file input, its label or button, or a drop zone (from `read_page` or `find`). Leave it out to use any file field in the page (hidden ones too), or pass `open`, the visible texts of buttons and menu items to click in order, such as `["New", "File upload"]` on Google Drive: the page's file chooser is intercepted and answered, so no dialog shows. Up to 25 files per call. If the page has no field and no chooser opens, the files are dropped on the page's main area instead. `files` are refs of files the user attached to the chat (listed in the message as `<attached_files>`). `paths` are files on this computer (`~/Desktop/photo.png`, an absolute path or a `file://` address), accepted only while Settings > AI > "Let the AI use files on this computer" is on; Lumen's own profile, credentials folders (`~/.ssh`, `~/.aws`, keychains, ...) and `.env`/key files are always refused. Leave both out and the user is asked to choose a file with the OS picker. The first upload to a site in a chat shows a card naming the files (unless Auto-allow or Bypass is on). It does not submit the form. See [Uploading files for you](uploading-files.md).
 
 | Parameter | Type | Required |
 |---|---|---|
 | `element_id` | integer | yes |
 | `files` | array of strings (refs) |  |
 | `paths` | array of strings (local paths) |  |
+| `open` | array of strings (texts to click first) |  |
 
 ### `drag`
 
