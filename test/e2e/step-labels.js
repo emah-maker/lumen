@@ -108,6 +108,8 @@ process.stdin.on('data', async (d) => {
   await app.evaluate(() => {
     const scripts = {
       find: [{ text: 'Digging through the pages.', tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['navigate', { url: '@b' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['open_tab', { url: '@c' }] }, { text: 'Found it on the second page.' }],
+      // the same run, but open_tab opens a page no tab shows yet (e): open_tab points at a page that is already open instead of opening it again (#772), so with /c (the user's own tab) or /d (left open by the run before) no tab of the AI's would be left for "Close them"
+      findNew: [{ text: 'Digging through the pages.', tool: ['navigate', { url: '@a' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['navigate', { url: '@b' }] }, { tool: ['wait', { seconds: 3 }] }, { tool: ['open_tab', { url: '@e' }] }, { text: 'Found it on the second page.' }],
       two: [{ text: 'Checking the first page.', tool: ['open_tab', { url: '@a' }] }, { text: 'Now the second.', tool: ['navigate', { url: '@b' }] }, { text: 'All done.' }],
       page: [{ text: 'On it.', tool: ['navigate', { url: '@c' }] }, { tool: ['wait', { seconds: 2 }] }, { text: 'Done from the page.' }],
       // one turn, four browser calls with a line of narration before each: ONE card; the last call acts on tab B (#B) while the user looks at tab A
@@ -133,7 +135,7 @@ process.stdin.on('data', async (d) => {
       const users = params.messages.filter((m) => m.role === 'user');
       const lastAsk = [...users].reverse().find((m) => !(Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_result')));
       const asked = JSON.stringify(lastAsk?.content || '');
-      const key = /final frame/.test(asked) ? 'endnav' : /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /mix the surfaces/.test(asked) ? 'mixed' : /the viewers/.test(asked) ? 'viewers' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page in this tab/.test(asked) ? 'movingA' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : 'find';
+      const key = /final frame/.test(asked) ? 'endnav' : /four things/.test(asked) ? 'four' : /between tabs/.test(asked) ? 'tabs' : /mix the surfaces/.test(asked) ? 'mixed' : /the viewers/.test(asked) ? 'viewers' : /close the other tab/.test(asked) ? 'closing' : /read the site/.test(asked) ? 'reading' : /moving page in this tab/.test(asked) ? 'movingA' : /moving page/.test(asked) ? 'moving' : /still page/.test(asked) ? 'still' : /two/.test(asked) ? 'two' : /from the page/.test(asked) ? 'page' : /that other site/.test(asked) ? 'findNew' : 'find';
       const idx = users.length - 1 - users.indexOf(lastAsk);
       const step = scripts[key][Math.min(idx, scripts[key].length - 1)];
       const base = global.__slBase;
@@ -831,7 +833,7 @@ process.stdin.on('data', async (d) => {
   await ui.click('#new-chat');
   await sleep(400);
   await watchUi();
-  await ui.fill('#prompt', 'Can you find the lab TA on that site?');
+  await ui.fill('#prompt', 'Can you find the lab TA on that other site?');
   await ui.press('#prompt', 'Enter');
   await waitFor(() => ui.evaluate(() => document.querySelectorAll('#messages .act-card').length >= 1), 10000);
   await waitFor(() => ui.evaluate(() => !document.getElementById('send').classList.contains('stop')), 40000);
