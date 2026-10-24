@@ -76,12 +76,13 @@ function readStoreFile(file, parse = (text) => JSON.parse(text)) {
   try { return { data: parse(text) }; } catch (error) { return failed(error); }
 }
 
-// `space`: the JSON indent (settings.json is read by people; the big data files pass 0).
-function writeJsonAtomic(file, data, space = 2) {
+// `space`: the JSON indent (settings.json is read by people; the big data files pass 0). `mode`: the file's permissions (a store
+// of secrets passes 0o600).
+function writeJsonAtomic(file, data, space = 2, mode = 0o666) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const text = JSON.stringify(data, null, space);
   const tmp = `${file}.tmp`;
-  const fd = fs.openSync(tmp, 'w');
+  const fd = fs.openSync(tmp, 'w', mode);
   try {
     fs.writeSync(fd, text);
     fs.fsyncSync(fd);
@@ -97,7 +98,7 @@ function writeJsonAtomic(file, data, space = 2) {
   } catch {
     // Windows can refuse the rename while another program (an antivirus scan, a sync client) has
     // the file open. The data is safely in the .tmp and .bak, so fall back to a direct write.
-    fs.writeFileSync(file, text);
+    fs.writeFileSync(file, text, { mode });
     try { fs.unlinkSync(tmp); } catch {}
   }
   lastText.set(file, text);

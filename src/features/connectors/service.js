@@ -23,9 +23,9 @@
 //    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
 //    sign-in applies here at once, and nothing is copied. syncShared() makes the entry match the owner's sign-in.
 'use strict';
-const fs = require('fs');
 const path = require('path');
 const registry = require('./registry');
+const { readStoreFile, writeJsonAtomic } = require('../../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
 const { ConnectorError, flat } = require('./util');
 
 const FILE = 'connectors.json';
@@ -49,29 +49,35 @@ function create({
 }) {
   const file = path.join(userData, FILE);
   let googleSealed = ''; // the shared Google sign-in (Drive, Sheets), sealed
+  let unreadable = false; // connectors.json exists but could not be read: a copy was kept, and only the user's own change may replace it
   let connected = load();
   const runtime = new Map(); // id -> 'ok' | 'needs-signin' | 'bad-token' (what the last request found)
   const cache = new Map(); // key -> { at, text }
 
   function load() {
+    const r = readStoreFile(file); // no file yet: nothing connected
+    if (r.failed) { unreadable = true; return {}; }
     try {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const data = r.data;
       const out = {};
       for (const [id, e] of Object.entries(data?.connected || {})) if (registry.get(id) && e && typeof e === 'object') out[id] = e;
       googleSealed = typeof data?.google?.secret === 'string' ? data.google.secret : '';
       return out;
     } catch { return {}; }
   }
-  function persist() {
-    fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}) }, null, 2), { mode: 0o600 });
+  // `deliberate`: the user's own change (connect, disconnect, a switch). A background update (the account name found after a
+  // connect) never writes over a file that could not be read.
+  function persist(deliberate = true) {
+    if (unreadable && !deliberate) return;
+    writeJsonAtomic(file, { version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}) }, 2, 0o600); // (tmp + rename: never a half-written file)
+    unreadable = false; // (a copy of the old file was set aside when it failed)
   }
   // Gmail sending: the switch is on, with the full sign-in and drafts still allowed (take the permission back at Google and it is off).
   function sendingOn() {
     try { return Boolean(connected.gmail?.config?.sending && connected.gmail.config.mode === 'oauth' && google?.drafts?.() && google?.send); } catch { return false; }
   }
   let sendLogStore = null;
-  const sendLog = () => (sendLogStore ||= require('../gmail-send').createLog({ file: path.join(userData, 'gmail-send-log.json'), now })); // (loaded on the first send)
+  const sendLog = () => (sendLogStore ||= require('../gmail-send').createLog({ file: path.join(userData, 'gmail-send-log.json'), now, secrets })); // (loaded on the first send)
   function changed() {
     registry.setUnlocked(sendingOn() ? ['gmail.send'] : []);
     registry.setConnected(Object.keys(connected).filter((id) => registry.get(id).kind !== 'mcp'));
@@ -380,7 +386,7 @@ function create({
       const entry = connected[id];
       const ctx = makeCtx(def, entry, null);
       provider(id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }).then((probe) => {
-        if (connected[id] === entry && probe.status === 200 && probe.account) { entry.account = probe.account; persist(); changed(); }
+        if (connected[id] === entry && probe.status === 200 && probe.account) { entry.account = probe.account; persist(false); changed(); }
       }).catch(() => {});
     }
     return list();
