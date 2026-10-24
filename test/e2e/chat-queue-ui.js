@@ -84,6 +84,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('the box is empty and keeps the focus after each Enter', (await promptValue()) === '' && (await ui.evaluate(() => document.activeElement?.id)) === 'prompt', await ui.evaluate(() => document.activeElement?.id));
     check('the running message has one check ("Sent")', await ui.evaluate(() => { const b = document.querySelector('#messages .msg.user'); const s = b.querySelector('.msg-status'); return b.dataset.st === 'read' || (b.dataset.st === 'sent' && s?.title === 'Sent'); }), '');
     check('a "Send all as one" bar shows with the count', await ui.evaluate(() => /2 messages waiting/.test(document.querySelector('#messages > .queue-bar')?.textContent || '') && document.querySelector('#messages > .queue-bar .queue-btn')?.textContent === 'Send all as one'), '');
+    await sleep(1200); // (the bubbles' entrance settles)
+    check('the waiting bar sits below the last bubble mark, not over it', await ui.evaluate(() => { const bs = document.querySelectorAll('#messages > .queued-bubble'); const mark = bs[bs.length - 1].querySelector('.msg-status').getBoundingClientRect(); return document.querySelector('#messages > .queue-bar').getBoundingClientRect().top >= mark.bottom; }), '');
     await snap('queued-messages');
 
     // ---- 2. Stop: the waiting messages come back to the box, none is sent
@@ -146,6 +148,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     const shown = await waitFor(pill, 5000);
     check('the card is scrolled out above: a pill shows at the top with the card\'s status, an icon and Stop', Boolean(shown) && shown.side === 'top' && /example\.com/.test(shown.text) && shown.hasStop && shown.ico, JSON.stringify(shown));
     check('the pill says the same as the card\'s status line', await ui.evaluate(() => document.querySelector('.run-pill-text').textContent === document.querySelector('.act-status-text').textContent), '');
+    await sleep(2300); // (the pill settles and its timer ticks)
+    check('the pill shows the elapsed time as m:ss', await ui.evaluate(() => /^[0-9]+:[0-9]{2}$/.test(document.querySelector('.run-pill-time').textContent) && document.querySelector('.run-pill-time').textContent !== '0:00'), await ui.evaluate(() => document.querySelector('.run-pill-time').textContent));
     await snap('running-pill');
     await ui.evaluate(() => { window.stepUI.add(turn, { name: 'read_page', id: 'p2', input: {}, label: 'Reading the page' }, { messages: document.getElementById('messages'), append: appendToTurn, task: 'Look at example', runId }); });
     check('the pill follows the card: a new step changes its text', await waitFor(() => ui.evaluate(() => /Reading/.test(document.querySelector('.run-pill-text').textContent)), 4000), await ui.evaluate(() => document.querySelector('.run-pill-text').textContent));

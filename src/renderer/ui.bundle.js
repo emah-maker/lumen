@@ -4021,6 +4021,7 @@ const line = window.chatQueue.create();
 const queued = line.list;
 const QUEUED = ':scope > .queued';
 let queueBar = null;
+let incomingChatId = null;
 
 
 let shownChatId = null;
@@ -4189,7 +4190,8 @@ const runPill = (() => {
     if (icon.dataset.k !== card.icon.dataset.k) { icon.dataset.k = card.icon.dataset.k || ''; icon.innerHTML = card.icon.innerHTML; }
     const label = card.statusText.textContent || card.title.textContent || '';
     if (text.textContent !== label) { text.textContent = label; main.setAttribute('aria-label', label + '. ' + t('runpill.show')); }
-    const secs = turn?.startedAt ? window.stepTime?.format(Date.now() - turn.startedAt) || '' : '';
+    const s = turn?.startedAt ? Math.max(0, Math.floor((Date.now() - turn.startedAt) / 1000)) : 0;
+    const secs = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
     if (time.textContent !== secs) time.textContent = secs;
   }
   function tick() { tickTimer = 0; if (side) { paint(); tickTimer = setTimeout(tick, 1000); } }
@@ -6581,7 +6583,9 @@ function applySync(view) {
 
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
+  incomingChatId = view?.id || null;
   clearChatView({ keepBox: sameChat });
+  incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownChatId = view?.id || null;
   window.planModeUI?.chatShown(view, sameChat);
@@ -6597,6 +6601,7 @@ function applySync(view) {
     if (!viewHidden()) requestAnimationFrame(() => setTimeout(flushLazyHistory, 0));
   } else showHistory(view?.items);
   resumeLive(view?.live);
+  if (!running && line.length) setTimeout(sendQueued);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view);
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.();
@@ -6812,7 +6817,7 @@ function clearChatView({ keepBox = false } = {}) {
   for (const id of [...approvals.keys()]) resolveApproval(id, false);
   approvals.clear();
 
-  const staying = keepBox ? line.drain() : [];
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId));
   const unsent = line.drain();
   for (const q of unsent) q.bubble.remove();
   queueBar = null;

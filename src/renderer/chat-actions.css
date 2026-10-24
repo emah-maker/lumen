@@ -82,11 +82,11 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .queue-actions { display: inline-flex; margin-left: auto; opacity: 0; transition: opacity var(--t-fast) ease-out; }
 .queued-bubble:hover .queue-actions, .queued-bubble:focus-within .queue-actions { opacity: 1; }
 @media (hover: none) { .queue-actions { opacity: 1; } }
-.queue-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: -8px 0 12px 40px; color: var(--muted); font-size: 12px; }
+.queue-bar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 2px 0 12px 40px; color: var(--muted); font-size: 12px; }
 .queue-bar .queue-btn { color: var(--accent-text); }
 
 /* ---- the running pill: the live card is out of view (chat-core.js runPill) ---- */
-.run-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: var(--z-float); display: flex; align-items: stretch; max-width: min(calc(100% - 24px), 420px); height: 32px; border-radius: 16px; overflow: hidden; background: var(--surface-raised); color: var(--text); font-size: 12px; box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--border); animation: fade-in var(--t-base) ease-out; }
+.run-pill { position: absolute; left: 50%; transform: translateX(-50%); z-index: var(--z-float); display: flex; align-items: stretch; max-width: min(calc(100% - 24px), 420px); height: 32px; border-radius: 16px; overflow: hidden; background: var(--surface-raised); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: var(--text); font-size: 12px; box-shadow: 0 4px 14px -4px rgba(0, 0, 0, 0.28), 0 0 0 1px var(--border); animation: fade-in var(--t-base) ease-out; }
 .run-pill[hidden] { display: none; }
 .run-pill[data-side="bottom"] { bottom: calc(var(--composer-h, 64px) + 16px + 10px + 40px); }
 .run-pill-main { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 0 10px 0 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -97,7 +97,7 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 .run-pill-ico::after { content: ""; position: absolute; top: -3px; right: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); animation: status-pulse 1.6s ease-in-out infinite; }
 .run-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-pill-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-.run-pill-time:empty { display: none; }
+.run-pill-time::before { content: "· "; }
 .run-pill-stop { flex: none; padding: 0 12px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--danger); font: inherit; font-weight: 600; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .run-pill, .run-pill-ico::after, .queued-bubble { animation: none; } }
 :root.pref-reduce-motion .run-pill, :root.pref-reduce-motion .run-pill-ico::after, :root.pref-reduce-motion .queued-bubble { animation: none; }

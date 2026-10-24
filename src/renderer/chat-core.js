@@ -490,6 +490,7 @@ const line = window.chatQueue.create();
 const queued = line.list;
 const QUEUED = ':scope > .queued'; // (the waiting bubbles, and the bar over them)
 let queueBar = null;
+let incomingChatId = null; // while applySync redraws: the chat it draws (what waits in that chat's line stays)
 // The chat this view shows, as main last said (a sync's view id, an event's chat id); null until known. `running` and `turn`
 // are that chat's alone: an event or a queued message for another chat never touches them.
 let shownChatId = null;
@@ -658,7 +659,8 @@ const runPill = (() => {
     if (icon.dataset.k !== card.icon.dataset.k) { icon.dataset.k = card.icon.dataset.k || ''; icon.innerHTML = card.icon.innerHTML; }
     const label = card.statusText.textContent || card.title.textContent || '';
     if (text.textContent !== label) { text.textContent = label; main.setAttribute('aria-label', label + '. ' + t('runpill.show')); }
-    const secs = turn?.startedAt ? window.stepTime?.format(Date.now() - turn.startedAt) || '' : '';
+    const s = turn?.startedAt ? Math.max(0, Math.floor((Date.now() - turn.startedAt) / 1000)) : 0;
+    const secs = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); // (m:ss, from the first second)
     if (time.textContent !== secs) time.textContent = secs;
   }
   function tick() { tickTimer = 0; if (side) { paint(); tickTimer = setTimeout(tick, 1000); } }
@@ -3050,7 +3052,9 @@ function applySync(view) {
   // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
+  incomingChatId = view?.id || null;
   clearChatView({ keepBox: sameChat });
+  incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
@@ -3066,6 +3070,7 @@ function applySync(view) {
     if (!viewHidden()) requestAnimationFrame(() => setTimeout(flushLazyHistory, 0));
   } else showHistory(view?.items);
   resumeLive(view?.live);
+  if (!running && line.length) setTimeout(sendQueued); // (the run ended while the view was redrawn, so no 'done' will send what waits)
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
@@ -3281,7 +3286,7 @@ function clearChatView({ keepBox = false } = {}) {
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
   // The same chat drawn again (a sync while a reply runs): what waits in its line stays waiting, put back under the redrawn view.
-  const staying = keepBox ? line.drain() : [];
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId)); // (also when the redraw comes before the chat's first event named it again)
   const unsent = line.drain();
   for (const q of unsent) q.bubble.remove();
   queueBar = null; // (its element goes with the rest of the view)
