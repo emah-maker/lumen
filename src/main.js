@@ -10597,7 +10597,11 @@ function trackRunDetails(run, msg) {
     if (d.tools.length < 60) d.tools.push({ id: msg.id, label: msg.label || '', name: msg.name, input: stepLabelsLib.compactInput(msg.name, msg.input) || msg.input, ok: true });
     try { const ids = tabMarker.stepTabs(msg.name, msg.input); if (ids.length) noteRunTabs(run, ids); } catch { /* none */ } // [tab chips] a step that names a tab: how it looks before the step (a close) changes it
   } else if (msg.type === 'thumb') {
-    if (msg.data) { d.thumb = { data: msg.data, url: msg.url || '', title: msg.title || '', ...(msg.small ? { small: true } : {}), ...(Number.isInteger(msg.tabId) ? { tabId: msg.tabId, s: require('./features/tab-chips').BOOT } : {}) }; if (Number.isInteger(msg.tabId)) noteRunTabs(run, [msg.tabId]); }
+    if (Number.isInteger(msg.tabId) && (msg.data || msg.kind === 'pending' || msg.kind === 'blank')) { // the tab the card names (no picture is kept: the card shows the tab's name, step-ui.js setTabRow)
+      const same = d.thumb?.tabId === msg.tabId;
+      d.thumb = { url: msg.url || (same ? d.thumb.url : '') || '', title: msg.title || (same ? d.thumb.title : '') || '', tabId: msg.tabId, s: require('./features/tab-chips').BOOT };
+      noteRunTabs(run, [msg.tabId]);
+    }
   } else if (msg.type === 'tool_update') {
     const t = d.tools.find((x) => x.id && x.id === msg.id);
     if (t) { if (msg.label) t.label = msg.label; if (msg.input) t.input = stepLabelsLib.compactInput(t.name, msg.input) || msg.input; }
@@ -10835,13 +10839,7 @@ function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or a
   for (const id of ids) { const snap = rt.snapshot(String(id)); if (snap) snaps[id] = snap; }
 }
 // The saved reply keeps one small frame (the live ones are sharp and bigger): scaled down once, here, not per frame.
-function savedThumb(t) {
-  if (!t || !t.data) return undefined;
-  const { small, ...rest } = t;
-  if (small && t.data.length * 0.75 <= 45000) return rest; // (taken small already: nothing to decode or scale on the main process)
-  const data = require('./features/tab-capture').shrinkThumb(t.data);
-  return data ? { ...rest, data } : undefined;
-}
+function savedThumb(t) { return t && Number.isInteger(t.tabId) ? { tabId: t.tabId, s: t.s, url: t.url || '', title: t.title || '' } : undefined; } // (the tab, never its picture)
 function stampRun(run, done = null) {
   try {
     const d = run.details;

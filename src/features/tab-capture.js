@@ -373,6 +373,24 @@ function whenCaptureIdle(maxMs = 150) {
     idleWaiters.add(done);
   });
 }
+// A JPEG's width and height from its frame header (SOF0-SOF15 but DHT/JPG/DAC), read from the base64 without decoding the picture; null if none.
+function jpegSize(base64) {
+  try {
+    const b = Buffer.from(base64, 'base64');
+    if (b[0] !== 0xff || b[1] !== 0xd8) return null;
+    for (let i = 2; i + 9 < b.length;) {
+      if (b[i] !== 0xff) return null;
+      const marker = b[i + 1];
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        const height = b.readUInt16BE(i + 5);
+        const width = b.readUInt16BE(i + 7);
+        return width > 0 && height > 0 ? { width, height } : null;
+      }
+      i += 2 + b.readUInt16BE(i + 2);
+    }
+  } catch { /* not a JPEG */ }
+  return null;
+}
 async function captureJpegNow(wc, { maxWidth, quality }) {
   const dbg = wc.debugger;
   let attachedHere = false;
@@ -384,6 +402,14 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
     const scale = Math.min(maxWidth / v.clientWidth, 2); // (never magnified past 2x: a narrow view is not blown up to the full width)
     const width = Math.max(1, Math.round(v.clientWidth * scale));
     const height = Math.max(1, Math.round(v.clientHeight * scale));
+    // A page on screen: one frame of the screencast, scaled by the compositor. A clip with a scale below 1 lays the live page out at the picture's size
+    // for the moment of the capture (see viaProtocolNow), and on the tab the user looks at that showed as a flash of the page at every AI screenshot.
+    // A view that is not drawn sends no frame in time: then the clip, whose relayout nobody sees.
+    if (scale < 1) {
+      const frame = await screencastFrame(wc, { quality, maxWidth: width, maxHeight: height, timeoutMs: 250 });
+      const size = frame ? jpegSize(frame) : null;
+      if (size) return { data: frame, ...size };
+    }
     const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } });
     return shot?.data ? { data: shot.data, width, height } : null;
   } catch {
@@ -393,4 +419,4 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
   }
 }
 
-module.exports = { checkPageSize, captureJpeg, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };

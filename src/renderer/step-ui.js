@@ -206,8 +206,9 @@
     const state = stateOf(turn, card);
     if (card.el.dataset.state !== state || ((card.hadBrowser || card.app) && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on)
       card.el.dataset.state = state;
-      if (card.hadBrowser || card.app) { card.hb = true; // (a program's window too: its live picture runs only while a card is on screen; a browser-only gate left Word and other apps with no live picture once a browser card had finished in that chat)
+      if (card.app) { card.hb = true; // (a program's window: its live picture runs only while a card is on screen)
         if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
+      else if (card.hadBrowser) { card.hb = true; reportVisible(true); } // a browser card draws no picture of its tab (the page itself is the preview): main is told no card wants frames
     }
     const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.surface === 'tool' ? 'tool' : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
@@ -219,7 +220,7 @@
     if (card.sum.textContent !== sum) card.sum.textContent = sum;
     // The button: a browser card opens its tab once it has one; a file card opens its file.
     let label = '';
-    if (card.surface === 'browser' && card.tab && !card.siteMode) label = tr('card.openPreview');
+    if (card.surface === 'browser' && card.tab && !card.siteMode) label = tr(card.shot.dataset.tabClosed ? 'card.reopenPage' : 'card.openPreview');
     else if (card.surface === 'app' && card.app) label = tr('desktopcard.open');
     // (a files card has no button: each file in it is a link that opens it)
     card.btn.hidden = !label;
@@ -257,7 +258,7 @@
     }
     const cur = card.tab?.tabId; // the tab the preview shows: marked "closed" while the last picture stays
     const shown = cur != null && card.tabEls.get(cur)?.dataset.state === 'closed' ? '1' : '';
-    if ((card.shot.dataset.tabClosed || '') !== shown) { card.shot.dataset.tabClosed = shown; if (shown) card.shot.dataset.closedLabel = tr('card.tabs.stateClosed'); }
+    if ((card.shot.dataset.tabClosed || '') !== shown) { card.shot.dataset.tabClosed = shown; if (shown) card.shot.dataset.closedLabel = tr('card.tabs.stateClosed'); if (card.surface === 'browser' && !card.btn.hidden && !card.siteMode) card.btn.textContent = tr(shown ? 'card.reopenPage' : 'card.openPreview'); } // (the button says what a click does now)
     const head = closed ? tr('card.tabs.headClosed', { total: card.touched.length, closed }) : tr('card.tabs.head', { total: card.touched.length });
     if (card.tabsHead.textContent !== head) card.tabsHead.textContent = head;
   }
@@ -447,8 +448,8 @@
       const label = tr(on ? 'card.aiTabs.show' : 'card.aiTabs.hide');
       const text = n > 0 ? tr('card.aiTabs.count', { label, count: n }) : label;
       if (card.toggle.textContent !== text) card.toggle.textContent = text;
-      card.toggle.setAttribute('aria-pressed', String(on));
-      card.toggle.title = tr('sidebar.hideAiTabs.menu.hide');
+      card.toggle.removeAttribute('aria-pressed'); // (the label already says what a click does: Show / Hide; "pressed" on top of it read twice)
+      card.toggle.title = label;
     }
     card.closeAll.hidden = !(n > 0 && card.runId != null && state !== 'working' && state !== 'approval' && !card.closed); // (after the run: "Close them")
     if (!card.closeAll.hidden && !card.closeAll.textContent) { card.closeAll.textContent = tr('card.aiTabs.close'); card.closeAll.setAttribute('aria-label', tr('card.aiTabs.closeLabel')); }
@@ -472,7 +473,8 @@
     card.closed = true;
     card.note.hidden = false;
     card.note.textContent = '';
-    if (!result?.closed) { card.note.textContent = tr('chat.aiTabs.none'); card.aiTabs = 0; refreshCard(null, card); return; }
+    card.note.tabIndex = -1; // (focus lands on the note: the button that was pressed goes away)
+    if (!result?.closed) { card.note.textContent = tr('chat.aiTabs.none'); card.aiTabs = 0; refreshCard(null, card); card.note.focus({ preventScroll: true }); return; }
     card.aiTabs = 0;
     card.note.append(el('span', { textContent: pluralTabs('chat.aiTabs.closed', result.closed) + ' ' }));
     const undo = el('button', { type: 'button', className: 'act-undo', textContent: tr('chat.aiTabs.undo') });
@@ -481,9 +483,11 @@
       const back = await Promise.resolve(api.undoCloseAiTabs?.(result.token)).catch(() => null);
       card.note.textContent = back?.reopened ? pluralTabs('chat.aiTabs.reopened', back.reopened) : tr('chat.aiTabs.nothingReopened');
       card.closed = false;
+      card.note.focus({ preventScroll: true });
     };
     card.note.append(undo);
     refreshCard(null, card);
+    undo.focus({ preventScroll: true });
   }
   document.addEventListener('lumen:hide-ai-tabs', () => { for (const c of document.querySelectorAll('.act-card')) if (c._card) refreshTabs(c._card, c.dataset.state); });
 
@@ -579,6 +583,22 @@
     if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src');
     card.shot.style.maxWidth = '';
   }
+  // The tab the AI works in: "Reading <name>" with the tab's icon (a click goes to the tab), never a picture of it. The name follows the tab.
+  function setTabRow(card, event) {
+    card.siteMode = false;
+    let name = event.title || '';
+    if (!name) { try { name = new URL(event.url).host; } catch { /* none */ } }
+    if (!name) return; // (a tab with no name yet: the last one stays until it has one)
+    card.shot.hidden = false;
+    card.shot.dataset.mode = 'site';
+    dropFrames(card);
+    card.img.removeAttribute('src');
+    card.siteName.textContent = tr('card.site.reading', { site: name });
+    const icon = typeof event.favicon === 'string' ? event.favicon : '';
+    if (icon || card.shownTab !== event.tabId) { card.siteIco.hidden = !icon; if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src'); } // (a frame without the icon keeps the tab's icon)
+    card.shownTab = event.tabId;
+    card.shot.style.maxWidth = '';
+  }
   // A step that reads an address with no tab (read_urls): "Reading <site>" with its icon, no picture of another tab.
   function setSite(card, event) {
     card.siteMode = true;
@@ -670,7 +690,7 @@
       }
       if (card.ended) { card.ended = false; card.stopped = false; } // (a step after the card said Done: it works again, and says Done at the turn's real end)
       setSurface(card, surface, event.name);
-      if (surface === 'browser' && !card.browserInit) { card.browserInit = true; card.task = SL().taskName(opts.task || ''); if (turn.lastThumb && !card.tab) { card.tab = turn.lastThumb.tab; setThumb(card, turn.lastThumb.src); } }
+      if (surface === 'browser' && !card.browserInit) { card.browserInit = true; card.task = SL().taskName(opts.task || ''); if (turn.lastThumb && !card.tab) { card.tab = turn.lastThumb.tab; setTabRow(card, turn.lastThumb.tab); } }
       markRow(row, surface, event.name);
       if (opts.runId != null && card.runId == null) card.runId = opts.runId;
       if (!card.first) card.first = label;
@@ -790,7 +810,7 @@
     if (Number.isInteger(event.tabId)) touchTabs(card, [event.tabId], { [event.tabId]: { t: tab.title, u: tab.url, f: typeof event.favicon === 'string' ? event.favicon : '' } });
     if (Number.isFinite(event.aiTabs)) card.aiTabs = event.aiTabs;
     tabsCount(card);
-    if (kind === 'site') setSite(card, event); else if (kind === 'blank') setBlank(card, event); else if (kind === 'pending') setPending(card); else { setThumb(card, src); card.goodTab = tab.tabId; }
+    if (kind === 'site') setSite(card, event); else setTabRow(card, event); // (no frame of the tab: a still picture beside the live page read as a frozen copy of it)
     refreshCard(turn, card);
   }
   // A file the AI made: the card offers it (Open file / Show in folder) and, for a picture, shows it as its preview.
@@ -869,13 +889,19 @@
     for (const n of turn.noteRows || []) out.push(n); // (approvals of a turn with no step on a surface)
     for (const card of turn.cards) { card.ended = true; if (card.firstSurface === 'browser') card.task = item.task || ''; }
     const t = item.thumb;
-    if (t && t.data) {
+    if (t && (Number.isInteger(t.tabId) || t.url)) { // (a chat saved before pictures were dropped still has t.data: unused)
       const last = [...turn.cards].reverse().find((c) => c.hadBrowser);
-      if (last) { last.tab = { tabId: Number.isInteger(t.tabId) ? t.tabId : null, s: t.s || '', url: t.url || '', title: t.title || '' }; setThumb(last, `data:image/jpeg;base64,${t.data}`); }
+      if (last) { last.tab = { tabId: Number.isInteger(t.tabId) ? t.tabId : null, s: t.s || '', url: t.url || '', title: t.title || '' }; const kept = item.tabs && Number.isInteger(t.tabId) ? (item.tabs[t.tabId] || item.tabs[String(t.tabId)]) : null; // (a saved frame with no name: the tab's name as the chat kept it)
+        setTabRow(last, { tabId: last.tab.tabId, title: last.tab.title || kept?.t || '', url: last.tab.url || kept?.u || '', favicon: kept?.f || '' }); }
     }
     const touchedIds = Array.isArray(item.touched) ? item.touched.filter(Number.isInteger) : [];
     const lastBrowser = [...turn.cards].reverse().find((c) => c.hadBrowser);
     if (lastBrowser && touchedIds.length) { touchTabs(lastBrowser, touchedIds, item.tabs || null); tabsCount(lastBrowser); }
+    if (lastBrowser && !lastBrowser.tab && touchedIds.length && item.tabs) { // (no saved frame: the name row is the last tab the turn worked in, as the chat kept it)
+      const id = touchedIds[touchedIds.length - 1];
+      const kept = item.tabs[id] || item.tabs[String(id)];
+      if (kept) { lastBrowser.tab = { tabId: id, s: kept.s || '', url: kept.u || '', title: kept.t || '' }; setTabRow(lastBrowser, { tabId: id, title: kept.t || '', url: kept.u || '', favicon: kept.f || '' }); tabsCount(lastBrowser); refreshCard(turn, lastBrowser); }
+    }
     const written = Array.isArray(item.written) ? item.written.filter((x) => x && typeof x.id === 'string' && x.name) : []; // (main made these rows from the paths the reply kept: same links as live)
     const filesCard = turn.cards[turn.cards.length - 1] || null; // (the card of the last step, as live: filesMade)
     if (filesCard && written.length) { filesCard.files = written.slice(0, 12); filesCard.file = filesCard.files[filesCard.files.length - 1]; renderFiles(filesCard); }

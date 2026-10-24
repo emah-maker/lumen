@@ -8,7 +8,7 @@
 .step-more { flex-basis: 100%; min-width: 0; margin: 4px 0 4px 14px; cursor: auto; display: flex; flex-direction: column; gap: 6px; }
 .step-sec { border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; }
 .step-sec-head { display: flex; align-items: center; justify-content: space-between; padding: 3px 4px 3px 8px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
-.step-copy { border: 0; background: none; color: var(--accent-text); font: inherit; padding: 1px 6px; border-radius: 4px; cursor: pointer; }
+.step-copy { border: 0; background: none; color: var(--accent-text); font: inherit; min-height: var(--hit-min); padding: 1px 6px; border-radius: var(--r-xs); cursor: pointer; }
 .step-copy:hover { background: var(--accent-soft); }
 .step-copy:focus-visible { outline: 2px solid var(--accent); }
 .step-pre { margin: 0; padding: 6px 8px; max-height: 220px; overflow: auto; font: 11.5px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--text); white-space: pre-wrap; word-break: break-word; user-select: text; }
@@ -42,6 +42,13 @@
 .act-site-ico { width: 18px; height: 18px; border-radius: 4px; flex: none; }
 .act-site-ico[hidden] { display: none; }
 .act-site-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A tab or site (no picture): one compact row, the name left-aligned, "Closed" at its end. */
+.act-shot[data-mode="site"]:not([hidden]) { display: flex; align-items: center; aspect-ratio: auto; transition: background-color .12s var(--ease-out); }
+.act-shot[data-mode="site"]:hover { background: var(--surface-raised); }
+.act-shot[data-mode="site"] .act-thumb { display: none; }
+.act-shot[data-mode="site"] .act-site { position: static; flex: 1; min-width: 0; justify-content: flex-start; padding: 8px 10px; color: var(--text); background: none; }
+.act-shot[data-mode="site"][data-tab-closed="1"] .act-site { color: var(--muted); }
+.act-shot[data-mode="site"][data-tab-closed="1"]::after { position: static; flex: none; margin-right: 8px; }
 /* The status bar: what the AI is doing right now, one line, under the preview. */
 .act-status { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 340px; padding: 5px 10px; border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 12px; }
 .act-status[hidden] { display: none; }
@@ -112,7 +119,7 @@
 .act-toggle:focus-visible, .act-closeall:focus-visible, .act-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .act-toggle:disabled, .act-closeall:disabled { opacity: .5; cursor: default; }
 .act-tabs-note { color: var(--muted); font-size: 12px; }
-.act-undo { border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 2px; }
+.act-undo { border: 0; background: none; color: var(--accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; min-height: var(--hit-min); padding: 0 4px; }
 .act-btn { flex: 1 1 140px; width: auto; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: background-color var(--t-base) ease-out; }
 .act-btn:hover { background: var(--accent-soft); }
 .act-btn:focus-visible, .act-steps > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -133,7 +140,7 @@
 .act-filelink, .act-fileshow { all: unset; box-sizing: border-box; cursor: pointer; min-width: 0; }
 .act-filelink { color: var(--accent-text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .act-filelink:hover, .act-filelink:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
-.act-fileshow { color: var(--muted); font-size: 11px; }
+.act-fileshow { color: var(--muted); font-size: var(--fs-xs); display: inline-flex; align-items: center; min-height: var(--hit-min); }
 .act-fileshow:hover, .act-fileshow:focus-visible { color: var(--text); text-decoration: underline; }
 .act-filenote, .act-filemore { color: var(--muted); font-size: 11px; }
 .act-steplink { margin-left: 8px; font-size: 11px; flex: none; }

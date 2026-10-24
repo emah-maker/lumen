@@ -149,6 +149,24 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     m = await marker(front);
     check('after the run the page shows beyond the top-left 520x330', m.magenta, JSON.stringify(m));
 
+    // 3b. the AI's screenshot tool (captureJpeg) on the tab in front takes one screencast frame, scaled by the compositor: the visible page is not laid
+    // out at the picture's size for the moment of the capture (that showed as a flash of the page on every AI screenshot). Listen for resize in the page
+    // before the tool runs, count after: none, and the page size never changes either.
+    await app.evaluate((_e, id) => global.__notifyClick.switchTab(id), front);
+    await sleep(600);
+    await app.evaluate(({ webContents }, tid) => webContents.fromId(global.__notifyClick.contentsOf(tid)).executeJavaScript(`(() => { window.__shotResizes = 0; window.__shotSizes = new Set(); addEventListener('resize', () => window.__shotResizes++); (function f() { window.__shotSizes.add(innerWidth + 'x' + innerHeight); requestAnimationFrame(f); })(); return true; })()`), front);
+    const shotRun = await app.evaluate(async ({ webContents }, tid) => {
+      const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+      const cap = global.__tabCapture;
+      const shots = [];
+      for (let i = 0; i < 6; i++) { const s = await cap.captureJpeg(wc, { maxWidth: 720, quality: 60 }); shots.push(s ? { width: s.width, height: s.height, size: cap.jpegSize(s.data) } : null); }
+      return { shots, resizes: await wc.executeJavaScript('window.__shotResizes'), sizes: await wc.executeJavaScript('[...window.__shotSizes]') };
+    }, front);
+    check('(set up) the tab area is wider than the 720 px screenshot, so the picture is scaled down', area.iw > 720, JSON.stringify(area));
+    check('six AI screenshots of the tab in front come back as JPEGs 720 px wide whose own header (jpegSize) gives the size the tool reports', shotRun.shots.every((s) => s && s.width === 720 && s.size && s.size.width === s.width && s.size.height === s.height), JSON.stringify(shotRun.shots));
+    check('the page in front gets no resize event during the AI screenshots', shotRun.resizes === 0, JSON.stringify(shotRun));
+    check('...and its innerWidth/innerHeight never change', shotRun.sizes.length === 1 && shotRun.sizes[0] === area.iw + 'x' + area.ih, JSON.stringify([shotRun.sizes, area]));
+
     // 4. an AI task in a tab behind the user's tab, with the live card streaming at 15 fps (a view nobody sees draws no frames, so the card polls it with
     // clipped screenshots) while the AI takes screenshots and reads the page in parallel; then the user switches to that tab. The page's innerWidth and
     // innerHeight are sampled all along and must equal the tab area's, and the page must fill its view (a probe in the bottom-right corner).
