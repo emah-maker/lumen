@@ -8727,6 +8727,15 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     return [...hosts].filter(Boolean);
   },
   google: connectorsGoogle,
+  // Google Drive and Sheets: one Google sign-in in the user's own browser (features/connectors/google-auth.js). Lumen's built-in Google
+  // client, unless the user typed their own for the Gmail widget (that one wins, as it does there). Tests point it at 127.0.0.1.
+  workspace: {
+    builtin: () => require('./features/google-client').builtinClient(),
+    own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
+    openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+    canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
+    focusApp: () => focusWindow(),
+  },
   mcp: mcpClient,
   openSignIn: connectorsOpen,
   // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
