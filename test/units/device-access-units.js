@@ -71,7 +71,7 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     const names = EXTERNAL_TOOLS.map((t) => t.name);
     check('drag, list_files and clipboard are listed to every engine and MCP client', ['drag', 'list_files', 'clipboard'].every((n) => names.includes(n)), J(names));
     const up = EXTERNAL_TOOLS.find((t) => t.name === 'upload_file');
-    check('upload_file lists paths and still needs only element_id', Boolean(up.input_schema.properties.paths) && J(up.input_schema.required) === '["element_id"]');
+    check('upload_file lists paths and needs no element_id (open or a field search take its place)', Boolean(up.input_schema.properties.paths) && Boolean(up.input_schema.properties.open) && !up.input_schema.required);
     check('short descriptions (every message pays for them)', EXTERNAL_TOOLS.filter((t) => ['drag', 'list_files', 'clipboard'].includes(t.name)).every((t) => t.description.length < 220));
     check('drag needs a from and a to', /from_id|from_x/.test(validateInput('drag', { to_id: 3 }) || '') && /to_id|to_x/.test(validateInput('drag', { from_id: 3 }) || '') && validateInput('drag', { from_id: 1, to_x: 3, to_y: 4 }) === null, J([validateInput('drag', { to_id: 3 }), validateInput('drag', { from_id: 1, to_x: 3, to_y: 4 })]));
     check('clipboard needs read or write', validateInput('clipboard', { action: 'read' }) === null && Boolean(validateInput('clipboard', { action: 'erase' })) && Boolean(validateInput('clipboard', {})));

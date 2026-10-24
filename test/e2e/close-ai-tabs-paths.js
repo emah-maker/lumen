@@ -96,7 +96,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   const open = (n) => ({ name: 'open_tab', input: { url: `/N-${n}` } });
   await script('N', [{ name: 'navigate', input: { url: '/N-nav' } }, open(0), open(1), open(2), open(3), open(4), open(5)]);
   await hold('N');
-  await send('chat-N: open tabs');
+  await send('chat-N: open tabs, each in a new tab');
   await waitFor(async () => (await marks()).length >= 7, 30000);
   const m0 = await marks();
   check('(set up) open_tab x6 and navigate left seven marked tabs', m0.length === 7, JSON.stringify(m0.map((x) => x.url)));
@@ -134,7 +134,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await newChat();
   await script('S', [{ name: 'open_tab', input: { url: '/S-0' } }, { name: 'open_tab', input: { url: '/S-1' } }]);
   await hold('S');
-  await send('chat-S: open and be stopped');
+  await send('chat-S: open and be stopped, each in a new tab');
   await waitFor(async () => (await marks()).filter((x) => /\/S-/.test(x.url)).length === 2, 30000);
   await ui.evaluate(() => window.assistant.stop());
   await sleep(500);
@@ -146,7 +146,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await newChat();
   await script('E', [{ name: 'open_tab', input: { url: '/E-0' } }, { name: 'open_tab', input: { url: '/E-1' } }]);
   await app.evaluate(() => { global.__fail.E = true; });
-  await send('chat-E: open and fail');
+  await send('chat-E: open and fail, each in a new tab');
   await waitFor(async () => /model failed|went wrong|Something/i.test(await bodyText()), 20000);
   const eGone = await waitFor(async () => !(await urlsNow()).some((u) => /\/E-/.test(u)), 20000);
   check('a run that ends in an error closes the tabs it opened', Boolean(eGone), JSON.stringify(await urlsNow()));
@@ -155,7 +155,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await newChat();
   await script('C', [{ name: 'open_tab', input: { url: '/C-0' } }, { name: 'open_tab', input: { url: '/C-1' } }]);
   await hold('C');
-  await send('chat-C: open and crash');
+  await send('chat-C: open and crash, each in a new tab');
   await waitFor(async () => (await marks()).filter((x) => /\/C-/.test(x.url)).length === 2, 30000);
   const crash = async () => { // what a crash leaves: the saved session, and the marker
     await sleep(5000); // (the session is saved a moment after a change)
@@ -192,7 +192,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await newChat();
   await script('V', [0, 1, 2, 3].map((n) => ({ name: 'open_tab', input: { url: `/V-${n}` } })));
   await hold('V');
-  await send('chat-V: open four');
+  await send('chat-V: open four, each in a new tab');
   await waitFor(async () => (await marks()).filter((x) => /[/]V-/.test(x.url)).length === 4, 30000);
   await waitFor(async () => { const us = await urlsNow(); return [0, 1, 2, 3].every((n) => us.some((u) => u.endsWith(`/V-${n}`))); }, 15000);
   const [v0, v1] = [await idOf("/V-0"), await idOf("/V-1")];

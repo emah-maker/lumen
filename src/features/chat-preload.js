@@ -115,7 +115,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
-    helpers: (on) => ipcRenderer.invoke('agent:helpers', on), // [subagents]
+    helpers: (mode) => ipcRenderer.invoke('agent:helpers', mode), // [subagents]
     preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on), // [prefer fractions] /fractions
     stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers]
     routines: { preview: (text) => ipcRenderer.invoke('chat:routine-preview', { text }), create: (spec) => ipcRenderer.invoke('chat:routine-create', spec) }, // [routines] "Schedule this" (renderer/chat-routines.js)

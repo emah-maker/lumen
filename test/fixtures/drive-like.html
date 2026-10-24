@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Files - Drive-like</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; }
+  #bar { padding: 12px 24px; border-bottom: 1px solid #ccc; position: relative; }
+  #new { display: inline-block; padding: 10px 22px; border: 1px solid #888; border-radius: 18px; cursor: pointer; user-select: none; }
+  #menu { display: none; position: absolute; top: 56px; left: 24px; background: #fff; border: 1px solid #888; box-shadow: 0 2px 8px #0004; min-width: 200px; z-index: 5; }
+  #menu.open { display: block; }
+  #menu [role=menuitem] { padding: 10px 16px; cursor: pointer; }
+  #list { margin: 24px; min-height: 300px; border: 2px dashed #bbb; padding: 16px; }
+  #log { background: #f3f3f3; padding: 8px; min-height: 40px; white-space: pre-wrap; margin: 24px; }
+</style>
+<div id="bar">
+  <!-- Opens its menu only for a trusted (real) mouse press and release, as Drive's jsaction buttons do: a script-made click() does nothing -->
+  <div id="new" role="button" tabindex="0" aria-label="New" aria-haspopup="menu">New</div>
+  <div id="menu" role="menu">
+    <div role="menuitem" id="mkdir">New folder</div>
+    <div role="menuitem" id="up">File upload</div>
+  </div>
+</div>
+<div id="list" role="main" aria-label="My Drive files">My Drive: drop files here</div>
+<div id="log"></div>
+<script>
+  const log = (line) => { document.getElementById('log').textContent += line + '\n'; };
+  const mode = location.search.replace(/^\?/, '');
+  let downTrusted = false;
+  const btn = document.getElementById('new');
+  btn.addEventListener('mousedown', (e) => { downTrusted = e.isTrusted; });
+  btn.addEventListener('mouseup', (e) => { if (e.isTrusted && downTrusted) document.getElementById('menu').classList.toggle('open'); downTrusted = false; });
+  const names = (files) => [...files].map((f) => f.name + ':' + f.size).join(', ');
+  // "File upload" makes a hidden multiple input on demand and clicks it, which opens the native chooser (like Drive).
+  // ?latent: no click at all, only a hidden input already in the page. ?dropOnly: nothing but the drop target.
+  document.getElementById('up').addEventListener('click', (e) => {
+    document.getElementById('menu').classList.remove('open');
+    if (mode === 'noclick') return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => log('picker: ' + names(input.files)));
+    input.click();
+  });
+  if (mode === 'latent') {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.hidden = true;
+    input.addEventListener('change', () => log('latent: ' + names(input.files)));
+    document.body.appendChild(input);
+  }
+  const list = document.getElementById('list');
+  list.addEventListener('dragover', (e) => e.preventDefault());
+  list.addEventListener('drop', (e) => { e.preventDefault(); log('drop: ' + names(e.dataTransfer.files)); });
+</script>

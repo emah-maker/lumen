@@ -2056,6 +2056,9 @@ body.side-resizing, body.side-resizing * { cursor: col-resize !important; user-s
 @keyframes btw-spin { to { transform: rotate(360deg); } }
 .btw-foot { margin-top: 4px; font-size: 11px; color: var(--muted); }
 .btw-foot[hidden] { display: none; }
+.btw-retry { border: 0; padding: 1px 10px; border-radius: var(--r-pill); font: inherit; color: var(--accent-text); background: var(--accent-soft); }
+.btw-retry:hover { filter: brightness(1.08); }
+.btw-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .msg.user[data-skill] { white-space: normal; }
 .skill-tag { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
