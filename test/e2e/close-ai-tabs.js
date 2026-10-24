@@ -103,7 +103,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   // ---- 2. A second chat opens five tabs; the reply offers "Close 5 tabs".
   await newChat();
   await plan('F', 5);
-  await send('chat-F: open five');
+  await send('chat-F: open five, each in a new tab');
   await waitFor(async () => /F done/.test(await bodyText()));
   m = await waitFor(async () => { const x = await marks(); return x.length === 5 && x; });
   check('five tabs are marked, all with the same chat and run', Boolean(m) && new Set(m.map((x) => x.mark.chatId)).size === 1 && new Set(m.map((x) => x.mark.runId)).size === 1, JSON.stringify(m));
@@ -136,11 +136,11 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   // ---- 5. The tab menu's "Close tabs the AI opened" closes the tabs of every chat.
   await newChat();
   await plan('G', 2);
-  await send('chat-G: open two');
+  await send('chat-G: open two, each in a new tab');
   await waitFor(async () => /G done/.test(await bodyText()));
   await newChat();
   await plan('H', 3);
-  await send('chat-H: open three');
+  await send('chat-H: open three, each in a new tab');
   await waitFor(async () => /H done/.test(await bodyText()));
   m = await waitFor(async () => { const x = await marks(); return x.length === 5 && x; });
   check('two chats opened five tabs between them', Boolean(m) && new Set(m.map((x) => x.mark.chatId)).size === 2, JSON.stringify(m));
@@ -176,7 +176,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   // ---- 7. The mark survives a quit and a restore.
   await newChat();
   await plan('Q', 2);
-  await send('chat-Q: open two');
+  await send('chat-Q: open two, each in a new tab');
   await waitFor(async () => /Q done/.test(await bodyText()));
   const before = await waitFor(async () => { const x = await marks(); return x.filter((y) => /\/Q-/.test(y.url)).length === 2 && x; });
   const wantUrls = before.filter((y) => /\/Q-|\/L-/.test(y.url)).map((y) => y.url).sort();
@@ -220,7 +220,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
   await newChat();
   await app.evaluate(() => { global.__keep.K = [1]; });
   await plan('K', 3);
-  await send('chat-K: open three, keep the second');
+  await send('chat-K: open three, keep the second, each in a new tab');
   await waitFor(async () => /K done/.test(await bodyText()));
   const kLeft = await waitFor(async () => { const u = (await urlsNow()).filter((x) => /\/K-\d$/.test(x)); return u.length === 1 && u; }, 15000);
   check('Close: the run\'s tabs closed when it ended, all but the keep:true one', Boolean(kLeft) && kLeft[0].endsWith('/K-1'), JSON.stringify(await urlsNow()));
