@@ -15,7 +15,7 @@ let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
 
 const COPY = {
-  short: { update: 'Lumen 0.5.5 is ready', action: 'Restart', agent: 'Lumen is using this tab' },
+  short: { update: 'Lumen 0.5.5 is ready: installs when you quit', action: 'Restart', agent: 'Lumen is using this tab' },
   long: { update: 'Couldn’t update to Lumen 0.5.5', action: 'Try again', agent: 'A Long Assistant Name is using this tab' },
 };
 const STATES = [{ id: 'none' }, ...['short', 'long'].flatMap((copy) => [{ id: `update ${copy}`, update: true, copy }, { id: `agent ${copy}`, agent: true, copy }, { id: `both ${copy}`, update: true, agent: true, copy }])];

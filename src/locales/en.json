@@ -2242,7 +2242,7 @@
   "updates.checking": "Checking…",
   "updates.hide": "Hide the update prompt",
   "updates.notNow": "Not now",
-  "updates.ready": "Lumen {version} is ready",
+  "updates.ready": "Lumen {version} is ready: installs when you quit",
   "updates.releases": "Open the releases page",
   "updates.restart": "Restart to update",
   "updates.restartWhenReady": "Restart when ready",
