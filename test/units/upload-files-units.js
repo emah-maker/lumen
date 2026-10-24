@@ -58,7 +58,7 @@ const OTHER = '0123456789abcdef';
     check('several files into a single-file field are refused, with the count', /single file, and 2 were given/.test(U.checkFiles({ multiple: false }, [f, f]) || ''));
     check('several files into a multiple field pass', U.checkFiles({ multiple: true }, [f, f]) === null);
     check('a file of the wrong type is refused, naming the file and what is accepted', /"a\.png" isn't a type this field accepts \(PDF\)/.test(U.checkFiles({ accept: '.pdf' }, [{ name: 'a.png', type: 'image/png' }]) || ''));
-    check('no files, and more than the cap, are refused', U.checkFiles({}, []) === 'No file was given.' && /At most 10/.test(U.checkFiles({ multiple: true }, Array.from({ length: 11 }, () => f)) || ''));
+    check('no files, and more than the cap, are refused', U.checkFiles({}, []) === 'No file was given.' && /At most 25/.test(U.checkFiles({ multiple: true }, Array.from({ length: 26 }, () => f)) || ''));
     const filters = U.dialogFilters('.pdf,image/*', 'All files');
     check('the picker filters name the accepted extensions and always offer All files', filters[0].extensions.includes('pdf') && filters[0].extensions.includes('png') && !filters[0].extensions.includes('*') && filters.at(-1).extensions[0] === '*' && U.dialogFilters('').length === 1);
   }
@@ -170,8 +170,10 @@ const OTHER = '0123456789abcdef';
   // ---- the tool
   {
     const tool = EXTERNAL_TOOLS.find((t) => t.name === 'upload_file');
-    check('upload_file is a tool every engine is given, with a short description', Boolean(tool) && tool.description.length < 260 && tool.input_schema.required.length === 1 && tool.input_schema.required[0] === 'element_id', J(tool));
-    check('its input is checked: element_id an integer, files an array of strings', validateInput('upload_file', { element_id: 3 }) === null && validateInput('upload_file', { element_id: 3, files: ['f_0123456789abcdef01234567'] }) === null && /element_id/.test(validateInput('upload_file', { element_id: 'x' }) || '') && /files/.test(validateInput('upload_file', { element_id: 3, files: 'f_1' }) || '') && /files\[0\]/.test(validateInput('upload_file', { element_id: 3, files: [7] }) || '') && /element_id/.test(validateInput('upload_file', {}) || ''));
+    check('upload_file is a tool every engine is given, with a short description', Boolean(tool) && tool.description.length < 260 && !tool.input_schema.required && tool.input_schema.properties.open.type === 'array' && /open/.test(tool.description), J(tool));
+    check('its input is checked: element_id an integer, files an array of strings', validateInput('upload_file', { element_id: 3 }) === null && validateInput('upload_file', { element_id: 3, files: ['f_0123456789abcdef01234567'] }) === null && /element_id/.test(validateInput('upload_file', { element_id: 'x' }) || '') && /files/.test(validateInput('upload_file', { element_id: 3, files: 'f_1' }) || '') && /files\[0\]/.test(validateInput('upload_file', { element_id: 3, files: [7] }) || '') && validateInput('upload_file', {}) === null && validateInput('upload_file', { open: ['New', 'File upload'], paths: ['C:/a.pdf'] }) === null && /open/.test(validateInput('upload_file', { open: 'New' }) || ''));
+    const scripts = require('../../src/ai/page-scripts');
+    check('the drop route scripts are valid page code', ['dropProbeArm()', 'dropProbeRead()', 'dropProbeDisarm()', 'dropFilesReset()', 'dropFilesAdd("a.pdf", "application/pdf", "QUJD", true)', 'dropFilesSend(10, 20)'].every((c) => { try { new Function(`return ${scripts[c.slice(0, c.indexOf('('))]}`); new Function(`return (${eval(`scripts.${c}`)})`); return true; } catch { return false; } }));
     check('it is an acting tool: hands-off mode and a tab kept off refuse it like click', manners.isActionTool('upload_file') && manners.offTabCheck({ offTab: true, tool: 'upload_file' }) === manners.offTabRefusal() && /Hands-off mode/.test(manners.handsOffCheck({ tool: 'upload_file', handsOff: true }) || ''));
   }
 

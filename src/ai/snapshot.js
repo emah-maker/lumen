@@ -573,7 +573,7 @@ const NEW_TOOLS = [
   },
   {
     name: 'batch',
-    description: 'Several actions in one call, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
+    description: 'Several actions, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
