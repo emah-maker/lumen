@@ -8977,6 +8977,7 @@ const agent = new Agent({
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
+  knownFolder: require('./features/device-access').makeKnown({ getPath: (n) => app.getPath(n), downloadDir: () => settingsBackend.downloadDir() }), // [device access] "desktop", "documents", "downloads"... where the system (OneDrive folder redirection) or Settings put them
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
