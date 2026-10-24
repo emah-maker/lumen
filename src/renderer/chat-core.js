@@ -485,6 +485,12 @@ function plainStep(event, label) {
 const prompt = $('prompt');
 const send = $('send');
 let running = false;
+// Messages typed while a reply runs wait in a line (renderer/chat-queue.js); each shows as a bubble of its own under the reply.
+const line = window.chatQueue.create();
+const queued = line.list;
+const QUEUED = ':scope > .queued'; // (the waiting bubbles, and the bar over them)
+let queueBar = null;
+let incomingChatId = null; // while applySync redraws: the chat it draws (what waits in that chat's line stays)
 // The chat this view shows, as main last said (a sync's view id, an event's chat id); null until known. `running` and `turn`
 // are that chat's alone: an event or a queued message for another chat never touches them.
 let shownChatId = null;
@@ -499,7 +505,14 @@ const drafts = (() => { try { return window.chatDrafts.create(window.localStorag
 let pastes = []; // long pasted blocks shown as chips and sent with the message (strings)
 let draftHold = true;
 let emptyOwner; // the id (null: not named yet) of the last empty chat whose box held text when it was left; undefined: none (see applySync)
-const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+let shownTemporary = false; // main said the chat shown here is a temporary one (applySync); the chat page also knows it (chatPageTools)
+const tempChatShown = () => shownTemporary || Boolean(window.chatPageTools?.isTemporary?.());
+// A temporary chat is never saved, so neither is what is typed in it: no draft is written for it, and one already stored under its id goes.
+const saveDraft = () => {
+  if (draftHold) return;
+  if (tempChatShown()) { if (shownChatId) drafts?.clear(shownChatId); return; }
+  drafts?.set(shownChatId, { text: prompt.value, pastes });
+};
 // Saved on every change (updateSend), and again when the box loses focus or the page goes away.
 prompt.addEventListener('blur', () => saveDraft());
 window.addEventListener('pagehide', () => saveDraft());
@@ -579,7 +592,8 @@ function applyView() {
 }
 function restoreDraft() {
   draftHold = false;
-  const d = drafts?.get(shownChatId);
+  if (tempChatShown() && shownChatId) drafts?.clear(shownChatId);
+  const d = tempChatShown() ? null : drafts?.get(shownChatId);
   if (d) {
     const carried = prompt.value.trim(); // (queued messages that came back to the box)
     prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
@@ -627,6 +641,69 @@ jump.addEventListener('click', () => {
   jump.hidden = true;
 });
 messages.after(jump);
+// The running pill: while the reply's live card is scrolled out of the chat, a small bar over the chat's edge says what the AI is doing (the card's own
+// status line), for how long, and has Stop; a click on it brings the card back into view. It shows only for the chat in view, and only while the card works.
+const runPill = (() => {
+  const pill = Object.assign(document.createElement('div'), { className: 'run-pill', hidden: true });
+  pill.setAttribute('role', 'group');
+  pill.setAttribute('aria-label', t('runpill.label'));
+  const main = Object.assign(document.createElement('button'), { type: 'button', className: 'run-pill-main', title: t('runpill.show') });
+  const icon = Object.assign(document.createElement('span'), { className: 'run-pill-ico' });
+  icon.setAttribute('aria-hidden', 'true');
+  const text = Object.assign(document.createElement('span'), { className: 'run-pill-text' });
+  const time = Object.assign(document.createElement('span'), { className: 'run-pill-time' });
+  main.append(icon, text, time);
+  const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'run-pill-stop', textContent: t('composer.stop.short'), title: t('composer.stop') });
+  pill.append(main, stop);
+  messages.after(pill);
+  let card = null; // the card being watched (renderer/step-ui.js)
+  let side = null; // 'top' | 'bottom' | null (hidden)
+  let io = null;
+  let mo = null;
+  let tickTimer = 0;
+  const working = () => ['working', 'approval'].includes(card?.el.dataset.state);
+  function paint() {
+    if (!card) return;
+    if (icon.dataset.k !== card.icon.dataset.k) { icon.dataset.k = card.icon.dataset.k || ''; icon.innerHTML = card.icon.innerHTML; }
+    const label = card.statusText.textContent || card.title.textContent || '';
+    if (text.textContent !== label) { text.textContent = label; main.setAttribute('aria-label', label + '. ' + t('runpill.show')); }
+    const s = turn?.startedAt ? Math.max(0, Math.floor((Date.now() - turn.startedAt) / 1000)) : 0;
+    const secs = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); // (m:ss, from the first second)
+    if (time.textContent !== secs) time.textContent = secs;
+  }
+  function tick() { tickTimer = 0; if (side) { paint(); tickTimer = setTimeout(tick, 1000); } }
+  function show(next) {
+    if (next === side) return;
+    side = next;
+    pill.hidden = !next;
+    if (!next) { clearTimeout(tickTimer); tickTimer = 0; return; }
+    pill.dataset.side = next;
+    pill.style.top = next === 'top' ? (messages.offsetTop + 8) + 'px' : '';
+    paint();
+    if (!tickTimer) tickTimer = setTimeout(tick, 1000);
+  }
+  function watch(next) {
+    if (next === card) return;
+    io?.disconnect();
+    mo?.disconnect();
+    io = mo = null;
+    card = next;
+    show(null);
+    if (!card || typeof IntersectionObserver !== 'function') return;
+    io = new IntersectionObserver((list) => {
+      const e = list[list.length - 1];
+      if (!e || !card || e.target !== card.el) return;
+      const r = e.boundingClientRect;
+      show(e.isIntersecting || !e.rootBounds || (!r.width && !r.height) || !working() ? null : window.chatQueue.pillSide(r, e.rootBounds));
+    }, { root: messages });
+    io.observe(card.el);
+    mo = new MutationObserver(() => { if (!working()) show(null); else if (side) paint(); });
+    mo.observe(card.statusText, { childList: true, characterData: true, subtree: true });
+  }
+  main.onclick = () => { if (card) card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+  stop.onclick = () => stopReply();
+  return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
+})();
 for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true }); // (the reader took over: the position kept is no longer wanted)
 messages.addEventListener('scroll', () => {
   if (Date.now() - jumping < 700) { stuck = true; return; } // (a smooth jump's own scrolling)
@@ -651,7 +728,7 @@ function append(el, { force = false } = {}) {
   flushLazyHistory(); // (a chat synced while the sidebar was closed is drawn before anything is added to it)
   $('empty').hidden = true;
   // Queued messages ("Sends when this reply finishes") stay at the very end, under the running reply.
-  const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(':scope > .notice.queued');
+  const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(QUEUED);
   if (firstQueued) firstQueued.before(el);
   else messages.append(el);
   scrollToBottom(force);
@@ -683,6 +760,7 @@ function setRunning(value) {
   running = value;
   if (!value) agentTarget = null;
   renderWorkingIn();
+  runPill.sync();
   document.body.classList.toggle('agent-active', value);
   chatHost.running?.(value); // the sidebar re-measures the page it frames (app.js)
   for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value; // (main never edits a chat mid-run)
@@ -1053,12 +1131,40 @@ sidebarEl.addEventListener('drop', async (e) => {
   prompt.focus();
 });
 
-// Asks that arrive while a reply is running (Alt+Enter in the address bar, "Ask about selection",
-// the new-tab page's Ask AI, a starter chip) wait their turn instead of disappearing.
-const queued = [];
+// Asks that arrive while a reply is running (Alt+Enter in the address bar, "Ask about selection", the new-tab page's Ask AI, a starter chip, or
+// what is typed in the box: Enter) wait their turn instead of disappearing. Each shows under the reply as your own bubble, dimmed, with a clock
+// and "Queued · 2nd"; Send now, Edit and × sit on it. The line itself (order, owner chat, merging) is renderer/chat-queue.js (`line`, above).
+function queueUp(entry) {
+  const bubble = userBubble(entry.text, entry.images, entry.tabs);
+  bubble.className = 'queued-bubble queued';
+  entry.label = Object.assign(document.createElement('span'), { className: 'queue-label' });
+  entry.meta = Object.assign(document.createElement('div'), { className: 'queue-meta' });
+  entry.meta.append(entry.label);
+  bubble.append(entry.meta);
+  entry.bubble = bubble;
+  append(bubble);
+  setMark(bubble, 'queued');
+  line.add(entry);
+  if (!entry.fresh) queueControls(entry);
+  renderQueue();
+  return entry;
+}
+// "Queued", "Queued · 2nd", ...: the places in this chat's line; and the bar that sends several as one turn.
+function renderQueue() {
+  const mine = line.mine(forOtherChat);
+  mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
+  const several = mine.filter(window.chatQueue.mergeable);
+  if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
+  if (!queueBar) {
+    queueBar = Object.assign(document.createElement('div'), { className: 'queue-bar queued' });
+    queueBar.append(document.createElement('span'), Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendAll'), title: t('chat.queued.sendAll.title'), onclick: sendAllNow }));
+  }
+  queueBar.firstChild.textContent = t('chat.queued.count', { n: several.length });
+  mine[mine.length - 1].bubble.after(queueBar);
+}
 // Edit (back into the composer) and × (dropped) on a message waiting for the current reply to finish.
 function queueControls(entry) {
-  const drop = () => { const i = queued.indexOf(entry); if (i !== -1) queued.splice(i, 1); entry.notice.remove(); };
+  const drop = () => { line.remove(entry); entry.bubble.remove(); renderQueue(); };
   const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
   edit.onclick = () => {
     drop();
@@ -1073,35 +1179,43 @@ function queueControls(entry) {
   cancel.onclick = () => { for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
   const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
   now.onclick = () => sendNow(entry);
-  entry.notice.append(' ', now, edit, cancel);
+  const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
+  actions.append(now, edit, cancel);
+  entry.meta.append(actions);
 }
 // Send now: `entry` goes first in the line and the running reply is stopped through the Stop button's own path
 // (agent:stop: a CLI engine is interrupted or its process tree ended, an API request aborted), so the reply's 'done'
 // sends it as the next turn. What the reply had said stays on screen, marked interrupted, and in the history (agent.js).
 function sendNow(entry) {
-  const i = queued.indexOf(entry);
-  if (i === -1) return;
-  if (i > 0) { queued.splice(i, 1); queued.unshift(entry); }
-  const first = messages.querySelector(':scope > .notice.queued');
-  if (first && first !== entry.notice) first.before(entry.notice);
+  if (!line.promote(entry)) return;
+  const first = messages.querySelector(QUEUED);
+  if (first && first !== entry.bubble) first.before(entry.bubble);
+  renderQueue();
   if (!running) return; // (the reply ended meanwhile: the line moves on by itself)
-  for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
+  for (const b of entry.bubble.querySelectorAll('.queue-btn')) b.disabled = true;
   if (turn) turn.interrupted = true;
   window.assistant.stop(shownChatId || undefined);
 }
+// "Send all as one": the messages waiting in this chat become ONE message (their texts one after the other, all their pictures and files),
+// which stops the reply and goes next, like Send now. One that carries a plan to run, or opens a new chat, keeps its own turn.
+function sendAllNow() {
+  const merged = window.chatQueue.merge(line.mine(forOtherChat), MAX_ATTACH);
+  if (!merged) return;
+  for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
+  const { text, images, tabs, screen, chatId } = merged;
+  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId }));
+}
 function sendQueued() {
+  if (running) return; // (a message typed in the meantime started its own turn: the line goes on when that one ends)
   // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
-  const mine = queued.findIndex((q) => !forOtherChat(q.chatId));
-  if (mine === -1) return;
-  const next = queued.splice(mine, 1)[0];
-  next.notice.remove();
+  const next = line.take(forOtherChat);
+  if (!next) return;
+  next.bubble.remove();
   if (next.fresh) {
-    // A question from the new-tab page that waited for the running reply: now start its new chat. The
-    // New chat button empties the view (notices of anything else still queued included), so put those back.
-    const rest = queued.splice(0);
+    // A question from the new-tab page that waited for the running reply: now start its new chat (what else is still waiting comes back to the box, as with any chat switch).
     $('new-chat').click();
-    for (const q of rest) { append(q.notice); queued.push(q); }
   }
+  renderQueue();
   ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
@@ -1119,11 +1233,7 @@ async function askInNewChat(text, files = []) {
     attachments = aside;
     renderAttachments();
   }
-  if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text }) }));
-    queued.push({ text, images, tabs: null, notice, fresh: true, chatId: shownChatId });
-    return;
-  }
+  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: shownChatId }); return; }
   $('new-chat').click();
   ask(text, images);
 }
@@ -1138,13 +1248,7 @@ function askInFreshChat(text) {
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
 // `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
 function ask(text, images = [], tabs = null, screen, opts = null) {
-  if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
-    queued.push(entry);
-    queueControls(entry);
-    return entry; // (for Send now)
-  }
+  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: shownChatId }); // (for Send now)
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
     pendingAsk = { text, images, tabs, screen, at: Date.now() };
@@ -1331,8 +1435,28 @@ function fileChips(files) {
   for (const f of files) row.append(Object.assign(document.createElement('span'), { className: 'msg-file', textContent: `${f.name} · ${fileSize(f.size)}`, title: f.name }));
   return row;
 }
-function startTurn(text, images, tabs = null) {
-  loadStepUI();
+// A message's mark, as in a messaging app (renderer/chat-queue.js advance): a clock while it waits for the reply before it, one check once it
+// is sent to the engine, two when the AI took it up (its reply began). It only moves forward.
+const MARKS = {
+  queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6"/><path d="M6 3.5V6l1.7 1"/></svg>',
+  sent: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6.4 5 8.8l4.4-5.2"/></svg>',
+  read: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6.5 3.3 8.8 7.5 3.8M5.2 8.3l.5.5 4.7-5.3"/></svg>',
+};
+function setMark(bubble, status) {
+  if (!bubble) return;
+  const next = window.chatQueue.advance(bubble.dataset.st, status);
+  if (!next || next === bubble.dataset.st) return;
+  bubble.dataset.st = next;
+  let mark = bubble.querySelector(':scope > .msg-status');
+  if (!mark) { mark = document.createElement('span'); mark.className = 'msg-status'; bubble.append(mark); }
+  const label = t('chat.mark.' + next);
+  mark.innerHTML = MARKS[next];
+  mark.title = label;
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', label);
+}
+// Your message as a bubble: the one being sent, or one waiting in the line.
+function userBubble(text, images, tabs = null) {
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   const pictures = imageItems(images);
@@ -1353,6 +1477,11 @@ function startTurn(text, images, tabs = null) {
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []); // "3 tabs attached: …"
   bubbleAsks.set(bubble, { text, images, tabs });
+  return bubble;
+}
+function startTurn(text, images, tabs = null) {
+  loadStepUI();
+  const bubble = userBubble(text, images, tabs);
   dropReplyActions(); // only the latest reply can be regenerated
   for (const b of messages.querySelectorAll('.notice-continue')) b.remove(); // (a Continue left under an earlier reply)
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.(); // (an edit left open)
@@ -1360,7 +1489,9 @@ function startTurn(text, images, tabs = null) {
   const versions = pendingVersions;
   pendingVersions = null;
   markEditable(bubble, { at: Date.now(), versions });
+  setMark(bubble, 'sent');
   beginTurn();
+  turn.userBubble = bubble;
   turn.versions = versions; // (a Regenerate: the switch goes on its reply, see labelReply)
 }
 
@@ -1386,7 +1517,7 @@ function beginTurn() {
   working.className = 'working';
   working.setAttribute('role', 'status');
   working.setAttribute('aria-label', t('chat.thinking'));
-  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
+  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null, startedAt: Date.now() };
   setRunning(true);
 }
 
@@ -1398,6 +1529,7 @@ function resumeLive(live) {
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
   // Waiting for a free slot (features/tab-chats.js): its message is not in the saved chat yet, so it is shown here.
   if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
+  if (!turn.userBubble && lastUser) { turn.userBubble = lastUser; setMark(lastUser, live.partial ? 'read' : 'sent'); } // (a chat opened mid-run: its last message)
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
@@ -1414,7 +1546,8 @@ function resumeLive(live) {
 function moveWorkingToEnd() {
   const w = turn?.working;
   if (!w) return;
-  const firstQueued = messages.querySelector(':scope > .notice.queued'); // (they stay under it)
+  runPill.sync();
+  const firstQueued = messages.querySelector(QUEUED); // (they stay under it)
   if (firstQueued) { if (w.nextElementSibling !== firstQueued) firstQueued.before(w); }
   else if (messages.lastElementChild !== w) messages.append(w);
 }
@@ -1627,6 +1760,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
   if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
+  if (turn.userBubble && window.chatQueue.countsAsRead(event.type)) setMark(turn.userBubble, 'read'); // (the AI took the message up)
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
@@ -1916,13 +2050,15 @@ function finishTurn(event, { early }) {
     aiTabsRunId = event.runId;
     if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId); // [ai manners] extras.js
   }
-  const stoppedByUser = Boolean(turn.stopRequested && !turn.interrupted);
+  // After Stop, or a reply that failed, the waiting messages are not sent on their own: they come back to the box (below).
+  const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
   finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
-  // After Stop the waiting messages are not sent on their own (the user just said stop): they come back to the box as a draft, to send or edit.
-  if (stoppedByUser) queuedToDraft(); else setTimeout(sendQueued);
+  // They come back as a draft, to send or edit (the user just said stop, or the engine just failed: the next ones would likely fail too).
+  // A question from the new-tab page that waits for a new chat of its own still goes.
+  if (backToBox) { queuedToDraft(); if (line.mine(forOtherChat).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
 }
 
 // [stop always works] The Stop button, Esc and Stop in the toolbar all come here. Main aborts the run (agent.js stop: the engine, its tools and
@@ -1950,8 +2086,9 @@ function stopReply() {
 window.chatStopReply = stopReply;
 // The messages waiting for a reply that was stopped come back to the box (as clearChatView does for a chat that was left).
 function queuedToDraft() {
-  const mine = queued.filter((q) => !q.fresh && !forOtherChat(q.chatId));
-  for (const q of mine) { queued.splice(queued.indexOf(q), 1); q.notice.remove(); }
+  const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
+  for (const q of mine) q.bubble.remove();
+  renderQueue();
   if (!mine.some((q) => q.text || q.images?.length)) return;
   const texts = mine.map((q) => q.text).filter(Boolean);
   if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
@@ -2786,6 +2923,7 @@ function drawItems(items, userEntries, replyEntries) {
       if (item.text) bubble.append(document.createTextNode(item.text));
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
+      if (item.read) setMark(bubble, 'read'); // (a chat saved before the marks existed shows none)
       userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length || item.outFiles?.length)) {
       const fileCards = () => { // [ai files] the file cards of a restored reply, under it
@@ -2925,15 +3063,19 @@ function applySync(view) {
   // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
+  incomingChatId = view?.id || null;
   clearChatView({ keepBox: sameChat });
+  incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
+  shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)
-  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
-  if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined; // (taken, or the box already has its own)
+  // (Not into a temporary chat: what was typed in a saved chat stays with it, and the temporary one never keeps a draft.)
+  else if (view?.id && !view.temporary && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
+  if (emptyOwner !== undefined && view?.id && !view.temporary && !view.live && !view.items?.length) emptyOwner = undefined; // (taken, or the box already has its own)
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
     // Kept for now: drawn after the next paint when the view is on screen (the tab strip and the page area come first), or when it is shown.
     lazyItems = view.items;
@@ -2941,6 +3083,7 @@ function applySync(view) {
     if (!viewHidden()) requestAnimationFrame(() => setTimeout(flushLazyHistory, 0));
   } else showHistory(view?.items);
   resumeLive(view?.live);
+  if (!running && line.length) setTimeout(sendQueued); // (the run ended while the view was redrawn, so no 'done' will send what waits)
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
@@ -3144,6 +3287,7 @@ function clearChatView({ keepBox = false } = {}) {
     pendingOpen = null;
     attachments = [];
     draftHold = true;
+    shownTemporary = false; // (saveDraft above still knew the chat being left; the next one's view says what it is)
     prompt.value = '';
     pastes = [];
     autosize();
@@ -3155,8 +3299,11 @@ function clearChatView({ keepBox = false } = {}) {
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
-  const unsent = queued.splice(0);
-  for (const q of unsent) q.notice.remove();
+  // The same chat drawn again (a sync while a reply runs): what waits in its line stays waiting, put back under the redrawn view.
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId)); // (also when the redraw comes before the chat's first event named it again)
+  const unsent = line.drain();
+  for (const q of unsent) q.bubble.remove();
+  queueBar = null; // (its element goes with the rest of the view)
   // Messages still waiting for the other chat's reply aren't lost: they come back to the box, to send here or not.
   if (unsent.some((q) => q.text || q.images?.length)) {
     const texts = unsent.map((q) => q.text).filter(Boolean);
@@ -3173,6 +3320,8 @@ function clearChatView({ keepBox = false } = {}) {
   $('empty').hidden = false;
   turn = null;
   setRunning(false);
+  for (const q of staying) { messages.append(q.bubble); line.add(q); $('empty').hidden = true; }
+  if (staying.length) renderQueue();
 }
 $('new-chat').onclick = () => {
   window.assistant.reset();

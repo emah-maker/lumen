@@ -30,9 +30,28 @@ const ENV_EXAMPLE = /^\.env\.(example|sample|template)$/i;
 // The folder names the model may use as a shorthand: "desktop", "downloads", ... ("phone": the phone inbox, features/phone-inbox.js)
 const NAMED = { desktop: 'Desktop', downloads: 'Downloads', phone: 'Downloads/From phone', documents: 'Documents', pictures: 'Pictures', movies: 'Movies', videos: 'Videos', music: 'Music', home: '' };
 
+// Shorthands whose folder the system (or the user, for downloads) may have moved: OneDrive "Known Folder Move" puts Desktop and Documents under
+// the OneDrive folder, so ~/Desktop is not there. opts.known(name) answers with the real folder; '' / a throw / a relative answer means
+// "ask the home folder", the old rule.
+const KNOWN_NAME = { desktop: 'desktop', downloads: 'downloads', documents: 'documents', pictures: 'pictures', movies: 'videos', videos: 'videos', music: 'music' };
+function knownFolder(name, known) {
+  if (typeof known !== 'function') return '';
+  try { const dir = known(name); return typeof dir === 'string' && dir && !dir.includes('\0') && path.isAbsolute(dir) ? path.normalize(dir) : ''; } catch { return ''; }
+}
+
+// Builds opts.known for the app: getPath is Electron's app.getPath, downloadDir the "Downloads folder" setting (it wins for downloads). The
+// phone inbox sits under the system Downloads folder (main.js phoneInbox), not under the setting.
+function makeKnown({ getPath, downloadDir } = {}) {
+  return (name) => {
+    if (name === 'downloads') { const dir = knownFolder('downloads', downloadDir); if (dir) return dir; }
+    if (name === 'phone') return path.join(getPath('downloads'), 'From phone');
+    return getPath(name);
+  };
+}
+
 // An absolute, normalized path for what the model wrote: "~/Desktop/a.png", "/Users/me/a.png", "file:///Users/me/a.png",
 // "Desktop/a.png" or "desktop" (relative ones are under the home folder). Throws on anything else.
-function resolvePath(raw, { home = os.homedir() } = {}) {
+function resolvePath(raw, { home = os.homedir(), known } = {}) {
   let text = String(raw ?? '').trim().replace(/^["']|["']$/g, '');
   if (!text) throw new DeviceAccessError('No path was given.');
   if (/^file:/i.test(text)) {
@@ -43,7 +62,10 @@ function resolvePath(raw, { home = os.homedir() } = {}) {
   if (/^\\\\|^\/\/[^/]/.test(text)) throw new DeviceAccessError('Network paths are not used.');
   const key = text.toLowerCase();
   const named = Object.hasOwn(NAMED, key) ? NAMED[key] : undefined;
-  if (named !== undefined) return path.join(home, named);
+  if (named !== undefined) {
+    const moved = key === 'phone' ? knownFolder('phone', known) : KNOWN_NAME[key] ? knownFolder(KNOWN_NAME[key], known) : '';
+    return moved || path.join(home, named);
+  }
   if (text === '~') return home;
   if (text.startsWith('~/') || text.startsWith('~\\')) text = path.join(home, text.slice(2));
   else if (!path.isAbsolute(text)) text = path.join(home, text);
@@ -59,6 +81,18 @@ function blockedReason(abs, { home = os.homedir(), profile = '' } = {}) {
   const base = path.basename(abs);
   if (SECRET_FILE.test(base) && !ENV_EXAMPLE.test(base)) return `${base} looks like a credentials file, which the AI never reads.`;
   return '';
+}
+
+// The folders a search of "desktop, documents and downloads" covers, as real folders: a redirected one that is itself out of bounds (it points
+// into a credentials folder or Lumen's profile) is left out.
+function searchRoots(names, opts = {}) {
+  const roots = [];
+  for (const n of names) {
+    const abs = resolvePath(n, opts);
+    try { if (blockedReason(abs, opts) || blockedReason(fs.realpathSync(abs), opts)) continue; } catch { /* missing: the scan skips it */ }
+    roots.push(abs);
+  }
+  return roots;
 }
 
 // The real path (links followed) of an existing file or folder the AI may use. kind: 'file' | 'dir'.
@@ -136,4 +170,4 @@ function clipboardText(text) {
   return `<untrusted_page_content>\n${cut}\n</untrusted_page_content>`;
 }
 
-module.exports = { DeviceAccessError, OFF_TEXT, MAX_LIST, MAX_CLIP_CHARS, resolvePath, blockedReason, checkedPath, shown, nameMatcher, listFiles, clipboardText };
+module.exports = { DeviceAccessError, OFF_TEXT, MAX_LIST, MAX_CLIP_CHARS, resolvePath, makeKnown, searchRoots, blockedReason, checkedPath, shown, nameMatcher, listFiles, clipboardText };

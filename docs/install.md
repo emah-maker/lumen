@@ -49,11 +49,21 @@ You only install Lumen once. After that it updates itself:
 
 1. Shortly after it starts, and every few hours, Lumen checks the latest release.
 2. It downloads the new version in the background ("Downloading Lumen v…") and checks it against the hash in `latest.yml` / `latest-mac.yml`.
-3. The toolbar shows **Restart to update**. Click it: Lumen restarts on the new version with your tabs. Your settings, chats and bookmarks are not touched.
+3. The toolbar shows "Lumen v… is ready: installs when you quit" with **Restart to update**. Click it: Lumen restarts on the new version with your tabs. Your settings, chats and bookmarks are not touched. If you just quit instead, the update installs as Lumen closes (and Lumen is not reopened).
 
 **Settings → About Lumen → Updates** shows the current version and has **Check for updates**. Turn off **Download updates automatically** there to be asked first.
 
 A copy that can't replace itself (a per-machine install under Program Files, for example) shows **Lumen v… is available** with a **Download** button instead. Lumen 0.2.4 and earlier have no updater: download a newer version by hand once.
+
+## If an update is interrupted
+
+On Windows the update swaps the install folder (for example `Lumen`) for the new one in two quick steps. While it does, a small `Lumen.swap.journal` file sits next to the install folder, and it is deleted when the swap is done. If Windows ended the swap part-way (a logoff or shutdown right as you quit), the next time Lumen starts it reads that file and either finishes the update or puts the old version back, and Settings says so. You don't need to do anything.
+
+If Lumen won't start at all and the install folder is gone, look in the folder that held it (by default `%LOCALAPPDATA%\Programs`):
+
+- If `Lumen.update\files` holds `Lumen.exe`, rename that `files` folder to `Lumen` and move it next to `Lumen.update`. That is the new version.
+- Otherwise rename `Lumen.old` to `Lumen`. That is the version you had.
+- Delete `Lumen.swap.journal` afterwards. Your settings, chats and bookmarks live elsewhere and are never touched.
 
 ## Troubleshooting
 

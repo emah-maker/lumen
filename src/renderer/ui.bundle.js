@@ -3236,6 +3236,88 @@ else globalThis.screenIntent = api;
   else root.agentPill = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
+// ---- chat-queue.js
+
+
+
+
+
+
+(function (root) {
+  const ORDER = { queued: 0, sent: 1, read: 2 };
+  const isStatus = (s) => Object.prototype.hasOwnProperty.call(ORDER, s);
+
+  function advance(current, next) {
+    if (!isStatus(next)) return isStatus(current) ? current : null;
+    if (!isStatus(current)) return next;
+    return ORDER[next] > ORDER[current] ? next : current;
+  }
+
+  const READ_EVENTS = new Set(['text', 'thinking', 'tool', 'desktop_card', 'helper_card', 'plan', 'approval']);
+  const countsAsRead = (type) => READ_EVENTS.has(type);
+
+
+  function ordinal(n) {
+    const v = Math.abs(Math.trunc(n)) % 100;
+    const suffix = v >= 11 && v <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[v % 10] || 'th');
+    return `${n}${suffix}`;
+  }
+
+
+  function create() {
+    const list = [];
+    return {
+      list,
+      get length() { return list.length; },
+      add(entry) { list.push(entry); return entry; },
+      has(entry) { return list.includes(entry); },
+      remove(entry) { const i = list.indexOf(entry); if (i === -1) return false; list.splice(i, 1); return true; },
+
+      mine(other) { return list.filter((q) => !other(q.chatId)); },
+
+      take(other) { const i = list.findIndex((q) => !other(q.chatId)); return i === -1 ? null : list.splice(i, 1)[0]; },
+
+      promote(entry) { const i = list.indexOf(entry); if (i === -1) return false; if (i > 0) { list.splice(i, 1); list.unshift(entry); } return true; },
+
+      place(entry, other) { const i = this.mine(other).indexOf(entry); return i + 1; },
+      drain(pred = () => true) { const out = list.filter(pred); for (const q of out) list.splice(list.indexOf(q), 1); return out; },
+    };
+  }
+
+
+  const mergeable = (q) => Boolean(q) && !q.fresh && !q.opts && (q.text || q.images?.length);
+
+
+  function merge(entries, maxAttach = 8) {
+    const parts = entries.filter(mergeable);
+    if (parts.length < 2) return null;
+    const ids = [...new Set(parts.flatMap((q) => q.tabs?.ids || []))];
+    const names = [...new Set(parts.flatMap((q) => q.tabs?.names || []))];
+    const gone = [...new Set(parts.flatMap((q) => q.tabs?.gone || []))];
+    return {
+      text: parts.map((q) => q.text).filter(Boolean).join('\n\n'),
+      images: parts.flatMap((q) => q.images || []).slice(0, maxAttach),
+      tabs: ids.length || gone.length ? { ids, names, gone } : null,
+      screen: parts.map((q) => q.screen).find(Boolean),
+      chatId: parts[0].chatId,
+      merged: parts,
+    };
+  }
+
+
+
+  function pillSide(card, view, margin = 0) {
+    if (!card || !view) return null;
+    if (card.bottom < view.top + margin) return 'top';
+    if (card.top > view.bottom - margin) return 'bottom';
+    return null;
+  }
+
+  const api = { advance, countsAsRead, ordinal, create, merge, mergeable, pillSide, STATUSES: Object.keys(ORDER) };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.chatQueue = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- tab-marker.js
 
 
@@ -3935,6 +4017,12 @@ const prompt = $('prompt');
 const send = $('send');
 let running = false;
 
+const line = window.chatQueue.create();
+const queued = line.list;
+const QUEUED = ':scope > .queued';
+let queueBar = null;
+let incomingChatId = null;
+
 
 let shownChatId = null;
 const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
@@ -3948,7 +4036,14 @@ const drafts = (() => { try { return window.chatDrafts.create(window.localStorag
 let pastes = [];
 let draftHold = true;
 let emptyOwner;
-const saveDraft = () => { if (!draftHold) drafts?.set(shownChatId, { text: prompt.value, pastes }); };
+let shownTemporary = false;
+const tempChatShown = () => shownTemporary || Boolean(window.chatPageTools?.isTemporary?.());
+
+const saveDraft = () => {
+  if (draftHold) return;
+  if (tempChatShown()) { if (shownChatId) drafts?.clear(shownChatId); return; }
+  drafts?.set(shownChatId, { text: prompt.value, pastes });
+};
 
 prompt.addEventListener('blur', () => saveDraft());
 window.addEventListener('pagehide', () => saveDraft());
@@ -4028,7 +4123,8 @@ function applyView() {
 }
 function restoreDraft() {
   draftHold = false;
-  const d = drafts?.get(shownChatId);
+  if (tempChatShown() && shownChatId) drafts?.clear(shownChatId);
+  const d = tempChatShown() ? null : drafts?.get(shownChatId);
   if (d) {
     const carried = prompt.value.trim();
     prompt.value = [d.text.replace(/\s+$/, ''), carried].filter(Boolean).join('\n');
@@ -4076,6 +4172,69 @@ jump.addEventListener('click', () => {
   jump.hidden = true;
 });
 messages.after(jump);
+
+
+const runPill = (() => {
+  const pill = Object.assign(document.createElement('div'), { className: 'run-pill', hidden: true });
+  pill.setAttribute('role', 'group');
+  pill.setAttribute('aria-label', t('runpill.label'));
+  const main = Object.assign(document.createElement('button'), { type: 'button', className: 'run-pill-main', title: t('runpill.show') });
+  const icon = Object.assign(document.createElement('span'), { className: 'run-pill-ico' });
+  icon.setAttribute('aria-hidden', 'true');
+  const text = Object.assign(document.createElement('span'), { className: 'run-pill-text' });
+  const time = Object.assign(document.createElement('span'), { className: 'run-pill-time' });
+  main.append(icon, text, time);
+  const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'run-pill-stop', textContent: t('composer.stop.short'), title: t('composer.stop') });
+  pill.append(main, stop);
+  messages.after(pill);
+  let card = null;
+  let side = null;
+  let io = null;
+  let mo = null;
+  let tickTimer = 0;
+  const working = () => ['working', 'approval'].includes(card?.el.dataset.state);
+  function paint() {
+    if (!card) return;
+    if (icon.dataset.k !== card.icon.dataset.k) { icon.dataset.k = card.icon.dataset.k || ''; icon.innerHTML = card.icon.innerHTML; }
+    const label = card.statusText.textContent || card.title.textContent || '';
+    if (text.textContent !== label) { text.textContent = label; main.setAttribute('aria-label', label + '. ' + t('runpill.show')); }
+    const s = turn?.startedAt ? Math.max(0, Math.floor((Date.now() - turn.startedAt) / 1000)) : 0;
+    const secs = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    if (time.textContent !== secs) time.textContent = secs;
+  }
+  function tick() { tickTimer = 0; if (side) { paint(); tickTimer = setTimeout(tick, 1000); } }
+  function show(next) {
+    if (next === side) return;
+    side = next;
+    pill.hidden = !next;
+    if (!next) { clearTimeout(tickTimer); tickTimer = 0; return; }
+    pill.dataset.side = next;
+    pill.style.top = next === 'top' ? (messages.offsetTop + 8) + 'px' : '';
+    paint();
+    if (!tickTimer) tickTimer = setTimeout(tick, 1000);
+  }
+  function watch(next) {
+    if (next === card) return;
+    io?.disconnect();
+    mo?.disconnect();
+    io = mo = null;
+    card = next;
+    show(null);
+    if (!card || typeof IntersectionObserver !== 'function') return;
+    io = new IntersectionObserver((list) => {
+      const e = list[list.length - 1];
+      if (!e || !card || e.target !== card.el) return;
+      const r = e.boundingClientRect;
+      show(e.isIntersecting || !e.rootBounds || (!r.width && !r.height) || !working() ? null : window.chatQueue.pillSide(r, e.rootBounds));
+    }, { root: messages });
+    io.observe(card.el);
+    mo = new MutationObserver(() => { if (!working()) show(null); else if (side) paint(); });
+    mo.observe(card.statusText, { childList: true, characterData: true, subtree: true });
+  }
+  main.onclick = () => { if (card) card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+  stop.onclick = () => stopReply();
+  return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
+})();
 for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true });
 messages.addEventListener('scroll', () => {
   if (Date.now() - jumping < 700) { stuck = true; return; }
@@ -4100,7 +4259,7 @@ function append(el, { force = false } = {}) {
   flushLazyHistory();
   $('empty').hidden = true;
 
-  const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(':scope > .notice.queued');
+  const firstQueued = el.classList?.contains('queued') ? null : messages.querySelector(QUEUED);
   if (firstQueued) firstQueued.before(el);
   else messages.append(el);
   scrollToBottom(force);
@@ -4132,6 +4291,7 @@ function setRunning(value) {
   running = value;
   if (!value) agentTarget = null;
   renderWorkingIn();
+  runPill.sync();
   document.body.classList.toggle('agent-active', value);
   chatHost.running?.(value);
   for (const x of messages.querySelectorAll('.msg-screen-x')) x.disabled = value;
@@ -4504,10 +4664,38 @@ sidebarEl.addEventListener('drop', async (e) => {
 
 
 
-const queued = [];
+
+function queueUp(entry) {
+  const bubble = userBubble(entry.text, entry.images, entry.tabs);
+  bubble.className = 'queued-bubble queued';
+  entry.label = Object.assign(document.createElement('span'), { className: 'queue-label' });
+  entry.meta = Object.assign(document.createElement('div'), { className: 'queue-meta' });
+  entry.meta.append(entry.label);
+  bubble.append(entry.meta);
+  entry.bubble = bubble;
+  append(bubble);
+  setMark(bubble, 'queued');
+  line.add(entry);
+  if (!entry.fresh) queueControls(entry);
+  renderQueue();
+  return entry;
+}
+
+function renderQueue() {
+  const mine = line.mine(forOtherChat);
+  mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
+  const several = mine.filter(window.chatQueue.mergeable);
+  if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
+  if (!queueBar) {
+    queueBar = Object.assign(document.createElement('div'), { className: 'queue-bar queued' });
+    queueBar.append(document.createElement('span'), Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendAll'), title: t('chat.queued.sendAll.title'), onclick: sendAllNow }));
+  }
+  queueBar.firstChild.textContent = t('chat.queued.count', { n: several.length });
+  mine[mine.length - 1].bubble.after(queueBar);
+}
 
 function queueControls(entry) {
-  const drop = () => { const i = queued.indexOf(entry); if (i !== -1) queued.splice(i, 1); entry.notice.remove(); };
+  const drop = () => { line.remove(entry); entry.bubble.remove(); renderQueue(); };
   const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
   edit.onclick = () => {
     drop();
@@ -4522,35 +4710,43 @@ function queueControls(entry) {
   cancel.onclick = () => { for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
   const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
   now.onclick = () => sendNow(entry);
-  entry.notice.append(' ', now, edit, cancel);
+  const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
+  actions.append(now, edit, cancel);
+  entry.meta.append(actions);
 }
 
 
 
 function sendNow(entry) {
-  const i = queued.indexOf(entry);
-  if (i === -1) return;
-  if (i > 0) { queued.splice(i, 1); queued.unshift(entry); }
-  const first = messages.querySelector(':scope > .notice.queued');
-  if (first && first !== entry.notice) first.before(entry.notice);
+  if (!line.promote(entry)) return;
+  const first = messages.querySelector(QUEUED);
+  if (first && first !== entry.bubble) first.before(entry.bubble);
+  renderQueue();
   if (!running) return;
-  for (const b of entry.notice.querySelectorAll('.queue-btn')) b.disabled = true;
+  for (const b of entry.bubble.querySelectorAll('.queue-btn')) b.disabled = true;
   if (turn) turn.interrupted = true;
   window.assistant.stop(shownChatId || undefined);
 }
-function sendQueued() {
 
-  const mine = queued.findIndex((q) => !forOtherChat(q.chatId));
-  if (mine === -1) return;
-  const next = queued.splice(mine, 1)[0];
-  next.notice.remove();
+
+function sendAllNow() {
+  const merged = window.chatQueue.merge(line.mine(forOtherChat), MAX_ATTACH);
+  if (!merged) return;
+  for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
+  const { text, images, tabs, screen, chatId } = merged;
+  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId }));
+}
+function sendQueued() {
+  if (running) return;
+
+  const next = line.take(forOtherChat);
+  if (!next) return;
+  next.bubble.remove();
   if (next.fresh) {
 
-
-    const rest = queued.splice(0);
     $('new-chat').click();
-    for (const q of rest) { append(q.notice); queued.push(q); }
   }
+  renderQueue();
   ask(next.text, next.images, next.tabs, next.screen, next.opts);
 }
 
@@ -4568,11 +4764,7 @@ async function askInNewChat(text, files = []) {
     attachments = aside;
     renderAttachments();
   }
-  if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text }) }));
-    queued.push({ text, images, tabs: null, notice, fresh: true, chatId: shownChatId });
-    return;
-  }
+  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: shownChatId }); return; }
   $('new-chat').click();
   ask(text, images);
 }
@@ -4587,13 +4779,7 @@ function askInFreshChat(text) {
 
 
 function ask(text, images = [], tabs = null, screen, opts = null) {
-  if (running) {
-    const notice = append(Object.assign(document.createElement('div'), { className: 'notice queued', textContent: t('chat.queued', { text: text.length > 60 ? `${text.slice(0, 59)}…` : text || t(images.some(isFileItem) ? 'chat.file' : 'chat.image') }) }));
-    const entry = { text, images, tabs, screen, opts, notice, chatId: shownChatId };
-    queued.push(entry);
-    queueControls(entry);
-    return entry;
-  }
+  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: shownChatId });
 
   if (!modelReady) {
     pendingAsk = { text, images, tabs, screen, at: Date.now() };
@@ -4780,8 +4966,28 @@ function fileChips(files) {
   for (const f of files) row.append(Object.assign(document.createElement('span'), { className: 'msg-file', textContent: `${f.name} · ${fileSize(f.size)}`, title: f.name }));
   return row;
 }
-function startTurn(text, images, tabs = null) {
-  loadStepUI();
+
+
+const MARKS = {
+  queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6"/><path d="M6 3.5V6l1.7 1"/></svg>',
+  sent: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6.4 5 8.8l4.4-5.2"/></svg>',
+  read: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6.5 3.3 8.8 7.5 3.8M5.2 8.3l.5.5 4.7-5.3"/></svg>',
+};
+function setMark(bubble, status) {
+  if (!bubble) return;
+  const next = window.chatQueue.advance(bubble.dataset.st, status);
+  if (!next || next === bubble.dataset.st) return;
+  bubble.dataset.st = next;
+  let mark = bubble.querySelector(':scope > .msg-status');
+  if (!mark) { mark = document.createElement('span'); mark.className = 'msg-status'; bubble.append(mark); }
+  const label = t('chat.mark.' + next);
+  mark.innerHTML = MARKS[next];
+  mark.title = label;
+  mark.setAttribute('role', 'img');
+  mark.setAttribute('aria-label', label);
+}
+
+function userBubble(text, images, tabs = null) {
   const bubble = document.createElement('div');
   bubble.className = 'msg user';
   const pictures = imageItems(images);
@@ -4802,6 +5008,11 @@ function startTurn(text, images, tabs = null) {
   if (text) bubble.append(document.createTextNode(text));
   if (tabs?.ids?.length) window.tabsAsk?.describeSent(bubble, tabs.names || []);
   bubbleAsks.set(bubble, { text, images, tabs });
+  return bubble;
+}
+function startTurn(text, images, tabs = null) {
+  loadStepUI();
+  const bubble = userBubble(text, images, tabs);
   dropReplyActions();
   for (const b of messages.querySelectorAll('.notice-continue')) b.remove();
   for (const b of messages.querySelectorAll('.msg.user.editing')) b.cancelEdit?.();
@@ -4809,7 +5020,9 @@ function startTurn(text, images, tabs = null) {
   const versions = pendingVersions;
   pendingVersions = null;
   markEditable(bubble, { at: Date.now(), versions });
+  setMark(bubble, 'sent');
   beginTurn();
+  turn.userBubble = bubble;
   turn.versions = versions;
 }
 
@@ -4835,7 +5048,7 @@ function beginTurn() {
   working.className = 'working';
   working.setAttribute('role', 'status');
   working.setAttribute('aria-label', t('chat.thinking'));
-  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null };
+  turn = { text: null, textSource: '', seg: null, working: append(working), steps: new Map(), cards: [], card: null, plain: null, startedAt: Date.now() };
   setRunning(true);
 }
 
@@ -4847,6 +5060,7 @@ function resumeLive(live) {
   if (askOf(lastUser)) lastAsk = askOf(lastUser);
 
   if (live.queued && live.queued.text && askOf(lastUser)?.text !== live.queued.text) { lastAsk = { text: live.queued.text, images: [], tabs: null }; startTurn(live.queued.text, []); } else beginTurn();
+  if (!turn.userBubble && lastUser) { turn.userBubble = lastUser; setMark(lastUser, live.partial ? 'read' : 'sent'); }
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
@@ -4863,7 +5077,8 @@ function resumeLive(live) {
 function moveWorkingToEnd() {
   const w = turn?.working;
   if (!w) return;
-  const firstQueued = messages.querySelector(':scope > .notice.queued');
+  runPill.sync();
+  const firstQueued = messages.querySelector(QUEUED);
   if (firstQueued) { if (w.nextElementSibling !== firstQueued) firstQueued.before(w); }
   else if (messages.lastElementChild !== w) messages.append(w);
 }
@@ -5076,6 +5291,7 @@ window.assistant.onEvent((event) => {
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; }
   if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
+  if (turn.userBubble && window.chatQueue.countsAsRead(event.type)) setMark(turn.userBubble, 'read');
   switch (event.type) {
     case 'turn_start':
     case 'text_block':
@@ -5365,13 +5581,15 @@ function finishTurn(event, { early }) {
     aiTabsRunId = event.runId;
     if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, event.aiTabs, event.runId);
   }
-  const stoppedByUser = Boolean(turn.stopRequested && !turn.interrupted);
+
+  const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
   finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
 
-  if (stoppedByUser) queuedToDraft(); else setTimeout(sendQueued);
+
+  if (backToBox) { queuedToDraft(); if (line.mine(forOtherChat).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
 }
 
 
@@ -5399,8 +5617,9 @@ function stopReply() {
 window.chatStopReply = stopReply;
 
 function queuedToDraft() {
-  const mine = queued.filter((q) => !q.fresh && !forOtherChat(q.chatId));
-  for (const q of mine) { queued.splice(queued.indexOf(q), 1); q.notice.remove(); }
+  const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
+  for (const q of mine) q.bubble.remove();
+  renderQueue();
   if (!mine.some((q) => q.text || q.images?.length)) return;
   const texts = mine.map((q) => q.text).filter(Boolean);
   if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
@@ -6235,6 +6454,7 @@ function drawItems(items, userEntries, replyEntries) {
       if (item.text) bubble.append(document.createTextNode(item.text));
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
+      if (item.read) setMark(bubble, 'read');
       userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length || item.outFiles?.length)) {
       const fileCards = () => {
@@ -6374,15 +6594,19 @@ function applySync(view) {
 
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
+  incomingChatId = view?.id || null;
   clearChatView({ keepBox: sameChat });
+  incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
+  shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null;
   window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
 
-  else if (view?.id && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
-  if (emptyOwner !== undefined && view?.id && !view.live && !view.items?.length) emptyOwner = undefined;
+
+  else if (view?.id && !view.temporary && !view.live && !view.items?.length && emptyOwner !== undefined && emptyOwner !== view.id && !drafts?.get(view.id)) { drafts?.rename(emptyOwner, view.id); stashRename(emptyOwner, view.id); }
+  if (emptyOwner !== undefined && view?.id && !view.temporary && !view.live && !view.items?.length) emptyOwner = undefined;
   if (!view?.live && Array.isArray(view?.items) && view.items.length) {
 
     lazyItems = view.items;
@@ -6390,6 +6614,7 @@ function applySync(view) {
     if (!viewHidden()) requestAnimationFrame(() => setTimeout(flushLazyHistory, 0));
   } else showHistory(view?.items);
   resumeLive(view?.live);
+  if (!running && line.length) setTimeout(sendQueued);
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view);
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.();
@@ -6593,6 +6818,7 @@ function clearChatView({ keepBox = false } = {}) {
     pendingOpen = null;
     attachments = [];
     draftHold = true;
+    shownTemporary = false;
     prompt.value = '';
     pastes = [];
     autosize();
@@ -6604,8 +6830,11 @@ function clearChatView({ keepBox = false } = {}) {
   lastAsk = null;
   for (const id of [...approvals.keys()]) resolveApproval(id, false);
   approvals.clear();
-  const unsent = queued.splice(0);
-  for (const q of unsent) q.notice.remove();
+
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId));
+  const unsent = line.drain();
+  for (const q of unsent) q.bubble.remove();
+  queueBar = null;
 
   if (unsent.some((q) => q.text || q.images?.length)) {
     const texts = unsent.map((q) => q.text).filter(Boolean);
@@ -6622,6 +6851,8 @@ function clearChatView({ keepBox = false } = {}) {
   $('empty').hidden = false;
   turn = null;
   setRunning(false);
+  for (const q of staying) { messages.append(q.bubble); line.add(q); $('empty').hidden = true; }
+  if (staying.length) renderQueue();
 }
 $('new-chat').onclick = () => {
   window.assistant.reset();

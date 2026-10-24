@@ -221,8 +221,8 @@ const fakeModel = (app) => app.evaluate(() => {
   await waitFor(async () => (await active()) === tY);
   await sleep(300);
   await send('chat-QB: go');
-  check('the first message in a new tab is sent at once while another chat runs (not queued behind it)', Boolean(await waitFor(() => tc(() => global.__inflight.has('QB')), 4000)), `${await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)} queued`);
-  check('... and shows no queued notice', (await ui.evaluate(() => document.querySelectorAll('#messages .notice.queued').length)) === 0, '');
+  check('the first message in a new tab is sent at once while another chat runs (not queued behind it)', Boolean(await waitFor(() => tc(() => global.__inflight.has('QB')), 4000)), `${await ui.evaluate(() => document.querySelectorAll('#messages .queued-bubble').length)} queued`);
+  check('... and shows no queued notice', (await ui.evaluate(() => document.querySelectorAll('#messages .queued-bubble').length)) === 0, '');
   await tc(() => { global.__release('QA'); global.__release('QB'); });
   await waitFor(() => tc(() => global.__tabChats.runs().length === 0), 15000);
   check('X ending does not leave Y stuck running', await waitFor(async () => !(await busy()), 6000), 'still busy');

@@ -130,7 +130,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('automatic downloads off: 9.9.9 waits for "Download"', r.action === 'Download' && (await app.evaluate(() => global.__stager.staged)) === 0, JSON.stringify(r));
   check('the toolbar says it is available', (await waitFor(() => pill(ui))) === 'Lumen 9.9.9 is available | Download', await pill(ui));
   await ui.click('#update-action');
-  check('Download stages the zip in the background, then offers the restart', (await waitFor(async () => (await pill(ui)) === 'Lumen 9.9.9 is ready | Restart to update')) === true && (await app.evaluate(() => global.__stager.staged)) === 1, await pill(ui));
+  check('Download stages the zip in the background, then offers the restart', (await waitFor(async () => (await pill(ui)) === 'Lumen 9.9.9 is ready: installs when you quit | Restart to update')) === true && (await app.evaluate(() => global.__stager.staged)) === 1, await pill(ui));
   check('no manual download for a copy that swaps itself', (await app.evaluate(() => global.__manualDownloads.length)) === 1, 'manual');
   await ui.click('#update-dismiss');
   check('closing the prompt hides it', (await waitFor(async () => (await pill(ui)) === null)) === true, await pill(ui));
@@ -142,7 +142,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await inTab(id, "document.getElementById('pref-autoDownloadUpdates').click()");
   await waitFor(() => app.evaluate(() => global.__settings.backend.prefs().autoDownloadUpdates === true));
   await app.evaluate(() => global.__updates.check());
-  check('automatic downloads on: the prompt appears once the update is ready', (await waitFor(async () => (await pill(ui)) === 'Lumen 10.0.0 is ready | Restart to update')) === true, await pill(ui));
+  check('automatic downloads on: the prompt appears once the update is ready', (await waitFor(async () => (await pill(ui)) === 'Lumen 10.0.0 is ready: installs when you quit | Restart to update')) === true, await pill(ui));
   await app.evaluate((_e, url) => global.__agent.browser.openTab(url), `${base}/keep-me`);
   // Wait for the page itself, not a fixed time: under load the tab can take longer to commit.
   await waitFor(() => app.evaluate(() => global.__agent.browser.listTabs().some((t) => String(t.url).endsWith('/keep-me'))));

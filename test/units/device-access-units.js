@@ -71,7 +71,7 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     const names = EXTERNAL_TOOLS.map((t) => t.name);
     check('drag, list_files and clipboard are listed to every engine and MCP client', ['drag', 'list_files', 'clipboard'].every((n) => names.includes(n)), J(names));
     const up = EXTERNAL_TOOLS.find((t) => t.name === 'upload_file');
-    check('upload_file lists paths and still needs only element_id', Boolean(up.input_schema.properties.paths) && J(up.input_schema.required) === '["element_id"]');
+    check('upload_file lists paths and needs no element_id (open or a field search take its place)', Boolean(up.input_schema.properties.paths) && Boolean(up.input_schema.properties.open) && !up.input_schema.required);
     check('short descriptions (every message pays for them)', EXTERNAL_TOOLS.filter((t) => ['drag', 'list_files', 'clipboard'].includes(t.name)).every((t) => t.description.length < 220));
     check('drag needs a from and a to', /from_id|from_x/.test(validateInput('drag', { to_id: 3 }) || '') && /to_id|to_x/.test(validateInput('drag', { from_id: 3 }) || '') && validateInput('drag', { from_id: 1, to_x: 3, to_y: 4 }) === null, J([validateInput('drag', { to_id: 3 }), validateInput('drag', { from_id: 1, to_x: 3, to_y: 4 })]));
     check('clipboard needs read or write', validateInput('clipboard', { action: 'read' }) === null && Boolean(validateInput('clipboard', { action: 'erase' })) && Boolean(validateInput('clipboard', {})));
@@ -210,6 +210,48 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
       check('a home behind a link: a link into its ~/.ssh is judged by where it goes', /credentials/.test(String(throws(() => D.checkedPath(path.join(linkHome, 'Documents', 'notes.txt'), 'file', { home: linkHome })))), throws(() => D.checkedPath(path.join(linkHome, 'Documents', 'notes.txt'), 'file', { home: linkHome })));
       check('a home behind a link: ~/.ssh itself is refused too', /credentials/.test(String(throws(() => D.checkedPath(path.join(linkHome, '.ssh', 'id_notes.txt'), 'file', { home: linkHome })))));
     } catch (e) { console.log(`SKIP  a home behind a link (${e.code || e.message})`); } // (no right to make a file link on this machine)
+  }
+
+  { // redirected known folders (OneDrive Known Folder Move): "desktop" and friends follow opts.known; the block list still judges the real place
+    const od = path.join(home, 'OneDrive - School');
+    const odDesktop = path.join(od, 'Desktop');
+    fs.mkdirSync(odDesktop, { recursive: true });
+    fs.mkdirSync(path.join(od, 'Documents'), { recursive: true });
+    fs.writeFileSync(path.join(odDesktop, 'moved.png'), 'x');
+    const known = (name) => ({ desktop: odDesktop, documents: path.join(od, 'Documents'), downloads: path.join(home, 'Elsewhere'), videos: path.join(od, 'Videos') })[name] || '';
+    const ko = { ...opts, known };
+    const r = (raw, o = ko) => D.resolvePath(raw, o);
+    check('known: desktop, documents and downloads shorthands use the resolver', r('desktop') === odDesktop && r('Documents') === path.join(od, 'Documents') && r('downloads') === path.join(home, 'Elsewhere'), J([r('desktop'), r('documents'), r('downloads')]));
+    check('known: movies and videos both ask for videos', r('movies') === path.join(od, 'Videos') && r('videos') === path.join(od, 'Videos'));
+    check('known: a name the resolver has no answer for falls back to home', r('pictures') === path.join(home, 'Pictures') && r('music') === path.join(home, 'Music') && r('home') === home && r('phone') === path.join(home, 'Downloads', 'From phone'));
+    check('known: explicit ~/Desktop paths are not rewritten', r('~/Desktop/a.png') === path.join(home, 'Desktop/a.png'));
+    check('fallback: no resolver, or one that throws or answers with junk, means the home folder', r('desktop', opts) === path.join(home, 'Desktop') && r('desktop', { ...opts, known: () => { throw new Error('no'); } }) === path.join(home, 'Desktop') && ['', null, 7, 'relative/dir', `${home}${String.fromCharCode(0)}x`].every((v) => r('desktop', { ...opts, known: () => v }) === path.join(home, 'Desktop')));
+    check('known: list_files on "desktop" lists the redirected folder, shown under the home folder', /OneDrive - School\/Desktop[^]*moved\.png/.test(D.listFiles({ folder: 'desktop' }, ko)), D.listFiles({ folder: 'desktop' }, ko));
+    check('known: without the resolver the same call says the home Desktop is missing only when it is', /shots/.test(D.listFiles({ folder: 'desktop' }, opts)));
+    // a folder redirected somewhere off limits stays off limits
+    const toSsh = { ...opts, known: (n) => (n === 'documents' ? path.join(home, '.ssh') : n === 'downloads' ? profile : '') };
+    check('blocklist: a known folder that is ~/.ssh is refused', /credentials/.test(String(throws(() => D.listFiles({ folder: 'documents' }, toSsh)))));
+    check('blocklist: a known folder that is Lumen\'s profile is refused', /profile/.test(String(throws(() => D.checkedPath('downloads', 'dir', toSsh)))));
+    try { // (a link needs a right some machines do not give)
+      fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(odDesktop, 'link.png'));
+      check('blocklist: a file in a redirected folder that is a link into ~/.ssh is refused', /credentials/.test(String(throws(() => D.checkedPath(path.join(odDesktop, 'link.png'), 'file', ko)))));
+      check('blocklist: and list_files leaves that link out', !/link.png/.test(D.listFiles({ folder: 'desktop' }, ko)));
+    } catch (e) { console.log(`SKIP  a link in a redirected folder (${e.code || e.message})`); }
+    const roots = D.searchRoots(['desktop', 'documents', 'downloads'], toSsh);
+    check('searchRoots: a redirected root that is off limits is dropped, the others kept', roots.length === 1 && roots[0] === path.join(home, 'Desktop'), J(roots));
+    check('searchRoots: the usual folders (no resolver) are all kept', D.searchRoots(['desktop', 'downloads'], opts).length === 2);
+    // makeKnown: the app's resolver
+    const calls = [];
+    const mk = D.makeKnown({ getPath: (n) => { calls.push(n); return path.join(od, n); }, downloadDir: () => path.join(home, 'MyDownloads') });
+    check('makeKnown: the Downloads setting wins for downloads, Electron answers the rest', mk('downloads') === path.join(home, 'MyDownloads') && mk('desktop') === path.join(od, 'desktop') && !calls.includes('downloads'), J(calls));
+    const mk2 = D.makeKnown({ getPath: (n) => path.join(od, n), downloadDir: () => '' });
+    check('makeKnown: an empty Downloads setting means the system Downloads folder; phone sits under the system one', mk2('downloads') === path.join(od, 'downloads') && mk2('phone') === path.join(od, 'downloads', 'From phone'));
+    const mk3 = D.makeKnown({ getPath: (n) => { throw new Error(`no ${n}`); } });
+    check('makeKnown: a folder the system lacks falls back through resolvePath to home', D.resolvePath('music', { home, known: mk3 }) === path.join(home, 'Music') && D.resolvePath('downloads', { home, known: D.makeKnown({ getPath: () => path.join(od, 'x'), downloadDir: () => { throw new Error('x'); } }) }) === path.join(od, 'x'));
+    // the agent passes the resolver to every lookup (and not when a test home is set)
+    const fake = { homeDir: () => undefined, profileDir: () => profile, knownFolder: known };
+    check('agent: deviceOpts carries the resolver, and a test home drops it', Agent.prototype.deviceOpts.call({ browser: fake }).known === known && Agent.prototype.deviceOpts.call({ browser: { ...fake, homeDir: () => home } }).known === undefined);
+    check('main wires knownFolder from app.getPath and the downloadDir setting', /knownFolder: require\('\.\/features\/device-access'\)\.makeKnown\(\{ getPath: \(n\) => app\.getPath\(n\), downloadDir: \(\) => settingsBackend\.downloadDir\(\) \}\)/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8')));
   }
 
   fs.rmSync(home, { recursive: true, force: true });
