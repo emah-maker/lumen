@@ -19,7 +19,7 @@ With **Search past chats** on (the default while Memory is on), the AI can look 
 
 ## Where memory is never used
 
-- **Temporary chats** neither read nor write memory.
+- **Temporary chats** neither read nor write memory, and the text you type in one is never kept as an unsent draft.
 - **Private windows** have no AI sidebar.
 - **Background tasks and routines** don't read or write it.
 - **Outside agents** connected over MCP can't use the `memory` tool.

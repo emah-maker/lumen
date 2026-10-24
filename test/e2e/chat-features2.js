@@ -164,12 +164,20 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await inPage("document.getElementById('cp-more').click(); document.getElementById('cp-temp').click()");
   check('Temporary chat starts an empty chat with a badge and a note', await waitFor(() => inPage("!document.getElementById('cp-temp-badge').hidden && !document.getElementById('cp-temp-note').hidden && document.body.classList.contains('cp-temporary')")), 'no badge');
   check('the header says so', (await inPage("document.getElementById('cp-title').textContent")) === 'Temporary chat');
+  // What is typed in a temporary chat is not kept as a draft either (renderer/chat-core.js saveDraft): not on blur, not when the page goes away.
+  await inPage("(() => { const p = document.getElementById('prompt'); p.focus(); p.value = 'a private draft'; p.dispatchEvent(new Event('input')); p.blur(); window.dispatchEvent(new Event('pagehide')); window.dispatchEvent(new Event('beforeunload')); })()");
+  await sleep(300);
+  check('a temporary chat keeps no draft in storage', !/private draft/.test(String(await inPage("Object.keys(localStorage).filter((k) => k.startsWith('lumen.chatDrafts')).map((k) => localStorage.getItem(k)).join('|')"))), await inPage("localStorage.getItem('lumen.chatDrafts.page')"));
+  await inPage("(() => { const p = document.getElementById('prompt'); p.value = ''; p.dispatchEvent(new Event('input')); })()");
   await send('A secret question');
   await shot('temporary-light');
   check('it answers like any chat', (await replies()) === 1);
   await sleep(1800); // (the save that would have followed the reply)
   check('nothing is saved: not listed, no file written', (await chatList()).length === listBefore && (await app.evaluate(() => global.__chatFiles())) === filesBefore && !(await inPage("document.getElementById('cp-items').textContent.includes('secret')")), JSON.stringify(await chatList()));
+  await inPage("(() => { const p = document.getElementById('prompt'); p.value = 'typed, then left'; p.dispatchEvent(new Event('input')); })()");
   await inPage("document.getElementById('new-chat').click()");
+  await sleep(500);
+  check('leaving a temporary chat with text in the box stores no draft, and the next chat starts empty', !/typed, then left/.test(String(await inPage("Object.keys(localStorage).filter((k) => k.startsWith('lumen.chatDrafts')).map((k) => localStorage.getItem(k)).join('|')"))) && (await inPage("document.getElementById('prompt').value")) === '', await inPage("localStorage.getItem('lumen.chatDrafts.page')"));
   check('New chat leaves it: the badge goes', await waitFor(() => inPage("document.getElementById('cp-temp-badge').hidden && !document.body.classList.contains('cp-temporary')")), 'badge still shown');
   await send('A normal one');
   check('a chat after it is saved as usual', await waitFor(async () => (await chatList()).length === listBefore + 1), JSON.stringify(await chatList()));
