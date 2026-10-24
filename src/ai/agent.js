@@ -66,6 +66,7 @@ const videoBudget = require('./video-budget');
 const tabChats = require('../features/tab-chats'); // [chat per tab] which tab a chat's tools act on
 const pdfInput = require('../features/pdf-input'); // scroll / click_at / press_key on a tab showing the built-in PDF viewer
 const manners = require('../features/ai-manners'); // [ai manners] hands-off mode, the user's focus, tabs the AI opened
+const fs = require('fs');
 const uploadFiles = require('../features/upload-files'); // [uploads] upload_file: files the user attached or picked, put into a page's file field
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
@@ -265,7 +266,7 @@ const TOOLS = [
   },
   {
     name: 'wait_for',
-    description: 'Wait (seconds 1-30) until the tab meets all given: text, url (substring or * glob), gone (text/selector), network_idle, download (returns its path).',
+    description: 'Wait (seconds 1-30) until all given hold: text, url (substring or * glob), gone (text/selector), network_idle, download (its path).',
     input_schema: {
       type: 'object',
       properties: {
@@ -280,12 +281,12 @@ const TOOLS = [
   },
   {
     name: 'verify_changes',
-    description: 'What this run changed in the fields and editors it edited (text, images, tables, items), before and after.',
+    description: 'What this run changed in the fields and editors it edited, before and after.',
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'get_console',
-    description: 'Console messages and errors since the AI first used the tab. Default: warnings+errors.',
+    description: 'Console messages and errors since first use. Default: warnings+errors.',
     input_schema: {
       type: 'object',
       properties: {
@@ -297,7 +298,7 @@ const TOOLS = [
   },
   {
     name: 'get_network',
-    description: 'Requests a tab made (status, host+path, ms) since the AI first used it. No headers or bodies.',
+    description: 'Requests a tab made (status, host+path, ms) since first use. No headers or bodies.',
     input_schema: {
       type: 'object',
       properties: {
@@ -364,15 +365,15 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: "Fill a page's file upload (element_id: input, button or drop zone). files: <attached_files> refs; paths: local files; neither: user picks. Does not submit.",
+    description: "Fill a page's file upload: element_id (input, button, drop zone), or open (menu texts to click: [\"New\",\"File upload\"]), or neither. files: <attached_files> refs; paths: local files; none: user picks. Does not submit.",
     input_schema: {
       type: 'object',
       properties: {
         element_id: { type: 'integer' },
         files: { type: 'array', items: { type: 'string' } },
         paths: { type: 'array', items: { type: 'string' } },
+        open: { type: 'array', items: { type: 'string' } },
       },
-      required: ['element_id'],
     },
   },
   {
@@ -1107,6 +1108,8 @@ const KEY_CODES = {
 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const DROP_BYTES_MAX = 40 * 1024 * 1024; // upload_file's page-made drop (the last route) carries the bytes through the page: its total cap
+const DROP_CHUNK = 3 * 1024 * 1024;
 
 // Eager input streaming skips server-side validation, so check inputs against the schema here.
 // Inputs where at least one of the listed fields must be present (kept out of the JSON schema).
@@ -5994,14 +5997,15 @@ ${out.text}${note}
     const gate = scope?.gate;
     if (!gate) throw new Error('upload_file needs the user\'s approval step, which did not run.');
     const wc = this.requireTab();
-    const id = input.element_id;
-    if (frames.decodeId(id)) throw new Error('That element is inside an embedded frame, where upload_file does not reach. Open the address of the frame itself in a tab (open_tab) and upload there.');
+    const id = input.element_id; // (none: the page's own file field or chooser is found; `open` clicks through a menu to the chooser)
+    const open = (Array.isArray(input.open) ? input.open : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 4);
+    if (id !== undefined && frames.decodeId(id)) throw new Error('That element is inside an embedded frame, where upload_file does not reach. Open the address of the frame itself in a tab (open_tab) and upload there.');
     const hostNow = () => { try { return new URL(wc.getURL()).host; } catch { return ''; } };
     const host = hostNow();
     if (!host) throw new Error('upload_file only works on web pages.');
     const { emit, signal, who, hosts } = gate;
     const token = crypto.randomBytes(8).toString('hex');
-    const facts = await this.probeUpload(wc, id, token);
+    const facts = id === undefined ? { status: 'none', label: '', accept: '', multiple: true } : await this.probeUpload(wc, id, token);
     const known = facts.status === 'input'; // else a click opens the page's own chooser, and its accept types are only known then
     const field = { known, accept: facts.accept || '', multiple: Boolean(facts.multiple) };
     // 1. Which files: attached ones by ref, else the user picks.
@@ -6041,17 +6045,18 @@ ${out.text}${note}
       try { dbg.attach('1.3'); attachedHere = true; } catch { throw new Error('Another tool (the DevTools of this tab) is holding the page, so files cannot be set now. Try again in a moment, or use another route.'); }
     }
     let marked = null;
+    let how = '';
     try {
       if (known) {
         marked = await this.probeUpload(wc, id, token, true);
         if (marked.status !== 'input') throw new Error('The page changed while the user was answering. Nothing was uploaded; read the page and try again.');
         await this.setFilesOnMarked(wc, token, paths);
       } else {
-        await this.setFilesByChooser(wc, id, files, paths);
+        how = await this.setFilesAnyWay(wc, id, open, files, paths);
       }
       await settleAfterAction(wc);
       const report = await runScript(wc, scripts.uploadReport(marked ? token : '', files.map((f) => f.name)), 8000).catch(() => null);
-      return this.uploadResult(files, facts, host, report);
+      return this.uploadResult(files, facts, host, report, how);
     } finally {
       if (marked) await runScript(wc, scripts.uploadCleanup(token)).catch(() => {});
       if (attachedHere) { try { dbg.detach(); } catch { /* gone */ } }
@@ -6078,8 +6083,87 @@ ${out.text}${note}
     }
   }
 
-  // No input to name: click the element with the page's file chooser intercepted, then answer the chooser with the files.
-  async setFilesByChooser(wc, id, files, paths) {
+  // No input was named. In order: the page's own file chooser answered (the element clicked, or the menu steps in `open` clicked, with the
+  // chooser intercepted so no native dialog shows); a file field found anywhere in the page (hidden ones, shadow roots and frames included);
+  // a drop of the files on the element or the page's main area. -> how it went in a few words (for uploadResult); throws what failed and why.
+  async setFilesAnyWay(wc, id, open, files, paths) {
+    let tried = '';
+    if (id !== undefined || open.length) {
+      try { await this.setFilesByChooser(wc, id, files, paths, open); return "through the page's own file chooser"; } catch (err) {
+        if (this.signalAborted() || !/did not open a file chooser/.test(err.message)) throw err;
+        tried = err.message;
+      }
+    }
+    if (await this.setFilesOnAnyInput(wc, files, paths)) return 'into a file field found in the page';
+    const dropped = await this.dropFiles(wc, id, files, paths);
+    if (dropped) return `by dropping them on the page (${dropped})`;
+    throw new Error(`${tried || 'The page has no file field and opened no file chooser.'} Dropping the files on the page was tried too and the page took no files. Nothing was uploaded. Read the page (read_page, screenshot) to find the button that adds files, and pass it as element_id or its menu texts in open.`);
+  }
+
+  // Every file field in the page (shadow roots and frames included, through DevTools' own pierced tree) that could take these files; the
+  // newest that can is given them. true when one was. A field that is disabled, takes a folder or whose accept/multiple refuse them is passed over.
+  async setFilesOnAnyInput(wc, files, paths) {
+    const send = (method, params) => wc.debugger.sendCommand(method, params);
+    let searchId = null;
+    try {
+      await send('DOM.getDocument', { depth: -1, pierce: true });
+      const found = await send('DOM.performSearch', { query: 'input[type=file]' });
+      searchId = found.searchId;
+      if (!found.resultCount) return false;
+      const { nodeIds } = await send('DOM.getSearchResults', { searchId, fromIndex: 0, toIndex: Math.min(found.resultCount, 20) });
+      for (const nodeId of nodeIds.slice().reverse()) { // (a page that makes a field on demand adds it at the end)
+        const node = (await send('DOM.describeNode', { nodeId }).catch(() => ({}))).node;
+        const attrs = node?.attributes || [];
+        const has = (n) => attrs.includes(n);
+        if (has('disabled') || has('webkitdirectory')) continue;
+        if (uploadFiles.checkFiles({ accept: has('accept') ? attrs[attrs.indexOf('accept') + 1] : '', multiple: has('multiple') }, files)) continue;
+        await send('DOM.setFileInputFiles', { files: paths, nodeId });
+        return true;
+      }
+      return false;
+    } catch { return false; } finally {
+      if (searchId) send('DOM.discardSearchResults', { searchId }).catch(() => {});
+    }
+  }
+
+  // The last route: the files dropped on element `id` (else the middle of the page's main area), as the browser's own drag and drop
+  // (Input.dispatchDragEvent with real file paths); when the page sees no files in that drop, a drop built in the page from the bytes.
+  // A listener in the page counts what the drop carried, and stops a page with no drop target from opening the file. -> a few words, or ''
+  // when no route gave the page the files.
+  async dropFiles(wc, id, files, paths) {
+    const send = (method, params) => wc.debugger.sendCommand(method, params);
+    const points = [];
+    if (id !== undefined) { const t = await this.locateElement(wc, id).catch(() => null); if (t) points.push({ x: Math.round(t.x), y: Math.round(t.y) }); }
+    points.push(...((await runScript(wc, scripts.dropTargets(), 3000).catch(() => null)) || []));
+    if (!points.length) return '';
+    const state = async () => (await runScript(wc, scripts.dropProbeRead(), 3000).catch(() => null)) || { seen: 0, handled: false };
+    if (!(await runScript(wc, scripts.dropProbeArm(), 3000).catch(() => false))) return '';
+    try {
+      // Each place in turn until the page takes the drop (a drop target cancels it): a drop on anything else changes nothing.
+      for (const at of points) {
+        try {
+          const data = { items: [], files: paths, dragOperationsMask: 1 };
+          for (const type of ['dragEnter', 'dragOver', 'drop']) await send('Input.dispatchDragEvent', { type, ...at, data });
+          await sleep(250);
+          const got = await state();
+          if (got.handled && got.seen >= files.length) return "the browser's own drag and drop";
+        } catch { break; /* no file drags here: the page-made drop below */ }
+      }
+      if (files.reduce((n, f) => n + f.size, 0) > DROP_BYTES_MAX) return '';
+      await runScript(wc, scripts.dropFilesReset(), 3000);
+      for (const f of files) {
+        const data = fs.readFileSync(f.path);
+        for (let i = 0; i < data.length || i === 0; i += DROP_CHUNK) await runScript(wc, scripts.dropFilesAdd(f.name, f.type || 'application/octet-stream', data.subarray(i, i + DROP_CHUNK).toString('base64'), i === 0), 20000);
+      }
+      const handled = await runScript(wc, scripts.dropFilesSend(points), 8000).catch(() => false);
+      return handled ? "a drop made in the page from the files' bytes" : '';
+    } finally {
+      await runScript(wc, scripts.dropProbeDisarm(), 3000).catch(() => {});
+    }
+  }
+
+  // Click the element (and the menu steps in `open`) with the page's file chooser intercepted, then answer the chooser with the files.
+  async setFilesByChooser(wc, id, files, paths, open = []) {
     const send = (method, params) => wc.debugger.sendCommand(method, params);
     await send('Page.enable', {}).catch(() => {});
     await send('Page.setInterceptFileChooserDialog', { enabled: true });
@@ -6089,11 +6173,19 @@ ${out.text}${note}
       wc.debugger.on('message', onMessage);
     });
     try {
-      await this.runTool('click', { element_id: id });
+      if (id !== undefined) await this.runTool('click', { element_id: id });
+      for (const text of open) { // a menu: each step appears once the one before it has opened
+        for (let attempt = 0; ; attempt++) {
+          try { await this.runTool('click', { text }); break; } catch (err) {
+            if (this.signalAborted() || attempt === 2) throw new Error(`Could not click ${quote(text)} to reach the file chooser: ${err.message} Nothing was uploaded.`);
+            await sleep(700); // the menu may still be opening
+          }
+        }
+      }
       let timer;
-      const chooser = await Promise.race([opened, new Promise((resolve) => { timer = setTimeout(resolve, 2500, null); })]);
+      const chooser = await Promise.race([opened, new Promise((resolve) => { timer = setTimeout(resolve, open.length ? 4000 : 2500, null); })]);
       clearTimeout(timer);
-      if (!chooser?.backendNodeId) throw new Error('Clicking it did not open a file chooser, so nothing was uploaded. Look for the page\'s file field (read_page lists inputs of kind "file") and pass its id, or ask the user.');
+      if (!chooser?.backendNodeId) throw new Error('Clicking it did not open a file chooser.');
       const node = (await send('DOM.describeNode', { backendNodeId: chooser.backendNodeId })).node;
       const attrs = node?.attributes || [];
       const accept = attrs[attrs.indexOf('accept') + 1] || '';
@@ -6107,10 +6199,12 @@ ${out.text}${note}
   }
 
   // What the model is told after an upload: the files, the site, and what the page shows.
-  uploadResult(files, facts, host, report) {
+  uploadResult(files, facts, host, report, how = '') {
     const names = files.map((f) => `${f.name} (${uploadFiles.sizeText(f.size)})`).join(', ');
     const into = facts.label ? `the field ${quote(facts.label)}` : 'the file field';
-    const lines = [`Put ${names} into ${into} on ${host}. Nothing was submitted: the page now has the file selected, and the form still needs its own submit.`];
+    const lines = how
+      ? [`Gave ${files.length} file${files.length === 1 ? '' : 's'} to ${host} ${how}: ${names}. Nothing was submitted. A page that uploads on its own (a drive, a gallery) starts now: read_page or screenshot to see its progress and confirm each file arrived.`]
+      : [`Put ${names} into ${into} on ${host}. Nothing was submitted: the page now has the file selected, and the form still needs its own submit.`];
     if (report?.files) {
       const held = report.files.length ? report.files.join(', ') : 'nothing';
       lines.push(`The field now holds: ${held}.`);
