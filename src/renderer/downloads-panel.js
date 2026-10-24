@@ -63,7 +63,7 @@
     }
     if (d.state === 'completed') return d.missing ? t('dlpanel.deleted') : [size(d.total || d.received), d.host, when(d.endedAt)].filter(Boolean).join(' · ');
     if (d.state === 'cancelled') return [t('dlpanel.canceled'), d.host].filter(Boolean).join(' · ');
-    return [t('dlpanel.failed'), d.host].filter(Boolean).join(' · ');
+    return [d.reason ? t(`dlpanel.failed.${d.reason}`) : t('dlpanel.failed'), d.host].filter(Boolean).join(' · ');
   }
   function actionsOf(d) {
     if (d.state === 'progressing') return d.awaitingOk ? ['cancel'] : [d.paused ? 'resume' : 'pause', 'cancel'];

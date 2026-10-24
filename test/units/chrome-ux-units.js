@@ -96,4 +96,21 @@ check('Downloads: remembers up to 1000, the toolbar panel only its latest 50', /
 check('Downloads: a removed row can be restored (the page offers Undo)', /action === 'restore'\) return restore\(id\)/.test(dlSrc) && /managersToast/.test(read('renderer/downloads.js')) && /managersToast/.test(read('renderer/bookmarks.js')) && /bookmarks:restore/.test(read('features/managers.js')), '');
 check('warning pages: certificate, HTTPS-only and Safe Browsing wording is in en.json', ['certError.heading', 'certError.reason.authorityInvalid', 'httpsOnly.heading', 'httpsOnly.lead', 'safeBrowsing.malware.summary', 'safeBrowsing.lead'].every((k) => typeof EN[k] === 'string'), '');
 
+// ---- UX round 2: link hover bubble, Switch to tab rows, hover vs selection, download failure reasons
+{
+  const { shortenMiddle } = require('../../src/features/link-status');
+  const long = 'https://example.com/' + 'a'.repeat(200) + '/end.html';
+  const short = shortenMiddle(long, 72);
+  check('link bubble: a long address is cut in the middle (host and end stay)', short.length === 72 && short.startsWith('https://example.com/') && short.endsWith('/end.html') && short.includes('…'), short);
+  check('link bubble: a short address is left alone', shortenMiddle('https://a.test/x') === 'https://a.test/x', '');
+  const sug = read('renderer/suggest.html') + read('renderer/suggest.js');
+  check('suggestions: hover is lighter than the keyboard selection', /--hover: rgba\(0, 0, 0, 0\.05\)/.test(sug) && /li:hover \{ background: var\(--hover\)/.test(sug) && /li\.selected, li\.selected:hover \{ background: var\(--selected\)/.test(sug), '');
+  check('suggestions: a never-visited seed site has a globe, an open tab its own icon, and the typed match is bold', /site: GLOBE, tab: TAB/.test(sug) && /createElement\('b'\)/.test(sug), '');
+  check('suggestions: a Switch to tab row is never pre-selected (Enter still navigates); a history or seed row is', defaultSuggestion('page', [{ kind: 'tab' }, { kind: 'search' }]) === -1 && defaultSuggestion('page', [{ kind: 'site' }]) === 0 && defaultSuggestion('page', [{ kind: 'history' }, { kind: 'tab' }]) === 0, '');
+  check('suggestions: matching open tabs are added after the top row, not in place of a History row', read('renderer/app.js').includes('visited.splice(Math.min(1, visited.length), 0, ...tabRows)') && !read('renderer/app.js').includes('visited[at] = row'), '');
+  const idx = read('renderer/index.html');
+  check('address bar: a combobox with a polite live region for the suggestion count', /id="address"[^>]*role="combobox"[^>]*aria-expanded="false"/.test(idx) && /id="suggest-live"[^>]*aria-live="polite"/.test(idx), '');
+  check('downloads: failed rows give a reason and the toolbar button turns red until the panel opens', ['connect', 'lost', 'stopped', 'save'].every((k) => EN['dlpanel.failed.' + k]) && /\.download-btn\.failed \{ color: var\(--danger\)/.test(read('renderer/styles.css')) && /downloads\.toast\.failed/.test(dlSrc), '');
+}
+
 process.exit(failures ? 1 : 0);

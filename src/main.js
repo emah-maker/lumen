@@ -1890,7 +1890,7 @@ function suggestions(query) {
     else if (entry.title.toLowerCase().includes(q)) rank = 1;
     if (rank) scored.push({ entry, score: rank * 1e6 + entry.visits * 1e3 - bare.length + entry.last / 1e13 });
   }
-  return scored.sort((a, b) => b.score - a.score).slice(0, 5).map(({ entry }) => ({ url: entry.url, title: entry.title }));
+  return scored.sort((a, b) => b.score - a.score).slice(0, 5).map(({ entry }) => ({ url: entry.url, title: entry.title, ...(history.has(entry.url) ? {} : { seed: true }) })); // (seed: a built-in suggestion never visited: the dropdown shows a globe, not the "recent" clock)
 }
 
 // The dropdown is its own view so it can draw over the page.
@@ -1933,6 +1933,17 @@ function showSuggestions(rect, payload) {
 function hideSuggestions() {
   if (suggestView) suggestView.setVisible(false);
 }
+
+// The hovered link's address bubble: its module (and its view, made on the first hover) is not loaded until a link is hovered.
+let linkStatusRt = null;
+function linkHover(tab, url) {
+  const rec = recOfSender(tab.view?.webContents);
+  if (!rec || tab.id !== activeIdOf(rec) || !rec.win || rec.win.isDestroyed()) { if (!url && rec) linkStatusRt?.hide(rec.win); return; }
+  if (!url && !linkStatusRt) return;
+  linkStatusRt ||= require('./features/link-status').createLinkStatus({ WebContentsView, preloadPath: path.join(__dirname, 'preload', 'link-status-preload.js'), hardenOwnView, raise: (w) => { if (w === win) raiseOverlays(); } });
+  linkStatusRt.update(rec.win, url, tab.view.getBounds());
+}
+ipcMain.on('linkstatus:dodge', (e) => linkStatusRt?.dodge(e.sender));
 
 // The downloads panel, drawn over the page under the toolbar button (renderer/downloads.html).
 // Unlike the suggestions dropdown it takes focus while open (for Escape and the keyboard) and
@@ -2866,6 +2877,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
   });
+  wc.on('update-target-url', (_e, url) => linkHover(tab, url)); // the hovered link's address, bottom-left over the page (features/link-status.js)
+  wc.on('did-start-navigation', (_e, _u, inPlace, isMain) => { if (isMain && !inPlace) linkHover(tab, ''); });
   wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
   for (const event of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate', 'did-navigate-in-page']) {
     // (loading flags and a background tab's title are not in the saved session: no save is armed for them)
@@ -3786,6 +3799,7 @@ function switchTab(id, { wake = true } = {}) {
   const timing = switchTimingOn ? beginSwitchTiming(tab, input, rapid) : null;
   if (input) lastSwitchAt = Date.now();
   if (id !== activeId) {
+    linkStatusRt?.hide(win); // (the old page's hovered link)
     tab.fillDue = true;
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
@@ -5214,6 +5228,7 @@ const downloads = createDownloads({
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
+  toast: (text) => toast(text), // "Downloading report.pdf", "Download failed: report.pdf"
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
   onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
