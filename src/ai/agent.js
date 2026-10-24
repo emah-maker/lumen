@@ -4857,7 +4857,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name === 'drag') return 'Dragging on the page';
       if (name === 'list_files' && input.read) return 'Reading a downloaded file';
-      if (name === 'list_files') return `Looking in ${deviceAccess.shown(deviceAccess.resolvePath(input.folder || 'desktop'))}`;
+      if (name === 'list_files') return `Looking in ${deviceAccess.shown(deviceAccess.resolvePath(input.folder || 'desktop', this.deviceOpts()), this.deviceOpts())}`;
       if (name === 'clipboard') return input.action === 'write' ? 'Copying text to the clipboard' : 'Reading the clipboard';
       if (name !== 'click' && name !== 'type_text') return null;
       const wc = this.taskTab()?.webContents;
@@ -6419,7 +6419,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
   // ---- [/desktop apps]
 
   // ---- [device access] Settings > AI > "Let the AI use files on this computer" (features/device-access.js)
-  deviceOpts() { return { profile: this.browser.profileDir?.() || '', home: this.browser.homeDir?.() || undefined }; } // (homeDir: tests only, so a search never touches the real home folder)
+  deviceOpts() { const home = this.browser.homeDir?.() || undefined; return { profile: this.browser.profileDir?.() || '', home, known: home ? undefined : this.browser.knownFolder }; } // (homeDir: tests only, so a search never touches the real home folder)
   requireDeviceAccess() { if (this.browser.deviceAccess?.() !== true) throw new Error(deviceAccess.OFF_TEXT); }
   // upload_file paths: each checked (exists, a regular file, not in a credentials folder or Lumen's profile, under the size cap).
   localFiles(paths) {
@@ -6985,7 +6985,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     const access = this.browser.deviceAccess?.() === true;
     const opts = this.deviceOpts();
     const query = String(input.find);
-    const found = await this.browser.findFile?.(query, { scan: access, blocked: (p) => Boolean(deviceAccess.blockedReason(p, opts)), roots: access ? ['desktop', 'documents', 'downloads'].map((n) => deviceAccess.resolvePath(n, opts)) : [] });
+    const found = await this.browser.findFile?.(query, { scan: access, blocked: (p) => Boolean(deviceAccess.blockedReason(p, opts)), roots: access ? deviceAccess.searchRoots(['desktop', 'documents', 'downloads'], opts) : [] });
     if (!found) return 'File lookup is not available here.';
     if (!found.hits.length) return `No pinned, recent or indexed file matches ${JSON.stringify(query.slice(0, 80))}.${access ? (found.scanned ? ' The desktop, documents and downloads folders have none either.' : '') : ` ${deviceAccess.OFF_TEXT}`}`;
     const lines = found.hits.map((h) => `${deviceAccess.shown(h.path, opts)}  (${new Date(h.mtime).toISOString().slice(0, 10)})`);
