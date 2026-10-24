@@ -12206,7 +12206,9 @@ ipcMain.handle('agent:helpers', (_e, mode) => {
     writeSettings({ ...readSettings(), aiSubagents: next });
     try { settingsBackend.pushUiPrefs(); } catch { /* the UI isn't up yet */ }
   }
-  return require('./ai/helpers-auto').modeOf(readSettings().aiSubagents);
+  // The sidebar reads this at startup, so it doesn't load ai/helpers-auto.js (perf-budget counts startup modules); same rule as its modeOf.
+  const v = readSettings().aiSubagents;
+  return v === true || v === 'on' ? 'on' : v === false || v === 'off' ? 'off' : 'auto';
 });
 
 // [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.

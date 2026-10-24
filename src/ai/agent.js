@@ -44,13 +44,13 @@ const pdfViewer = require('../features/pdf-viewer'); // a PDF in Lumen's own vie
 const slidesViewer = require('../features/slides-viewer'); // read_pdf also reads a .pptx open in the slide viewer
 const emlViewer = require('../features/eml-viewer'); // an email (.eml) open in its viewer: read as text, once the user shared it
 const emlLib = { isEmlName: (n) => /\.eml$/i.test(String(n || '')), parseFile: (...a) => require('../features/eml').parseFile(...a), toText: (...a) => require('../features/eml').toText(...a) }; // (the parser loads when an email is read)
-const openTabReuse = require('../features/open-tab-reuse'); // open_tab: a page already open (or the chat's own idle tab) is used instead of a new tab
+const openTabReuse = lazy(() => require('../features/open-tab-reuse')); // open_tab: a page already open (or the chat's own idle tab) is used instead of a new tab
 const fileTabs = require('../features/file-tabs'); // [screen context] the file a tab shows (a PDF in the viewer, a file:// page): the card asks about it, never a page
 const modelNames = require('../features/model-names');
 const btwLib = require('./btw'); // /btw: a side question answered beside the running task, no tools
 const agentsQuiet = require('../features/agents-quiet');
 const screenIntent = require('./screen-intent');
-const helpersAuto = require('./helpers-auto'); // delegate in Auto mode: whether what the user asked has several independent parts
+const helpersAuto = lazy(() => require('./helpers-auto')); // delegate in Auto mode: whether what the user asked has several independent parts
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
