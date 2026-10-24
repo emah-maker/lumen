@@ -72,7 +72,7 @@
 
 
   const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
-  const loads = {};
+  const loads = Object.create(null);
   function load(name, file, after) {
     if (loads[name] || typeof document === 'undefined' || !here) return;
     loads[name] = 'loading';
@@ -664,8 +664,8 @@
 
 
   function takeDefinitions(lines) {
-    const refs = {};
-    const notes = {};
+    const refs = Object.create(null);
+    const notes = Object.create(null);
     const keep = [];
     let fenced = false;
     for (let n = 0; n < lines.length; n++) {
@@ -8305,7 +8305,7 @@ function startChat() {
 
   function defaultSuggestion(typed, items, { completed = false } = {}) {
     if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return items[0].kind === 'history' ? 0 : -1;
+    return ['history', 'site'].includes(items[0].kind) ? 0 : -1;
   }
 
   const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
@@ -9578,7 +9578,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? `${tab.title} (AI is reading)` : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
@@ -9867,7 +9867,7 @@ function fillHoverCard(el) {
   hoverCardEl.querySelector('.hover-card-title').textContent = tab.title;
   const host = hoverCardHost(tab.url);
   const hostEl = hoverCardEl.querySelector('.hover-card-host');
-  hostEl.textContent = tab.isolated && host ? `${host} · AI research: no cookies or logins` : host;
+  hostEl.textContent = tab.isolated && host ? t('tabs.isolatedHost', { host }) : host;
   if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · ');
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · ');
   if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · ');
@@ -9940,6 +9940,9 @@ $('tabs').addEventListener('pointerover', (e) => {
   hoverTab(el);
 });
 $('tabs').addEventListener('pointerleave', () => { hoverCardPressed = null; hideHoverCard(); });
+
+$('tabs').addEventListener('focusin', (e) => { const el = e.target.closest?.('.tab'); if (el && e.target === el && el.matches(':focus-visible')) hoverTab(el); });
+$('tabs').addEventListener('focusout', (e) => { if (e.target.closest?.('.tab') && !$('tabs').contains(e.relatedTarget)) hideHoverCard(); });
 $('tabs').addEventListener('pointerdown', (e) => { hoverCardPressed = e.target.closest('.tab'); hideHoverCard(); }, true);
 $('tabs').addEventListener('scroll', hideHoverCard, { passive: true });
 
@@ -10089,7 +10092,18 @@ window.browser.onOrganizeNote?.(({ text, undo, ttl, undoLabel, undoTitle, aiUndo
     note.append(Object.assign(document.createElement('button'), { textContent: undoLabel || t('organize.undo'), ...(undoTitle ? { title: undoTitle } : {}), onclick: () => { if (chatNote) window.browser.openChatNote?.(chatNote); else if (phoneNote) window.browser.phoneNoteAction?.(phoneNote); else if (aiUndo) window.browser.undoAiClose?.(aiUndo); else window.browser.undoOrganize(); note.remove(); } }));
   }
   organizeBtn.after(note);
-  setTimeout(() => note.remove(), Number.isFinite(ttl) ? ttl : 9000);
+
+  let left = Number.isFinite(ttl) ? ttl : 9000;
+  let timer = 0, armedAt = 0, hovered = false, focused = false;
+  const arm = () => { armedAt = Date.now(); timer = setTimeout(() => note.remove(), left); };
+  const sync = () => {
+    if (hovered || focused) { if (timer) { clearTimeout(timer); timer = 0; left = Math.max(2000, left - (Date.now() - armedAt)); } } else if (!timer && note.isConnected) arm();
+  };
+  note.addEventListener('pointerenter', () => { hovered = true; sync(); });
+  note.addEventListener('pointerleave', () => { hovered = false; sync(); });
+  note.addEventListener('focusin', () => { focused = true; sync(); });
+  note.addEventListener('focusout', (e) => { if (!note.contains(e.relatedTarget)) { focused = false; sync(); } });
+  arm();
 });
 
 
@@ -10404,9 +10418,24 @@ function renderSuggestions() {
       width: r.width + SUGGEST_PAD.x * 2,
       height: suggest.items.length * 36 + 10 + SUGGEST_PAD.top + SUGGEST_PAD.bottom,
     },
-    { items: suggest.items.map(({ kind, title, detail }) => ({ kind, title, detail })), selected: suggest.selected, listId: ++suggestListId },
+    { items: suggest.items.map(({ kind, title, detail, badge }) => ({ kind, title, detail, badge })), selected: suggest.selected, listId: ++suggestListId, query: suggest.typed.trim() },
   );
   shownSuggestions = { id: suggestListId, items: suggest.items };
+  announceSuggestions();
+}
+
+
+
+let suggestLiveTimer = null;
+function announceSuggestions(selectedOnly = false) {
+  const live = $('suggest-live');
+  const n = suggest.items.length;
+  address.setAttribute('aria-expanded', String(n > 0));
+  if (!live) return;
+  const item = suggest.items[suggest.selected];
+  const say = selectedOnly ? (item ? `${item.badge ? `${item.badge}: ` : ''}${item.title}` : '') : n ? t(n === 1 ? 'address.suggestions.one' : 'address.suggestions.other', { count: n }) : '';
+  clearTimeout(suggestLiveTimer);
+  suggestLiveTimer = setTimeout(() => { live.textContent = say; }, 120);
 }
 
 
@@ -10419,6 +10448,15 @@ function hideSuggestions() {
   suggestSeq++;
   suggest = { items: [], selected: -1, typed: '' };
   window.browser.hideSuggestions();
+  announceSuggestions();
+}
+
+
+function matchOpenTabs(text) {
+  const q = text.toLowerCase();
+  const state = lastTabState;
+  if (!state || !q) return [];
+  return state.tabs.filter((x) => x.id !== state.activeId && /^https?:/i.test(x.url || '') && ((x.title || '').toLowerCase().includes(q) || prettyUrl(x.url).split(/[?#]/)[0].toLowerCase().includes(q))).slice(0, 3);
 }
 
 async function updateSuggestions(typed, deleting) {
@@ -10438,7 +10476,11 @@ async function updateSuggestions(typed, deleting) {
   }
 
   const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
-  const visited = history.map((h) => ({ kind: 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+  const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+
+
+  const tabRows = matchOpenTabs(text).slice(0, 2).map((tab) => ({ kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') }));
+  visited.splice(Math.min(1, visited.length), 0, ...tabRows);
   const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
 
   suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
@@ -10452,6 +10494,7 @@ function moveSelection(step) {
   const item = suggest.items[suggest.selected];
   address.value = !item ? suggest.typed : item.kind === 'search' ? item.title : item.go;
   renderSuggestions();
+  announceSuggestions(true);
 }
 
 
@@ -10482,10 +10525,20 @@ function navigate(target) {
   address.blur();
 }
 
+function chooseSuggestion(item, fallback) {
+  if (item?.tabId != null && lastTabState?.tabs.some((x) => x.id === item.tabId)) {
+    hideSuggestions();
+    dropAddressDraft();
+    addressDirty = false;
+    window.browser.switchTab(item.tabId);
+    address.blur();
+  } else navigate(item ? item.go : fallback);
+}
+
 window.browser.onSuggestionPicked(({ index, listId }) => {
   if (listId !== shownSuggestions.id) return;
   const item = shownSuggestions.items[index];
-  if (item) navigate(item.go);
+  if (item) chooseSuggestion(item);
 });
 
 address.addEventListener('input', (e) => {
@@ -10565,7 +10618,7 @@ address.addEventListener('keydown', (e) => {
 $('omnibox').addEventListener('submit', (e) => {
   e.preventDefault();
   const item = suggest.items[suggest.selected];
-  navigate(item ? item.go : address.value.trim());
+  chooseSuggestion(item, address.value.trim());
 });
 
 $('back').onclick = () => window.browser.back();
@@ -10650,6 +10703,7 @@ function openFind(opts) {
   clearTimeout(findHideTimer);
   findbar.hidden = false;
   requestAnimationFrame(() => findbar.classList.add('open'));
+  syncFindButtons(0);
   findInput.focus();
   findInput.select();
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -10659,10 +10713,13 @@ function closeFind() {
   if (findbar.hidden || !findbar.classList.contains('open')) return;
   findbar.classList.remove('open', 'no-match');
   $('find-count').textContent = '';
-  window.browser.stopFind();
+  window.browser.stopFind(true);
   clearTimeout(findHideTimer);
   findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) findbar.hidden = true; }, motionReduced() ? 0 : 420);
 }
+
+
+function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
   if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
@@ -10672,6 +10729,7 @@ window.browser.onOpenFind(openFind);
 window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
   $('find-count').textContent = findInput.value ? (matches ? t('find.count', { current: activeMatchOrdinal, total: matches }) : t('find.none')) : '';
   findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
+  syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
   if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
@@ -10680,11 +10738,12 @@ findInput.addEventListener('input', () => {
     $('find-count').textContent = '';
     findbar.classList.remove('no-match');
   }
+  syncFindButtons(0);
 });
 findInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); findStep(!e.shiftKey); }
-  else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
+findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeFind(); } });
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;
@@ -11252,11 +11311,12 @@ const downloadsBtn = $('downloads');
 const RING = 2 * Math.PI * 10;
 let downloadStates = new Map();
 let pulseTimer = null;
+const failedDownloads = new Set();
 
 window.browser.onDownloads?.((list) => {
   if (!Array.isArray(list)) return;
   downloadsBtn.hidden = !list.length;
-  if (!list.length) { downloadStates = new Map(); downloadsBtn.classList.remove('progressing', 'finished'); return; }
+  if (!list.length) { downloadStates = new Map(); failedDownloads.clear(); downloadsBtn.classList.remove('progressing', 'finished', 'failed'); return; }
   const active = list.filter((d) => d.state === 'progressing');
   const sized = active.filter((d) => d.total > 0);
   const total = sized.reduce((s, d) => s + d.total, 0);
@@ -11266,6 +11326,8 @@ window.browser.onDownloads?.((list) => {
   downloadsBtn.querySelector('.ring-bar').style.strokeDashoffset = String(RING * (1 - fraction));
 
   const justFinished = list.some((d) => d.state === 'completed' && downloadStates.get(d.id) === 'progressing');
+  for (const d of list) { if (d.state === 'interrupted' && downloadStates.get(d.id) === 'progressing') failedDownloads.add(d.id); else if (d.state !== 'interrupted') failedDownloads.delete(d.id); }
+  downloadsBtn.classList.toggle('failed', failedDownloads.size > 0);
   downloadStates = new Map(list.map((d) => [d.id, d.state]));
   if (justFinished) {
     downloadsBtn.classList.remove('finished');
@@ -11283,12 +11345,15 @@ window.browser.onDownloads?.((list) => {
 });
 for (const type of ['pointerenter', 'focus']) downloadsBtn.addEventListener(type, () => window.browser.warmDownloads?.(), { once: true });
 downloadsBtn.onclick = () => {
+  failedDownloads.clear();
+  downloadsBtn.classList.remove('failed');
   const r = downloadsBtn.getBoundingClientRect();
   window.browser.openDownloadsMenu?.({ right: Math.round(r.right), bottom: Math.round(r.bottom) });
 };
 
 
 window.browser.onWindowFocus?.((focused) => document.body.classList.toggle('window-inactive', !focused));
+window.browser.onWindowFullscreen?.((on) => document.body.classList.toggle('window-fullscreen', Boolean(on)));
 
 window.browser.onAgentsPending?.(({ count } = {}) => {
   const b = $('agents-pending');
@@ -16155,7 +16220,9 @@ const tabSearch = (() => {
   end.insertBefore(pill, document.getElementById('downloads') || end.firstChild);
 
   let applying = false;
+  let last = null;
   function render(u) {
+    last = u;
 
     const own = u.canSelfUpdate || Boolean(u.relocate);
     const ready = u.status === 'downloaded' && own;
@@ -16170,7 +16237,7 @@ const tabSearch = (() => {
     const retrying = busy && Boolean(u.retrying);
     const key = moveFailed ? '' : ready ? 'updates.ready' : retrying ? 'updates.retrying' : busy ? (u.queued ? 'updates.downloadingQueued' : 'updates.downloading') : failed ? (u.installFailed ? (u.version ? 'updates.installFailedVersion' : 'updates.installFailed') : 'updates.failed')
       : u.relocate === 'user' ? 'updates.moveToUserApps' : u.relocate ? 'updates.moveToUpdate' : 'updates.available';
-    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: u.progress || 0 });
+    text.textContent = moveFailed ? u.moveError : window.t(key, { version: u.version, progress: Math.floor(u.progress || 0) });
 
 
     const why = failed && u.error ? (u.installFailed ? window.t(u.version ? 'updates.installFailedWhy' : 'updates.installFailedNoVersionWhy', { version: u.version, reason: u.error.replace(/[.\s]+$/, '') }) : window.t('updates.failedWhy', { reason: u.error })) : '';
@@ -16179,13 +16246,14 @@ const tabSearch = (() => {
     action.hidden = busy && u.queued;
     action.disabled = applying || Boolean(u.checking);
     iconPath.setAttribute('d', ready || busy || failed || moveFailed ? ICON_RETRY : ICON_DOWNLOAD);
-    label.textContent = u.checking ? window.t('updates.checking') : ready || busy ? window.t('updates.restart') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
+    label.textContent = u.checking ? window.t('updates.checking') : applying && (ready || busy) ? window.t('updates.restarting') : ready ? window.t('updates.restart') : busy ? window.t('updates.restartWhenReady') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : window.t('updates.download');
     action.title = ready || busy ? window.t('updates.restart.title') : failed || moveFailed ? window.t('updates.retry') : u.relocate ? window.t('updates.moveAndUpdate') : u.canSelfUpdate ? window.t('updates.download') : u.asset ? window.t('updates.downloadAsset', { name: u.asset.name }) : window.t('updates.releases');
   }
   action.addEventListener('click', async () => {
     if (applying) return;
     applying = true;
     action.disabled = true;
+    if (last) render(last);
     let next = null;
     try { next = await api.apply(); } catch {} finally { applying = false; }
     if (!next) next = await api.state().catch(() => null);

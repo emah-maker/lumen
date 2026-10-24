@@ -42,7 +42,7 @@ const J = (v) => JSON.stringify(v);
     const findbar = { hidden: !open, classList: { contains: (c) => c === 'open' && open, add() {}, remove() {} } };
     const ctx = {
       findbar, findInput, findHideTimer: null, clearTimeout() {}, requestAnimationFrame() {}, Number, document: { activeElement: focused ? findInput : null },
-      window: { browser: { find: (text, o) => log.push(['find', text, o.findNext]) } }, findStep: (fwd) => log.push(['step', fwd]),
+      window: { browser: { find: (text, o) => log.push(['find', text, o.findNext]) } }, findStep: (fwd) => log.push(['step', fwd]), syncFindButtons() {},
     };
     vm.runInNewContext(`${fn}; this.openFind = openFind;`, ctx);
     return { ctx, findInput, log };

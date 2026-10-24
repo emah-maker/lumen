@@ -139,9 +139,10 @@ function createPrivateWindows(deps) {
       if (!alive(rec)) return callback(false);
       // Remembered for this window only; nothing is written to settings.json.
       const { response } = await dialog.showMessageBox(rec.win, {
-        type: 'question', buttons: [t('permission.deny'), t('permission.allow')], defaultId: 0, cancelId: 0,
+        type: 'question', buttons: [t('permission.deny'), t('permission.allow')], defaultId: 0, cancelId: -1, // Esc: "no" for this request only, not remembered
         message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }), detail: t('private.permission.detail'),
       });
+      if (response !== 0 && response !== 1) return callback(false);
       for (const name of ask) rec.decisions.set(`${origin}|${name}`, response === 1);
       callback(response === 1);
       SITE_PERMISSIONS.notify(ses);

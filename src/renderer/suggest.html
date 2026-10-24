@@ -4,8 +4,8 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'" />
   <style>
-    :root { color-scheme: light dark; --surface: #ffffff; --border: rgba(0, 0, 0, 0.1); --text: #1d1d1f; --muted: #66666b; --selected: rgba(0, 122, 255, 0.12); --accent: #007aff; --accent-text: #0062cc; --shadow: rgba(0, 0, 0, 0.2); }
-    @media (prefers-color-scheme: dark) { :root { --surface: #2c2c2e; --border: rgba(255, 255, 255, 0.12); --text: #f5f5f7; --muted: #a1a1a6; --selected: rgba(10, 132, 255, 0.24); --accent: #0a84ff; --accent-text: #62adff; --shadow: rgba(0, 0, 0, 0.55); } }
+    :root { color-scheme: light dark; --surface: #ffffff; --border: rgba(0, 0, 0, 0.1); --text: #1d1d1f; --muted: #66666b; --selected: rgba(0, 122, 255, 0.12); --hover: rgba(0, 0, 0, 0.05); --accent: #007aff; --accent-text: #0062cc; --shadow: rgba(0, 0, 0, 0.2); }
+    @media (prefers-color-scheme: dark) { :root { --surface: #2c2c2e; --border: rgba(255, 255, 255, 0.12); --text: #f5f5f7; --muted: #a1a1a6; --selected: rgba(10, 132, 255, 0.24); --hover: rgba(255, 255, 255, 0.07); --accent: #0a84ff; --accent-text: #62adff; --shadow: rgba(0, 0, 0, 0.55); } }
     html, body { margin: 0; background: transparent; overflow: hidden; }
     body { font: 13px/1.4 -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text); user-select: none; }
     /* Margins match SUGGEST_PAD in app.js: room for the shadow inside this view. */
@@ -21,7 +21,8 @@
     @keyframes drop { from { opacity: 0; transform: translateY(-6px) scale(0.98); } }
     @keyframes row { from { opacity: 0; transform: translateY(-4px); } }
     li { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 8px; cursor: default; transition: background-color 120ms ease-out; }
-    li.selected, li:hover { background: var(--selected); }
+    li:hover { background: var(--hover); } /* lighter than the keyboard's pick, so two rows never both look selected */
+    li.selected, li.selected:hover { background: var(--selected); }
     li.selected svg { stroke: var(--accent); }
     @media (prefers-reduced-motion: reduce) {
       ul.entering { animation: fade 140ms ease-out; }
@@ -30,6 +31,9 @@
     }
     svg { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
     .title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 0 1 auto; }
+    .title b, .url b { font-weight: 650; color: var(--text); }
+    .badge { flex: none; margin-left: auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 16px; color: var(--accent-text); background: var(--selected); }
+    li.selected .badge { background: var(--surface); }
     .url { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; flex: 1 1 0; min-width: 0; }
   </style>
 </head>

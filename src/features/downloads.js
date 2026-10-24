@@ -34,7 +34,7 @@ function createDownloads(deps) {
   const listFile = () => path.join(deps.app.getPath('userData'), 'downloads.json');
   let saveTimer = null;
   let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
-  const keptList = () => downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt }) => ({ id, name, path: file, state, received, total, url, started, endedAt }));
+  const keptList = () => downloads.map(({ id, name, path: file, state, received, total, url, started, endedAt, reason }) => ({ id, name, path: file, state, received, total, url, started, endedAt, ...(state === 'interrupted' && reason ? { reason } : {}) }));
   function save() {
     clearTimeout(saveTimer);
     const gen = ++saveGen;
@@ -66,10 +66,18 @@ function createDownloads(deps) {
     }
   }
   const exists = (d) => Boolean(d.path) && fs.existsSync(d.path);
+  // Electron says only that a transfer was interrupted, not why: the reason is read from how far it got and whether it can be resumed
+  // (connect: nothing arrived, lost: stopped part way but can resume, stopped: stopped and cannot resume, save: the finished file could not be moved).
+  const reasonOf = (d) => (!d.received ? 'connect' : d.item?.canResume?.() ? 'lost' : 'stopped');
+  function noteFailed(d) { // once per failure (an interrupted download that resumes and fails again says so again)
+    if (d.failToasted) return;
+    d.failToasted = true;
+    deps.toast?.(t('downloads.toast.failed', { name: d.name }));
+  }
   // What the panel shows for one download (no Electron objects, nothing about other tabs).
   const panelEntry = (d) => ({
     id: d.id, name: d.name, state: d.state, received: d.received, total: d.total, paused: Boolean(d.paused), awaitingOk: Boolean(d.awaitingOk),
-    speed: Math.round(d.speed || 0), host: hostOf(d.url || ''), endedAt: d.endedAt || null,
+    speed: Math.round(d.speed || 0), host: hostOf(d.url || ''), endedAt: d.endedAt || null, reason: d.state === 'interrupted' ? d.reason || null : null,
     missing: d.state === 'completed' && !exists(d), canResume: Boolean(d.item && d.state === 'interrupted' && d.item.canResume()),
     icon: icons.get(d.path)?.dataUrl || null,
   });
@@ -152,6 +160,7 @@ function createDownloads(deps) {
       downloads.unshift(entry);
       trim();
       sendDownloads();
+      if (target && !risky) deps.toast?.(t('downloads.toast.started', { name: entry.name })); // (a risky file asks first; a Save As… name is not known yet)
       item.on('updated', (_e, state) => {
         const now = Date.now();
         const received = item.getReceivedBytes();
@@ -164,6 +173,8 @@ function createDownloads(deps) {
         entry.total = item.getTotalBytes();
         entry.paused = item.isPaused() || entry.awaitingOk;
         entry.state = state === 'interrupted' ? 'interrupted' : 'progressing';
+        if (entry.state === 'progressing') entry.failToasted = false;
+        else { entry.reason = reasonOf(entry); noteFailed(entry); }
         progress();
         if (entry.state === 'interrupted') sendDownloads();
         else sendProgress();
@@ -192,12 +203,13 @@ function createDownloads(deps) {
         try {
           fs.renameSync(holding, entry.path);
         } catch {
-          try { fs.copyFileSync(holding, entry.path); fs.unlinkSync(holding); } catch { entry.state = 'interrupted'; }
+          try { fs.copyFileSync(holding, entry.path); fs.unlinkSync(holding); } catch { entry.state = 'interrupted'; entry.reason = 'save'; }
         }
       }
       if (entry.path) reserved.delete(entry.path.toLowerCase());
       fs.rm(path.dirname(holding), { recursive: true, force: true }, () => {});
     }
+    if (entry.state === 'interrupted') { entry.reason ||= reasonOf(entry); noteFailed(entry); }
     progress();
     sendDownloads();
     if (entry.state === 'completed') loadIcon(entry);

@@ -142,9 +142,9 @@ module.exports = function windowMergeUnits(check) {
   }
   {
     const T0 = 1000000;
-    check('undo window: valid for the whole life of the toast', wm.undoValid(T0, T0) && wm.undoValid(T0, T0 + wm.NOTE_MS - 1), '');
-    check('undo window: a click a moment after the toast faded still counts (grace), a late one does not', wm.undoValid(T0, T0 + wm.NOTE_MS + wm.UNDO_GRACE_MS - 1) && !wm.undoValid(T0, T0 + wm.NOTE_MS + wm.UNDO_GRACE_MS) && !wm.undoValid(T0, T0 + 15000), '');
-    check('undo window: it matches the strip\'s toast (the strip is told the same length)', wm.NOTE_MS === 9000 && wm.UNDO_GRACE_MS < 1000, '');
+    check('undo window: valid for the whole life of the toast, including while it is held open by hover', wm.undoValid(T0, T0) && wm.undoValid(T0, T0 + wm.NOTE_MS - 1) && wm.undoValid(T0, T0 + wm.NOTE_MS + 30000), '');
+    check('undo window: it ends at UNDO_MS, a late click does not count', wm.undoValid(T0, T0 + wm.UNDO_MS - 1) && !wm.undoValid(T0, T0 + wm.UNDO_MS) && !wm.undoValid(T0, T0 + 120000), '');
+    check('undo window: it matches the strip\'s toast (the strip is told the same length)', wm.NOTE_MS === 9000 && wm.UNDO_MS > wm.NOTE_MS, '');
     check('undo window: no time, or a clock that went back, is not valid', !wm.undoValid(undefined, T0) && !wm.undoValid(NaN, T0) && !wm.undoValid(T0 + 5, T0), '');
   }
   {

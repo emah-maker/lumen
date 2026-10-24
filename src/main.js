@@ -1200,15 +1200,17 @@ function setupPermissions() {
     if (!ask.length) return callback(true);
     // Tied to the asking tab: it waits while that tab is in the background, and is dropped (not
     // remembered as a "no") if the tab navigates away or closes first.
-    const { response, cancelled } = await dialog.showMessageBox(win, {
+    const { response, cancelled, checkboxChecked } = await dialog.showMessageBox(win, {
       type: 'question',
       buttons: [t('permission.deny'), t('permission.allow')],
       defaultId: 0,
-      cancelId: 0,
+      cancelId: -1, // Esc answers "no" for this request only: nothing is saved (only a button click is, and only with "Remember my choice" ticked)
+      checkboxLabel: t('permission.remember'), checkboxChecked: true,
       message: t('permission.ask', { host: new URL(origin).host, reason: t(SITE_PERMISSIONS.promptKey(permission, { mediaTypes: ask.map((d) => (d === 'camera' ? 'video' : 'audio')) })) }),
       owner: wc,
     });
-    if (cancelled) return callback(false);
+    if (cancelled || (response !== 0 && response !== 1)) return callback(false);
+    if (!checkboxChecked) return callback(response === 1); // "Remember my choice" unticked: allow or deny just this once
     for (const name of ask) permissionDecisions.set(`${origin}|${name}`, response === 1);
     settingsBackend.savePermissions(permissionDecisions); // [settings]
     callback(response === 1);
@@ -1888,7 +1890,7 @@ function suggestions(query) {
     else if (entry.title.toLowerCase().includes(q)) rank = 1;
     if (rank) scored.push({ entry, score: rank * 1e6 + entry.visits * 1e3 - bare.length + entry.last / 1e13 });
   }
-  return scored.sort((a, b) => b.score - a.score).slice(0, 5).map(({ entry }) => ({ url: entry.url, title: entry.title }));
+  return scored.sort((a, b) => b.score - a.score).slice(0, 5).map(({ entry }) => ({ url: entry.url, title: entry.title, ...(history.has(entry.url) ? {} : { seed: true }) })); // (seed: a built-in suggestion never visited: the dropdown shows a globe, not the "recent" clock)
 }
 
 // The dropdown is its own view so it can draw over the page.
@@ -1931,6 +1933,17 @@ function showSuggestions(rect, payload) {
 function hideSuggestions() {
   if (suggestView) suggestView.setVisible(false);
 }
+
+// The hovered link's address bubble: its module (and its view, made on the first hover) is not loaded until a link is hovered.
+let linkStatusRt = null;
+function linkHover(tab, url) {
+  const rec = recOfSender(tab.view?.webContents);
+  if (!rec || tab.id !== activeIdOf(rec) || !rec.win || rec.win.isDestroyed()) { if (!url && rec) linkStatusRt?.hide(rec.win); return; }
+  if (!url && !linkStatusRt) return;
+  linkStatusRt ||= require('./features/link-status').createLinkStatus({ WebContentsView, preloadPath: path.join(__dirname, 'preload', 'link-status-preload.js'), hardenOwnView, raise: (w) => { if (w === win) raiseOverlays(); } });
+  linkStatusRt.update(rec.win, url, tab.view.getBounds());
+}
+ipcMain.on('linkstatus:dodge', (e) => linkStatusRt?.dodge(e.sender));
 
 // The downloads panel, drawn over the page under the toolbar button (renderer/downloads.html).
 // Unlike the suggestions dropdown it takes focus while open (for Escape and the keyboard) and
@@ -2864,6 +2877,8 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('found-in-page', (_e, result) => {
     if (tab.id === activeId) ui()?.send('find:result', result);
   });
+  wc.on('update-target-url', (_e, url) => linkHover(tab, url)); // the hovered link's address, bottom-left over the page (features/link-status.js)
+  wc.on('did-start-navigation', (_e, _u, inPlace, isMain) => { if (isMain && !inPlace) linkHover(tab, ''); });
   wc.on('context-menu', (_e, params) => showContextMenu(wc, params));
   for (const event of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate', 'did-navigate-in-page']) {
     // (loading flags and a background tab's title are not in the saved session: no save is armed for them)
@@ -3784,6 +3799,7 @@ function switchTab(id, { wake = true } = {}) {
   const timing = switchTimingOn ? beginSwitchTiming(tab, input, rapid) : null;
   if (input) lastSwitchAt = Date.now();
   if (id !== activeId) {
+    linkStatusRt?.hide(win); // (the old page's hovered link)
     tab.fillDue = true;
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
@@ -4342,6 +4358,7 @@ async function refineGroups(model, wire, signal, timeoutMs = organizeAi.TIMEOUT_
 // Undo button (`undo: true`) is the organize's, so an older merge can no longer be undone from it.
 // A plain one-line confirmation in the strip's toast ("Link copied"): no Undo.
 const toast = (text) => organizeNote(text, { ttl: 2600 });
+let fullScreenHinted = false; // (the "Press F11 to exit full screen" toast shows once per run)
 // A shortcut shown beside a menu item without being registered a second time (handleShortcut owns the keys).
 const shortcutHint = (accelerator) => ({ accelerator, registerAccelerator: false });
 function organizeNote(text, { undo = false, merge = false, ttl = windowMerge.NOTE_MS } = {}) {
@@ -4824,7 +4841,8 @@ function groupMenu(groupId, { x, y }) {
     ...moveGroupItems(groupId),
     { type: 'separator' },
     { label: t('menu.ungroup'), click: () => { tabGroups.ungroupAll(groupId); sendTabs(); } },
-    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => closeTab(id, { user: true })) },
+    { type: 'separator' },
+    { label: t('menu.closeGroup'), click: () => tabGroups.members(groupId).map((t) => t.id).forEach((id) => requestCloseTab(id)) }, // (each tab through requestCloseTab, as every other close item: a page's "Leave site?" still runs)
   ]).popup({ window: win, x: Math.round(x), y: Math.round(y) });
 }
 
@@ -5210,6 +5228,7 @@ const downloads = createDownloads({
   downloadDir: () => settingsBackend.downloadDir(), // [settings] Downloads folder unless changed in Settings
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
+  toast: (text) => toast(text), // "Downloading report.pdf", "Download failed: report.pdf"
   blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
   onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
@@ -5479,6 +5498,12 @@ function showContextMenu(wc, p) {
       { label: t('menu.copyLink'), click: () => { clipboard.writeText(p.linkURL); toast(t('menu.linkCopied')); } },
       { type: 'separator' },
     );
+  } else if (/^(mailto|tel):/i.test(p.linkURL || '')) { // an email or phone link: copy just the address or number (no scheme, no ?subject=)
+    const mail = /^mailto:/i.test(p.linkURL);
+    let value = p.linkURL.replace(/^(mailto|tel):/i, '').split('?')[0];
+    try { value = decodeURIComponent(value); } catch {}
+    value = value.trim();
+    if (value) items.push({ label: t(mail ? 'menu.copyEmail' : 'menu.copyPhone'), click: () => { clipboard.writeText(value); toast(t(mail ? 'menu.emailCopied' : 'menu.phoneCopied')); } }, { type: 'separator' });
   }
   if (p.mediaType === 'image' && p.srcURL) {
     if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) });
@@ -8208,6 +8233,9 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('focus', () => { rec.keyboardOwner = w.webContents; }); // (see keepKeyboardFromBackgroundTab)
   w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) hang.mark('focus:followFront', followFront); hang.mark('focus:a11y', () => a11yMode?.onFocus()); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
+  // Full screen (F11 / the View menu) has no window controls to clear: the strip drops its caption reserve (renderer: body.window-fullscreen). The first time, the toast says how to leave.
+  w.on('enter-full-screen', () => { ui()?.send('window-fullscreen', true); if (process.platform !== 'darwin' && !fullScreenHinted) { fullScreenHinted = true; toast(t('fullscreen.exitHint')); } });
+  w.on('leave-full-screen', () => ui()?.send('window-fullscreen', false));
   w.on('resize', () => { hideSuggestions(); hideDownloadsPanel(); dialogs.layout(); if (tabs.some((t) => t.fullscreen)) layout(); });
   w.on('blur', hideSuggestions);
   // [agent window] Making the window (~5 ms), showing it (~2-5 ms) and starting its UI's load (~3 ms) are each a turn of their own: in one they
@@ -10316,6 +10344,11 @@ ipcMain.on('missingfile:choose', async (event) => {
   if (canceled || !filePaths[0] || wc.isDestroyed()) return;
   wc.loadURL(pathToFileURL(filePaths[0]).href).catch(() => {}); // opens in its viewer, as File > Open does
 });
+// The crashed page's Reload for a page that is not on the web (a new tab, settings, a file): the tab reloads the address it crashed on (the page's own address names it; main takes only the sender's tab).
+ipcMain.on('crashed:reload', (event) => {
+  if (event.senderFrame !== event.sender.mainFrame || !event.senderFrame.url.startsWith(ERROR_URL) || new URL(event.senderFrame.url).searchParams.get('kind') !== 'crashed') return;
+  reloadTab(tabByContents(event.sender), { always: true });
+});
 ipcMain.on('tab:close', (_e, id) => requestCloseTab(id));
 ipcMain.on('tab:switch', (_e, id, at, byUser) => { switchInput = { source: 'click', at: switchTimingOn && Number.isFinite(at) ? at : null }; const shown = switchTab(id); switchInput = null; if (byUser === true && shown && readSettings().keepViewedAiTabs !== false) userTookOver(tabs.find((t) => t.id === id)); }); // [ai manners] byUser: only a press in the tab strip or side list sets it (the chip, the AI and the app's own switches do not), and a tab the user chose to look at is theirs to keep
 ipcMain.on('tab:move', (event, id, toIndex, done) => {
@@ -10535,7 +10568,12 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
   }
   wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext });
 });
-ipcMain.on('find:stop', () => activeTab()?.webContents.stopFindInPage('clearSelection'));
+ipcMain.on('find:stop', (_e, close) => { // closing the bar keeps the match selected and hands the keyboard back to the page; an emptied field clears it
+  const wc = activeTab()?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  wc.stopFindInPage(close ? 'keepSelection' : 'clearSelection');
+  if (close) wc.focus();
+});
 
 const tabsAsk = require('./features/tabs-ask');
 const chatImages = require('./features/chat-images');

@@ -64,7 +64,7 @@
 
       <form class="omnibox" id="omnibox" role="search">
         <span class="security" id="security" hidden></span>
-        <input id="address" type="text" spellcheck="false" autocomplete="off"
+        <input id="address" type="text" spellcheck="false" autocomplete="off" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false"
                placeholder="Search or enter address" aria-label="Address" data-i18n-placeholder="address.placeholder" data-i18n-aria-label="address.label" />
         <div class="omnibox-end">
           <button class="zoom-pill" id="zoom" type="button" title="Reset zoom (Ctrl+0)" aria-label="Reset zoom" data-i18n-title="toolbar.zoomReset.title" data-i18n-aria-label="toolbar.zoomReset" hidden></button>
@@ -217,6 +217,7 @@
       <div id="meeting-panel" class="chat-list meeting-panel" role="dialog" aria-label="Meeting helper" data-i18n-aria-label="meeting.title" hidden></div>
       <div id="task-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="tab-live" class="sr-only" role="status" aria-live="polite"></div>
+      <div id="suggest-live" class="sr-only" role="status" aria-live="polite"></div>
       <div id="messages" class="messages" role="log" aria-live="off" aria-label="Messages" data-i18n-aria-label="chatpage.messages">
         <div class="empty" id="empty">
           <p class="empty-title">Ask anything, or give Lumen a task on this page.</p>

@@ -101,7 +101,9 @@
   height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--accent-soft); color: var(--accent-text);
   font-size: 12px; font-weight: 500; transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
 }
-#update-action:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+#update-action:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--accent); }
+#update-action:disabled { opacity: .6; cursor: default; } /* applying or re-checking: not clickable yet */
+#update-pill .update-text { font-variant-numeric: tabular-nums; } /* the percentage doesn't change the pill's width each tick */
 .update-dismiss {
   width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: var(--r-lg);
   background: transparent; color: var(--muted); font-size: 14px; line-height: 1;
