@@ -45,6 +45,8 @@ if (!TEST && !process.argv.includes('--install-shortcuts')) {
 // a second copy used to load the rest of this file's ~100 ms of modules first and took over 2 s to hand its links to the running one and leave.
 const singleInstance = process.argv.includes('--install-shortcuts') || require('./features/instance').acquireInstanceLock(app);
 if (!singleInstance) { app.quit(); return; } // (the running copy got our arguments through 'second-instance')
+// An update swap that Windows cut short (logoff, shutdown) leaves a journal next to the install: finish it, or put the old version back.
+if (process.platform === 'win32' && !TEST) { try { const p = require('path'); const dir = p.dirname(process.execPath); const j = p.join(p.dirname(dir), p.basename(dir) + '.swap.journal'); if (fs.existsSync(j)) require('./features/swap-helper').recover(j); } catch { /* the install is left as it is */ } }
 const path = require('path');
 // Every window's icon. Windows gets the .ico (its small sizes are ready to use): decoding the 1024 px PNG held up
 // each new window by ~45 ms, the first one included. (macOS ignores it; Linux takes the PNG.)
