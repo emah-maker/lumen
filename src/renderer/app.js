@@ -3289,7 +3289,7 @@ window.assistant.onMcpEvent?.((event) => {
 });
 
 // The toolbar's pills (an update, "<AI> is using this tab") never crowd the address field: the end column goes compact in steps,
-// data-compact 1 (a dot and a short label) then 2 (icons only; extras.css), as far as it takes to fit. It tries each step from the
+// data-compact 1 (a dot and a short label), 2 (icons only), 3 and 4 (the start side's spare room, then part of the address's, go to this column; styles.css), as far as it takes to fit. It tries each step from the
 // full pills down and keeps the first that leaves every item whole inside the column, clear of the address and inside the window,
 // whatever mix of pills, extension icons and window width there is. (Offsets, not rects: the pills slide in with a transform.)
 (() => {
@@ -3311,7 +3311,7 @@ window.assistant.onMcpEvent?.((event) => {
     try {
       let level = 0;
       end.dataset.compact = '0';
-      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+      while (level < 4 && !fits()) end.dataset.compact = String(++level);
     } finally { fitting = false; }
   };
   const ro = new ResizeObserver(fitToolbarPills);

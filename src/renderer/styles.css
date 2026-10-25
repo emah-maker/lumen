@@ -415,17 +415,25 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 /* One calm row: navigation left, address centered, actions right. */
 .toolbar {
   --toolbar-side-min: 150px; /* each side keeps room for its buttons, so the address never overlaps them */
+  --toolbar-start-min: var(--toolbar-side-min); /* (the start side holds only Back and Forward: the last compact step gives most of it to the end column) */
+  --omnibox-min: 240px;
   --omnibox-max: 680px;
   /* The end column is never narrower than its content (the pills and buttons at their natural width), so the address
      field, which can shrink to its 240px floor, gives up room first. .toolbar-end caps that content width below. */
-  display: grid; grid-template-columns: minmax(var(--toolbar-side-min), 1fr) minmax(240px, var(--omnibox-max)) minmax(max-content, 1fr);
+  display: grid; grid-template-columns: minmax(var(--toolbar-start-min), 1fr) minmax(var(--omnibox-min), var(--omnibox-max)) minmax(max-content, 1fr);
   align-items: center; gap: 8px; height: var(--toolbar-h); padding: 0 8px;
 }
 .toolbar-start, .toolbar-end { display: flex; align-items: center; gap: 2px; }
 /* Nothing here clips: items share the row by shrinking (the extension list, then the update pill's words), never by
    overflowing out of an end-aligned row, which cut off its first item from the left. The cap keeps the end column from
    claiming the address field's floor and the nav buttons' room. */
-.toolbar-end { justify-content: flex-end; min-width: var(--toolbar-side-min); max-width: calc(100vw - var(--toolbar-side-min) - 240px - 40px); }
+.toolbar-end { justify-content: flex-end; min-width: var(--toolbar-side-min); max-width: calc(100vw - var(--toolbar-start-min) - var(--omnibox-min) - 40px); }
+/* Compact steps 3 and 4 (app.js fitToolbarPills), for a crowd of pills in a narrow window: the start side gives up its spare room, and an outside agent's window badge steps aside. */
+.toolbar:has(.toolbar-end:is([data-compact="3"], [data-compact="4"])) { --toolbar-start-min: 72px; }
+.toolbar-end:is([data-compact="3"], [data-compact="4"]) .agent-window-chip { display: none; }
+/* Step 4, the last resort (every pill at once in the narrowest window): the address field gives up part of its floor and a working app's Take over steps aside (Stop stays). */
+.toolbar:has(.toolbar-end[data-compact="4"]) { --omnibox-min: 160px; }
+.toolbar-end[data-compact="4"] .external-takeover { display: none; }
 
 .icon-btn {
   width: 30px; height: 30px; flex: none; display: grid; place-items: center;
@@ -570,6 +578,7 @@ body.zoomed browser-action-list { max-width: max(84px, calc(100vw - 700px)); } /
 @media (max-width: 860px) {
   .toolbar { gap: 4px; padding: 0 6px; }
   .toolbar-end { gap: 0; }
+  .toolbar-end { max-width: calc(100vw - var(--toolbar-start-min) - var(--omnibox-min) - 20px); } /* (this size's padding and gaps are 20px, not 40) */
   browser-action-list { max-width: max(56px, calc(100vw - 600px)); }
 }
 /* Very wide windows: the address field stops growing. */

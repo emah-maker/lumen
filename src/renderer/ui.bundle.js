@@ -11875,7 +11875,7 @@ window.assistant.onMcpEvent?.((event) => {
     try {
       let level = 0;
       end.dataset.compact = '0';
-      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+      while (level < 4 && !fits()) end.dataset.compact = String(++level);
     } finally { fitting = false; }
   };
   const ro = new ResizeObserver(fitToolbarPills);

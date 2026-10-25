@@ -6,5 +6,5 @@
 .focus-time { font-size: 12px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .focus-time[hidden] { display: none; }
 .focus-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.toolbar-end[data-compact="2"] .focus-btn.on .focus-time { display: none; }
-.toolbar-end[data-compact="2"] .focus-btn.on { padding: 0; width: 30px; }
+.toolbar-end:is([data-compact="2"], [data-compact="3"], [data-compact="4"]) .focus-btn.on .focus-time { display: none; }
+.toolbar-end:is([data-compact="2"], [data-compact="3"], [data-compact="4"]) .focus-btn.on { padding: 0; width: 30px; }
