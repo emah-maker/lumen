@@ -93,6 +93,14 @@ const block = (i) => ({ type: 'image', source: { type: 'base64', media_type: i.m
     const bad = new OpenAI.APIError(400, { message: 'temperature: must be at most 1' }, '400 {"error":{"message":"temperature: must be at most 1"}}', H);
     const badText = providers.describeProviderError(bad, 'openai')?.text || '';
     check('an unlisted error shows the provider sentence, not raw JSON', /couldn't answer \(error 400\): temperature: must be at most 1/.test(badText) && !/[{}]/.test(badText), badText);
+    // A 403 is a bad key only when it says so (xAI also answers a model the key cannot use, a refusal or a region block with 403)
+    const forb = (status, msg, model) => providers.describeProviderError(new OpenAI.APIError(status, { message: msg }, `${status} ${msg}`, H), 'xai', model)?.text || '';
+    const noModel = forb(403, 'The API key does not have permission to access this model', 'xai:grok-5');
+    check('xAI 403 "no access to this model" names the model, not the key', /no access to grok-5/.test(noModel) && !/rejected/.test(noModel), noModel);
+    const refused = forb(403, 'Content violates usage guidelines', 'xai:grok-5');
+    check('xAI 403 refusal shows the provider sentence, not "key rejected"', /Content violates usage guidelines/.test(refused) && !/rejected/.test(refused), refused);
+    check('a 403 "incorrect API key" is still a rejected key (settings action)', /API key was rejected/.test(forb(403, 'Incorrect API key provided', 'xai:grok-5')) && providers.describeProviderError(new OpenAI.APIError(403, { message: 'Incorrect API key provided' }, '403 Incorrect API key provided', H), 'xai').action === 'settings', '');
+    check('a plain 401 is still a rejected key', /API key was rejected/.test(forb(401, 'Unauthorized', 'xai:grok-5')), forb(401, 'Unauthorized'));
   }
 
   // ---- text-only models: the images are left out of the request, said once, the text still goes
