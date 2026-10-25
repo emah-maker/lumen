@@ -235,5 +235,25 @@ const brandName = (b) => b.brand;
   check('prepareAutomation in the first process: hands over and sets nothing (the relaunched browser decides for itself)', !firstProc.error && firstProc.plan.relaunch === true && firstProc.switches.length === 0, JSON.stringify(firstProc));
 }
 
+// ---- every request header and navigator.userAgentData field, per platform (a portal like ATI's compares them; pinned `platform`, so a Windows run covers macOS)
+{
+  const chromeVersion = '152.0.7977.65';
+  for (const [platform, arch, release, sys, uaOs, chOs, chArch, pv] of [
+    ['darwin', 'arm64', '', '15.6.1', 'Macintosh; Intel Mac OS X 10_15_7', 'macOS', 'arm', '15.6.1'], // (an Apple Silicon Mac: Chrome's UA still says Intel and 10_15_7)
+    ['darwin', 'x64', '', '26.0.0', 'Macintosh; Intel Mac OS X 10_15_7', 'macOS', 'x86', '26.0.0'],
+    ['win32', 'x64', '10.0.26100', '', 'Windows NT 10.0; Win64; x64', 'Windows', 'x86', '19.0.0'],
+  ]) {
+    const meta = id.uaMetadata({ chromeVersion, platform, arch, release, systemVersion: sys });
+    const ua = id.userAgent(platform, chromeVersion);
+    const sent = { ...id.lowEntropyHeaders(meta), ...id.highEntropyHeaders(meta, Object.keys(id.HIGH_ENTROPY)) };
+    const everything = JSON.stringify([ua, sent, meta]);
+    check(`${platform}/${arch}: no Electron, Lumen or Headless token in the UA, any hint header or userAgentData`, !/electron|lumen|headless|claude/i.test(everything), everything);
+    check(`${platform}/${arch}: UA OS "${uaOs}" matches Sec-CH-UA-Platform ${chOs}, arch ${chArch}, platform version ${pv}`, ua.includes(`(${uaOs})`) && sent['Sec-CH-UA-Platform'] === `"${chOs}"` && sent['Sec-CH-UA-Arch'] === `"${chArch}"` && sent['Sec-CH-UA-Platform-Version'] === `"${pv}"` && sent['Sec-CH-UA-Bitness'] === '"64"' && sent['Sec-CH-UA-Mobile'] === '?0', JSON.stringify(sent));
+    // The OS name in the UA, in the hint and in userAgentData agree: a mac UA never goes with a "Windows" hint and the reverse.
+    check(`${platform}/${arch}: the other platform's name appears nowhere`, platform === 'darwin' ? !/Windows|Win64/.test(everything) : !/Macintosh|macOS/.test(everything), everything);
+    check(`${platform}/${arch}: Sec-CH-UA-Full-Version(-List) and userAgentData name the UA's Chrome`, sent['Sec-CH-UA-Full-Version'] === `"${chromeVersion}"` && /Google Chrome";v="152\.0\.7977\.65"/.test(sent['Sec-CH-UA-Full-Version-List']) && ua.includes('Chrome/152.0.0.0'), JSON.stringify(sent));
+  }
+}
+
 assert.strictEqual(failures, 0, `${failures} chrome-identity check(s) failed`);
 console.log('chrome-identity units: all passed');
