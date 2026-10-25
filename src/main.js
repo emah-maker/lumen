@@ -12595,7 +12595,13 @@ ipcMain.handle('settings:set-adhd', (_e, on) => {
   writeSettings({ ...readSettings(), adhdMode: Boolean(on) });
   return true;
 });
-ipcMain.handle('settings:set-key', (_e, key) => {
+ipcMain.handle('settings:set-key', async (_e, key) => {
+  let unverified = false;
+  if (key) { // same check as the other providers: a rejected key is not saved; offline saves it, noted as unchecked
+    const check = await providers.checkKey('anthropic', String(key).trim());
+    if (check.ok === false) throw new Error(check.message);
+    unverified = check.ok === null;
+  }
   const settings = readSettings();
   if (key) {
     if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable; set ANTHROPIC_API_KEY instead.');
@@ -12609,7 +12615,7 @@ ipcMain.handle('settings:set-key', (_e, key) => {
   // has no such step (no model list to fetch), so it needs its own nudge — otherwise the picker and
   // "Set up an AI" card would stay stuck on the old (dis)connected state until something else refreshed them.
   modelsChanged();
-  return true;
+  return unverified ? { ok: true, unverified: true } : true;
 });
 
 // ---------- AI agents over MCP and CDP, and the Claude Code engine (features/ai-agents.js) ----------

@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A dropped connection mid-reply now switches models.** When a provider’s connection broke partway through a reply (a reset, a network change, a cut-off stream), Lumen sometimes just showed an error; it now moves to the next model like any other connection problem, and Stop still just stops.
 - Gemini 3.x models now show a cost in chat usage, and Gemini 3 tool-using chats keep the model's reasoning signatures between steps, so long tool runs no longer fail with a 400 error.
 
 ## 0.5.68 (2026-10-24)
