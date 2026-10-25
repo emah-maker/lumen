@@ -103,7 +103,7 @@ function buildMcpServers() {
 
   M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
   const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
-    h('h3', { text: 'Custom MCP servers' }),
+    h('h2', { text: 'Custom MCP servers' }),
     h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
   el.refresh = () => M.list().then(render).catch(() => {}); // the Connectors cards changed a server: look again

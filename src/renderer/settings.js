@@ -63,19 +63,38 @@ async function save(key, value, host) {
 
 // A description of more than a line or two is clamped to two lines; fitDescs() adds a quiet "Show more" only where the text really is clipped.
 const CLAMP_FROM = 60;
+// A caution or a promise about secrets is read in full, never behind "Show more" (a row that gives a program the computer, a key kept in the keychain, a list that can miss something).
+const KEEP_WHOLE = /only turn this on|trust it|trick|no list is perfect|can[’']t be undone|cannot be undone|without asking|can[’']t read|keychain|never in private/i;
+// The CSS clamp cuts the last line wherever the ellipsis fits ("clipboar…"); the cut text is made here instead, at a word, and the whole text kept in data-full.
+function cutAtWord(d) {
+  const full = d.textContent; const line = d.clientHeight / 2;
+  let at = full.lastIndexOf(' ', Math.floor(full.length * 2 / Math.max(3, Math.round(d.scrollHeight / line)))); // (a guess by the share of lines, then back a word at a time until it fits)
+  for (let n = 0; at > 0 && n < 14; n++) {
+    d.textContent = full.slice(0, at).replace(/[s,;:.–—-]+$/, '') + '…';
+    if (d.scrollHeight <= d.clientHeight + 1) break;
+    at = full.lastIndexOf(' ', at - 1);
+  }
+  d.dataset.full = full; d.dataset.w = String(d.clientWidth);
+}
+function restoreDesc(d) { if (d.dataset.full === undefined) return; d.textContent = d.dataset.full; delete d.dataset.full; delete d.dataset.w; }
 function fitDescs() {
   const todo = [];
+  const searching = document.body.classList.contains('searching');
+  for (const d of document.querySelectorAll('.desc[data-full]')) if (searching || d.dataset.w !== String(d.clientWidth)) restoreDesc(d); // (a new width cuts again; a search shows every description whole)
   for (const d of document.querySelectorAll('.desc.clamp')) { // (reads first: a write in between would make the next read lay the page out again)
+    if (d.closest('.row.warn')) { d.classList.remove('clamp'); continue; } // (a switch that gives a program the computer: its warning is never cut)
     if (!d.offsetParent || d.classList.contains('open')) continue; // on another page, filtered out, or already opened
     if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue; // (in a list below the screen that is not laid out yet: asking its size would lay it out; it is looked at when it nears the screen)
     const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
-    todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
+    todo.push([d, has, d.dataset.full !== undefined || d.scrollHeight > d.clientHeight + 1]);
   }
   for (const [d, has, clipped] of todo) {
+    if (clipped && d.dataset.full === undefined && !d.classList.contains('open') && !searching) cutAtWord(d);
     if (clipped && !has) {
       const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
       more.addEventListener('click', () => {
         const open = d.classList.toggle('open');
+        if (open) restoreDesc(d);
         more.setAttribute('aria-expanded', String(open));
         more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
         if (!open) requestAnimationFrame(fitDescs);
@@ -89,6 +108,7 @@ const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitDescs, 
 
 // Search hits: the matched words are wrapped in <mark class="hit"> in the visible labels and descriptions.
 function highlight(words) {
+  if (words.length) for (const d of document.querySelectorAll('.desc[data-full]')) restoreDesc(d); // (a hit may sit in the part the clamp cut off)
   const parents = new Set();
   for (const m of document.querySelectorAll('mark.hit')) { parents.add(m.parentNode); m.replaceWith(document.createTextNode(m.textContent)); }
   for (const el of parents) el.normalize();
@@ -112,8 +132,18 @@ function row(label, desc, ...controls) {
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
-  if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
+  describeControl(el);
   return el;
+}
+// A row's description is read after its control's name: the first control (or radio group) of the row points at it.
+let descSeq = 0;
+function describeControl(el) {
+  const desc = el.querySelector(':scope > .text > .desc');
+  const control = desc && el.querySelector('[role="radiogroup"], input:not([type="hidden"]), select, textarea');
+  if (!control || control.hasAttribute('aria-describedby')) return;
+  desc.id ||= `row-desc-${++descSeq}`;
+  control.setAttribute('aria-describedby', desc.id);
 }
 // Extra words a row is found by (scored like the names of its choices): "default search" finds the search engine picker.
 function withKeywords(el, words) {
@@ -141,6 +171,7 @@ function stackRow(label, desc, ...content) {
   const el = row(label, desc);
   el.classList.add('stack');
   el.append(...content);
+  describeControl(el);
   return el;
 }
 // `invert`: the setting is stored the other way round (aiHandsOff is true when the AI is *kept off* the pages), so the switch shows the
@@ -302,7 +333,7 @@ class Slot {
     if (!this.card) {
       this.card = h('div', { class: 'card' });
       const shown = this.pending && this.pending.toLowerCase() !== categories.get(this.cat).title.toLowerCase();
-      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h3', { class: 'group-title', text: this.pending }) : null, this.card);
+      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h2', { class: 'group-title', text: this.pending }) : null, this.card);
       this.el.append(g);
       this.groups.push(g);
     }
@@ -1350,7 +1381,7 @@ async function buildWidgets(card) {
     // block = label with the content below it; section = a titled inset list; advanced = the same, collapsed.
     const setting = (label, control, hint, ...more) => row(label, hint, control, ...more);
     const block = (label, hint, ...content) => stackRow(label, hint, ...content);
-    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h3', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
+    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h2', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
     const advanced = (rows, foot, open = false) => h('details', { class: 'group wf-advanced', ...(open ? { open: '' } : {}) }, h('summary', { text: 'Advanced' }), h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
     // "Where do I get this?" under a row's muted line; opens one fixed page by name.
     const helpLink = (r, key, text) => { r.querySelector('.text').append(h('button', { type: 'button', class: 'linkish', text, onclick: () => S.widgets.help(key) })); return r; };
@@ -2317,9 +2348,9 @@ async function buildWidgets(card) {
   const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'On your new-tab page' }), list),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new-tab page' }), list),
     h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
   // A card's gear on the new-tab page opens that widget's editor; its Add widget picker opens the form for a new one.
@@ -2386,7 +2417,7 @@ function buildStartup(card) {
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPage(); } });
   input.addEventListener('input', () => { addNote.textContent = ''; });
-  card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
+  card.append(stackRow('On startup', 'What Lumen opens when it starts.', h('div', { class: 'radios', role: 'radiogroup', 'aria-label': tr('settings.startup.label', 'On startup') }, ...radios)));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
     h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
 }
