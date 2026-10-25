@@ -10,8 +10,8 @@ const GV = require('../../gmail-view');
 const GA = require('../../gmail-atom');
 const { flat, clip, htmlToText, when, ConnectorError } = require('../util');
 
-const NEEDS_FULL = 'This needs the full Google sign-in. Tell the user to connect Gmail again in Settings → You and AI → Connectors and finish the Google sign-in. Meanwhile unread mail can still be listed.';
-const ALLOW_DRAFTS = 'Allow drafts first: Lumen needs Google’s permission to make Gmail drafts. Tell the user to open Settings → You and AI → Connectors and press Allow drafts on the Gmail card (Google asks them once), then ask again. Nothing was made.';
+const NEEDS_FULL = 'This needs the full Google sign-in. Tell the user to connect Gmail again in Settings → AI and agents → Connectors and finish the Google sign-in. Meanwhile unread mail can still be listed.';
+const ALLOW_DRAFTS = 'Allow drafts first: Lumen needs Google’s permission to make Gmail drafts. Tell the user to open Settings → AI and agents → Connectors and press Allow drafts on the Gmail card (Google asks them once), then ask again. Nothing was made.';
 
 const line = (m) => `${m.id}  ${when(m.at ? new Date(m.at).toISOString() : '')}  ${flat(m.from, 60)}: ${flat(m.subject, 160)}${m.snippet ? ` | ${flat(m.snippet, 160)}` : ''}${m.unread ? ' [unread]' : ''}`;
 
@@ -139,7 +139,7 @@ const actions = {
 // Sending (opt-in, features/gmail-send.js): ready only with the full sign-in, drafts allowed (gmail.compose covers send) and the switch on.
 function sendReady(ctx) {
   draftsReady(ctx);
-  if (!ctx.config.sending || !ctx.google.send) throw new ConnectorError('Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → You and AI → Connectors. Nothing was sent. You can still make a draft.', 'auth');
+  if (!ctx.config.sending || !ctx.google.send) throw new ConnectorError('Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → AI and agents → Connectors. Nothing was sent. You can still make a draft.', 'auth');
 }
 const MAYBE_SENT = (GS, email) => `The email may have been sent; check Sent before trying again${email ? ` (${GS.sentLink(email)})` : ''}. Don’t send it again unless the user says it didn’t go.`;
 const SEND_FAILS = 'Nothing was sent.';

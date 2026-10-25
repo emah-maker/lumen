@@ -48,7 +48,7 @@ window.addEventListener('resize', reportBounds);
 // ---------- motion ----------
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
-// The system setting, or Settings → Accessibility → Reduce motion (the pref-reduce-motion class):
+// The system setting, or Settings → Appearance → Accessibility → Reduce motion (the pref-reduce-motion class):
 // the springs and FLIP animations run in JS, so the CSS rule alone didn't stop them.
 const motionReduced = () => reduceMotion.matches || document.documentElement.classList.contains('pref-reduce-motion');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -2720,7 +2720,7 @@ function applyStill(visible, { fade = false } = {}) {
   settleStill = settle;
   widened.then(() => afterPaint(settle)); // (closing: the sidebar goes once main has widened the view over it)
 }
-// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
+// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI and agents "Sidebar button
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
@@ -3136,7 +3136,7 @@ const mcpSteps = new Map(); // step id -> row
 // "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
 const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
 
-// ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
+// ---------- other apps using Lumen (features/external-apps.js, Settings → AI and agents → Let other apps use Lumen) ----------
 // A pill per app that is working (or paused), with Stop and Take over; and a pill like the update one (Allow this time / Deny) when an app that has not been allowed
 // yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
 (() => {
@@ -3171,7 +3171,16 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     const [before = '', after = ''] = t('external.wantsShort', { client: MARK }).split(MARK);
     const words = el('span', 'update-text external-ask-text');
     words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
-    bar.replaceChildren(dot, words,
+    // A Claude Code with no token: the cause is the missing key, so fix that here, once (Settings has the same button).
+    const setupKey = !ask.claudeCode || !window.assistant.externalApps.connectClaudeCode ? null : button('external-ask-btn external-setup-key', t('external.setupKey'), async () => {
+      setupKey.disabled = true;
+      setupKey.textContent = t('external.setupBusy');
+      const r = await window.assistant.externalApps.connectClaudeCode().catch((err) => ({ ok: false, error: err.message }));
+      setupKey.disabled = false;
+      setupKey.textContent = t(r.ok ? 'external.setupDone' : 'external.setupFailed');
+      setupKey.title = r.ok ? r.message : r.error || '';
+    });
+    bar.replaceChildren(dot, words, ...(setupKey ? [setupKey] : []),
       button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
       button('external-ask-btn', t('external.always'), () => answer('always')), // ("Always allow": remembered by name, revocable in Settings; the agent's first tool call waits for this answer)
       button('external-ask-btn', t('external.deny'), () => answer('deny')));

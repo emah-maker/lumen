@@ -12,7 +12,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     clearDownloads: call('prefs:clear-downloads'),
     showDownload: call('prefs:open-download'),
     pickDownloadDir: call('prefs:pick-download-dir'),
-    pickProjectsDir: call('prefs:pick-projects-dir'), // [projects] Settings > AI > Projects folder
+    pickProjectsDir: call('prefs:pick-projects-dir'), // [projects] Settings → AI and agents → Projects folder
     pickWallpaper: call('prefs:pick-wallpaper'), // [look]
     removeWallpaper: call('prefs:remove-wallpaper'),
     wallpaperPreview: call('prefs:wallpaper-preview'), // [look] the picture as a small data: URL, for Settings' preview
@@ -134,11 +134,11 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     restartTab: call('prefs:restart-tab'),
     internals: call('prefs:internals'),
     strings: call('settings:strings'), // the page's text in the system's language (features/i18n.js)
-    // You and AI → Usage (features/usage.js)
+    // AI and agents → Usage (features/usage.js)
     usage: call('prefs:usage'),
     clearUsage: call('prefs:clear-usage'),
     setUsageBudget: call('prefs:usage-budget'), // { unit, daily, weekly, engine? }: Grok's budget, or the named provider's
-    cliInfo: call('prefs:cli-info'), // Settings → AI → AI providers: each CLI's version, path, sign-in and menu state
+    cliInfo: call('prefs:cli-info'), // Settings → AI and agents → AI providers: each CLI's version, path, sign-in and menu state
     // About → Updates (features/updates.js)
     updates: {
       state: call('settings:updates-state'),
@@ -146,7 +146,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       apply: call('settings:updates-apply'),
     },
     // Skills (features/skills.js)
-    routines: { state: call('settings:routines'), act: call('settings:routines-act') }, // [routines] Settings → AI → Routines (features/background-runner.js)
+    routines: { state: call('settings:routines'), act: call('settings:routines-act') }, // [routines] Settings → AI and agents → Routines (features/background-runner.js)
     skills: {
       list: call('skills:list'),
       save: call('skills:save'),
@@ -191,7 +191,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       onProgress: (cb) => ipcRenderer.on('macros:progress', (_e, e) => cb(e)),
     },
     focus: { get: call('settings:focus'), start: call('settings:focus-start'), phrase: call('settings:focus-phrase') }, // [focus] Settings > General > Focus mode (features/focus.js)
-    // "You and AI" reuses the sidebar's settings calls.
+    // The AI and agents page reuses the sidebar's settings calls.
     ai: {
       get: call('settings:get'),
       onModelsUpdated: (cb) => ipcRenderer.on('models-updated', () => cb()), // the model was changed elsewhere (the sidebar)
@@ -240,9 +240,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       cliLogout: call('cli:logout'),
       cliCancel: call('cli:cancel'),
       claudeCodeStatus: call('claudecode:status'),
-      codexStatus: call('codex:status'), // Settings → AI → Connect: Codex CLI found? signed in? connected?
+      codexStatus: call('codex:status'), // Settings → AI and agents → Connect: Codex CLI found? signed in? connected?
       codexLocate: call('codex:locate'), // "Locate codex…" (a file picker; true forgets the saved path)
-      antigravityStatus: call('antigravity:status'), // Settings → AI → CLI agents: found? the install command
+      antigravityStatus: call('antigravity:status'), // Settings → AI and agents → CLI agents: found? the install command
       antigravityInstall: call('antigravity:install'), // runs Google's installer, only from the click that follows seeing it
       useAntigravity: call('settings:use-antigravity'),
       mcpInfo: call('mcp:info'),
@@ -255,6 +255,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         setRequireToken: call('mcp:external-require-token'),
         setup: call('mcp:external-setup'),
         add: call('mcp:external-add'),
+        connect: call('mcp:external-connect'),
         revoke: call('mcp:external-revoke'),
         setAsk: call('mcp:external-ask'),
         openConfig: call('mcp:external-open-config'),

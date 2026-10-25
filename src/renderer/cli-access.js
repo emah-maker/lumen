@@ -1,4 +1,4 @@
-// Settings > AI > "full access to this computer": one setting per command-line AI, plus the master switch that sets
+// Settings → AI and agents → "full access to this computer": one setting per command-line AI, plus the master switch that sets
 // them together. Plain functions (no DOM, no Electron), shared by settings.js and the unit tests.
 // Each key is a boolean, off by default (settings/settings-backend.js DEFAULTS):
 //   claudeCodeFullAccess   ai/claude-code.js   ARGS_FULL

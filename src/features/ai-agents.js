@@ -115,16 +115,16 @@ function setupAiAgents(deps) {
   // Off until the user turns it on (Settings, or an "Add to <agent>" button): nothing outside Lumen
   // can drive the browser by default. Lumen's own engines (ownsSession) work either way.
   const mcpEnabled = () => readSettings().mcpEnabled === true;
-  // Settings → AI → "Agents in their own window don't ask" (on by default): an outside agent's calls in its own Lumen window run
+  // Settings → AI and agents → "Agents in their own window don't ask" (on by default): an outside agent's calls in its own Lumen window run
   // without approval cards (agent.js autoAllows); AI-off sites, kept-off tabs and hands-off mode still apply. Off: every new site asks.
   const agentsNoAsk = () => readSettings().agentsNoAsk !== false;
-  // [external apps] Other apps (Claude Desktop, Cursor, VS Code, Claude Code) with a token and a name of their own: Settings → AI → Let other apps use
+  // [external apps] Other apps (Claude Desktop, Cursor, VS Code, Claude Code) with a token and a name of their own: Settings → AI and agents → Let other apps use
   // Lumen (features/external-apps.js). They reach the MCP server below through its identify / onInitialize hooks and mcpCallTool's wrapper.
   const external = (() => {
     let real = null;
     // (an engine session is skipped by the hooks below: the server serves an engine tag only to a live run of Lumen's own, enabled() under startMcp; keep it so)
-    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
-    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
+    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), findClaude: () => AGENTS.claude.find(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
+    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'connect', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
     ipcMain.handle('mcp:external-state', () => (real ? real.invoke.state() : { active: [], prompts: [] })); // (every window asks at start: that must not load it)
     for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
@@ -169,7 +169,7 @@ function setupAiAgents(deps) {
   };
   // [warm per chat] Each tab chat's own Claude Code engine, whose process stays warm between that chat's messages
   // (features/warm-chats.js): its own process and MCP token. Freed on chat delete / last tab closed (chatGone), after
-  // the idle time (deps.warmIdleMs: Settings > AI, the same choice as a kept Grok Build's, Infinity for never; else
+  // the idle time (deps.warmIdleMs: Settings → AI and agents, the same choice as a kept Grok Build's, Infinity for never; else
   // claude-code.js IDLE_MS; the engine's own idle timeout is the same), past the idle cap (Performance mode: fewer
   // on a slow PC; the least recently used idle one goes), and on quit. Active runs are never capped.
   const ccIdleMs = () => { let ms = null; try { ms = deps.warmIdleMs?.(); } catch {} return ms === Infinity || (Number.isFinite(ms) && ms > 0) ? ms : claudeCodeModule().IDLE_MS; };
@@ -237,7 +237,7 @@ function setupAiAgents(deps) {
       // Grok reaches Lumen's tools, and asks Lumen before each tool call, over local HTTP
       // (mcp-http.js), started on the first Grok Build message. Its sessions are Lumen's own.
       grokBuild = new GrokBuildEngine({ userData: app.getPath('userData'), gate: startGrokGate, spawn: cliSpawn(), onFresh: freshReads });
-      // [keep connected] Settings > AI > Keep Grok Build connected (grokKeepConnected, off by default): each chat's own
+      // [keep connected] Settings → AI and agents → Keep Grok Build connected (grokKeepConnected, off by default): each chat's own
       // long-lived `grok agent stdio` process (features/grok-warm.js). Read live: turning it off ends them at the next look.
       grokBuild.keepWarm = require('./grok-warm').createGrokWarm({
         engine: grokBuild,
@@ -280,7 +280,7 @@ function setupAiAgents(deps) {
   let antigravityModels = []; // the slugs `agy models` lists, when known
   let antigravityNames = {}; // and their display names ("Gemini 3.1 Pro (High)")
   const antigravityModule = () => require('../ai/antigravity');
-  // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI), or with LUMEN_AGY_SIDEBAR=1.
+  // Offered in the sidebar once the user has chosen it (the setup card, Settings → AI and agents), or with LUMEN_AGY_SIDEBAR=1.
   const antigravitySidebar = () => process.env.LUMEN_AGY_SIDEBAR === '1' || (process.env.LUMEN_AGY_SIDEBAR !== '0' && readSettings().antigravitySidebar === true);
   // [parallel Antigravity chats] Each chat runs agy in a home folder of its own (antigravity.js chatHomeFor), so a message's
   // own engine (leaseEngine) can run beside the sidebar's with its own MCP token file, and the chat still resumes there.
@@ -299,13 +299,13 @@ function setupAiAgents(deps) {
   let codexSignedIn = 'unknown'; // true | false | 'unknown' — mirrors codex.status().signedIn
   let codexModels = []; // [{ id, name, tier }]: the account's cached list, else the documented ids
   const codexModule = () => require('../ai/codex');
-  // Offered in the sidebar once Codex is found and signed in, unless the user turned it off (Settings > AI), or LUMEN_CODEX_SIDEBAR=0/1.
+  // Offered in the sidebar once Codex is found and signed in, unless the user turned it off (Settings → AI and agents), or LUMEN_CODEX_SIDEBAR=0/1.
   const codexSidebar = () => process.env.LUMEN_CODEX_SIDEBAR === '1' || (process.env.LUMEN_CODEX_SIDEBAR !== '0' && readSettings().codexSidebar !== false);
   const newCodex = () => new (codexModule().CodexEngine)({ userData: app.getPath('userData'), gate: startGrokGate, locate: (refresh) => (deps.codexLocate ? deps.codexLocate() : codexConnect.find(Boolean(refresh))), bridge: mcpCommand, ensureServer: () => startMcp(true), spawn: cliSpawn(), onFresh: freshReads });
   const codexEngine = () => {
     if (!codex) {
       codex = newCodex();
-      // [keep connected] Settings > AI > Keep Codex connected (codexKeepConnected, on by default): each chat's own long-lived
+      // [keep connected] Settings → AI and agents → Keep Codex connected (codexKeepConnected, on by default): each chat's own long-lived
       // `codex app-server` process (features/codex-warm.js), idle time as for a kept Grok Build. Read live: turning it off ends them.
       codex.keepWarm = require('./codex-warm').createCodexWarm({
         engine: codex,
@@ -730,6 +730,7 @@ function setupAiAgents(deps) {
   async function addToAgent(id) {
     if (id === 'codex') return codexConnect.add();
     const key = AGENTS[id] ? id : 'claude';
+    if (key === 'claude') { const r = await external.load().invoke.connect('claude-code'); return { ok: r.ok, text: r.ok ? r.message : r.error }; } // (with its own key, not the shared token-less entry)
     const agent = AGENTS[key];
     const found = await agent.find();
     if (!found) return { ok: false, text: agent.installHint() };
@@ -848,12 +849,12 @@ function setupAiAgents(deps) {
     });
   }
 
-  // Settings → AI: where Antigravity stands, and the install command for this OS (shown to the user; run only by the click below).
+  // Settings → AI and agents: where Antigravity stands, and the install command for this OS (shown to the user; run only by the click below).
   ipcMain.handle('antigravity:status', async (_e, refresh) => {
     const s = await refreshAntigravityStatus(Boolean(refresh)).catch(() => ({ installed: false, signedIn: false }));
     return { installed: Boolean(s.installed), signedIn: s.signedIn, enabled: antigravitySidebar(), installCommand: antigravityModule().installCommand(), signInHint: antigravityModule().SIGN_IN_HINT };
   });
-  // The user clicked "Install" (Settings → AI) after seeing the command: runs Google's official installer for this OS.
+  // The user clicked "Install" (Settings → AI and agents) after seeing the command: runs Google's official installer for this OS.
   // Only from the settings page; never from a page, an agent or the sidebar.
   let installing = null;
   ipcMain.handle('antigravity:install', async (e) => {
@@ -951,7 +952,7 @@ function setupAiAgents(deps) {
       modelsChanged();
       return { installed: Boolean(s.installed), signedIn: s.signedIn !== false };
     },
-    // Settings → AI → AI providers: one row of facts per CLI, the same layout for each: installed, where, which version, signed in as
+    // Settings → AI and agents → AI providers: one row of facts per CLI, the same layout for each: installed, where, which version, signed in as
     // what, offered in the menu. Only local, free commands (`--version`, the status checks the engines already cache for 30 s).
     cliInfo,
     // Are the local CLIs there, and signed in (background tasks list them, or say why not).
@@ -1006,7 +1007,7 @@ function claudeCodeOptions({ signedIn = 'unknown', accountDetail = null } = {}) 
     badges: signedIn === false ? ['sign in'] : [],
     detail: signedIn === false
       ? 'Not signed in: open a terminal, run claude, then type /login'
-      : m.id === 'default' ? 'Lumen picks Haiku (most messages), Sonnet or Opus for each message (Settings → AI: Pick the Claude Code model for me), else the model set in Claude Code' : '', // the heading says Claude Code; the name says which model
+      : m.id === 'default' ? 'Lumen picks Haiku (most messages), Sonnet or Opus for each message (Settings → AI and agents: Pick the Claude Code model for me), else the model set in Claude Code' : '', // the heading says Claude Code; the name says which model
     group: 'Your Claude account',
     signedIn,
     accountDetail,

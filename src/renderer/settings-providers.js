@@ -1,4 +1,4 @@
-// Settings → AI → AI providers, and the per-provider sections of Settings → Usage. Loaded before settings.js and called from
+// Settings → AI and agents → AI providers, and the per-provider sections of Settings → Usage. Loaded before settings.js and called from
 // it; it uses that file's h(), row(), stackRow(), toggle(), meterRow(), flash(), tokens(), dollars(), tr(), save(), usageChip() and st.
 // One block per AI in the same order and layout, so a setting or a number is found in the same place for every one of them:
 //   Claude Code, Grok Build, Codex CLI, Antigravity (command-line AIs: version, path, signed in as, menu, full access, effort, Auto, usage)
@@ -104,7 +104,7 @@ function providerUsageRows(u, refresh) {
   return out;
 }
 
-// ---------- Settings → AI → AI providers → Local (Ollama / LM Studio) ----------
+// ---------- Settings → AI and agents → AI providers → Local (Ollama / LM Studio) ----------
 // The switch, the server and its address, Detect, and the installed models with what each can do. The address and models are kept
 // by main.js (settings.localAI, ai/local-models.js); an address that isn't on this computer asks once before it is used.
 async function localRows() {
@@ -161,7 +161,7 @@ async function localRows() {
   ];
 }
 
-// ---------- Settings → AI → AI providers ----------
+// ---------- Settings → AI and agents → AI providers ----------
 
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';

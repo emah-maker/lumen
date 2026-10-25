@@ -1,4 +1,4 @@
-// Other apps using Lumen, in the real app (Settings > AI > "Let other apps use Lumen"). A fake MCP client in Node stands in for Claude
+// Other apps using Lumen, in the real app (Settings → AI and agents → "Let other apps use Lumen"). A fake MCP client in Node stands in for Claude
 // Desktop, Cursor and the rest (no real external app is started, and nothing outside the temp profile is touched):
 //   - off by default; the switch, the status line and the per-app setup tabs in the Settings page
 //   - Add app: the token is encrypted on disk and kept in a user-only file; the setup text names that file and holds no secret

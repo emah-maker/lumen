@@ -1,5 +1,5 @@
 // ---------- usage: your plan's limits, and how much of them Lumen uses ----------
-// Settings → You and AI → Usage, and the sidebar's meter under the composer.
+// Settings → AI and agents → Usage, and the sidebar's meter under the composer.
 //  - The plan's limits come from two places, both free: `claude -p /usage` (a local command: no
 //    model call, 0 tokens), which reports "Current session: 29% used · resets 8:09pm" and a weekly
 //    line when the plan has one, plus what the CLI saw contributing ("Top MCP servers: lumen 1%" is

@@ -1,4 +1,4 @@
-// Performance mode: Lumen's lighter way of running on a slow computer. The setting (Settings → System)
+// Performance mode: Lumen's lighter way of running on a slow computer. The setting (Settings → Advanced)
 // is Auto (default), Always on or Off. Auto turns it on for a PC with 4 GB of memory or less, 4 or
 // fewer logical CPUs, no graphics acceleration (turned off, or blocklisted so Chromium draws in
 // software), or one whose CPU is being throttled (Windows battery saver or thermal limits report
