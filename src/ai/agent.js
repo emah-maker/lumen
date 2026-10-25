@@ -2364,7 +2364,7 @@ class Agent {
     const settings = messages.settings;
     const current = settings.model;
     const info = fallback.classify(err);
-    if (info.kind !== 'limit' && info.kind !== 'unreachable') return null;
+    if (info.kind !== 'limit' && info.kind !== 'unreachable' && info.kind !== 'denied') return null;
     // An engine's own process failing (it would not start, it exited) is not a verdict on the service: the next message tries it again.
     const own = fallback.isEngine(current) && info.kind === 'unreachable';
     const held = fallback.shared.entry(current);
@@ -2956,7 +2956,7 @@ class Agent {
     try {
       message = providers.splitModel(model).provider === 'anthropic'
         ? await this.claudeTurn(temp, signal, quiet, this.contextBudget(model), true)
-        : await this.otherTurn(temp, signal, quiet, this.contextBudget(model), true).catch((err) => { err.__provider = providers.splitModel(model).provider; throw err; });
+        : await this.otherTurn(temp, signal, quiet, this.contextBudget(model), true).catch((err) => { err.__provider = providers.splitModel(model).provider; err.__model = model; throw err; });
     } catch (err) {
       if (signal.aborted) throw err;
       emit({ type: 'notice', text: `Couldn’t compact this chat (${describeError(err, this.browser.anthropicAuth?.()).text}). Nothing was changed.` });
@@ -4096,6 +4096,7 @@ ${prompt}` : prompt), historyImages: [] };
           ? await this.claudeTurn(messages, signal, tee, Math.round(this.contextBudget(model) * budgetScale), toolsOff)
           : await this.otherTurn(messages, signal, tee, Math.round(this.contextBudget(model) * budgetScale), toolsOff).catch((err) => {
             err.__provider = providers.splitModel(model).provider;
+            err.__model = model;
             throw err;
           });
         jsonRetries = 0;
@@ -7738,7 +7739,7 @@ function apiErrorText(err) {
 // auth: how Claude is reached ('key' | 'env' | 'cli' | null), from the browser adapter.
 function describeError(err, auth = null) {
   // Errors from OpenAI, Grok or Gemini are tagged with their provider in otherTurn().
-  const other = err.__provider ? providers.describeProviderError(err, err.__provider) : null;
+  const other = err.__provider ? providers.describeProviderError(err, err.__provider, err.__model) : null;
   if (other) return other;
   if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   if (err instanceof sdk().AuthenticationError && auth === 'cli') return { text: 'Your Anthropic sign-in has expired. Sign in again in Settings → AI and agents.', action: 'settings', signInExpired: true };

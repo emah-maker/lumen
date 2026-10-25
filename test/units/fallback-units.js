@@ -6,6 +6,7 @@ const { classify, createCooldowns, order, pick, resolve, noticeFor, nameOf, COOL
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 const J = JSON.stringify;
+const { createCooldowns: cdOf } = require('../../src/ai/fallback');
 const NOW = Date.UTC(2026, 9, 1, 12, 0, 0); // 2026-10-01 12:00 UTC
 
 // ---- error shapes, as the SDKs, Node's fetch, Electron's net stack and the two CLIs really produce them
@@ -137,7 +138,20 @@ const cases = [
   // ---- round 3: credit exhaustion is a limit whatever the status, a CLI's embedded status and type, numeric body codes
   ['xai 403 used all credits or monthly spending limit', oai(403, null, 'Your team 1a2b3c has either used all available credits or reached its monthly spending limit. To continue making API requests, please purchase more credits or raise your spending limit.'), 'limit', (c) => c.scope === 'provider'],
   ['xai 403 monthly spending limit (no status, text only)', new Error('Your team has either used all available credits or reached its monthly spending limit.'), 'limit'],
-  ['xai 403 a plain permission denial stays auth', oai(403, null, 'The API key does not have permission to access this model'), 'auth'],
+  // A 403 is not always a bad key (docs.x.ai: 401 is the bad-key answer; 403 is "ask your team admin for permission"): by what it says
+  ['xai 403 no access to the model: this model only, not the key', oai(403, null, 'The API key does not have permission to access this model'), 'denied', (c) => c.scope === 'model' && c.resetsAt === NOW + COOLDOWN.denied],
+  ['xai 403 model not available to the team', oai(403, null, 'Your team does not have access to model grok-4-heavy'), 'denied', (c) => c.scope === 'model'],
+  ['xai 403 body as the SDK words it ({code, error} string)', Object.assign(new Error('403 {"code":"Permission denied","error":"Team abc has no access to model grok-5"}'), { name: 'PermissionDeniedError', status: 403 }), 'denied'],
+  ['xai 403 content refusal: other, never auth', oai(403, null, 'Content violates usage guidelines. Please revise the request.'), 'other'],
+  ['xai 403 region block: other', oai(403, null, 'Access from your region is not permitted'), 'other'],
+  ['xai 403 disabled team: other', oai(403, null, 'Your team has been disabled. Contact support.'), 'other'],
+  ['xai 403 invalid API key: still auth', oai(403, null, 'Incorrect API key provided: xai-****'), 'auth'],
+  ['xai 403 missing API key: still auth', oai(403, null, 'No API key was supplied'), 'auth'],
+  ['xai 403 invalid_api_key code: still auth', oai(403, 'invalid_api_key', 'Forbidden'), 'auth'],
+  ['gemini 403 API key not valid: still auth', Object.assign(new Error('403 API key not valid. Please pass a valid API key.'), { status: 403 }), 'auth'],
+  ['a bare 403 with no message: still auth', Object.assign(new Error('403 status code (no body)'), { name: 'PermissionDeniedError', status: 403 }), 'auth'],
+  ['a plain 401 is auth', oai(401, null, 'Unauthorized'), 'auth'],
+  ['a 401 that mentions a model is still auth', oai(401, null, 'No access to this model: bad token'), 'auth'],
   ['openai 429 insufficient_quota, real body', Object.assign(new Error('429 You exceeded your current quota, please check your plan and billing details.'), { name: 'RateLimitError', status: 429, code: 'insufficient_quota', type: 'insufficient_quota', error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', param: null, code: 'insufficient_quota' } }), 'limit', (c) => c.scope === 'provider'],
   ['anthropic 400 credit balance too low, real body', api('BadRequestError', 400, 'invalid_request_error', 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'), 'limit'],
   ['claude code text-only 429 rate_limit_error', new Error('API Error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account’s rate limit. Please try again later."},"request_id":"req_011CTx"}'), 'limit', (c) => c.status === 429],
@@ -731,6 +745,21 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
     check('provider no longer connected (nothing of it listed): null, the caller falls back as before', sameKindModel('xai:grok-3', gem) === null, sameKindModel('xai:grok-3', gem));
     check('a bare Claude id and a CLI engine are left to the caller', sameKindModel('claude-sonnet-4', gem) === null && sameKindModel('codex:gpt-5', opts(['codex:gpt-6-sol'])) === null, '');
     check('"More models…" and a provider Auto row are never the stand-in', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])) === 'openrouter:a/b', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])));
+  }
+
+  // ---- a model this key may not use: the turn moves to another model of the same provider; the provider stays usable
+  {
+    const info = classify(oai(403, null, 'The API key does not have permission to access this model'), { now: NOW });
+    const cd = cdOf();
+    check('denied: marks only that model for the cooldown', cd.mark('xai:grok-5', info, NOW) !== null && cd.cooling('xai:grok-5', NOW + 1000) && !cd.cooling('xai:grok-4', NOW + 1000), J(cd.snapshot(NOW)));
+    check('denied: the cooldown ends after an hour', !cd.cooling('xai:grok-5', NOW + COOLDOWN.denied + 1), '');
+    const o = [{ id: 'xai:grok-5', label: 'Grok 5', provider: 'xAI' }, { id: 'xai:grok-4', label: 'Grok 4', provider: 'xAI' }];
+    const next = pick({ current: 'xai:grok-5', options: o, cooldowns: cd, at: NOW + 1000 });
+    check('denied: pick takes another model of the same provider', next === 'xai:grok-4', J(next));
+    const n = noticeFor({ kind: 'denied', from: 'xai:grok-5', to: 'xai:grok-4' }, o);
+    check('denied: the notice names the model, not a rejected key', /no access to .*Grok 5.*switched to .*Grok 4/.test(n) && !/rejected/.test(n), n);
+    const cd2 = cdOf();
+    check('auth and other still cool nothing', cd2.mark('xai:grok-5', classify(oai(401, null, 'Unauthorized'), { now: NOW }), NOW) === null && cd2.mark('xai:grok-5', classify(oai(403, null, 'Region blocked'), { now: NOW }), NOW) === null, '');
   }
 
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nall fallback checks passed');

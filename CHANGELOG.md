@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A 403 from xAI no longer says your key was rejected unless it was.** xAI answers a model your team cannot use, a content refusal, a region block or a disabled team with a 403, and Lumen treated every 403 as a bad key and stopped using the whole provider. Now only a 401, or a 403 that says the key is invalid or missing, is a key problem. A 403 saying you have no access to a model moves the chat to another model of the same provider and the notice names the model; any other 403 shows xAI's own message. Test: test/units/fallback-units.js and test/units/chat-images-units.js.
+
 ## 0.5.68 (2026-10-24)
 
 - **"desktop", "documents" and "downloads" now mean your real folders for the AI.** If OneDrive (or Windows) keeps your Desktop or Documents somewhere other than your home folder, "Let the AI use files on this computer" looked in a folder that did not exist: list_files said it was missing and find: searched nothing. The shorthands now follow the folder the system reports (the same ones the Files picker searches), and "downloads" follows the Downloads folder you chose in Settings. If the system gives no answer, the home-folder name is used as before. A folder moved onto ~/.ssh, a cloud-credentials folder or Lumen's own profile is still refused, and is left out of the find: search. Test: `test/units/device-access-units.js` ("known:", "blocklist:", "makeKnown:").
