@@ -208,14 +208,15 @@ Right-click a tab → **Open in split view** to show it next to the tab you are 
 Lumen is an MCP server: any MCP-capable agent can drive the browser with the same tools the sidebar uses (read_page, click by text, fill_form, navigate, tabs, screenshot, read_urls, run_script, web_search, group_tabs…; all 28 with their parameters are in the [MCP tool reference](docs/mcp-tools.md)). It's off until you turn on **Settings → AI and agents → Allow AI agents to connect**. For Claude Desktop, Cursor, VS Code and Claude Code outside Lumen, **Settings → AI and agents → Let other apps use Lumen** gives each app a token of its own, shows a pill while it works, and lets you Stop, Take over or Revoke it ([guide](docs/external-apps.md)). The exact commands for your install, with the right paths, are under **Connect an AI agent** in the same place (each with a Copy button). Claude Code, Codex CLI, Gemini CLI and Grok Build also get a one-click **Add to …** button, which turns the setting on (Claude Code's says **Already connected** if `claude mcp get lumen` finds it). They run Lumen's own executable in Node mode on `mcp.js`:
 
 ```powershell
-# Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
+# Easiest: Settings, AI and agents, Let other apps use Lumen, Claude Code tab, Connect Claude Code (it does the steps below, with a key of its own).
+# By hand, Claude Code on Windows (PowerShell or cmd). Use claude.cmd: in PowerShell the npm claude.ps1
 # shim swallows the "--", and the command fails with "missing required argument 'commandOrUrl'".
-claude.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- "C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe" "C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js"
+claude.cmd mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -e "LUMEN_CLIENT_TOKEN_FILE=C:\Users\<you>\AppData\Roaming\Lumen\external-app-tokens\<id>.token" -- "C:\Users\<you>\AppData\Local\Programs\Lumen\Lumen.exe" "C:\Users\<you>\AppData\Local\Programs\Lumen\resources\app\mcp.js"
 ```
 
 ```sh
-# Claude Code on macOS / Linux
-claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -- /Applications/Lumen.app/Contents/MacOS/Lumen /Applications/Lumen.app/Contents/Resources/app/mcp.js
+# Claude Code on macOS / Linux (the token file is the one Settings shows after Connect Claude Code or Add app)
+claude mcp add lumen --scope user -e ELECTRON_RUN_AS_NODE=1 -e LUMEN_CLIENT_TOKEN_FILE="$HOME/Library/Application Support/Lumen/external-app-tokens/<id>.token" -- /Applications/Lumen.app/Contents/MacOS/Lumen /Applications/Lumen.app/Contents/Resources/app/mcp.js
 ```
 
 ```toml

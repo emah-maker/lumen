@@ -255,6 +255,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         setRequireToken: call('mcp:external-require-token'),
         setup: call('mcp:external-setup'),
         add: call('mcp:external-add'),
+        connect: call('mcp:external-connect'),
         revoke: call('mcp:external-revoke'),
         setAsk: call('mcp:external-ask'),
         openConfig: call('mcp:external-open-config'),

@@ -75,6 +75,26 @@ function setupExternalApps(deps) {
       return { ok: true, app: made.app, setup: setup(made.tokenFile), info: info() }; // (the token itself stays in its file: it is shown nowhere)
     } catch (err) { return { ok: false, error: String(err?.message || err) }; }
   };
+  // "Connect <app>": its token app + its own config, in one click (external-apps-connect.js). Tests never touch a real config or CLI: they hand in stand-ins.
+  const runCli = (found, argv) => new Promise((resolve) => {
+    require('../ai/cli-utils').execFile(found.command, [...(found.args || []), ...argv], { shell: false, windowsHide: true, timeout: 60000, cwd: require('os').homedir(), ...(found.env ? { env: { ...process.env, ...found.env } } : {}) }, (err, stdout, stderr) => {
+      resolve({ ok: !err, out: `${stdout || ''}${stderr || ''}`.replace(/\x1b\[[0-9;]*m/g, '').trim() });
+    });
+  });
+  invoke.connect = async (kind) => {
+    kind = String(kind);
+    const connect = require('./external-apps-connect');
+    if (kind !== 'claude-code' && !connect.JSON_APPS[kind]) return { ok: false, error: 'Lumen can’t set that app up by itself yet. Copy the text below instead.' };
+    const seams = (isTest && global.__externalConnectSeams) || {};
+    const { command, args } = deps.mcpCommand();
+    let r;
+    try {
+      if (kind === 'claude-code') r = await connect.connectClaudeCode({ ext, command, args, find: seams.claude ? async () => seams.claude : deps.findClaude, run: runCli });
+      else r = connect.connectJsonApp(kind, { ext, command, args, file: isTest ? seams.configPath?.(kind) : externalApps.configPath(kind) });
+    } catch (err) { r = { ok: false, error: String(err?.message || err) }; }
+    if (r.ok && !enabled()) invoke.enable(true); // (asking to connect an app is asking for apps to connect; a first-time switch-on also requires tokens)
+    return { ...r, app: r.app || null, setup: r.tokenFile ? setup(r.tokenFile) : null, info: info() };
+  };
   invoke.revoke = (id) => ({ ok: ext.revoke(String(id)), info: info() });
   invoke.ask = (id, on) => ({ ok: ext.setAsk(String(id), on === true), info: info() });
   invoke['open-config'] = (kind) => {

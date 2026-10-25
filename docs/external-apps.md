@@ -14,6 +14,14 @@ It is off until you turn it on: **Settings → AI and agents → Let other apps 
 
 ## Set up an app
 
+**The quick way:** pick the app's tab and press **Connect <app>**. Lumen makes (or reuses) that app's token and token file and puts Lumen into the app's own config with it, then says what to restart.
+
+- **Claude Code**: Lumen runs the real CLI (`claude mcp remove lumen --scope user`, then `claude mcp add lumen --scope user ...` with the token file). It never writes a project-scope `.mcp.json`. If the CLI is not installed it says so and shows the command to copy.
+- **Claude Desktop, Cursor, VS Code**: Lumen edits only the `lumen` entry of the app's user-level config file, writes it in one step, and keeps the old file next to it as `<file>.bak`. A file that is not plain JSON (VS Code's `mcp.json` with comments, for example) is left alone and you paste the text instead. Restart the app afterwards.
+- A **token-less Claude Code** (the toolbar says "Claude Code (no token)" and asks Allow) has a **Set up Claude Code's key** button on that prompt and on its row in the list: the same one click.
+
+By hand:
+
 1. Open **Settings → AI and agents → Let other apps use Lumen** and turn it on. **Require a token for every app** is on.
 2. Pick the app's tab, give it a name, and press **Add app**. The text below the tab now names the app's token file. It holds a path, not the secret, so there is nothing to copy and keep safe, and **Show setup** on the app's row brings the text back any time.
 3. Paste it where the app keeps its MCP servers:

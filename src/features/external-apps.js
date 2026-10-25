@@ -38,6 +38,8 @@ const DENY_MEMORY_MS = 10 * 60 * 1000; // a Deny holds for this long, so an app 
 // bidi marks and overrides, soft hyphen, BOM) removed, spaces collapsed. Every comparison (reserved names, prompts) uses nameKey().
 const cleanName = (s) => String(s || '').normalize('NFKC').replace(/\p{Cc}/gu, ' ').replace(/\p{Cf}/gu, '').replace(/\s+/g, ' ').trim().slice(0, 60);
 const nameKey = (s) => cleanName(s).toLowerCase();
+// A client that calls itself Claude Code (its own name is "claude-code"; Lumen may have added "(no token)"): Settings and the Allow prompt offer to give it a key.
+const isClaudeCodeName = (s) => /^claude[ -]?code( \(no token\))*$/.test(nameKey(s));
 
 function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), writeToken = writeTokenFile, safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let records = [];
@@ -72,7 +74,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   const byId = (id) => records.find((r) => r.id === id) || temp.find((r) => r.id === id) || null;
   const pub = (r) => {
     const l = live.get(r.id);
-    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : r.remembered ? 'remembered' : 'session', unverified: !r.secret, createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
+    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : r.remembered ? 'remembered' : 'session', unverified: !r.secret, claudeCode: !r.secret && isClaudeCodeName(r.name), createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
   };
   // (Linux's basic_text backend only obfuscates: that is no keychain)
   const encryptionOk = () => Boolean(safeStorage?.isEncryptionAvailable?.()) && safeStorage.getSelectedStorageBackend?.() !== 'basic_text';
@@ -221,7 +223,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     if (now() - (denied.get(key) || -Infinity) < DENY_MEMORY_MS) return Promise.resolve({ decision: 'deny' });
     let p = [...prompts.values(), ...queue].find((x) => x.key === key);
     if (!p) {
-      p = { id: `p${++promptSeq}`, key, name: cleanName(name) || 'An AI agent', waiters: new Set() };
+      p = { id: `p${++promptSeq}`, key, name: cleanName(name) || 'An AI agent', claudeCode: isClaudeCodeName(name), waiters: new Set() };
       p.promise = new Promise((resolve) => { p.resolve = resolve; });
       if (prompts.size < MAX_PROMPTS) show(p); else queue.push(p);
     }
@@ -233,7 +235,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     p.timer = setTimer(() => answer(p.id, 'deny', true), PROMPT_WAIT_MS);
     p.timer?.unref?.();
     prompts.set(p.id, p);
-    try { onPrompt({ type: 'open', prompt: { id: p.id, name: p.name } }); } catch {}
+    try { onPrompt({ type: 'open', prompt: { id: p.id, name: p.name, claudeCode: p.claudeCode } }); } catch {}
   }
   // A connection went while it waited: its place goes; a prompt nobody waits for is dismissed (not a Deny).
   function cancelWait(session) {
@@ -261,7 +263,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     onChange();
     return true;
   }
-  const pendingPrompts = () => [...prompts.values()].map((p) => ({ id: p.id, name: p.name }));
+  const pendingPrompts = () => [...prompts.values()].map((p) => ({ id: p.id, name: p.name, claudeCode: Boolean(p.claudeCode) }));
 
   // ---- one call (the wrapper in mcpCallTool): { refuse } with the reason, or { signal, ask, end() }. Not for Lumen's own engines.
   function beginCall(session) {
@@ -395,4 +397,4 @@ function setupFor({ command, args, tokenFile = null, token = null, name = 'lumen
   };
 }
 
-module.exports = { createExternalApps, writeTokenFile, nameKey, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, CALL_WAIT_MS, MAX_PROMPTS, cleanName };
+module.exports = { createExternalApps, writeTokenFile, nameKey, isClaudeCodeName, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, CALL_WAIT_MS, MAX_PROMPTS, cleanName };

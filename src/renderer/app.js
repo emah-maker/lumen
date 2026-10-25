@@ -3171,7 +3171,16 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     const [before = '', after = ''] = t('external.wantsShort', { client: MARK }).split(MARK);
     const words = el('span', 'update-text external-ask-text');
     words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
-    bar.replaceChildren(dot, words,
+    // A Claude Code with no token: the cause is the missing key, so fix that here, once (Settings has the same button).
+    const setupKey = !ask.claudeCode || !window.assistant.externalApps.connectClaudeCode ? null : button('external-ask-btn external-setup-key', t('external.setupKey'), async () => {
+      setupKey.disabled = true;
+      setupKey.textContent = t('external.setupBusy');
+      const r = await window.assistant.externalApps.connectClaudeCode().catch((err) => ({ ok: false, error: err.message }));
+      setupKey.disabled = false;
+      setupKey.textContent = t(r.ok ? 'external.setupDone' : 'external.setupFailed');
+      setupKey.title = r.ok ? r.message : r.error || '';
+    });
+    bar.replaceChildren(dot, words, ...(setupKey ? [setupKey] : []),
       button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
       button('external-ask-btn', t('external.always'), () => answer('always')), // ("Always allow": remembered by name, revocable in Settings; the agent's first tool call waits for this answer)
       button('external-ask-btn', t('external.deny'), () => answer('deny')));
