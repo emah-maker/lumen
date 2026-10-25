@@ -1718,6 +1718,7 @@
   "settings.ai.maxChatRuns.unlimited": "No limit",
   "settings.ai.maxSteps.unlimited": "Unlimited",
   "settings.startup.addPage": "Page to open on startup",
+  "settings.startup.label": "On startup",
   "settings.title": "Settings",
   "settings.unavailable": "Settings can only be changed from Lumen's own settings tab. Open ⋯ → Settings.",
   "setup.claudeCode": "Use your own Claude Code",
