@@ -596,3 +596,6 @@ details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px 
 .mr-preview-row { margin-top: 6px; }
 .ext-pin { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); flex: none; }
 .ext-pin input.switch:disabled { opacity: 0.5; }
+.item.ext-sites-row { border-top: 0; padding-top: 0; flex-wrap: wrap; font-size: var(--fs-sm); }
+.ext-sites-row input[type=text] { min-width: 180px; }
+.ext-sites-row [hidden] { display: none; }

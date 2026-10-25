@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Lumen everywhere test extension",
+  "version": "1.0.0",
+  "description": "A fixture for test/e2e/extension-perf.js: a content script and webRequest listeners on every site (what BetterCampus and most password managers ask for).",
+  "permissions": ["webRequest", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start" }]
+}
