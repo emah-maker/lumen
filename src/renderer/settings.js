@@ -784,7 +784,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.at('automation').append(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), portRow);
+  card.at('automation').append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
 
 }
 
@@ -2448,7 +2448,7 @@ async function buildPrivacy(card) {
   const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission');
   withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
   permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
-  permissions.append(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted));
+  permissions.append(withKeywords(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted), 'camera microphone location notifications alerts popups clipboard permission revoke'));
   renderGranted();
   // [devices] The hardware picked in a site's chooser (WebHID, WebUSB, Web Serial), with Remove (features/device-chooser.js).
   const devices = h('div', { class: 'list', id: 'device-grants' });
@@ -2526,7 +2526,7 @@ async function buildPasswords(card, asked) {
     renderNote();
     renderLogins();
   });
-  const toggleRow = row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input);
+  const toggleRow = withKeywords(row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input), 'autofill auto fill sign-in login logins credentials keychain');
   toggleRow.querySelector('.label').addEventListener('click', () => input.click());
   toggleRow.querySelector('.text').append(note); // how many are saved, or why it can't turn on
   card.group('Passwords').append(toggleRow);
@@ -3103,7 +3103,7 @@ function buildSystem(card) {
   };
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
-  card.append(perfRow);
+  card.append(withKeywords(perfRow, 'energy power saver slow lag'));
   // [igpu] Visual effects (the graphicsMode key; was "Graphics"): Automatic (Light on an integrated GPU, decided once at start-up) / Full / Light (settings-backend.js [igpu]).
   // One status line says what is on right now (with Performance mode), a Restart button when drawing is in software, and a hint on a hybrid-GPU laptop.
   const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Visual effects'), tr('settings.graphics.desc', 'Light removes the blur behind glass surfaces and runs the new-tab effect lighter, which saves a lot on an integrated GPU or without graphics acceleration. Automatic uses Light on an integrated GPU and in software drawing.'),
@@ -3302,6 +3302,8 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+let reshowTimer = 0;
+const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, 100); }; // (one pass for the sections that finish together)
 let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
   const SS = window.settingsSearch;
@@ -3310,15 +3312,15 @@ function show() {
   const wasSearching = searchedBefore;
   searchedBefore = searching;
   document.body.classList.toggle('searching', searching);
-  const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
+  // (the page's own title counts only when the query is about that page: "agents" must not match every row of "AI and agents")
+  const titlesOf = (g, slot) => SS.titlesFor(words, { group: g.dataset.title, sub: slot.isSub ? slot.title : '', cat: categories.get(slot.cat).title });
   const hitsBySlot = new Map();
   // Description-only hits are noise when something is named by the query: drop them once a label or title matches anywhere.
   let floor = 1;
   if (searching) {
-    for (const slot of slots.values()) for (const g of slot.groups) {
-      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
-      for (const r of g.querySelectorAll('.row')) if (SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles: '', search: '' }) === 3 || SS.matchesAll(titles, words)) floor = 2;
-    }
+    const items = [];
+    for (const slot of slots.values()) for (const g of slot.groups) { const titles = titlesOf(g, slot); for (const r of g.querySelectorAll('.row')) items.push({ label: r.querySelector('.label')?.textContent || '', titles }); }
+    floor = SS.floorFor(words, items);
   }
   for (const slot of slots.values()) {
     let hits = 0;
@@ -3333,11 +3335,11 @@ function show() {
         }
         continue;
       }
-      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
+      const titles = titlesOf(g, slot);
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = Math.max(titleHit ? 2 : 0, SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles, search: r.dataset.search, keywords: r.dataset.keywords || '' }));
+        const s = SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
         r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s); // best matches first inside a list
         if (s >= floor) { n++; best = Math.max(best, s); }
@@ -3380,8 +3382,14 @@ function show() {
   performance.mark('show:loops');
   syncNavStop();
   performance.mark('show:nav');
-  $('no-results').hidden = !searching || any;
+  $('no-results').hidden = !searching || any || !allDone; // (sections still being built may hold the answer: no "nothing matches" until they are all in)
   const suggest = $('no-results-suggest');
+  const partial = searching && !any && words.length > 1 ? words.filter((w) => [...document.querySelectorAll('#sections .row')].some((r) => SS.score([w], { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' }) > 0)) : [];
+  $('no-results-partial').textContent = partial.length ? tr('settings.noResultsPartial', 'These words match on their own:') : '';
+  if (partial.length) {
+    suggest.replaceChildren(...partial.map((word) => h('button', { type: 'button', class: 'chip', text: word, onclick: () => { $('search').value = word; show(); $('search').focus(); } })));
+    suggest.dataset.partial = '1';
+  } else if (suggest.dataset.partial) { suggest.replaceChildren(); delete suggest.dataset.partial; }
   if (!suggest.children.length) {
     for (const [word, text] of [['privacy', tr('settings.suggest.privacy', 'Privacy')], ['theme', tr('settings.suggest.theme', 'Theme')], ['download', tr('settings.suggest.download', 'Downloads')], ['password', tr('settings.suggest.password', 'Passwords')], ['search engine', tr('settings.suggest.searchEngine', 'Search engine')]]) {
       suggest.append(h('button', { type: 'button', class: 'chip', text, onclick: () => { $('search').value = word; show(); $('search').focus(); } }));
@@ -3543,8 +3551,8 @@ async function init() {
   mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
   mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle');
-  mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
-  mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
+  mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab developer energy power');
+  mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent developer debug');
   const BUILDS = [
     ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
@@ -3610,6 +3618,7 @@ async function init() {
           slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
         }
         finished.add(sid);
+        if (!allDone && searchedBefore) reshowSoon(); // (a search is on screen: the rows this section just made are searched too)
         tidyReady();
         refreshRestartNotes();
       })());
@@ -3634,7 +3643,8 @@ async function init() {
   window.addEventListener('resize', fitSoon);
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
   document.fonts?.ready.then(fitDescs).catch(() => {});
-  $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); }); // (searching looks through every row: they are all built first)
+  // Searching shows what is built at once and the rest as it finishes (see reshowSoon), so a search typed right after the page opens answers in one frame instead of waiting for every section.
+  $('search').addEventListener('input', () => { revealFolded(); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {

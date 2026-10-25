@@ -1647,6 +1647,7 @@ else globalThis.WidgetSummary = api;
 
 
 
+
 (function () {
 
   const SYNONYMS = {
@@ -1661,10 +1662,12 @@ else globalThis.WidgetSummary = api;
     update: ['updates', 'version'], upgrade: ['updates', 'version'], version: ['updates', 'about'],
     language: ['languages', 'translate', 'spelling'], translate: ['translation', 'languages'], spelling: ['spell check'], spellcheck: ['spell check', 'spelling'],
     download: ['downloads', 'save'], save: ['downloads'], folder: ['downloads', 'location'],
-    chatgpt: ['ai', 'openai'], claude: ['ai', 'anthropic'], gemini: ['ai', 'google'], grok: ['ai', 'xai'], assistant: ['ai', 'model'], llm: ['ai', 'model'],
+
+    chatgpt: ['openai'], claude: ['anthropic'], gemini: ['google'], grok: ['xai'], assistant: ['ai model'], llm: ['ai model'],
     reset: ['defaults', 'restore'], backup: ['export', 'import'], bookmarks: ['import', 'favorites'], favourites: ['favorites'],
     mic: ['microphone'], webcam: ['camera'], gps: ['location'], popup: ['pop-ups'], popups: ['pop-ups'], notification: ['notifications'],
     shortcut: ['keyboard', 'keys'], shortcuts: ['keyboard', 'keys'], accessibility: ['reduce motion', 'contrast', 'text size'],
+    autofill: ['passwords', 'logins'],
   };
 
   const isWordChar = (c) => /[a-z0-9]/.test(c);
@@ -1674,7 +1677,9 @@ else globalThis.WidgetSummary = api;
     return false;
   }
 
-  const alternatives = (word) => [word, ...(SYNONYMS[word] || [])];
+
+  const singular = (word) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? [word.slice(0, -1)] : []);
+  const alternatives = (word) => [word, ...singular(word), ...(SYNONYMS[word] || [])];
   const matchesWord = (text, word) => alternatives(word).some((a) => hasWord(text, a));
   const matchesAll = (text, words) => words.every((w) => matchesWord(text, w));
   const parse = (query) => String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -1689,7 +1694,32 @@ else globalThis.WidgetSummary = api;
     return matchesAll(`${search} ${titles}`.toLowerCase(), words) ? 1 : 0;
   }
 
-  const api = { SYNONYMS, hasWord, matchesWord, matchesAll, parse, score };
+
+
+  const STOP = new Set(['and', 'the', 'of', 'for', 'to', 'a', 'an']);
+  function categoryHit(words, title) {
+    const t = parse(title).filter((w) => !STOP.has(w));
+    const q = words.filter((w) => !STOP.has(w));
+    if (!t.length || !q.length) return false;
+    const is = (w, x) => (w.length >= 3 ? x.startsWith(w) : x === w);
+    return q.every((w) => t.some((x) => is(w, x))) && q.some((w) => is(w, t[0]));
+  }
+
+
+  const titlesFor = (words, { group = '', sub = '', cat = '' }) => `${group} ${sub} ${categoryHit(words, cat) ? cat : ''}`.toLowerCase();
+
+  const rowScore = (words, titles, { label = '', search = '', keywords = '' }) => Math.max(matchesAll(titles, words) ? 2 : 0, score(words, { label, titles, search, keywords }));
+
+  const floorFor = (words, items) => (items.some(({ label = '', titles }) => score(words, { label }) === 3 || matchesAll(titles, words)) ? 2 : 1);
+
+  function rank(words, rows) {
+    if (!words.length) return rows.map(() => 0);
+    const items = rows.map((r) => ({ ...r, titles: titlesFor(words, r) }));
+    const floor = floorFor(words, items);
+    return items.map((r) => { const s = rowScore(words, r.titles, r); return s >= floor ? s : 0; });
+  }
+
+  const api = { SYNONYMS, hasWord, matchesWord, matchesAll, parse, score, categoryHit, titlesFor, rowScore, floorFor, rank };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else window.settingsSearch = api;
 })();
@@ -2088,7 +2118,7 @@ function buildUnloading(slot) {
 
   const master = kw(toggle('tabSleep', un('master', 'Unload inactive tabs'),
     un('masterDesc', 'Closes the page of a background tab you have not used for a while to free its memory; it reloads when you come back. Turn off to keep every tab loaded.'),
-    (on) => { if (on && st.prefs.tabSleepMode === 'off') save('tabSleepMode', 'both'); refresh(); }), 'master on off enable');
+    (on) => { if (on && st.prefs.tabSleepMode === 'off') save('tabSleepMode', 'both'); refresh(); }), 'master on off enable energy power saver saving');
 
   const afterControls = presetWithCustom({ key: 'tabSleepMinutes', label: un('after', 'Unload after'), presets: C.minutes.concat(0), text: unloadMinutesText, unitText: un('unitMinutes', 'minutes'), min: 1, max: C.maxMinutes, selectId: 'pref-tabSleepMinutes', numberId: 'pref-tabSleepMinutesCustom' });
   const perfNote = h('span', { class: 'note', id: 'unload-perf-note' });
@@ -2131,7 +2161,7 @@ function buildUnloading(slot) {
     return row(label, desc, h('span', { class: 'note', text: un('alwaysOn', 'Always on') }), input);
   };
   const exceptions = [
-    kw(toggle('tabSleepKeepAudio', un('keepAudio', 'Tabs playing audio or video'), un('keepAudioDesc', 'A tab that is playing sound or video stays loaded.'), undefined, { fallback: true }), 'music sound media playing'),
+    kw(toggle('tabSleepKeepAudio', un('keepAudio', 'Tabs playing audio or video'), un('keepAudioDesc', 'A tab that is playing sound or video stays loaded.'), undefined, { fallback: true }), 'music sound mute muted media playing'),
     kw(toggle('tabSleepKeepPinned', un('keepPinned', 'Pinned tabs'), un('keepPinnedDesc', 'Pinned tabs stay loaded.'), undefined, { fallback: true }), 'pin'),
     kw(toggle('tabSleepKeepForms', un('keepForms', 'Tabs with unsaved input or a “Leave site?” prompt'), un('keepFormsDesc', 'A tab with typed, unsent text, or a page that would ask “Leave site?” before closing, stays loaded.'), undefined, { fallback: true }), 'form typed draft beforeunload leave'),
     locked('unload-keep-calls', un('keepCalls', 'Tabs in a call or sharing their screen'), un('keepCallsDesc', 'A tab using the camera or microphone, or sharing the screen, always stays loaded, so a call or a share is never cut.')),
@@ -3809,15 +3839,18 @@ function providerInfoText(i) {
 
 async function buildProviders(page) {
   const ai = await S.ai.get();
-  const info = Object.fromEntries((await S.cliInfo().catch(() => [])).map((i) => [i.id, i]));
+
+  const probes = S.cliInfo().catch(() => []);
+  const checking = new Map();
   const autoKeys = new Set((ai.autoProviders || []).map((p) => p.key));
   const keys = { anthropic: { stored: ai.hasStoredKey, env: ai.hasEnvKey }, ...ai.providerKeys };
   const rowsFor = (key) => {
     const out = [];
     if (PROVIDER_CLI[key]) {
-      const i = info[key] || { installed: false };
-      const state = h('span', { class: `note${i.installed && i.signedIn === false ? ' err' : ''}`, id: `provider-state-${key}`, text: providerInfoText(i), title: i.path || '' });
-      out.push(row('Status', i.path ? `Found at ${i.path}` : 'Where Lumen looks is listed under Connect an AI agent.', state));
+      const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
+      const statusRow = row('Status', 'Where Lumen looks is listed under Connect an AI agent.', state);
+      checking.set(key, [state, statusRow]);
+      out.push(statusRow);
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
       if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced). Off by default.`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
@@ -3847,6 +3880,17 @@ async function buildProviders(page) {
     page.group(providerName(key));
     page.append(...(key === 'local' ? await localRows() : rowsFor(key)));
   }
+  probes.then((list) => {
+    const info = Object.fromEntries(list.map((i) => [i.id, i]));
+    for (const [key, [state, statusRow]] of checking) {
+      const i = info[key] || { installed: false };
+      state.textContent = providerInfoText(i);
+      state.title = i.path || '';
+      state.classList.toggle('err', Boolean(i.installed && i.signedIn === false));
+      const desc = statusRow.querySelector('.desc');
+      if (i.path && desc) { desc.textContent = `Found at ${i.path}`; statusRow.dataset.search = `status found at ${i.path}`.toLowerCase(); }
+    }
+  });
 }
 ;
 // ---- settings-preview.js
@@ -4791,7 +4835,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.at('automation').append(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), portRow);
+  card.at('automation').append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
 
 }
 
@@ -6455,7 +6499,7 @@ async function buildPrivacy(card) {
   const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission');
   withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
   permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
-  permissions.append(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted));
+  permissions.append(withKeywords(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted), 'camera microphone location notifications alerts popups clipboard permission revoke'));
   renderGranted();
 
   const devices = h('div', { class: 'list', id: 'device-grants' });
@@ -6533,7 +6577,7 @@ async function buildPasswords(card, asked) {
     renderNote();
     renderLogins();
   });
-  const toggleRow = row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input);
+  const toggleRow = withKeywords(row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input), 'autofill auto fill sign-in login logins credentials keychain');
   toggleRow.querySelector('.label').addEventListener('click', () => input.click());
   toggleRow.querySelector('.text').append(note);
   card.group('Passwords').append(toggleRow);
@@ -7110,7 +7154,7 @@ function buildSystem(card) {
   };
   showPerfNote();
   perfRow.querySelector('.text').append(perfNote);
-  card.append(perfRow);
+  card.append(withKeywords(perfRow, 'energy power saver slow lag'));
 
 
   const gfxRow = select('graphicsMode', tr('settings.graphics.label', 'Visual effects'), tr('settings.graphics.desc', 'Light removes the blur behind glass surfaces and runs the new-tab effect lighter, which saves a lot on an integrated GPU or without graphics acceleration. Automatic uses Light on an integrated GPU and in software drawing.'),
@@ -7309,6 +7353,8 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+let reshowTimer = 0;
+const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, 100); };
 let searchedBefore = false;
 function show() {
   const SS = window.settingsSearch;
@@ -7317,15 +7363,15 @@ function show() {
   const wasSearching = searchedBefore;
   searchedBefore = searching;
   document.body.classList.toggle('searching', searching);
-  const catTitle = (slot) => categories.get(slot.cat).title.toLowerCase();
+
+  const titlesOf = (g, slot) => SS.titlesFor(words, { group: g.dataset.title, sub: slot.isSub ? slot.title : '', cat: categories.get(slot.cat).title });
   const hitsBySlot = new Map();
 
   let floor = 1;
   if (searching) {
-    for (const slot of slots.values()) for (const g of slot.groups) {
-      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
-      for (const r of g.querySelectorAll('.row')) if (SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles: '', search: '' }) === 3 || SS.matchesAll(titles, words)) floor = 2;
-    }
+    const items = [];
+    for (const slot of slots.values()) for (const g of slot.groups) { const titles = titlesOf(g, slot); for (const r of g.querySelectorAll('.row')) items.push({ label: r.querySelector('.label')?.textContent || '', titles }); }
+    floor = SS.floorFor(words, items);
   }
   for (const slot of slots.values()) {
     let hits = 0;
@@ -7340,11 +7386,11 @@ function show() {
         }
         continue;
       }
-      const titles = `${g.dataset.title} ${slot.isSub ? slot.title : ''} ${catTitle(slot)}`.toLowerCase();
+      const titles = titlesOf(g, slot);
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = Math.max(titleHit ? 2 : 0, SS.score(words, { label: r.querySelector('.label')?.textContent || '', titles, search: r.dataset.search, keywords: r.dataset.keywords || '' }));
+        const s = SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
         r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s);
         if (s >= floor) { n++; best = Math.max(best, s); }
@@ -7387,8 +7433,14 @@ function show() {
   performance.mark('show:loops');
   syncNavStop();
   performance.mark('show:nav');
-  $('no-results').hidden = !searching || any;
+  $('no-results').hidden = !searching || any || !allDone;
   const suggest = $('no-results-suggest');
+  const partial = searching && !any && words.length > 1 ? words.filter((w) => [...document.querySelectorAll('#sections .row')].some((r) => SS.score([w], { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' }) > 0)) : [];
+  $('no-results-partial').textContent = partial.length ? tr('settings.noResultsPartial', 'These words match on their own:') : '';
+  if (partial.length) {
+    suggest.replaceChildren(...partial.map((word) => h('button', { type: 'button', class: 'chip', text: word, onclick: () => { $('search').value = word; show(); $('search').focus(); } })));
+    suggest.dataset.partial = '1';
+  } else if (suggest.dataset.partial) { suggest.replaceChildren(); delete suggest.dataset.partial; }
   if (!suggest.children.length) {
     for (const [word, text] of [['privacy', tr('settings.suggest.privacy', 'Privacy')], ['theme', tr('settings.suggest.theme', 'Theme')], ['download', tr('settings.suggest.download', 'Downloads')], ['password', tr('settings.suggest.password', 'Passwords')], ['search engine', tr('settings.suggest.searchEngine', 'Search engine')]]) {
       suggest.append(h('button', { type: 'button', class: 'chip', text, onclick: () => { $('search').value = word; show(); $('search').focus(); } }));
@@ -7550,8 +7602,8 @@ async function init() {
   mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
   mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
   mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle');
-  mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab');
-  mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent');
+  mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab developer energy power');
+  mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent developer debug');
   const BUILDS = [
     ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
     ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
@@ -7617,6 +7669,7 @@ async function init() {
           slot.append(row(tr('settings.loadFailed', 'Couldn’t load this section'), tr('settings.loadFailedHint', 'Close this tab and open Settings again. If it keeps happening, restart Lumen.') + ' (' + String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') + ')'));
         }
         finished.add(sid);
+        if (!allDone && searchedBefore) reshowSoon();
         tidyReady();
         refreshRestartNotes();
       })());
@@ -7641,7 +7694,8 @@ async function init() {
   window.addEventListener('resize', fitSoon);
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true);
   document.fonts?.ready.then(fitDescs).catch(() => {});
-  $('search').addEventListener('input', () => { revealFolded(); if (allDone) show(); else buildAll().then(show); });
+
+  $('search').addEventListener('input', () => { revealFolded(); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
 
   document.addEventListener('keydown', (e) => {

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Settings search works the moment Settings opens, and finds the right things.** A search typed right after opening used to wait about 0.8 seconds for the AI providers page to check each command-line AI; it now answers in about 0.1 seconds and the Status rows fill in as the checks finish. Searching for "agents" no longer lists every row of the AI page, "claude" and "grok" list only their own rows, "autofill", "mute", "energy" and "developer" now find a setting, and a search with no match offers the words in it that do.
+
 ## 0.5.69 (2026-10-25)
 
 - When Claude Code, Codex, Grok Build or Antigravity updates itself while you send a message, Lumen now waits a few seconds and starts it again instead of failing with "Windows or your security software would not let Lumen run Claude Code". If it still will not start, the message moves to your next connected AI with a note ("Claude Code didn’t start (it may have just updated). Lumen tried again and switched to ..."), and security software is blamed only when Windows really says it blocked the file.
