@@ -61,6 +61,7 @@ const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Past
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
 const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
+const extensionSites = () => require('./browser/extension-sites'); // Settings → Extensions → Site access (loaded when an extension is loaded with sites saved, or one is changed)
 const { replyOnThrow } = require('./ai/page-debug');
 const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
@@ -1563,6 +1564,13 @@ async function setupExtensions() {
   const { ElectronChromeExtensions } = require('electron-chrome-extensions');
   const { installChromeWebStore, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
   const { extensionPermissionLines } = require('./browser/extension-permissions');
+  // Site access: an extension saved as "only these sites" loads with its sweeping patterns narrowed to them (see browser/extension-sites.js).
+  // Every load goes through here: start-up, an install, the library's updates. Nothing is read when no extension has sites saved.
+  const loadRaw = ses.extensions.loadExtension.bind(ses.extensions);
+  ses.extensions.loadExtension = async (dir, ...rest) => {
+    if (typeof dir === 'string' && (Object.keys(readSettings().extensionSites || {}).length || fs.existsSync(path.join(dir, 'manifest.lumen-original.json')))) await extensionSites().applyToDir(dir, readSettings().extensionSites).catch(() => {});
+    return loadRaw(dir, ...rest);
+  };
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
@@ -1673,6 +1681,22 @@ async function setupExtensions() {
   const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
   firstTabLoaded.then(() => setTimeout(checkUpdates, 30000).unref?.());
   setInterval(checkUpdates, 5 * 60 * 60 * 1000).unref?.();
+}
+
+// Settings → Extensions → Site access: saves the sites (none: all sites, as installed) and loads the extension again with them.
+// Pages already open keep what they had until they reload.
+async function setExtensionSites(id, list) {
+  const sites = extensionSites().cleanSites(list);
+  const saved = { ...(readSettings().extensionSites || {}) };
+  if (sites.length) saved[id] = sites; else delete saved[id];
+  writeSettings({ ...readSettings(), extensionSites: saved });
+  const ses = session.defaultSession;
+  const ext = ses.extensions.getExtension(id);
+  if (!ext) return;
+  const dir = ext.path;
+  ses.extensions.removeExtension(id);
+  const loaded = await ses.extensions.loadExtension(dir).catch((err) => { console.error('[lumen] extension reload failed:', err?.message || err); return null; });
+  if (loaded?.manifest?.manifest_version === 3 && loaded.manifest.background?.service_worker) ses.serviceWorkers.startWorkerForScope(`chrome-extension://${id}`).catch(() => {});
 }
 
 // Help > Report an issue: the new-issue page with the version and OS filled in (nothing is sent until the user submits it on GitHub)
@@ -9375,6 +9399,7 @@ if (TEST) {
   global.__zoomBy = (step) => zoomBy(activeTab()?.webContents, step);
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
+  global.__setExtensionSites = (id, sites) => setExtensionSites(id, sites);
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
@@ -10023,6 +10048,8 @@ const settingsBackend = settingsPage.create({
   permissionDecisions,
   deviceGrants, // [devices] declared with the permissions below (a getter would be needed if it were read before then)
   uninstallExtension,
+  setExtensionSites,
+  extensionSitesSaved: () => readSettings().extensionSites || {},
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),
   isSettingsSender,
