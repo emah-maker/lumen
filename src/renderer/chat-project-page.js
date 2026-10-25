@@ -143,7 +143,7 @@
       const out = await page.api.projectLink(page.id, { add: { url: /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`, title: '' } }).catch(() => null);
       if (out && !out.error) { url.value = ''; say.textContent = ''; draw(out); host().refresh(); } else say.textContent = out?.error === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages.') : tr('projectws.pages.invalid', 'That is not a web address (http or https).');
     };
-    url.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    url.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); submit(); } });
     const tab = button(tr('projectws.pages.tab', 'Add this tab'), async () => {
       const out = await page.api.projectAddTab(page.id).catch(() => null);
       if (out?.ok) { draw(out.project); say.textContent = out.already ? tr('projectws.pages.already', 'That page is already pinned.') : tr('projectws.pages.added', 'Pinned.'); host().refresh(); }
@@ -291,7 +291,7 @@
       if (out && !out.error) { data.project = out; root.setAttribute('aria-label', out.name); h.refresh(); } else title.value = data.project.name;
     };
     title.addEventListener('blur', rename);
-    title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } else if (e.key === 'Escape') { title.value = data.project.name; title.blur(); } });
+    title.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); title.blur(); } else if (e.key === 'Escape') { title.value = data.project.name; title.blur(); } });
     const fresh = button(tr('chatpage.project.newChat', 'New chat here'), () => h.newChat(data.project), 'primary');
     const folder = button(tr('projectws.folder', 'Folder and more…'), () => h.editFolder(data.project));
     const del = twoStep(tr('chatpage.project.delete', 'Delete project'), tr('projectws.deleteAgain', 'Click again: its chats stay'), async () => {

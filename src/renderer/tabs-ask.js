@@ -192,7 +192,7 @@
         markActive();
         return;
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if ((e.key === 'Enter' && !isImeEnter(e)) || e.key === 'Tab') {
         if (e.shiftKey && e.key === 'Enter') return;
         e.preventDefault(); e.stopImmediatePropagation();
         choose(index);

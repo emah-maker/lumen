@@ -1120,7 +1120,7 @@ function searchController(view, { id, o, act, ui, cap }) {
     input.addEventListener('input', () => { ui.term = input.value.slice(0, 80); ui.active = -1; ctl.search(false); });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const list = p.options(); if (!list.length) return; const nextIndex = ui.active < 0 ? (e.key === 'ArrowDown' ? 0 : list.length - 1) : (ui.active + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length; p.setActive(nextIndex); return; }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeEnter(e)) {
         e.preventDefault();
         const list = p.options();
         const pick = ui.active >= 0 ? list[ui.active] : list.find((b) => !b.classList.contains('am-opt-recent'));

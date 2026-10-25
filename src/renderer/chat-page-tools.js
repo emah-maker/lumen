@@ -44,7 +44,7 @@
       btn.focus();
     };
     input.addEventListener('keydown', (e) => {
-      if (e.isComposing || e.keyCode === 229) return;
+      if (isImeEnter(e)) return;
       if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
     });
     input.addEventListener('blur', () => finish(true));

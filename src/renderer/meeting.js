@@ -298,7 +298,7 @@
   }
   promptSend.onclick = submitPrompt;
   promptInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !isImeEnter(e)) {
       e.preventDefault();
       submitPrompt();
     }

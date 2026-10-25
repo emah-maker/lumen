@@ -1394,7 +1394,7 @@ function startRename(groupId) {
   };
   input.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); finish(true); }
     else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
   });
   input.addEventListener('blur', () => finish(true));
@@ -2274,7 +2274,7 @@ address.addEventListener('blur', () => {
 });
 window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) hideSuggestions(); }, 150));
 address.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.altKey) {
+  if (e.key === 'Enter' && e.altKey && !isImeEnter(e)) {
     e.preventDefault();
     const text = address.value.trim();
     hideSuggestions();
@@ -2425,7 +2425,7 @@ findInput.addEventListener('input', () => {
   syncFindButtons(0); // off until the result for this text arrives
 });
 findInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); findStep(!e.shiftKey); }
+  if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); findStep(!e.shiftKey); }
 });
 findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeFind(); } }); // anywhere in the bar (a button focused, say), not only the field
 $('find-next').onclick = () => findStep(true);

@@ -186,7 +186,7 @@
   promptEl.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== promptEl) closeMenu(); }, 120));
   // Capture: these keys mean something here before the chat's own Enter-to-send sees them.
   promptEl.addEventListener('keydown', (e) => {
-    if (e.isComposing || composing) return;
+    if (isImeEnter(e) || e.isComposing || composing) return;
     const swallow = () => { e.preventDefault(); e.stopImmediatePropagation(); };
     if (open) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { swallow(); index = (index + (e.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length; render(); }
