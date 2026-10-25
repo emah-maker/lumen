@@ -167,6 +167,13 @@ function createUploadStore({ dir, now = () => Date.now() } = {}) {
     return { ref, name: clean, type: meta.type, size: buffer.length };
   }
 
+  // The path of a file still pending (a chip in the box), or null: main draws its thumbnail from it, and nothing else ever gets a path out of here.
+  function pendingPath(ref) {
+    if (!isRef(ref)) return null;
+    const meta = readMeta(path.join(pendingDir, ref));
+    return meta ? meta.path : null;
+  }
+
   // The user took the chip off before sending.
   function discard(ref) {
     if (!isRef(ref)) return false;
@@ -238,7 +245,7 @@ function createUploadStore({ dir, now = () => Date.now() } = {}) {
     } catch { /* no chat folders */ }
   }
 
-  return { stash, discard, adopt, resolve, list, removeChat, sweep, dir };
+  return { stash, pendingPath, discard, adopt, resolve, list, removeChat, sweep, dir };
 }
 
 // The OS picker's file-type filters for an input's accept (the extensions it names), plus "All files" so the user is

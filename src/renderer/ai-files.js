@@ -3,7 +3,8 @@
 //   window.aiFiles.autoOpen(file, card)    the reply's main file, opened for the user: a page or SVG in the canvas (full-page chat), a PDF in a new background tab
 //
 // The card shows the icon, name and folder with Open, Show in folder and Copy path. A page or SVG the AI wrote gets a live preview (inline in
-// the sidebar, "Open in canvas" on the full-page chat); a picture gets a thumbnail; a PDF opens in Lumen's viewer. Lumen is the browser, so the
+// the sidebar, "Open in canvas" on the full-page chat); a picture gets a thumbnail; a Word, Excel or PowerPoint file gets its first page (drawn by
+// main, features/office-thumb.js: a picture here, a click opens Lumen's own viewer in a tab; "Open in canvas" shows it larger); a PDF opens in Lumen's viewer. Lumen is the browser, so the
 // AI never needs to say "open it in a browser".
 //
 // The preview is the AI's own code, so it is treated as hostile: it runs in <iframe sandbox="allow-scripts"> (an opaque origin: no way into this
@@ -72,12 +73,18 @@
     host.append(el('div', { className: 'ai-file-head' }, icon, meta), body, bar, status);
 
     const viewable = file.kind === 'html' || file.kind === 'svg';
+    const office = file.kind === 'docx' || file.kind === 'xlsx' || file.kind === 'pptx';
     // Buttons: the file's own way first.
     if (viewable && file.previewable && canvasOpen()) bar.append(button(tr('aifile.openCanvas'), async () => {
       const got = await preview(file);
       if (got?.text) window.chatCanvas.open({ lang: file.kind, code: got.text, opener: host.querySelector('.ai-file-btn') });
       else say(host, tr('aifile.gone'));
     }, 'ai-file-btn ai-file-primary'));
+    if (office && file.trusted && file.previewable && canvasOpen() && typeof window.chatCanvas.openImage === 'function') bar.append(button(tr('aifile.openCanvas'), async () => {
+      const got = await preview(file);
+      if (got?.dataUrl && IMAGE.test(got.dataUrl)) window.chatCanvas.openImage({ title: file.name, src: got.dataUrl, opener: host.querySelector('.ai-file-btn') });
+      else say(host, tr('aifile.gone'));
+    }));
     if (file.canTab) bar.append(button(viewable ? tr('aifile.openTab') : tr('aifile.open'), () => openIn(file, host, 'tab'), `ai-file-btn${bar.children.length ? '' : ' ai-file-primary'}`));
     else if (file.canSystem) bar.append(button(tr('aifile.openApp'), () => openIn(file, host, 'system'), 'ai-file-btn ai-file-primary'));
     if (file.canTab && file.canSystem && !viewable && file.kind !== 'image' && file.kind !== 'pdf') bar.append(button(tr('aifile.openApp'), () => openIn(file, host, 'system')));
@@ -100,10 +107,18 @@
         const b = button(tr('aifile.showPreview'), () => { b.remove(); show(); });
         body.append(b);
       }
-    } else if (file.trusted && file.previewable && file.kind === 'image') {
+    } else if (file.trusted && file.previewable && (file.kind === 'image' || office)) {
       const load = async () => {
+        if (office) body.replaceChildren(el('div', { className: 'ai-file-skeleton', 'aria-hidden': 'true' })); // (room held while the page is drawn, so the chat does not jump when it arrives)
         const got = await preview(file);
-        if (got?.dataUrl && IMAGE.test(got.dataUrl)) body.replaceChildren(el('img', { className: 'ai-file-thumb', src: got.dataUrl, alt: file.name, decoding: 'async' }));
+        if (got?.dataUrl && IMAGE.test(got.dataUrl)) {
+          const img = el('img', { className: `ai-file-thumb${office ? ' ai-file-office' : ''}`, src: got.dataUrl, alt: office ? tr('aifile.previewOf', { name: file.name }) : file.name, decoding: 'async' });
+          if (!office) { body.replaceChildren(img); return; }
+          const open = button('', () => openIn(file, host, 'tab'), 'ai-file-thumbbtn'); // (the picture is the way in: it opens the viewer)
+          open.title = tr('aifile.openTab');
+          open.append(img);
+          body.replaceChildren(open);
+        } else if (office) body.replaceChildren();
       };
       if (typeof IntersectionObserver === 'function') {
         const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { io.disconnect(); load(); } });

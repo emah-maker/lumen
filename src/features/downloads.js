@@ -31,6 +31,8 @@ function createDownloads(deps) {
   const reserved = new Set(); // paths claimed by downloads still running, so two same-named files don't collide
   let downloadSeq = 0;
   const icons = new Map(); // path -> { image (nativeImage, for dragging), dataUrl (for the panel) }
+  const thumbs = new Map(); // path -> { dataUrl }: the first page of a Word, Excel or PowerPoint file (deps.thumb: features/office-thumb.js)
+  const isOffice = (file) => /\.(?:docx|xlsx|pptx)$/i.test(String(file || ''));
   const listFile = () => path.join(deps.app.getPath('userData'), 'downloads.json');
   let saveTimer = null;
   let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
@@ -80,6 +82,7 @@ function createDownloads(deps) {
     speed: Math.round(d.speed || 0), host: hostOf(d.url || ''), endedAt: d.endedAt || null, reason: d.state === 'interrupted' ? d.reason || null : null,
     missing: d.state === 'completed' && !exists(d), canResume: Boolean(d.item && d.state === 'interrupted' && d.item.canResume()),
     icon: icons.get(d.path)?.dataUrl || null,
+    office: d.state === 'completed' && isOffice(d.path), thumb: thumbs.get(d.path)?.dataUrl || null, // a finished Word, Excel or PowerPoint file: its first page, and the Preview button
   });
   const pushDownloads = () => {
     deps.ui()?.send('downloads', downloads.slice(0, 10).map(({ id, name, state, received, total, paused }) => ({ id, name, state, received, total, paused })));
@@ -93,7 +96,14 @@ function createDownloads(deps) {
   // a pause, a removal) goes out at once.
   const sendProgress = trailingThrottle(pushDownloads, PROGRESS_MS);
   const sendDownloads = () => sendProgress.now();
+  // The first page of a finished Word, Excel or PowerPoint file, drawn in the background (a failure leaves the system's icon).
+  function loadThumb(entry) {
+    if (!deps.thumb || !isOffice(entry.path) || thumbs.has(entry.path) || !exists(entry)) return;
+    thumbs.set(entry.path, { dataUrl: null }); // (asked once)
+    Promise.resolve(deps.thumb(entry.path)).then((t) => { if (t && t.dataUrl) { thumbs.set(entry.path, { dataUrl: t.dataUrl }); sendDownloads(); } }).catch(() => {});
+  }
   function loadIcon(entry) {
+    loadThumb(entry);
     if (!entry.path || icons.has(entry.path) || !exists(entry)) return;
     deps.app.getFileIcon(entry.path, { size: 'normal' }).then((image) => {
       icons.set(entry.path, { image, dataUrl: image.toDataURL() });
@@ -309,6 +319,7 @@ function createDownloads(deps) {
     if (!d) return false;
     if (action === 'open' && d.state === 'completed' && exists(d)) { openFile(d.path); return true; }
     if (action === 'show' && d.state === 'completed' && exists(d)) { deps.shell.showItemInFolder(d.path); return true; }
+    if (action === 'preview' && d.state === 'completed' && exists(d) && isOffice(d.path)) { deps.onPreview?.(d.path); return true; } // the panel's Preview button: Lumen's own viewer in a tab
     if (action === 'pin' && d.state === 'completed' && exists(d)) { deps.onPin?.(d.path); return true; } // Pin to Files (the panel's right-click menu)
     if (action === 'pause' && d.state === 'progressing' && d.item && !d.awaitingOk && !d.paused) { d.item.pause(); return true; }
     if (action === 'resume' && d.state === 'progressing' && d.item && !d.awaitingOk && d.paused) { d.item.resume(); return true; }

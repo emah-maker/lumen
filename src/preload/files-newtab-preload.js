@@ -21,6 +21,7 @@ if (location.protocol === 'file:' && /\/renderer\/newtab\.html$/.test(location.p
     scan: call('newtab-files:scan'),
     remember: call('newtab-files:remember'), // "Turn on" in the empty card: Settings > General > Files > Remember files I open
     restore: call('newtab-files:restore'),
+    thumb: call('newtab-files:thumb'), // a Word, Excel or PowerPoint file's first page, for the row's hover preview
     strings: ipcRenderer.sendSync('newtab-files:strings') || {}, // the card's words (locales/en.json files.card.*)
     onChanged: (cb) => { if (typeof cb === 'function') ipcRenderer.on('newtab-files:changed', () => cb()); },
   });

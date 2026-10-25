@@ -574,6 +574,7 @@ contextBridge.exposeInMainWorld('assistant', {
   uploads: {
     stash: (file) => ipcRenderer.invoke('uploads:stash', file),
     discard: (ref) => ipcRenderer.send('uploads:discard', ref),
+    thumb: (ref) => ipcRenderer.invoke('uploads:thumb', ref),
     choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'),
@@ -762,7 +763,7 @@ contextBridge.exposeInMainWorld('skillsApi', {
 });
 
 contextBridge.exposeInMainWorld('lumenFiles', {
-  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore thumb'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
   open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
 });
 

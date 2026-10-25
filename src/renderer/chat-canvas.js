@@ -132,6 +132,7 @@
   }
   function open({ lang, code, opener, quiet = false }) { // quiet: opened for the user (a file the AI made), so focus stays in the message box
     panel ||= build();
+    delete panel.aside.dataset.mode;
     lastOpener = opener || null;
     const kind = kindOf(lang, code);
     state = { lang: String(lang || ''), kind, code: String(code || ''), tab: 'code' };
@@ -145,8 +146,26 @@
     show(previewable(kind) ? 'preview' : 'code');
     if (!quiet) panel.aside.querySelector('.cv-tab.active, .cv-btn')?.focus();
   }
+  // A picture instead of code: the first page of a Word, Excel or PowerPoint file (a card's "Open in canvas", renderer/ai-files.js). The picture is a
+  // data: PNG main drew; nothing here is the file's own markup.
+  function openImage({ title, src, opener }) {
+    if (typeof src !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(src)) return;
+    panel ||= build();
+    lastOpener = opener || null;
+    state = { lang: '', kind: 'image', code: '', tab: 'preview' };
+    panel.title.textContent = String(title || '');
+    panel.tabs.hidden = true;
+    panel.codeView.hidden = true;
+    panel.previewBox.hidden = false;
+    panel.previewBox.replaceChildren(el('img', { className: 'cv-image', src, alt: String(title || ''), decoding: 'async' }));
+    panel.aside.dataset.mode = 'image';
+    panel.aside.hidden = false;
+    document.body.classList.add('canvas-open');
+    panel.aside.querySelector('.cv-close')?.focus();
+  }
   function closePanel(restoreFocus) {
     if (!panel) return;
+    delete panel.aside.dataset.mode;
     panel.aside.hidden = true;
     panel.previewBox.replaceChildren();
     document.body.classList.remove('canvas-open');
@@ -161,5 +180,5 @@
     b.addEventListener('click', () => open({ lang: pre.dataset.lang, code: pre.querySelector('code')?.textContent ?? pre.textContent, opener: b }));
     copyBtn.before(b);
   }
-  root.chatCanvas = { decorate, open, close: closePanel };
+  root.chatCanvas = { decorate, open, openImage, close: closePanel };
 })(typeof window !== 'undefined' ? window : globalThis);

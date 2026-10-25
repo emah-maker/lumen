@@ -1,0 +1,62 @@
+/* The Word and Excel viewer (office.html, office.js). A document is a white page and a sheet is a white grid whatever the theme, as in Office;
+   only the stage around them and the toolbar follow the theme. The first-page and top-left thumbnails (features/office-thumb.js) load this page with
+   ?thumb=1, which drops the chrome and the scrollbars. */
+:root { --stage: #f2f2f4; --shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.08); }
+@media (prefers-color-scheme: dark) { :root { --stage: #111113; --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.4); } }
+html, body { margin: 0; background: var(--stage); color: var(--text); }
+body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--hairline); }
+#name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
+#kind { color: var(--muted); }
+#note { padding: 8px 16px; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--hairline); }
+#note:empty { display: none; }
+.message { margin: 18vh auto 0; max-width: 520px; text-align: center; color: var(--muted); font-size: 14px; }
+.message strong { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+
+/* ---- a document */
+main.docx { display: flex; justify-content: center; padding: 28px 16px 64px; }
+.paper { box-sizing: border-box; width: min(816px, 100%); min-height: 1056px; padding: 72px 80px; background: #fff; color: #1b1b1f; box-shadow: var(--shadow); border-radius: 2px; font: 15px/1.55 Calibri, Carlito, "Segoe UI", Arial, sans-serif; overflow-wrap: break-word; }
+.paper p { margin: 0 0 0.7em; white-space: pre-wrap; }
+.paper p.empty { min-height: 1em; }
+.paper p.title { margin: 0 0 0.5em; font-size: 2.2em; line-height: 1.15; font-weight: 600; }
+.paper p.subtitle { margin: 0 0 0.9em; font-size: 1.25em; color: #5a5a62; }
+.paper p.h1, .paper p.h2, .paper p.h3, .paper p.h4, .paper p.h5, .paper p.h6 { margin: 1.1em 0 0.4em; font-weight: 600; line-height: 1.25; color: #1f3864; }
+.paper p.h1 { font-size: 1.7em; }
+.paper p.h2 { font-size: 1.35em; }
+.paper p.h3 { font-size: 1.15em; }
+.paper p.h4, .paper p.h5, .paper p.h6 { font-size: 1em; }
+.paper p.justify { text-align: justify; }
+.paper p.center { text-align: center; }
+.paper p.right { text-align: right; }
+.paper p.li { position: relative; margin-bottom: 0.3em; }
+.paper p.li .mark { position: absolute; left: -1.5em; width: 1.2em; text-align: right; }
+.paper .link { color: #0563c1; text-decoration: underline; }
+.paper img { max-width: 100%; height: auto; vertical-align: middle; }
+.paper table { border-collapse: collapse; margin: 0 0 1em; max-width: 100%; }
+.paper td { border: 1px solid #bfbfbf; padding: 4px 8px; vertical-align: top; }
+.paper td > p:last-child { margin-bottom: 0; }
+.paper hr { border: 0; border-top: 1px dashed #c8c8cc; margin: 1.5em 0; }
+.paper sup, .paper sub { line-height: 0; }
+
+/* ---- a workbook */
+main.xlsx { display: block; padding: 0; background: #fff; color: #1b1b1f; overflow: auto; height: calc(100vh - var(--hdr, 45px) - var(--tabs, 36px)); }
+.grid { border-collapse: separate; border-spacing: 0; font: 13px/1.35 Calibri, Carlito, "Segoe UI", Arial, sans-serif; table-layout: fixed; }
+.grid th, .grid td { box-sizing: border-box; height: 22px; padding: 1px 6px; border-right: 1px solid #e1e1e5; border-bottom: 1px solid #e1e1e5; overflow: hidden; text-overflow: clip; white-space: pre; vertical-align: bottom; background: #fff; }
+.grid td.wrap { white-space: pre-wrap; vertical-align: top; height: auto; }
+.grid td.num { text-align: right; }
+.grid th { position: sticky; top: 0; z-index: 1; background: #f3f3f5; color: #5a5a62; font-weight: 500; text-align: center; border-color: #d4d4d8; }
+.grid th.row { position: sticky; left: 0; z-index: 1; width: 44px; min-width: 44px; }
+.grid th.corner { left: 0; z-index: 2; }
+#sheets { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 2px; padding: 4px 8px; background: var(--bg); border-top: 1px solid var(--hairline); overflow-x: auto; }
+#sheets[hidden] { display: none; }
+#sheets button { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: 4px 12px; cursor: default; white-space: nowrap; transition: background var(--t-fast); }
+#sheets button:hover { background: var(--hover); }
+#sheets button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+#sheets button[aria-selected="true"] { background: var(--hover); color: var(--accent-text); font-weight: 600; }
+
+/* ---- thumbnails: the first page or the top-left cells, nothing else */
+html.thumb, html.thumb body { overflow: hidden; background: #fff; }
+html.thumb header, html.thumb #note, html.thumb #sheets { display: none; }
+html.thumb main.docx { padding: 0; display: block; }
+html.thumb .paper { width: 100%; min-height: 0; padding: 56px 64px; box-shadow: none; border-radius: 0; }
+html.thumb main.xlsx { height: auto; overflow: hidden; }

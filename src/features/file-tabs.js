@@ -10,6 +10,9 @@
 //
 // Nothing here ever includes a full path in what leaves the computer: topicUrl and the names use at most the last two folder names.
 
+const path = require('path');
+const { pathToFileURL } = require('url');
+
 const KINDS = {
   pdf: { exts: ['pdf'], label: 'PDFs', typeName: 'PDF' },
   slides: { exts: ['pptx', 'ppt', 'pps', 'ppsx', 'key', 'odp'], label: 'Slides', typeName: 'Slides' },
@@ -46,7 +49,7 @@ function addressOf(url) {
     const inner = parse(u.searchParams.get('u') || '');
     return inner && (isHttp(inner) || inner.protocol === 'file:') ? inner.href : '';
   }
-  if (u.protocol === 'file:' && /\/renderer\/(slides|eml)\.html$/i.test(u.pathname)) {
+  if (u.protocol === 'file:' && /\/renderer\/(slides|eml|office)\.html$/i.test(u.pathname)) {
     const inner = parse(u.searchParams.get('u') || '');
     return inner && inner.protocol === 'file:' ? inner.href : '';
   }
@@ -135,6 +138,21 @@ function iconKind(url) {
   return ['pdf', 'slides', 'mail', 'image', 'sheet', 'code'].includes(kind) ? kind : 'file';
 }
 
+// ---- Word and Excel files in a tab (renderer/office.html, filled in by features/office-viewer.js; the tab wiring in main.js needs no more than these checks)
+const OFFICE_VIEWER_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'office.html')).href;
+const isOfficeName = (name) => /\.(?:docx|xlsx)$/i.test(String(name || '').split(/[?#]/)[0]);
+const isLocalOffice = (url) => { const u = parse(url); return Boolean(u) && u.protocol === 'file:' && isOfficeName(u.pathname); };
+const isOfficeViewerUrl = (url) => typeof url === 'string' && url.split(/[?#]/)[0].toLowerCase() === OFFICE_VIEWER_URL.toLowerCase();
+const officeViewerUrl = (fileUrl) => `${OFFICE_VIEWER_URL}?${new URLSearchParams({ u: fileUrl })}`;
+// The file a viewer address shows (a file: URL of a .docx or .xlsx), or null.
+function officeUrlOf(url) {
+  if (!isOfficeViewerUrl(url)) return null;
+  const inner = parse(url).searchParams.get('u');
+  return inner && isLocalOffice(inner) ? inner : null;
+}
+// A download Chromium starts for a local .docx or .xlsx opened in a tab: the viewer takes its place (a file from the web is saved as usual).
+const shouldOpenOfficeInPlace = ({ url, filename } = {}) => isLocalOffice(url) && isOfficeName(filename || url);
+
 // A new group made from one file tab by hand ("New Group"): named for the file's folder, else its type.
 function nameFor(url, title = '') {
   const id = identify(url, { title });
@@ -158,4 +176,4 @@ async function readTextHead(address, { max = 300, bytes = 2048 } = {}) {
   } catch { return ''; } finally { await handle?.close().catch(() => {}); }
 }
 
-module.exports = { addressOf, identify, iconKind, nameFor, readTextHead, humanize, GENERIC_FOLDERS, KINDS };
+module.exports = { OFFICE_VIEWER_URL, isOfficeName, isLocalOffice, isOfficeViewerUrl, officeViewerUrl, officeUrlOf, shouldOpenOfficeInPlace, addressOf, identify, iconKind, nameFor, readTextHead, humanize, GENERIC_FOLDERS, KINDS };

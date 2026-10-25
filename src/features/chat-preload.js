@@ -25,6 +25,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     uploads: {
       stash: (file) => ipcRenderer.invoke('uploads:stash', file),
       discard: (ref) => ipcRenderer.send('uploads:discard', ref),
+      thumb: (ref) => ipcRenderer.invoke('uploads:thumb', ref), // a Word, Excel or PowerPoint file's first page, for its chip
       choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
     },
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs

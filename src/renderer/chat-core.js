@@ -997,6 +997,30 @@ async function addFiles(files) {
   return added > 0;
 }
 
+// A Word, Excel or PowerPoint file in the box shows its first page beside its name (main draws it: features/office-thumb.js; asked once per file).
+const attachThumbs = new Map(); // ref -> data: URL | null
+const OFFICE_NAME = /\.(?:docx|xlsx|pptx)$/i;
+const PNG_URL = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+function showChipThumb(ref, url) {
+  const chip = [...$('attachments').children].find((c) => c.dataset.ref === ref);
+  if (!chip || chip.querySelector('.attachment-thumb')) return;
+  const text = Object.assign(document.createElement('span'), { className: 'attachment-text' });
+  text.append(...chip.querySelectorAll('.attachment-ext, .attachment-name, .attachment-size'));
+  chip.classList.add('has-thumb');
+  chip.prepend(Object.assign(document.createElement('img'), { className: 'attachment-thumb', src: url, alt: '', decoding: 'async' }), text);
+}
+function requestChipThumb(a) {
+  if (!a.ref || !OFFICE_NAME.test(a.name || '') || typeof window.assistant.uploads?.thumb !== 'function') return;
+  if (attachThumbs.has(a.ref)) { const url = attachThumbs.get(a.ref); if (url) showChipThumb(a.ref, url); return; }
+  attachThumbs.set(a.ref, null);
+  Promise.resolve(window.assistant.uploads.thumb(a.ref)).then((r) => {
+    const url = r && typeof r.dataUrl === 'string' && PNG_URL.test(r.dataUrl) ? r.dataUrl : null;
+    if (!url) return;
+    attachThumbs.set(a.ref, url);
+    showChipThumb(a.ref, url);
+  }).catch(() => {});
+}
+
 function renderAttachments() {
   const strip = $('attachments');
   strip.replaceChildren();
@@ -1014,6 +1038,7 @@ function renderAttachments() {
         Object.assign(document.createElement('span'), { className: 'attachment-name', textContent: a.name }),
         Object.assign(document.createElement('span'), { className: 'attachment-size', textContent: fileSize(a.size) }),
       );
+      if (a.ref) chip.dataset.ref = a.ref;
     } else {
       const img = document.createElement('img');
       img.src = a.url;
@@ -1028,6 +1053,7 @@ function renderAttachments() {
     remove.onclick = () => { const [gone] = attachments.splice(i, 1); if (gone?.ref) window.assistant.uploads?.discard(gone.ref); renderAttachments(); showAttachNote([]); prompt.focus(); };
     chip.append(remove);
     strip.append(chip);
+    if (isFileItem(a)) requestChipThumb(a);
   });
   // A long pasted block: a chip like a file's, sent as part of the message (the model reads it; a file chip it would not).
   pastes.forEach((text, i) => {

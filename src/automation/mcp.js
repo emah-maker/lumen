@@ -33,13 +33,14 @@ function onLines(stream, handler, maxLine = MAX_LINE) {
   stream.setEncoding('utf8');
   stream.on('data', (chunk) => {
     buffer += chunk;
-    if (buffer.length > maxLine) { buffer = ''; stream.destroy(); return; }
     let i;
     while ((i = buffer.indexOf('\n')) >= 0) {
       const line = buffer.slice(0, i).trim();
       buffer = buffer.slice(i + 1);
+      if (line.length > maxLine) { buffer = ''; stream.destroy(); return; }
       if (line) handler(line);
     }
+    if (buffer.length > maxLine) { buffer = ''; stream.destroy(); } // (the limit is on one line, not on a chunk that carries several: a big screenshot reply followed by the next message)
   });
 }
 
@@ -78,9 +79,14 @@ const annotationsFor = (name) => (READ_ONLY_TOOLS.has(name) ? ANNOTATIONS : unde
 // `engine`: the tag a bridge started by Lumen's own Claude Code engine carries (claude-code.js).
 // `extraTools(session)`: tools offered to THIS session only (the connector tool, to a run Lumen itself started: its `engine` tag is a
 // random per-run value that is live only while that run is; an outside client has none, so it never sees them).
-function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, extraTools = null, onInitialize = null }) {
+// `onInitialize(session, info)`: a reason to refuse the client at the handshake, or nothing. It must not wait on a person: clients give the
+// handshake a short timeout (Claude Code marks a server that has not answered initialize within seconds as failed, and never loads its tools).
+// `onCall(session)`: awaited before each tools/call (never the handshake): a reason the call may not run, or nothing. This is where an
+// unverified app waits for the user's Allow (features/external-apps.js admitForCall): a tool call is what clients wait on for minutes.
+function createSession({ tools, callTool, enabled, onEvent, send, engine = null, onListed = null, extraTools = null, onInitialize = null, onCall = null }) {
   const session = { clientName: 'An AI agent', initialized: false, controller: new AbortController(), engine };
-  const reply = (id, result) => send({ jsonrpc: '2.0', id, result });
+  const cancelled = new Set(); // ids of requests the client withdrew (notifications/cancelled): they get no reply
+  const reply = (id, result) => { if (cancelled.delete(id)) return; send({ jsonrpc: '2.0', id, result }); };
   const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
   const listFor = () => [...tools.map((t) => t), ...(session.engine ? extraTools?.(session) || [] : [])];
 
@@ -93,7 +99,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
           if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → AI and agents → Allow AI agents to connect).');
           const info = params.clientInfo || {};
           session.clientName = clientLabel(info);
-          const veto = await onInitialize?.(session, info); // [external apps] a reason to refuse this client (features/external-apps.js admit), or nothing
+          const veto = await onInitialize?.(session, info); // [external apps] a reason to refuse this client (features/external-apps.js admit, deferred: it never waits for the user), or nothing
           if (veto) return fail(id, -32001, veto);
           const requested = params.protocolVersion;
           reply(id, {
@@ -110,6 +116,9 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
           return;
         case 'ping':
           return reply(id, {});
+        case 'notifications/cancelled': // the client gave up on a request (a tool call it timed out on): a reply is no longer wanted
+          if (params.requestId !== undefined && params.requestId !== null) { if (cancelled.size > 200) cancelled.clear(); cancelled.add(params.requestId); }
+          return;
         case 'tools/list':
           if (!session.listed) { session.listed = true; try { onListed?.(session); } catch {} } // the agent now has Lumen's tools (grok-build.js waits for this)
           return reply(id, {
@@ -119,6 +128,9 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
           if (!enabled(session)) return reply(id, { content: [{ type: 'text', text: 'AI agent connections are turned off in Lumen settings.' }], isError: true });
           const name = String(params.name || '');
           if (!listFor().some((t) => t.name === name)) return fail(id, -32602, `Unknown tool: ${name}`);
+          const blocked = await onCall?.(session); // [external apps] the user's Allow is waited for here, not at initialize
+          if (blocked) return reply(id, { content: [{ type: 'text', text: blocked }], isError: true });
+          if (session.controller.signal.aborted) return; // the bridge went while the call waited
           return reply(id, await callTool(name, params.arguments || {}, session));
         }
         default:
@@ -134,7 +146,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
 }
 
 // Accepts bridge connections. Returns { close }. Writes a fresh token for this run.
-function startServer({ userData, tools, extraTools = null, callTool, enabled, onEvent, onClose = null, onListed = null, identify = null, onInitialize = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
+function startServer({ userData, tools, extraTools = null, callTool, enabled, onEvent, onClose = null, onListed = null, identify = null, onInitialize = null, onCall = null, authTimeoutMs = AUTH_TIMEOUT_MS, maxLine = MAX_LINE }) {
   const token = crypto.randomBytes(24).toString('hex');
   fs.writeFileSync(tokenPath(userData), token, { mode: 0o600 });
   const where = channelPath(userData);
@@ -173,7 +185,7 @@ function startServer({ userData, tools, extraTools = null, callTool, enabled, on
         if (who === false) { send({ lumenAuth: 'denied' }); socket.end(); return; }
         authed = true;
         clearTimeout(authTimer);
-        current = createSession({ tools, extraTools, callTool, enabled, onEvent, onListed, onInitialize, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
+        current = createSession({ tools, extraTools, callTool, enabled, onEvent, onListed, onInitialize, onCall, send, engine: typeof message.lumenEngine === 'string' ? message.lumenEngine.slice(0, 80) : null });
         current.session.disconnect = () => socket.destroy(); // [external apps] Stop and Revoke cut this connection
         if (who) current.session.client = who.client;
         sessions.add(current);
@@ -247,7 +259,7 @@ async function connectOrLaunch(userData, launch, log) {
         // not up yet
       }
     }
-    throw new Error('Lumen did not start within 30 seconds.');
+    throw new Error('Lumen did not start within 30 seconds. If it is open, turn on Settings, AI and agents, Allow AI agents to connect.');
   }
 }
 
@@ -274,23 +286,42 @@ async function relay() {
   // starts itself: an inherited or planted variable must not make the bridge run another program.
   const launch = process.env.LUMEN_LAUNCH && !require('../test-mode').isPackaged() ? JSON.parse(process.env.LUMEN_LAUNCH) : defaultLaunch();
   const toClient = (obj) => process.stdout.write(`${JSON.stringify(obj)}\n`);
+  // stdout is a pipe on Windows and its writes are asynchronous: exiting at once could cut the last reply (a screenshot) short. Leave when it is flushed.
+  const leave = (code) => { const t = setTimeout(() => process.exit(code), 2000); t.unref?.(); process.stdout.write('', () => process.exit(code)); };
+  process.stdout.on('error', () => process.exit(0)); // the agent went away (EPIPE): nothing left to say
 
   // Queue client messages until the app connection is authenticated.
   const pending = [];
+  const inflight = new Map(); // id -> true: requests sent to Lumen and not yet answered (so the bridge can answer them with an error if Lumen goes, and not leave before they are answered)
   let socket = null;
   let ready = false;
-  onLines(process.stdin, (line) => {
-    if (ready) socket.write(`${line}\n`);
-    else pending.push(line);
+  let stdinEnded = false;
+  const idOf = (line) => { try { const m = JSON.parse(line); return m && typeof m === 'object' && m.method && m.id !== undefined && m.id !== null ? m.id : undefined; } catch { return undefined; } };
+  const failAll = (message) => { for (const id of [...inflight.keys()]) { inflight.delete(id); toClient({ jsonrpc: '2.0', id: JSON.parse(id), error: { code: -32000, message } }); } };
+  // One client line goes to Lumen (or waits for it).
+  const forward = (line) => {
+    const id = idOf(line);
+    if (id !== undefined) inflight.set(JSON.stringify(id), true);
+    if (ready) socket.write(`${line}\n`); else pending.push(line);
+  };
+  // A client that closes its stdin (a script piping one message in) still gets its answers: the bridge leaves once none are outstanding (or after 2 minutes).
+  const maybeLeave = () => { if (stdinEnded && ready && !inflight.size) { socket.end(); leave(0); } };
+  onLines(process.stdin, forward);
+  process.stdin.on('end', () => {
+    stdinEnded = true;
+    if (!ready && !pending.length) { socket?.end(); leave(0); return; }
+    const t = setTimeout(() => { socket?.end(); leave(0); }, 120000); t.unref?.();
+    maybeLeave();
   });
-  process.stdin.on('end', () => { socket?.end(); setTimeout(() => process.exit(0), 50); });
 
   try {
     socket = await connectOrLaunch(userData, launch, log);
+    socket.on('error', () => {}); // (a reset connection ends in 'close' below)
     let token = '';
     for (let i = 0; i < 50 && !token; i++) {
       try { token = fs.readFileSync(tokenPath(userData), 'utf8').trim(); } catch { await new Promise((r) => setTimeout(r, 100)); }
     }
+    if (!token) throw new Error('Lumen is running but is not accepting agents. Turn on Settings, AI and agents, Allow AI agents to connect.');
     let authed = false;
     onLines(socket, (line) => {
       if (!authed) {
@@ -302,17 +333,24 @@ async function relay() {
           return;
         }
         if (msg.lumenAuth !== 'ok') {
-          log('Lumen refused the connection (bad token).');
-          process.exit(1);
+          const why = process.env.LUMEN_CLIENT_TOKEN_FILE !== undefined || process.env.LUMEN_CLIENT_TOKEN !== undefined ? 'its app token is not valid (revoked, or the wrong file)' : 'bad token';
+          log(`Lumen refused the connection (${why}).`);
+          failAll(`Lumen refused the connection: ${why}.`);
+          leave(1);
+          return;
         }
         authed = true;
         ready = true;
         for (const l of pending.splice(0)) socket.write(`${l}\n`);
+        maybeLeave();
         return;
       }
+      const m = /^\{"jsonrpc":"2\.0","id":("(?:[^"\\]|\\.)*"|[^,]+),/.exec(line.length > 200 ? line.slice(0, 200) : line); // (a reply: the id leads, as createSession writes it)
+      if (m) inflight.delete(m[1]);
       process.stdout.write(`${line}\n`);
+      maybeLeave();
     });
-    socket.on('close', () => { log('Lumen closed the connection.'); process.exit(0); });
+    socket.on('close', () => { if (!stdinEnded || inflight.size) log('Lumen closed the connection.'); /* (an ordinary shutdown, the client gone and every reply delivered, is not news) */ failAll('Lumen closed the connection.'); leave(0); });
   } catch (err) {
     log(err.message);
     for (const l of pending.splice(0)) {
@@ -321,7 +359,7 @@ async function relay() {
         if (id !== undefined) toClient({ jsonrpc: '2.0', id, error: { code: -32000, message: `Could not reach Lumen: ${err.message}` } });
       } catch {}
     }
-    process.exit(1);
+    leave(1);
   }
 }
 
