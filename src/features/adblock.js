@@ -56,6 +56,9 @@ const FILTER_PAGES = { urls: ['http://*/*', 'https://*/*'], types: ['mainFrame']
 // Response headers matter on documents only: the CSP rules and the Accept-CH hints a page asks for.
 const FILTER_DOCUMENTS = { urls: REQUEST_URLS, types: ['mainFrame', 'subFrame'] };
 
+// Web apps that rebuild thousands of nodes while scrolling and have no DOM-driven (generic class/id) ad rules worth the cost.
+const CHURNY_APPS = /^https:\/\/open\.spotify\.com(?:[/?#]|$)/i;
+
 const hostOf = (url) => {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 };
@@ -301,6 +304,17 @@ function createAdblock(deps) {
       const sender = { insertCSS: (css, options) => event.sender.insertCSS(css, options), executeJavaScript: () => Promise.resolve() };
       return cosmetics({ frameId: event.frameId, processId: event.processId, sender }, url, msg);
     };
+    // Ghostery's page script watches the whole DOM (class/id/href changes, subtree) to find new elements to hide, and scans every
+    // added subtree on the page's main thread. A page where the blocker is off or that is allow-listed has nothing to hide, and a
+    // virtualized web app (Spotify's player rebuilds its rows on every scroll) only pays for it as scroll jank: those pages get the
+    // CSS from the first call (hostname rules) and no observer.
+    const watchDom = blocker.onIsMutationObserverEnabled;
+    blocker.onIsMutationObserverEnabled = async (event) => {
+      let url = '';
+      try { url = event.senderFrame?.url || event.sender?.getURL?.() || ''; } catch { /* a frame that is already gone */ }
+      if (!on(url) || isProviderUrl(url, true) || CHURNY_APPS.test(url)) return false;
+      return watchDom(event);
+    };
     let headers = blocker.onHeadersReceived;
     blocker.onHeadersReceived = (details, callback) => {
       deps.onResponseHeaders(details); // [settings] sites asking for the color-scheme hint
@@ -427,4 +441,4 @@ const fromProviderFrame = (details, page) => {
   try { const frameUrl = details.frame?.url; return Boolean(frameUrl) && (PROVIDER_URL.test(frameUrl) || (SIGN_IN_HOST.test(frameUrl) && sameSite(page, frameUrl))); } catch { return false; }
 };
 
-module.exports = { createAdblock, hostOf, pageMemo, challengeFor, isProviderUrl, spotifyOwn };
+module.exports = { createAdblock, CHURNY_APPS, hostOf, pageMemo, challengeFor, isProviderUrl, spotifyOwn };

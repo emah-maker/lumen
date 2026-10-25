@@ -40,5 +40,9 @@ check('spotify: its picture hosts are let through as images on any page', SP_IMG
 check('spotify: ...and for the cards own requests (no page behind them), with the API', SP_IMG.every((u) => spotifyOwn(u, 'other', false)) && spotifyOwn('https://api.spotify.com/v1/me/player/queue', 'xhr', false) && spotifyOwn('https://accounts.spotify.com/api/token', 'other', false), '');
 check('spotify: a page script or fetch to its hosts, its ads, logging and look-alikes are not let through', !spotifyOwn('https://i.scdn.co/x.js', 'script', true) && !spotifyOwn('https://api.spotify.com/v1/x', 'xhr', true) && !spotifyOwn('https://spclient.wg.spotify.com/ads/v1/x', 'other', false) && !spotifyOwn('https://i.scdn.co.evil.example/x', 'image', true) && !spotifyOwn('https://notscdn.co/x', 'image', true) && !spotifyOwn('http://i.scdn.co/x', 'image', true), '');
 
+const { CHURNY_APPS } = require('../../src/features/adblock');
+check('dom watch: Spotify\'s web player (rebuilds rows on scroll) gets no DOM observer', CHURNY_APPS.test('https://open.spotify.com/') && CHURNY_APPS.test('https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=x'), '');
+check('dom watch: other sites and look-alikes keep it', !CHURNY_APPS.test('https://example.com/') && !CHURNY_APPS.test('https://open.spotify.com.evil.example/') && !CHURNY_APPS.test('http://open.spotify.com/') && !CHURNY_APPS.test('https://notopen.spotify.com/'), '');
+
 console.log(failed ? `${failed}/${total} FAILED` : `${total}/${total} passed`);
 process.exit(failed ? 1 : 0);
