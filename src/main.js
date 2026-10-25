@@ -61,6 +61,7 @@ const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Past
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
 const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
+const extensionSites = () => require('./browser/extension-sites'); // Settings → Extensions → Site access (loaded when an extension is loaded with sites saved, or one is changed)
 const { replyOnThrow } = require('./ai/page-debug');
 const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
 const { createChatStore, toMarkdown, cleanTitle, autoTitle } = require('./features/chat-store');
@@ -1563,6 +1564,13 @@ async function setupExtensions() {
   const { ElectronChromeExtensions } = require('electron-chrome-extensions');
   const { installChromeWebStore, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
   const { extensionPermissionLines } = require('./browser/extension-permissions');
+  // Site access: an extension saved as "only these sites" loads with its sweeping patterns narrowed to them (see browser/extension-sites.js).
+  // Every load goes through here: start-up, an install, the library's updates. Nothing is read when no extension has sites saved.
+  const loadRaw = ses.extensions.loadExtension.bind(ses.extensions);
+  ses.extensions.loadExtension = async (dir, ...rest) => {
+    if (typeof dir === 'string' && (Object.keys(readSettings().extensionSites || {}).length || fs.existsSync(path.join(dir, 'manifest.lumen-original.json')))) await extensionSites().applyToDir(dir, readSettings().extensionSites).catch(() => {});
+    return loadRaw(dir, ...rest);
+  };
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
@@ -1673,6 +1681,22 @@ async function setupExtensions() {
   const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
   firstTabLoaded.then(() => setTimeout(checkUpdates, 30000).unref?.());
   setInterval(checkUpdates, 5 * 60 * 60 * 1000).unref?.();
+}
+
+// Settings → Extensions → Site access: saves the sites (none: all sites, as installed) and loads the extension again with them.
+// Pages already open keep what they had until they reload.
+async function setExtensionSites(id, list) {
+  const sites = extensionSites().cleanSites(list);
+  const saved = { ...(readSettings().extensionSites || {}) };
+  if (sites.length) saved[id] = sites; else delete saved[id];
+  writeSettings({ ...readSettings(), extensionSites: saved });
+  const ses = session.defaultSession;
+  const ext = ses.extensions.getExtension(id);
+  if (!ext) return;
+  const dir = ext.path;
+  ses.extensions.removeExtension(id);
+  const loaded = await ses.extensions.loadExtension(dir).catch((err) => { console.error('[lumen] extension reload failed:', err?.message || err); return null; });
+  if (loaded?.manifest?.manifest_version === 3 && loaded.manifest.background?.service_worker) ses.serviceWorkers.startWorkerForScope(`chrome-extension://${id}`).catch(() => {});
 }
 
 // Help > Report an issue: the new-issue page with the version and OS filled in (nothing is sent until the user submits it on GitHub)
@@ -2930,8 +2954,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
     if (tab.aiClosing) { // [ai manners] closing a tab the AI opened never asks "Leave site?" (that would pull the tab to the front): the page keeps it, the tab stays open
       tab.aiCloseKept = true;
-      tab.closing = false;
-      event.preventDefault();
+      tab.closing = false; // (no preventDefault: that would let the page unload anyway; left alone, the handler keeps the tab open)
       sendTabs();
       return;
     }
@@ -7372,6 +7395,16 @@ function mergeWindowItems(src, { hideDisabled = false } = {}) {
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = lazy(() => require('./features/tab-drag-math'));
 let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
+// The display under a DIP point (see tabDragMath.displayAtPoint); every point in a drag is in DIPs, which is what
+// getCursorScreenPoint, BrowserWindow bounds and workArea all use, so nothing here is multiplied by a scale.
+const displayAt = (point) => tabDragMath.displayAtPoint(screen.getAllDisplays(), point) || screen.getDisplayNearestPoint(point);
+// Moves a window without changing its size, even across displays with different scales (setPosition alone resizes it
+// on Windows, because the size is converted with the scale of the display it leaves); a drifted size is set again
+// with setBoundsSettled, which is exact once the window sits on the target display.
+function moveKeepingSize(win, x, y, want) {
+  win.setPosition(x, y);
+  if (tabDragMath.sizeDrifted(win.getBounds(), want, win.getMinimumSize())) setBoundsSettled(win, { x, y, width: want.width, height: want.height });
+}
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
 // Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
@@ -7518,7 +7551,8 @@ function showDragCard(d, tab, cursor, { compact = false, count = null } = {}) {
   card.owner = d;
   const page = withWindow(d.rec, () => ({ ...contentBounds }));
   const shotHeight = Math.round(CARD_WIDTH * Math.min(0.75, Math.max(0.45, (page.height || 600) / (page.width || 800))));
-  card.win.setBounds({ ...d.cardAt, width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 });
+  card.want = { width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 };
+  setBoundsSettled(card.win, { ...d.cardAt, ...card.want });
   card.loaded.then(() => {
     if (tabDrag !== d || !(d.card || d.chip)) return; // put away (the strip left) before the card was ready
     const icons = d.ghost?.favicons?.length ? d.ghost.favicons : tab.favicon ? [tab.favicon] : [];
@@ -7567,6 +7601,8 @@ function wakeDeferredAside(d) {
 }
 // Puts away the card of drag `d`: never the card of a newer drag that has taken it over meanwhile (a
 // drop's window can take a moment to show, and a quick second drag reuses the one card window).
+// The card follows the cursor across displays of any scale at its own size.
+const moveCard = (x, y) => { if (dragCard.want) moveKeepingSize(dragCard.win, x, y, dragCard.want); else dragCard.win.setPosition(x, y); };
 function hideDragCard(d, kind, landing = null) {
   if (!dragCard || dragCard.win.isDestroyed() || dragCard.owner !== d) return;
   if (kind === 'join' && landing && rcAlive(landing.rec) && !motionReducedMain() && !TEST_BACKGROUND) {
@@ -7714,13 +7750,13 @@ function tickTabDrag() {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
       d.cardAt = at;
-      if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(at.x, at.y);
+      if (dragCard && !dragCard.win.isDestroyed()) moveCard(at.x, at.y);
     }
   } else if (moved || !d.last) { // a still cursor needs no display lookup: the window is already where it goes
-    const area = screen.getDisplayNearestPoint(cursor).workArea;
+    const area = displayAt(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
-    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
-    if (d.chip && dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
+    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { moveKeepingSize(d.rec.win, b.x, b.y, d.size); d.last = b; } // no size drift across displays
+    if (d.chip && dragCard && !dragCard.win.isDestroyed()) moveCard(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
   }
   if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d), 6, d.hover?.rec ?? null);
@@ -7885,7 +7921,7 @@ function finishCardDrag(d, reason, target) {
   // A window of its own, placed so the tab sits under the cursor as it will in the new strip, and no
   // bigger than the display it opens on.
   const cursor = cursorPoint();
-  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  const area = displayAt(cursor).workArea;
   d.size = tabDragMath.fitToDisplay(d.size, area);
   const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
   const newWindowFor = () => {
@@ -8018,7 +8054,7 @@ function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   if (!ids.includes(tabId)) ids = [tabId];
   if (!tab || closableTabCount(src) - ids.length < 1) return false; // a window's last tabs stay where they are
   const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : { x: 0, y: 0 };
-  const area = screen.getDisplayNearestPoint(anchor).workArea;
+  const area = displayAt(anchor).workArea;
   // getSize() on a maximized window is the maximized size, so the new window covered the old one
   // and hung off the work area. The restored size is what the drag path uses, and the window is
   // kept fully on the work area (it is not being dragged, so it should not slide off).
@@ -8703,6 +8739,15 @@ const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleepi
   const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
   return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping || t.frozen), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
 });
+// [close guard] An autosaving editor's own save indicator: 'saved' | 'saving' | 'unknown' (could not be read: the typed-text check decides).
+const agentSaveState = async (id) => {
+  const t = tabs.find((x) => x.id === id);
+  if (!alive(t)) return 'unknown';
+  try {
+    const answer = await Promise.race([t.view.webContents.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: manners.autosaveScript() }]), new Promise((resolve) => setTimeout(() => resolve('unknown'), 2000))]);
+    return answer === 'saving' || answer === 'saved' ? answer : 'unknown';
+  } catch { return 'unknown'; }
+};
 const agentUnsavedState = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? unsavedInputState(t.view.webContents) : Promise.resolve('no'); }; // [close guard] 'no' | 'yes' | 'unknown'
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
@@ -9003,7 +9048,7 @@ const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun((id) => closeTab(id, { ai: true })), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
-  hasUnsavedInput: inRun(agentHasUnsavedInput), unsavedState: inRun(agentUnsavedState), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  hasUnsavedInput: inRun(agentHasUnsavedInput), unsavedState: inRun(agentUnsavedState), saveState: inRun(agentSaveState), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
@@ -9364,6 +9409,7 @@ if (TEST) {
   global.__zoomBy = (step) => zoomBy(activeTab()?.webContents, step);
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
+  global.__setExtensionSites = (id, sites) => setExtensionSites(id, sites);
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
@@ -10012,6 +10058,8 @@ const settingsBackend = settingsPage.create({
   permissionDecisions,
   deviceGrants, // [devices] declared with the permissions below (a getter would be needed if it were read before then)
   uninstallExtension,
+  setExtensionSites,
+  extensionSitesSaved: () => readSettings().extensionSites || {},
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),
   isSettingsSender,

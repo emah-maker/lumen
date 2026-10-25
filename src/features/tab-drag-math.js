@@ -75,4 +75,27 @@ function stripHit(point, windows, slack = 6, sticky = null) {
   return null;
 }
 
-module.exports = { clampToDisplay, fitToDisplay, placeOnWorkArea, windowBoundsFor, grabPoint, stripHit };
+// The display a DIP point is on: the one whose DIP bounds contain it, else the nearest by distance to its edge.
+// `displays` are screen.getAllDisplays() (bounds in DIPs, one shared space whatever each display's scale). Works
+// on that list instead of screen.getDisplayNearestPoint, which converts the point to physical pixels with the scale
+// of whichever display it guesses first, and so picks the wrong monitor near the seam of a mixed-scale desktop.
+function displayAtPoint(displays, point) {
+  let best = null;
+  let bestD = Infinity;
+  for (const d of displays || []) {
+    const b = d.bounds;
+    const dx = point.x < b.x ? b.x - point.x : point.x >= b.x + b.width ? point.x - (b.x + b.width - 1) : 0;
+    const dy = point.y < b.y ? b.y - point.y : point.y >= b.y + b.height ? point.y - (b.y + b.height - 1) : 0;
+    const dist = dx * dx + dy * dy;
+    if (dist < bestD) { best = d; bestD = dist; }
+    if (dist === 0) break;
+  }
+  return best;
+}
+
+// Whether a window of `want` size, after a move, came out a different size: Windows converts the size of a
+// setPosition/setBounds with the scale of the display the window is on NOW, so crossing to a display with
+// another scale resizes it (1000x700 becomes 667x467). `min` is its minimum size (a window can't be smaller).
+const sizeDrifted = (got, want, min = [0, 0]) => Math.abs(got.width - Math.max(want.width, min[0])) > 2 || Math.abs(got.height - Math.max(want.height, min[1])) > 2;
+
+module.exports = { displayAtPoint, sizeDrifted, clampToDisplay, fitToDisplay, placeOnWorkArea, windowBoundsFor, grabPoint, stripHit };

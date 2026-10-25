@@ -114,40 +114,41 @@ const isActionTool = (name) => ACTION_TOOLS.has(name);
 
 const handsOffRefusal = (tool) => tool === 'close_tab' ? CLOSE_REFUSAL : `Hands-off mode is on: the user does not let the AI click, type, scroll or navigate in their own tabs, so ${tool} was not run on this tab. Open a tab of your own with open_tab (it opens in the background) and work there. Reading the user's tabs (read_page, find, screenshot, read_tabs, list_tabs) still works.`;
 
-// ---- closing a tab the AI may not close on its own
-// close_tab on a tab the user owns (hands-off mode) or one with text typed in that closing would lose is not refused: the user is asked
-// (a card: Close / Keep, one card for several tabs) and the tab closes only on Close. Nothing here is a way round the guard: the
-// tool's answer says what the user chose, and no text suggests another route.
+// ---- closing a tab: never a question
+// close_tab never pauses the run or asks the user. A tab the user owns (hands-off mode) is refused in plain words; a tab holding the
+// user's unsaved text (or a page that asks "Leave site?") is simply left open and the tool says so, so the AI carries on.
 const CLOSE_REFUSAL = 'Hands-off mode is on and nobody is here to ask: the user does not let the AI close their own tabs, so this tab was not closed. It is still open. Tell the user; do not try to close it another way.';
-const CLOSE_NO_CHAT = 'This tab has text typed into it that closing would lose, and nobody is here to ask, so it was not closed. It is still open. Tell the user.';
-// { ask, theirs, unsaved } for one tab. handsOff: the setting (off for a macro the user runs); ownTab: the AI opened it;
-// unsaved: 'no' | 'yes' | 'unknown' (the page could not be checked: counts as typed text).
-function closeVerdict({ handsOff = false, ownTab = false, unsaved = 'no' } = {}) {
-  const state = unsaved === 'yes' || unsaved === 'unknown' ? unsaved : 'no';
-  const theirs = Boolean(handsOff) && !ownTab;
-  return { ask: theirs || state !== 'no', theirs, unsaved: state };
-}
 const cut = (text, n) => { const s = String(text || '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 3)}...` : s; };
-// The card for the tabs about to be closed: [{ title, host, theirs, unsaved }] -> { title, detail, args, allowLabel, denyLabel }.
-function closeCard(tabs = []) {
-  const list = (tabs || []).filter(Boolean);
-  const name = (t) => cut(t.title || t.host || 'Untitled', 70);
-  const mine = list.every((t) => t.theirs);
-  const note = (t) => (t.unsaved === 'yes' ? ' (has unsaved text)' : t.unsaved === 'unknown' ? ' (may have unsaved text)' : '');
-  const parts = [];
-  if (list.some((t) => t.theirs)) parts.push(list.length === 1 ? 'It\u2019s your tab.' : 'These are your tabs.');
-  if (list.some((t) => t.unsaved === 'yes')) parts.push(list.length === 1 ? 'It has text typed into it that would be lost.' : 'Some have text typed into them that would be lost.');
-  else if (list.some((t) => t.unsaved === 'unknown')) parts.push(list.length === 1 ? 'Lumen could not check whether it has unsaved text.' : 'Lumen could not check whether some have unsaved text.');
-  return {
-    title: list.length === 1 ? `Close ${name(list[0])}?` : mine ? `Close ${list.length} of your tabs?` : `Close ${list.length} tabs?`,
-    detail: parts.join(' ') || 'The AI wants to close it.',
-    args: list.map((t) => `${name(t)}${t.host && t.title ? ` - ${t.host}` : ''}${note(t)}`).join('\n'),
-    allowLabel: 'Close',
-    denyLabel: 'Keep',
-  };
+// The tool's answer when a tab was left open on purpose. `why`: 'yes' | 'unknown' | 'leave' (the page's own "Leave site?" check) | 'saving'.
+const closeLeft = (title, why = 'yes') => {
+  const name = cut(title, 70) ? `"${cut(title, 70)}"` : 'the tab';
+  const reason = why === 'unknown' ? 'Lumen could not check whether it has unsaved text' : why === 'leave' ? 'the page asked to keep it (it may have unsaved changes)' : why === 'saving' ? 'it is still saving' : 'it has unsaved text';
+  return `Left ${name} open: ${reason}. Nothing is wrong and the user was not interrupted: carry on with the task (it is fine to leave it open).`;
+};
+// Editors that save as you type: a typed-into field is not unsaved work there, their own save indicator says (autosaveScript).
+const AUTOSAVE_HOST = /(^|\.)(docs\.google\.com|notion\.so|notion\.site|officeapps\.live\.com|office\.com|onedrive\.live\.com|sharepoint\.com|figma\.com|miro\.com|airtable\.com|coda\.io)$/i;
+const autosaveHost = (host) => AUTOSAVE_HOST.test(String(host || ''));
+// Runs in the page: 'saving' while a save indicator says changes are pending ("Saving...", "Unsaved changes", offline), else 'saved'
+// (no indicator at all counts as saved: these apps keep no pending state of their own to wait for).
+function autosaveScript() {
+  return `(() => {
+    const els = [...document.querySelectorAll('.docs-title-save-label-text,.docs-save-label,#docs-save-indicator-badge,[class*=save-indicator],[class*=saveIndicator],[id*=save-indicator],[data-testid*=save]')];
+    const text = els.map((e) => ((e.innerText || e.textContent || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('data-tooltip') || '')).trim()).join(' | ');
+    return /\\b(saving|unsaved|not saved|couldn.t save|changes? (pending|not saved))\\b/i.test(text) ? 'saving' : 'saved';
+  })()`;
 }
-// What the tool tells the AI when the user chose Keep.
-const closeKept = (title) => `The user chose to keep ${cut(title, 70) ? `"${cut(title, 70)}"` : 'this tab'} open, so it was NOT closed. It is still open: do not close it another way, and tell the user it stays open.`;
+// What closing one tab does. `unsaved`: 'no' | 'yes' | 'unknown' (the page's typed-text check); `save`: for an autosave host, 'saved' |
+// 'saving' (null elsewhere); `aiTyped`: the AI itself typed into this tab (its own tab: not the user's work).
+// -> { act: 'close' | 'refuse' | 'leave' | 'wait', why }
+function closeDecision({ handsOff = false, ownTab = false, unsaved = 'no', save = null, aiTyped = false } = {}) {
+  if (Boolean(handsOff) && !ownTab) return { act: 'refuse', why: 'theirs' };
+  if (save === 'saving') return { act: 'wait', why: 'saving' };
+  if (save === 'saved') return { act: 'close', why: 'autosaved' }; // (a field with text in it is just the document)
+  const state = unsaved === 'yes' || unsaved === 'unknown' ? unsaved : 'no';
+  if (state === 'no') return { act: 'close', why: 'clean' };
+  if (state === 'yes' && ownTab && aiTyped) return { act: 'close', why: 'ai-typed' };
+  return { act: 'leave', why: state };
+}
 // Did the user say, in a message they typed in this chat, that the AI may close their tabs without asking? Only typed text counts
 // (never page or tool text), like a Gmail send's "you can send without asking". A tab with unsaved text asks anyway.
 const CLOSE_NO_ASK = /\b(?:close|shut)\b[^.!?\n]{0,80}\btabs?\b[^.!?\n]{0,60}\b(?:without (?:asking|checking|confirm\w*)|no need to (?:ask|check|confirm)|don'?t (?:ask|check|confirm|need to (?:ask|check|confirm)))|\b(?:don'?t|no need to|without)\s+(?:ask(?:ing)?|check(?:ing)?|confirm(?:ing)?)[^.!?\n]{0,40}\b(?:before|when)\b[^.!?\n]{0,30}\b(?:clos\w+|shut\w*)\b[^.!?\n]{0,30}\btabs?\b/i;
@@ -305,6 +306,6 @@ module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, focusAfterAiClose, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
-  closeVerdict, closeCard, closeKept, closeGranted, CLOSE_NO_CHAT, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee,
+  closeDecision, closeLeft, autosaveHost, autosaveScript, CLOSE_REFUSAL, closeGranted, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };

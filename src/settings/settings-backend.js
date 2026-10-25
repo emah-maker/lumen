@@ -1120,6 +1120,14 @@ function create(deps) {
   const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
   // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
   const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
+  // [extensions] Site access: offered when the extension has an id Lumen can keep (a Web Store install) and asks for all sites
+  // or is already narrowed; "sites" is what the user saved (empty: all sites, as installed).
+  function siteAccess(ext) {
+    const X = require('../browser/extension-sites');
+    const sites = (deps.extensionSitesSaved?.() || {})[ext.id] || [];
+    const canNarrow = Boolean(X.idOfKey(ext.manifest.key)) && (sites.length > 0 || X.hasBroadAccess(ext.manifest));
+    return { canNarrow, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
+  }
   function listExtensions() {
     const pinned = prefs().extensionPins.order;
     return installedExtensions().map((ext) => ({
@@ -1130,6 +1138,7 @@ function create(deps) {
       options: ext.manifest.options_ui?.page || ext.manifest.options_page || '',
       button: hasAction(ext), // false: no toolbar button, so nothing to pin
       pinned: hasAction(ext) && pinned.includes(ext.id),
+      ...siteAccess(ext),
     }));
   }
   // [extensions] Pins: renderer/ext-pins-core.js has the rules (a new extension starts pinned while fewer than three are).
@@ -1179,7 +1188,7 @@ function create(deps) {
   }
   async function reset() {
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen' && key !== 'featureCardNever') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom', 'extensionSites']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen' && key !== 'featureCardNever') delete s[key]; // not a preference: a reset doesn't bring back old release notes
     writeSettings(s);
     deps.permissionDecisions.clear();
     deps.deviceGrants?.clear();
@@ -1331,6 +1340,11 @@ function create(deps) {
     handle('prefs:extension-pin', async (id, on) => { await pinExtension(String(id), on === true); return listExtensions(); }); // [extensions] Settings → Extensions: Show in toolbar
     handle('prefs:remove-extension', async (id) => {
       await deps.uninstallExtension(id, { session: ses() }).catch(() => {});
+      return listExtensions();
+    });
+    handle('prefs:extension-sites', async (id, sites) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites)
+      if (!EXT_ID.test(String(id))) throw new Error('Unknown extension');
+      await deps.setExtensionSites(String(id), sites);
       return listExtensions();
     });
     handle('prefs:extension-options', (id) => {

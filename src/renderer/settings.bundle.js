@@ -7143,17 +7143,30 @@ async function buildExtensions(card) {
     input.addEventListener('change', async () => render(await S.pinExtension(e.id, input.checked)));
     return h('label', { class: 'ext-pin' }, h('span', { text: 'Show in toolbar' }), input);
   };
-  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.map((e) => h('div', { class: 'item' },
+
+
+  const siteRow = (e) => {
+    const only = e.sites.length > 0;
+    const mode = h('select', { 'aria-label': `Where ${e.name} can run` }, h('option', { value: 'all', text: 'On all sites', selected: !only }), h('option', { value: 'some', text: 'Only on these sites', selected: only }));
+    const input = h('input', { type: 'text', class: 'grow', placeholder: 'instructure.com, your school’s Canvas domain', value: e.sites.join(', '), 'aria-label': `Sites ${e.name} can run on`, hidden: !only });
+    const save = async (sites) => render(await S.extensionSites(e.id, sites));
+    mode.addEventListener('change', () => { if (mode.value === 'all') save([]); else { input.hidden = false; input.focus(); } });
+    input.addEventListener('change', () => save(input.value.split(/[\s,;]+/).filter(Boolean)));
+    const suggest = e.suggestedSites.length ? h('button', { text: 'Use suggested sites', hidden: !only, title: e.suggestedSites.join(', '), onclick: () => save(e.suggestedSites) }) : null;
+    mode.addEventListener('change', () => { if (suggest) suggest.hidden = mode.value === 'all'; });
+    return h('div', { class: 'item ext-sites-row' }, h('span', { class: 'note', text: 'Runs on' }), mode, input, suggest);
+  };
+  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.flatMap((e) => [h('div', { class: 'item' },
     h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.description ? ` · ${e.description}` : ''}` })),
     e.button ? pinSwitch(e) : null,
     e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
-    h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })))
+    h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })), e.canNarrow ? siteRow(e) : null].filter(Boolean))
     : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))])); };
   card.append(select('extensionsToolbar', 'Show extensions in the toolbar', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.',
     [['pinned', 'Only the ones I pin'], ['all', 'All of them'], ['none', 'Hide all']]));
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'extensionsToolbar') render(shownItems); });
   render(await S.extensions());
-  card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused here; remove one to turn it off.', list,
+  card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused here; remove one to turn it off. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.', list,
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
 }
 
