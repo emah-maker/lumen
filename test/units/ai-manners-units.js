@@ -106,9 +106,9 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
       check(`tool layer: ${name} on the user's tab is refused before any card (ensureAllowed)`, /Hands-off mode is on/.test(msg || ''), msg);
     }
     check('tool layer: execute refuses it too (a batch step or a direct call never skips the check)', /Hands-off mode is on/.test(await refused(() => inTab(1, () => agent.execute('click', { element_id: 1 }))) || ''));
-    { const was = agent.askApproval; let cards = 0; agent.askApproval = async () => { cards++; return false; }; // [close guard] not refused outright: the user is asked, and Keep leaves the tab
+    { const was = agent.askApproval; let cards = 0; agent.askApproval = async () => { cards++; return false; }; // closing a tab never asks: the user's tab is refused in plain words, still open
       const msg = await refused(() => inTab(1, () => ask('close_tab', { tab_id: 1 })));
-      check('tool layer: close_tab of the user\'s tab asks the user (a card), and Keep says it stays open', cards === 1 && /chose to keep/.test(msg || '') && /NOT closed/.test(msg || ''), msg);
+      check('tool layer: close_tab of the user tab is refused with no card, and the answer says it stays open', cards === 0 && /Hands-off mode is on/.test(msg || '') && /still open/.test(msg || ''), msg);
       agent.askApproval = was; }
     check('tool layer: close_tab of a tab the AI opened is not', (await refused(() => inTab(1, () => ask('close_tab', { tab_id: 2 })))) === null);
     check('tool layer: reading the user\'s tab still works', (await refused(() => inTab(1, () => ask('read_page')))) === null && (await refused(() => inTab(1, () => ask('find', { text: 'x' })))) === null);
@@ -485,7 +485,7 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
     check('close: a page that gave no answer (hung / crashed / threw) is told apart from one holding text', /return 'unknown'/.test(main) && /\(await unsavedInputState\(tab\.view\.webContents\)\) === 'yes'\) return keepTab/.test(main));
     check('close: the toast of a chat-row close goes to the window holding the tabs', /aiCloseNote\(r\.rec \|\| curRec, r\)/.test(main) && /Object\.defineProperty\(result, 'rec'/.test(main));
-    check('close_tab: the AI path closes without the Leave-site question and says the page blocked it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page blocked it/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8')));
+    check('close_tab: the AI path closes without the Leave-site question and leaves it open and says the page asked to keep it', /requestCloseTab: inRun\(agentRequestCloseTab\)/.test(main) && /function agentRequestCloseTab/.test(main) && /the page asked to keep it/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-manners.js'), 'utf8')));
   }
 
   // ---- a click that never reached the page (torn-off / hidden / minimized window) falls back to page events

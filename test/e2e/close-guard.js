@@ -1,7 +1,6 @@
-// The AI's close_tab on tabs the user owns, in the real app (agent.js closeGuard, ai-manners.js closeCard, the chat's approval card):
-// instead of being refused, the AI's request shows a card in the chat (Close / Keep). Close closes the tab, Keep leaves it and tells the AI so;
-// two tabs asked for in one step share one card; a tab with text typed into it says so on the card; Bypass permissions does not answer it.
-// A scripted provider (no network, no key) drives it against local fake mail pages on 127.0.0.1. Run with LUMEN_TEST_BACKGROUND=1.
+// The AI's close_tab never asks and never pauses the run (agent.js closeDecisionFor, ai-manners.js closeDecision): the user's tab under hands-off mode is
+// refused in plain words, a tab with typed text or a "Leave site?" page is left open and the AI is told, a clean tab closes; no approval card, ever.
+// A scripted provider (no network, no key) drives it against local fake pages on 127.0.0.1. Run with LUMEN_TEST_BACKGROUND=1.
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
@@ -52,6 +51,7 @@ const stubProvider = (app) => app.evaluate(() => {
     const pages = {
       '/gmail': '<!doctype html><title>Inbox (35) - me@gmail.com - Gmail</title><body><h1>Inbox</h1><p>35 unread</p></body>',
       '/kitchen': '<!doctype html><title>Inbox (30,719) - Kitchenlab.ORG Mail</title><body><h1>Inbox</h1><p>30,719 unread</p></body>',
+      '/guarded': '<!doctype html><title>Guarded Page</title><body>nothing typed<script>onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ""; };</script></body>',
       '/draft': '<!doctype html><title>Compose - Draft Mail</title><body><textarea id="t" aria-label="Message"></textarea><script>onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ""; };</script></body>',
     };
     res.end(pages[req.url] || '<!doctype html><title>Other</title><body>other</body>');
@@ -85,68 +85,38 @@ const stubProvider = (app) => app.evaluate(() => {
     const ended = () => waitFor(() => ui.evaluate(() => !document.body.classList.contains('agent-active')), 30000);
     const cardsLeft = () => ui.evaluate(() => document.querySelectorAll('.approval-tool:not(.answered)').length);
 
+    const noCard = () => ui.evaluate(() => document.querySelectorAll('.approval-tool').length === 0);
     const gmail = await openUser(`${base}/gmail`);
-    const kitchen = await openUser(`${base}/kitchen`);
     const front = await openUser(`${base}/other`); // the tab the user is on
-    check('the fake mail tabs are open, and are the user\'s (not marked as the AI\'s)', (await isOpen(gmail)) && (await isOpen(kitchen)) && !(await app.evaluate((_e, i) => global.__agent.browser.isAiTab(i), gmail)));
+    check('the fake mail tab is open, and is the user\'s (not marked as the AI\'s)', (await isOpen(gmail)) && !(await app.evaluate((_e, i) => global.__agent.browser.isAiTab(i), gmail)));
 
-    // 1. One tab, Keep.
+    // 1. Hands-off mode, the user's tab: refused in plain words, no card, the run carries on and ends by itself.
     await ask([[gmail]]);
-    let card = await cardOf();
-    check('hands-off, user\'s tab: a card appears instead of a refusal, naming the tab', /^Close Inbox \(35\)/.test(card.title || '') && /your tab/.test(card.detail || ''), JSON.stringify(card));
-    check('the card has Keep and Close buttons (no "Always")', card.buttons.includes('Close') && card.buttons.includes('Keep') && card.buttons.length === 2, JSON.stringify(card.buttons));
-    check('the tab is still open while the card waits', await isOpen(gmail));
-    await press('Keep');
-    await ended();
-    check('Keep: the tab stays open', await isOpen(gmail));
-    const kept = await app.evaluate(() => global.__results.join('\n'));
-    check('Keep: the AI is told the user kept it, that it is still open, and given no way round', /chose to keep/.test(kept) && /NOT closed/.test(kept) && /another way/.test(kept) && !/open_tab|your own tab/.test(kept), kept);
+    check('hands-off, user tab: the run ends on its own (it is never waiting on the user)', await ended());
+    check('hands-off, user tab: no approval card was shown', await noCard());
+    check('hands-off, user tab: the tab is still open and the AI was told so', (await isOpen(gmail)) && /still open/.test(await app.evaluate(() => global.__results.join('\n'))));
 
-    // 2. One tab, Close.
-    await ask([[gmail]]);
-    card = await cardOf();
-    await press('Close');
-    await ended();
-    check('Close: the tab is closed', !(await isOpen(gmail)));
-    check('Close: the AI is told the user chose Close', /Closed tab/.test(await app.evaluate(() => global.__results.join('\n'))));
-
-    // 3. Two tabs in one step: one card.
-    const gmail2 = await openUser(`${base}/gmail`);
-    await ask([[gmail2, kitchen]]);
-    card = await cardOf();
-    check('two tabs in one step: ONE card, "Close 2 of your tabs?", listing both', card.title === 'Close 2 of your tabs?' && /Inbox \(35\)/.test(card.args || '') && /Kitchenlab/.test(card.args || ''), JSON.stringify(card));
-    await sleep(500);
-    check('...and no second card follows', (await cardsLeft()) === 1);
-    await press('Close');
-    await ended();
-    check('Close on the batch closes both tabs', !(await isOpen(gmail2)) && !(await isOpen(kitchen)));
-
-    // 4. Unsaved text: with hands-off off the guard is only the typed text.
+    // 2. Unsaved text (and the page asks "Leave site?"): left open, no card, no dialog, the run ends on its own.
     await app.evaluate(() => global.__settings.backend.set('aiHandsOff', false));
     const draft = await openUser(`${base}/draft`);
     await app.evaluate(async ({ webContents }, id) => { const t = global.__agent.browser.tabById(id); await webContents.fromId(t.webContents.id).executeJavaScript('(() => { const t = document.getElementById("t"); t.focus(); t.value = "Dear team, the draft I am typing"; t.dispatchEvent(new Event("input", { bubbles: true })); })()'); }, draft);
-    await ask([[draft]]);
-    card = await cardOf();
-    check('text typed into the tab: the card says it has unsaved text', /unsaved text|text typed/.test(`${card.detail} ${card.args}`) && !/your tab/.test(card.detail || ''), JSON.stringify(card));
-    await press('Keep');
-    await ended();
-    check('Keep on a tab with unsaved text leaves it open', await isOpen(draft));
-    await ask([[draft]]);
-    await cardOf();
-    await press('Close');
-    await ended();
-    check('Close on a tab with unsaved text closes it (even though the page asks "Leave site?")', await waitFor(async () => !(await isOpen(draft)), 8000));
+    await ask([[draft], [gmail]]);
+    check('unsaved text: the run does not stop for an approval, it goes on to the next step and ends', await ended());
+    check('unsaved text: no approval card', await noCard());
+    check('unsaved text: the tab is still open', await isOpen(draft));
+    const results = await app.evaluate(() => global.__results.join('\n'));
+    check('unsaved text: the AI is told "Left <title> open: it has unsaved text" and the next close (a clean tab) went ahead', /Left "Compose - Draft Mail" open: it has unsaved text/.test(results) && /Closed tab/.test(results) && !(await isOpen(gmail)), results);
 
-    // 5. Bypass permissions does not answer it.
-    await app.evaluate(() => { global.__settings.backend.set('aiHandsOff', true); global.__settings.backend.set('bypassPermissions', true); });
-    const gmail3 = await openUser(`${base}/gmail`);
-    await ask([[gmail3]]);
-    card = await cardOf();
-    check('Bypass permissions on: the card is still shown', /Close Inbox/.test(card.title || ''), JSON.stringify(card));
-    check('Bypass: the tab is not closed until the user answers', await isOpen(gmail3));
-    await press('Close');
-    await ended();
-    check('Bypass: Close then closes it', !(await isOpen(gmail3)));
+    // 3. A page that asks "Leave site?" with nothing typed: kept open too, never asked.
+    const guarded = await openUser(`${base}/guarded`);
+    await ask([[guarded]]);
+    check('"Leave site?" page: the run ends on its own, no card, the tab stays open', (await ended()) && (await noCard()) && (await isOpen(guarded)));
+    check('"Leave site?" page: the AI is told it was left open', /Left .* open/.test(await app.evaluate(() => global.__results.join('\n'))), await app.evaluate(() => global.__results.join('\n')));
+
+    // 4. A tab the AI opened with nothing in it closes as before.
+    const mine = await app.evaluate(async () => { const t = global.__agent.browser.openTab('about:blank', { background: true }); return t.id; });
+    await ask([[mine]]);
+    check('a blank tab closes with no card', (await ended()) && (await noCard()) && !(await isOpen(mine)));
 
     check('no card is left waiting', (await cardsLeft()) === 0);
     void front;
