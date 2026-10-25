@@ -754,6 +754,64 @@ const errors = (log) => log.events.filter((e) => e.type === 'error');
     check('"More models…" and a provider Auto row are never the stand-in', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])) === 'openrouter:a/b', sameKindModel('openrouter:x/y', opts(['openrouter:__more', 'openrouter:auto', 'openrouter:a/b'])));
   }
 
+  // ---- "the request is too long for the model": ONE matcher (fallback.isContextError) behind every caller:
+  // classify (never a limit/outage switch), auto-model's failureOf (escalate), agent.js (fitContext halving + "grown too long")
+  // and providers.describeProviderError (the user's message). Real provider wording; OUTPUT caps and per-minute token rates are not it.
+  {
+    const { isContextError } = require('../../src/ai/fallback');
+    const A = require('../../src/ai/auto-model');
+    const providers = require('../../src/ai/providers');
+    providers.clientFor('openai', 'sk-test'); // loads the SDK that describeProviderError reads
+    const sdk = (status, code, message, type = code) => Object.assign(new Error(`${status} ${message}`), { name: 'APIError', status, code, type, error: { message, type, code } });
+    const ctx = [
+      ['Anthropic prompt too long', api('InvalidRequestError', 400, 'invalid_request_error', 'prompt is too long: 215000 tokens > 200000 maximum')],
+      ['Anthropic via CLI text', 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}'],
+      ['Bedrock', 'Input is too long for requested model.'],
+      ['OpenAI code only', sdk(400, 'context_length_exceeded', 'Bad request')],
+      ['OpenAI body code only', Object.assign(new Error('400 Bad request'), { status: 400, error: { code: 'context_length_exceeded' } })],
+      ['OpenAI message', sdk(400, 'context_length_exceeded', "This model's maximum context length is 128000 tokens. However, your messages resulted in 140000 tokens. Please reduce the length of the messages.")],
+      ['OpenAI message, no code', sdk(400, null, "This model's maximum context length is 16385 tokens. However, you requested 20000 tokens (15000 in the messages, 5000 in the completion).")],
+      ['OpenAI Responses', sdk(400, 'context_length_exceeded', 'Your input exceeds the context window of this model. Please adjust your input and try again.')],
+      ['Gemini token count', sdk(400, 400, 'The input token count (1200000) exceeds the maximum number of tokens allowed (1048575).', 'INVALID_ARGUMENT')],
+      ['Gemini short', 'The input token count exceeds the maximum number of tokens allowed 1048576.'],
+      ['exceeds the max tokens', 'Request exceeds the max tokens allowed for this model'],
+      ['xAI prompt length', sdk(400, null, "This model's maximum prompt length is 131072 but the request contains 150000 tokens.")],
+      ['OpenRouter', sdk(400, 400, "This endpoint's maximum context length is 8192 tokens. However, you requested about 9000 tokens (8000 of text input, 1000 in the output).")],
+      ['OpenRouter numeric code', Object.assign(new Error('400 Input token count exceeds the model limit'), { status: 400, error: { code: 400, message: 'Input token count exceeds the model limit', metadata: { raw: 'context length exceeded' } } })],
+      ['Mistral', 'Prompt contains 40000 tokens, too large for model with 32768 maximum context length'],
+      ['Groq', sdk(400, 'context_length_exceeded', 'Please reduce the length of the messages or completion.')],
+    ];
+    const notCtx = [
+      ['OpenAI max_tokens (output cap)', sdk(400, null, 'max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000.')],
+      ['Anthropic max_tokens cap', api('InvalidRequestError', 400, 'invalid_request_error', 'max_tokens: 70000 > 64000, which is the maximum allowed number of output tokens for claude-sonnet-4')],
+      ['output tokens exceed the maximum', 'max_tokens exceeds the maximum tokens for this model'],
+      ['OpenAI TPM', sdk(429, 'rate_limit_exceeded', 'Rate limit reached for gpt-4o in organization org-x on tokens per min (TPM): Limit 30000, Used 29000, Requested 4000.')],
+      ['Anthropic input tokens per minute', api('RateLimitError', 429, 'rate_limit_error', 'This request would exceed the rate limit for your organization of 30,000 input tokens per minute.')],
+      ['Gemini quota', sdk(429, 429, 'Quota exceeded for metric: generate_content_free_tier_input_token_count, limit: 250000', 'RESOURCE_EXHAUSTED')],
+      ['too many tokens, wait (gateway rate)', 'Too many tokens, please wait before trying again.'],
+      ['token limit per minute', 'You exceeded the token limit per minute for this key'],
+      ['plain 500', sdk(500, null, 'The server had an error while processing your request')],
+      ['usage limit', 'You have hit your usage limit. Resets 5pm.'],
+    ];
+    const OpenAI = require('openai'); // describeProviderError only describes the SDK's own APIError, so wrap each case as one
+    const said = (e) => { const msg = typeof e === 'string' ? e : String(e.message).replace(/^d{3} /, ''); const status = typeof e === 'string' ? 400 : e.status; const body = typeof e === 'string' ? { message: e } : { ...(e.error?.error || e.error || {}), message: msg, code: e.code ?? e.error?.code, type: e.type }; return providers.describeProviderError(new OpenAI.APIError(status, body, msg, { get: () => null }), 'openai')?.text || ''; };
+    for (const [name, e] of ctx) {
+      check(`context: ${name}`, isContextError(e) === true, J(e?.message || e));
+      check(`context -> classify is not a limit or outage: ${name}`, !['limit', 'unreachable'].includes(classify(e, { now: NOW }).kind), J(classify(e, { now: NOW })));
+      check(`context -> auto-model failureOf: ${name}`, A.failureOf(e)?.kind === 'context', J(A.failureOf(e)));
+      check(`context -> providers says the chat is too long: ${name}`, /grown too long/.test(said(e)), said(e));
+    }
+    for (const [name, e] of notCtx) {
+      check(`not context: ${name}`, isContextError(e) === false, J(e?.message || e));
+      check(`not context -> auto-model failureOf: ${name}`, A.failureOf(e)?.kind !== 'context', J(A.failureOf(e)));
+      check(`not context -> providers does not say the chat is too long: ${name}`, !/grown too long/.test(said(e)), said(e));
+    }
+    check('TPM and quota messages are still limits', ['OpenAI TPM', 'Anthropic input tokens per minute', 'Gemini quota'].every((n) => classify(notCtx.find((x) => x[0] === n)[1], { now: NOW }).kind === 'limit'), '');
+    check('isContextError copes with nothing', isContextError(undefined) === false && isContextError(null) === false && isContextError('') === false, '');
+    // agent.js needs Electron (not loadable here): it must use the shared matcher for fitContext's halving and its message.
+    const agentSrc = require('fs').readFileSync(require('path').join(__dirname, '../../src/ai/agent.js'), 'utf8');
+    check('agent.js uses fallback.isContextError (no private regex)', /const isContextError = fallback\.isContextError;/.test(agentSrc) && /isContextError\(err\) && budgetScale === 1/.test(agentSrc) && /if \(isContextError\(err\)\) return \{ text: 'This chat has grown too long/.test(agentSrc), '');
+  }
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nall fallback checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

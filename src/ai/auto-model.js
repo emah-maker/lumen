@@ -308,13 +308,12 @@ function escalate({ options = [], current, failure = {}, request = {}, tried = [
 // What kind of failure an error is, for escalate(): 'context' (the request is too long for the model), 'tools' (the
 // model takes no tools), 'denied' (the account can't use the model, e.g. a plan without it) or null (not one for a
 // stronger model: a usage limit or an outage goes through ai/fallback.js instead).
-const CONTEXT = /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length|exceeds the (maximum|max)|token limit|input length exceeds/i;
 const TOOLS = /does(?: not|n't) support (tool|function)|tools? (?:are |is )?not supported|no endpoints found that support tool|function calling is not (supported|enabled)/i;
 const DENIED = /not available (for|on) your|does not exist or you do not have access|do(?:es)? not have access to (the )?model|model .{0,40}(is )?not (available|found|supported) (for|on|in) your (plan|account|subscription)|requires? (a )?(pro|max|plus|team|paid|higher)\b|upgrade your (plan|subscription)|not included in your (plan|subscription)|no access to (this )?model/i;
 function failureOf(err) {
   const text = typeof err === 'string' ? err : [err?.message, err?.error?.message, err?.error?.error?.message].filter(Boolean).join(' ');
   const status = Number(err?.status ?? err?.statusCode) || null;
-  if (CONTEXT.test(text)) return { kind: 'context' };
+  if (fallback.isContextError(err)) return { kind: 'context' };
   if ((status === 400 || status === 404 || status === 422 || status === null) && TOOLS.test(text)) return { kind: 'tools' };
   if ((status === 403 || status === 404 || status === 400 || status === null) && DENIED.test(text)) return { kind: 'denied' };
   return null;

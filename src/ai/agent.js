@@ -1057,7 +1057,7 @@ function withoutImages(messages) {
   const swap = (b) => (b?.type === 'image' ? { type: 'text', text: IMAGE_NOTE } : b?.type === 'tool_result' && Array.isArray(b.content) ? { ...b, content: b.content.map(swap) } : b);
   return messages.map((m) => (Array.isArray(m.content) ? { ...m, content: m.content.map(swap) } : m));
 }
-const isContextError = (err) => /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length/i.test(String(err?.message || ''));
+const isContextError = fallback.isContextError; // one matcher for every "too long for the model" wording (ai/fallback.js)
 
 // settings = { model, adhdMode }; adhdMode is fixed per conversation, the model can change.
 // Once the chat has passed the API's own context-management trigger (loop(): messages.pageStub), the pages

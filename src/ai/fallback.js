@@ -36,7 +36,24 @@ const MAX_HOPS = 3; // switches within one turn
 // ---------- classification ----------
 
 const NET_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EPIPE', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN', 'ERR_NETWORK', 'ERR_NETWORK_CHANGED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_ABORTED', 'ERR_STREAM_PREMATURE_CLOSE', 'ERR_SOCKET_CONNECTION_TIMEOUT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED']);
-const CONTEXT_RE = /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length|exceeds the (maximum|max) (number of )?(input )?tokens|token limit|tokens? (limit|quota) (for|of|per) (this|the) (request|message|prompt)|exceeded the model limit|input length exceeds/i;
+// "The request is too long for the model", the one definition (agent.js's budget halving and "chat has grown too long"
+// message, auto-model's escalation, providers.js's message and classify() below all use it). Real wording: Anthropic
+// "prompt is too long: N tokens > M maximum", Bedrock "Input is too long for requested model", OpenAI/DeepSeek/OpenRouter
+// "maximum context length is", Mistral "too large for model with N maximum context length", xAI "maximum prompt length is",
+// Gemini "input token count (N) exceeds the maximum number of tokens allowed", Groq "reduce the length of the messages".
+const CONTEXT_RE = /prompt is too long|input is too long|(context|prompt|input) (length|window|size) (is |was )?(exceeded|too (long|large))|context (length|window)|maximum (context|prompt|input) (length|size)|too many (input |prompt )?tokens|reduce the length|exceeds? the (maximum|max)( number of)?( input| prompt)? tokens|(input )?token count[^|]{0,40}exceeds|(exceed(s|ed)?|over|above) the (model'?s? |context )?token limit|tokens? (limit|quota) (for|of|per) (this|the) (request|message|prompt)|exceeded the model limit|input length exceeds/i;
+const CONTEXT_CODE_RE = /context[_ -]?(length|window)[_ -]?exceeded|string_above_max_length|input_too_long|prompt_too_long/i; // an error's own `code` / `type`
+// Not a context error even though it names tokens: an OUTPUT cap (max_tokens) or a per-minute token rate (TPM). Only a
+// message that also says "context"/"prompt is too long"/"input" overrides these.
+const NOT_CONTEXT_RE = /\bmax_(completion_|output_)?tokens\b|max(imum)? (completion|output) tokens|at most \d+ (completion|output) tokens|tokens? per (min|minute|day|hour)|\b(tpm|tpd)\b|per[- ]minute|rate limit|too many tokens(, | )(please )?(wait|try|slow)/i;
+const CONTEXT_STRONG_RE = /prompt is too long|input is too long|context (length|window)|maximum (context|prompt|input) (length|size)|input token count|input length exceeds/i;
+function contextIn(text, types = [], codes = []) {
+  if ([...types, ...codes].some((t) => CONTEXT_CODE_RE.test(t))) return true;
+  if (!CONTEXT_RE.test(text)) return false;
+  return !NOT_CONTEXT_RE.test(text) || CONTEXT_STRONG_RE.test(text);
+}
+// Is this error (an Error with its status/code/type/body, or just its text) "the request is too long for the model"?
+const isContextError = (input) => { const f = facts(input); return contextIn(f.text, f.types, f.codes); };
 // Text only (a CLI's sentence, no status): anchored phrases that name a plan, usage or billing limit. A bare "limit",
 // "quota", "rate limit" or "reset" shows up in tool and page messages ("request rate limit of tool calls per page").
 const TEXT_LIMIT_RE = /\busage limit|\brate[ _-]?limit(ed)? (exceeded|reached)|\bbeen rate[ -]limited|quota exceeded|exceeded (your|the) (current )?quota|insufficient[_ ]quota|\bcredit balance\b|resource[_ ]exhausted|credits? (have )?(run|ran) out|out of credits|insufficient (credits|funds|balance)|out of (extra )?usage|(hit|reached) your (\w+ )?limit|your (weekly|monthly|5-hour|daily) limit|monthly (spend )?limit|spend limit (reached|exceeded)/i;
@@ -142,7 +159,7 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   const out = (kind, extra = {}) => ({ kind, scope: 'provider', resetsAt: null, status, detail: text.split('\n')[0].slice(0, 200), ...extra });
 
   if (name === 'AbortError' || name === 'APIUserAbortError' || (typeof input === 'object' && input?.cause?.name === 'AbortError') || /request was aborted/i.test(text)) return out('other');
-  if (CONTEXT_RE.test(text)) return out('other');
+  if (contextIn(text, types, codes)) return out('other'); // too long for the model: another model is not the fix (see isContextError)
   // A bad argument (Node's ERR_INVALID_URL, ERR_INVALID_ARG_TYPE, ...) is the request's fault, not the network's.
   if (codes.some((c) => /^ERR_INVALID_/i.test(c))) return out('other');
   // undici's "terminated" (the connection closed mid-stream), bare or wrapping a cause that has no system code ("other side closed"; a code is judged below). A user Stop is an AbortError, handled above
@@ -478,4 +495,4 @@ const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, sameKindModel, COOLDOWN, MAX_HOPS };
+module.exports = { classify, isContextError, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, sameKindModel, COOLDOWN, MAX_HOPS };
