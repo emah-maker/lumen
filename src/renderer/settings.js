@@ -3533,7 +3533,8 @@ async function init() {
   window.addEventListener('focus', async () => {
     try {
       const fresh = await S.get();
-      for (const key of ['aiSubagents', 'aiPermissionMode', 'tabLayout']) if (st && fresh.prefs[key] !== st.prefs[key]) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); }
+      if (st && fresh.prefs.aiSubagents !== st.prefs.aiSubagents) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'aiSubagents' } })); }
+      for (const key of ['aiPermissionMode', 'tabLayout']) if (st && fresh.prefs[key] !== st.prefs[key]) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); } // (the rows that show or hide with them)
     } catch { /* the page is closing */ }
   });
   window.setI18n?.(strings); // renderer/i18n.js
