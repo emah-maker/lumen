@@ -72,6 +72,16 @@ function capSize(css, scale, max = MAX_PIXELS) {
   return { width, height, cut: Math.ceil(css.width) > limit || Math.ceil(css.height) > limit };
 }
 
+// The scroll offsets (CSS px) of the slices that cover a page `total` px tall through a window `view` px tall, each slice starting where the last one ended;
+// the last is pulled up to the page's end (it overlaps the one before). A page no taller than the window is one slice at 0.
+function slicePlan(total, view) {
+  const t = Math.max(1, Math.ceil(total));
+  const v = Math.max(1, Math.floor(view));
+  const ys = [0];
+  for (let y = v; y < t && ys.length < 400; y += v) ys.push(Math.min(y, t - v));
+  return ys;
+}
+
 // ---------- the tool ----------
 
 // deps: { overlay, copyImage(nativeImage) -> Promise, nativeImage, shell, screen, app, t, downloadDir(), saveDir() (test override),
@@ -102,9 +112,60 @@ function createScreenshot(deps) {
     return { image };
   }
 
-  // (in the page's capture queue: a clipped capture taken while another is in flight leaves the page at the clip's size, see features/tab-capture.js)
+  // A full page is taken as the window's own pictures, one scroll step at a time, and sewn together: Page.captureScreenshot with captureBeyondViewport
+  // makes Chromium lay the live page out at the full height for the capture (a resize event, ResizeObserver ticks and a visualViewport change on the page
+  // the user is looking at, measured by test/e2e/screenshot-no-resize.js), which broke layouts built on vh units and moved the scroll. Sticky and
+  // fixed elements are hidden (visibility only, no layout) after the first slice so they are not repeated down the picture; the scroll position and
+  // every style set are put back. Pages this cannot do (sideways overflow, a document that does not scroll, a slice that comes back empty) take
+  // the old way below.
+  const SHOT_HIDE = '__lumenShotHidden';
   function captureFull(ctx) { return require('./tab-capture').oneAtATime(ctx.wc, () => captureFullNow(ctx)); }
   async function captureFullNow(ctx) {
+    try {
+      const done = await stitchFull(ctx);
+      if (done) return done;
+    } catch { /* the old way */ }
+    return captureBeyond(ctx);
+  }
+  async function stitchFull(ctx) {
+    const wc = ctx.wc;
+    const m = await wc.executeJavaScript('(() => { const d = document.documentElement; const b = document.body; return [Math.max(d.scrollHeight, b ? b.scrollHeight : 0), d.scrollWidth, d.clientWidth, innerHeight, scrollX, scrollY]; })()');
+    if (!Array.isArray(m)) return null;
+    const [totalH, scrollW, clientW, vh, sx, sy] = m;
+    if (!(vh > 0) || scrollW > clientW + 2) return null; // sideways overflow: only the old way takes it whole
+    if (totalH <= vh + 1) return { ...(await captureVisible(ctx)) }; // nothing below the fold: what is shown is the page
+    const first = (await captureVisible(ctx)).image;
+    const rowScale = first.getSize().height / vh;
+    const size = capSize({ width: clientW, height: totalH }, rowScale);
+    const outW = Math.min(first.getSize().width, Math.max(1, Math.round(size.width * rowScale)));
+    const outH = Math.max(1, Math.round(size.height * rowScale));
+    const out = Buffer.alloc(outW * outH * 4);
+    let covered = 0;
+    try {
+      for (const target of slicePlan(size.height, vh)) {
+        const actual = await wc.executeJavaScript(`new Promise((resolve) => { scrollTo({ left: ${sx}, top: ${Math.round(target)}, behavior: 'instant' }); const t = setTimeout(done, 150); function done() { clearTimeout(t); resolve(scrollY); } requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 40))); })`);
+        if (target === 0) { /* the first slice keeps fixed and sticky parts */ } else {
+          await wc.executeJavaScript(`(() => { if (window.${SHOT_HIDE}) return; const keep = []; const w = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT); let n = 0; while (w.nextNode() && n++ < 30000) { const e = w.currentNode; const p = getComputedStyle(e).position; if (p === 'fixed' || p === 'sticky') { keep.push([e, e.style.getPropertyValue('visibility'), e.style.getPropertyPriority('visibility')]); e.style.setProperty('visibility', 'hidden', 'important'); } } window.${SHOT_HIDE} = keep; })()`);
+        }
+        const img = (await captureVisible(ctx)).image;
+        const { width: iw, height: ih } = img.getSize();
+        if (iw < outW || Math.abs(ih / vh - rowScale) > 0.02) throw new Error('the window changed size');
+        const bmp = img.toBitmap();
+        const skip = Math.min(ih - 1, Math.max(0, Math.round((covered - actual) * rowScale)));
+        const dest = Math.round(covered * rowScale);
+        const rows = Math.min(ih - skip, outH - dest);
+        for (let r = 0; r < rows; r++) bmp.copy(out, (dest + r) * outW * 4, ((skip + r) * iw) * 4, ((skip + r) * iw + outW) * 4);
+        covered = actual + vh;
+        if (actual < target - 1 && covered < size.height) throw new Error('the page did not scroll');
+      }
+    } finally {
+      try { await wc.executeJavaScript(`(() => { const k = window.${SHOT_HIDE}; if (k) { for (const [e, v, p] of k) { if (v) e.style.setProperty('visibility', v, p); else e.style.removeProperty('visibility'); } delete window.${SHOT_HIDE}; } scrollTo({ left: ${sx}, top: ${sy}, behavior: 'instant' }); })()`); } catch { /* the page is gone */ }
+    }
+    return { image: deps.nativeImage.createFromBitmap(out, { width: outW, height: outH }), cut: size.cut };
+  }
+
+  // (in the page's capture queue: a clipped capture taken while another is in flight leaves the page at the clip's size, see features/tab-capture.js)
+  async function captureBeyond(ctx) {
     const dbg = ctx.wc.debugger;
     let attachedHere = false;
     try {
@@ -281,4 +342,4 @@ function createScreenshot(deps) {
   return { open, capture, selectArea };
 }
 
-module.exports = { createScreenshot, fileNameFor, uniquePath, normalizeRect, scaleRect, capSize, timestamp, MAX_PIXELS, MIN_AREA };
+module.exports = { createScreenshot, fileNameFor, uniquePath, normalizeRect, scaleRect, capSize, slicePlan, timestamp, MAX_PIXELS, MIN_AREA };
