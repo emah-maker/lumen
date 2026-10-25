@@ -216,7 +216,7 @@
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
     if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
     const steps = tr(card.count === 1 ? 'card.steps.one' : 'card.steps.other', { count: card.count });
-    const sum = state === 'working' && card.latest ? tr('card.steps.latest', { steps, latest: card.latest }) : steps;
+    const sum = steps; // (the step being done is in the status bar right above: said there once, never again in the summary)
     if (card.sum.textContent !== sum) card.sum.textContent = sum;
     // The button: a browser card opens its tab once it has one; a file card opens its file.
     let label = '';
