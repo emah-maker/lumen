@@ -88,7 +88,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel, fullAccessRejected } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, fullAccessRejected, startChild, describeStart } = require('./cli-utils');
 const { agyAllowed, helperRows } = require('./agy-tools'); // the allowlist the hook gate (mcp-http.js agyDecision) shares
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { isLimitText } = require('../features/grok-limit');
@@ -128,7 +128,7 @@ async function findAgy() {
 // What the user should do about a failure. `text` is the best failure string run() found (result.error, else stderr).
 function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
-  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Antigravity', setting: 'Give Antigravity full access to this computer' }); if (rejected) return rejected; }
+  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Antigravity', setting: 'Give Antigravity full access to this computer' }); if (rejected) return rejected; } const started = describeStart(t, { name: 'Antigravity', exe: 'agy.exe' }); if (started) return started; // [start retry]
   if (/not (logged|signed) in|please (log|sign) ?in|sign[- ]?in required|unauthenticated|not authenticated|authentication (failed|required)|no (active )?session|login required|keyring/i.test(t)) {
     return { text: `Antigravity is not signed in. ${SIGN_IN_HINT} Lumen never sees your Google login.` };
   }
@@ -410,7 +410,7 @@ class AntigravityEngine {
   // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); spawn / kill / exec: swappable for tests (child_process spawn,
   // cli-utils killTree, child_process execFile); onFresh({ conversation, resume }): a new agy process starts (snapshot's read cache).
   // bridge(): { command, args, env } for the stdio MCP bridge (only with LUMEN_AGY_MCP=stdio); ensureServer(): starts its server.
-  constructor({ userData, gate, bridge = null, ensureServer = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
+  constructor({ userData, gate, bridge = null, ensureServer = null, onFresh = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, startWait = undefined, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true }) {
     this.kind = 'antigravity';
     this.userData = userData;
     this.gate = gate;
@@ -419,6 +419,7 @@ class AntigravityEngine {
     this.onFresh = onFresh;
     this.watchdogMs = watchdogMs;
     this.spawn = spawnChild;
+    this.startWait = startWait; // pauses between start retries (cli-utils startChild); tests pass one that does not wait
     this.kill = kill;
     this.exec = exec;
     this.argsFor = argsFor;
@@ -591,7 +592,7 @@ class AntigravityEngine {
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home, run: gateRun, fullAccess }), cwd: folder });
+    const { child } = await startChild({ spawn: this.spawn, file: bin, args: argv, options: { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ home, run: gateRun, fullAccess }), cwd: folder }, signal, wait: this.startWait, onWait: () => emit({ type: 'status', text: 'Antigravity is updating, waiting a moment…' }), again: async () => { const found = await this.detect(true); return found ? { file: found } : null; } }); // [start retry] agy updates itself too: an exe being replaced is waited for and looked up again
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
     let over = false;

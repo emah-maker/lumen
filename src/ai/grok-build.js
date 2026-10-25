@@ -186,7 +186,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected } = require('./cli-utils');
+const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected, startChild, describeStart } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
 const authSync = require('./auth-sync');
 const { isSignedOutText } = authSync;
@@ -233,7 +233,7 @@ async function findGrok() {
 // string run() could find (result.errors, result.result, or stderr, in that order).
 function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
-  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Grok Build', setting: 'Give Grok Build full access to this computer' }); if (rejected) return rejected; }
+  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Grok Build', setting: 'Give Grok Build full access to this computer' }); if (rejected) return rejected; } const started = describeStart(t, { name: 'Grok Build', exe: 'grok.exe' }); if (started) return started; // [start retry]
   if (isSignedOutText(t, /not logged in|please (run|sign) in|run `grok login`|b401b|unauthori[sz]ed|token (has )?(expired|been revoked)|refresh token/i, /log ?in|oauth|authenticat/i)) {
     return { text: 'Grok Build is not signed in. Open a terminal, run `grok login`, and sign in with your SuperGrok or X Premium+ account. Lumen never sees your Grok login.' };
   }
@@ -787,7 +787,7 @@ class GrokBuildEngine {
   // onFresh({ sessionId, resume }): a new grok process starts (one per message), so the page reads the
   // model saw before no longer count (snapshot.js's repeat-read cache, features/ai-agents.js).
   // watchdogMs: a run whose stdout is silent this long (no Lumen tool call in flight) is hung and is ended (0: off).
-  constructor({ userData, gate, lumenReady = null, onFresh = null, watchdogMs = WATCHDOG_MS, firstWaitExtraMs = FIRST_WAIT_EXTRA_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
+  constructor({ userData, gate, lumenReady = null, onFresh = null, watchdogMs = WATCHDOG_MS, firstWaitExtraMs = FIRST_WAIT_EXTRA_MS, spawn: spawnChild = spawn, startWait = undefined, kill = killTree, exec = execFile, argsFor = buildArgs, watch = true, background = false, home = grokHomeFor(userData), dir = sidebarDirFor(userData) }) {
     this.firstWaitExtraMs = firstWaitExtraMs;
     this.kind = 'grokbuild';
     this.watchdogMs = watchdogMs;
@@ -804,6 +804,7 @@ class GrokBuildEngine {
     this.argsFor = argsFor;
     this.watch = watch;
     this.spawn = spawnChild;
+    this.startWait = startWait; // pauses between start retries (cli-utils startChild); tests pass one that does not wait
     this.kill = kill;
     this.exec = exec;
     this.bin = undefined; // undefined: not looked up yet; null: not installed
@@ -999,7 +1000,7 @@ class GrokBuildEngine {
     // stdio: no stdin, and nothing of Lumen's is inherited beyond the two pipes (Node opens its own
     // handles non-inheritable). The environment is buildEnv's short list, not Lumen's own.
     emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (the renderer clears it on the first output)
-    const child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir, fullAccess }), cwd: workDir });
+    const { child } = await startChild({ spawn: this.spawn, file: bin, args: argv, options: { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv({ userData: this.userData, run: gateRun, home, dir, fullAccess }), cwd: workDir }, signal, wait: this.startWait, onWait: () => emit({ type: 'status', text: 'Grok Build is updating, waiting a moment…' }), again: async () => { const found = await this.detect(true); return found ? { file: found } : null; } }); // [start retry] an exe being replaced by an update is waited for and looked up again (cli-utils startChild)
     // tools / inflight / dog / arm: the inactivity watchdog, as in claude-code.js (callBegin / callEnd pause it).
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     this.active = active;
