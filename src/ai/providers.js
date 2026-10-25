@@ -209,8 +209,15 @@ const imageUrl = (source) => (source?.type === 'base64' ? `data:${source.media_t
 // only the one transition request pays a cache-miss on that turn).
 const OLD_TOOL_TEXT_CAP = 2000; // chars; generous enough to keep a compact read_page/find result whole
 
-// Anthropic-format history -> Chat Completions messages.
-function toChatMessages(system, messages) {
+// Gemini 3 returns a thought signature on a tool call (extra_content.google.thought_signature; only the first of
+// parallel calls) and rejects the next request with a 400 if the current turn's calls come back without it
+// (ai.google.dev/gemini-api/docs/generate-content/thought-signatures, checked 2026-10-24). A call the model never signed
+// (history from another model, a chat saved before this) takes Google's documented placeholder instead: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+const GEMINI_DUMMY_SIGNATURE = 'skip_thought_signature_validator';
+const needsGeminiSignature = (provider, model) => provider === 'gemini' && /^gemini-3/.test(String(model || ''));
+
+// Anthropic-format history -> Chat Completions messages. `target` ({ provider, model }) is who receives it.
+function toChatMessages(system, messages, target = {}) {
   const out = [{ role: 'system', content: system }];
   const lastUserIdx = messages.reduce((last, m, i) => (m.role === 'user' ? i : last), -1);
   messages.forEach((m, mi) => {
@@ -220,7 +227,10 @@ function toChatMessages(system, messages) {
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n\n');
       const calls = blocks.filter((b) => b.type === 'tool_use').map((b) => ({
         id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
+        // (kept only on turns the same Gemini model wrote: agent.js sends other authors' turns through portableContent, which drops it)
+        ...(target.provider === 'gemini' && b.thought_signature ? { extra_content: { google: { thought_signature: b.thought_signature } } } : {}),
       }));
+      if (calls.length && needsGeminiSignature(target.provider, target.model) && !calls[0].extra_content) calls[0].extra_content = { google: { thought_signature: GEMINI_DUMMY_SIGNATURE } };
       out.push({ role: 'assistant', content: text || (calls.length ? null : '(no reply)'), ...(calls.length ? { tool_calls: calls } : {}) });
       return;
     }
@@ -275,7 +285,7 @@ async function streamTurn(args) {
 }
 async function streamTurnOnce({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
   const request = (client || clientFor(provider, apiKey)).chat.completions.create(
-    { model, messages: toChatMessages(system, messages), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
+    { model, messages: toChatMessages(system, messages, { provider, model }), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
     { signal },
   );
   // The response's rate-limit headers come with the same request (no extra call): x-ratelimit-* for OpenAI, xAI and OpenRouter.
@@ -304,7 +314,9 @@ async function streamTurnOnce({ provider, model, apiKey, system, messages, tools
     }
     for (const tc of delta.tool_calls || []) {
       const index = Number.isInteger(tc.index) ? tc.index : calls.length;
-      const slot = calls[index] || (calls[index] = { id: '', name: '', args: '' });
+      const slot = calls[index] || (calls[index] = { id: '', name: '', args: '', sig: '' });
+      const sig = tc.extra_content?.google?.thought_signature;
+      if (typeof sig === 'string' && sig) slot.sig = sig; // Gemini 3: sent back unchanged next turn (toChatMessages)
       if (tc.id) slot.id = tc.id;
       if (tc.function?.name && !slot.name) slot.name = tc.function.name;
       if (tc.function?.arguments) slot.args += tc.function.arguments;
@@ -320,7 +332,7 @@ async function streamTurnOnce({ provider, model, apiKey, system, messages, tools
     } catch {
       input = {}; // unparseable arguments; the tool validator reports the missing fields
     }
-    content.push({ type: 'tool_use', id: safeId(call.id), name: call.name, input });
+    content.push({ type: 'tool_use', id: safeId(call.id), name: call.name, input, ...(call.sig ? { thought_signature: call.sig } : {}) });
   }
   if (!content.length && !pictures.length) content.push({ type: 'text', text: '(no reply)' });
   const stopReason = calls.length ? 'tool_use' : finish === 'length' ? 'max_tokens' : finish === 'content_filter' ? 'refusal' : 'end_turn';

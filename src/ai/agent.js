@@ -814,10 +814,16 @@ const generatedNote = (b) => ({ type: 'text', text: `[A picture was generated an
 const fileNote = (b) => ({ type: 'text', text: `[The file ${String(b.path || '').split(/[\\/]/).pop().slice(0, 120)} was shown to the user in the chat]` });
 const withGeneratedNotes = (m) => (hasGenerated(m) ? { ...m, content: m.content.map((b) => (b?.type === 'generated_image' ? generatedNote(b) : b?.type === 'ai_file' ? fileNote(b) : b)) } : m);
 
+// A Gemini 3 thought signature (providers.js) rides on its tool_use block. Only Gemini's own endpoint takes it back: Claude's API
+// answers an unknown field with a 400, and producedBy is empty for a chat reloaded after a restart, so this can't lean on the author.
+const hasSignature = (m) => Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && 'thought_signature' in b);
+const withoutSignatures = (m) => (hasSignature(m) ? { ...m, content: m.content.map((b) => { if (b?.type !== 'tool_use' || !('thought_signature' in b)) return b; const { thought_signature: _sig, ...rest } = b; return rest; }) } : m);
+
 function historyFor(messages, model) {
+  const toGemini = providers.splitModel(String(model || '')).provider === 'gemini';
   return messages.map((original) => {
     const author = producedBy.get(original);
-    const m = withGeneratedNotes(original);
+    const m = toGemini ? withGeneratedNotes(original) : withoutSignatures(withGeneratedNotes(original));
     if (m.role !== 'assistant' || !author || author === model) return m;
     return { role: 'assistant', content: portableContent(m.content) };
   });
@@ -7758,4 +7764,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { NOTES_TOOL, PROJECT_TOOL_DEF: OTHER_PROJECT, setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { historyFor, producedBy, NOTES_TOOL, PROJECT_TOOL_DEF: OTHER_PROJECT, setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
