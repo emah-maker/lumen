@@ -16,7 +16,7 @@ const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
 const permissionMode = require('../features/permission-mode'); // [bypass permissions]
 const TC = require('../features/theme-colors'); // [look] accent colours: the choices and the shades each gives in light and dark
-const RS = require('./reset-scope'); // what Reset settings puts back (the row text and the confirmation read it too)
+const RS = () => require('./reset-scope'); // what Reset settings puts back (the row text and the confirmation read it too); loaded on use: the start-up module budget
 const BG = require('../features/backgrounds'); // [look] the new-tab backgrounds and effects, Shuffle daily
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
@@ -980,7 +980,7 @@ function create(deps) {
       graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy and security says whether passkeys can work on this computer
       accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
-      resetAreas: RS.AREAS.map(({ id, label }) => ({ id, label })), // the Reset row's text and confirmation
+      resetAreas: RS().AREAS.map(({ id, label }) => ({ id, label })), // the Reset row's text and confirmation
       resetLocked: Boolean(deps.focusLocked?.()), // Reset is refused while Focus is on
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
@@ -1204,9 +1204,9 @@ function create(deps) {
     return state();
   }
   async function reset() {
-    if (deps.focusLocked?.()) throw new Error(RS.FOCUS_MESSAGE); // [focus] (a reset is not a way out of a session either)
+    if (deps.focusLocked?.()) throw new Error(RS().FOCUS_MESSAGE); // [focus] (a reset is not a way out of a session either)
     const s = readSettings();
-    const keys = RS.resetKeys(); // only what the Reset row lists (reset-scope.js)
+    const keys = RS().resetKeys(); // only what the Reset row lists (reset-scope.js)
     for (const key of keys) delete s[key];
     writeSettings(s);
     deps.permissionDecisions.clear();
