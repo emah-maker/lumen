@@ -140,7 +140,7 @@ function buildExternalApps() {
   }
 
   root.append(
-    row(tr('settings.ea.switch', 'Let other apps use Lumen'), tr('settings.ea.switchDesc', 'Lets Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) read and use pages in a Lumen window of their own. Each app gets a token of its own that you can revoke. Off by default.'), switchInput),
+    row(tr('settings.ea.switch', 'Let other apps use Lumen'), tr('settings.ea.switchDesc', 'Lets Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) read and use pages in a Lumen window of their own. Each app gets a token of its own that you can revoke.'), switchInput),
     h('div', { class: 'row' }, statusLine),
     row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session (unless you pick Always allow), never asks less, and can’t use the name of an app you set up.'), requireInput),
     h('div', { class: 'row' }, warning, requireNow),

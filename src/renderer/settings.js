@@ -197,7 +197,7 @@ const CLI_ACCESS_EXTRA = {
   antigravityFullAccess: ', with its terminal sandbox off',
   codexFullAccess: ', with its sandbox off and its own shell, patch and web search tools',
 };
-const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Off by default; applies from the next message.`;
+const cliAccessDesc = (name, extra) => `${name} in the sidebar works as in your terminal: it can run commands and read and change any of your files${extra}, without asking first. Lumen’s approval cards still cover its browser tools, not ${name}’s own. Only turn this on if you trust it: a page it reads could try to trick it. Applies from the next message.`;
 function syncCliAccess() {
   const CA = window.cliAccess;
   const state = CA.masterState(st.prefs);
@@ -214,13 +214,13 @@ function cliAccessRows() {
     for (const key of CA.KEYS) await save(key, value);
     syncCliAccess();
   });
-  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build, Antigravity and Codex together. Half-way means only some are on; clicking it then turns them all off. Off by default.'), input);
+  const master = row(label, tr('settings.ai.cliFullAccessDesc', 'Turns full access on or off for Claude Code, Grok Build, Antigravity and Codex together. Half-way means only some are on; clicking it then turns them all off.'), input);
   master.querySelector('.label').addEventListener('click', () => input.click());
   const rows = CA.CLI_ACCESS.map(({ key, name }) => toggle(key, tr(`settings.ai.${key}`, `Give ${name} full access to this computer`), tr(`settings.ai.${key}Desc`, cliAccessDesc(name, CLI_ACCESS_EXTRA[key])), syncCliAccess));
   queueMicrotask(syncCliAccess);
   for (const r of rows) r.classList.add('warn');
   master.classList.add('warn');
-  return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows)];
+  return [master, collapsible(tr('settings.ai.perProgram', 'Choose per program'), rows, tr('settings.ai.perProgramDesc', 'Turn full access on or off for one program at a time.'))];
 }
 function select(key, label, desc, options, { number = false, after, id = `pref-${key}` } = {}) {
   const el = h('select', { id, 'aria-label': label },
@@ -373,8 +373,8 @@ let routedEl = null; // the element the last route focused
 const visibleNow = (el) => el.offsetParent !== null; // on screen now (not in a hidden category or filtered out)
 
 // A summary line that folds a handful of rows away. Searching opens it when one of its rows matches (see show()).
-function collapsible(title, rows) {
-  const d = h('details', { class: 'adv-rows' }, h('summary', { text: title }), ...rows);
+function collapsible(title, rows, desc) {
+  const d = h('details', { class: 'adv-rows' }, h('summary', {}, h('span', { class: 'adv-text' }, h('span', { class: 'adv-title', text: title }), desc ? h('span', { class: 'adv-desc', text: desc }) : null)), ...rows);
   d.querySelector('summary').addEventListener('click', () => { d.dataset.pinned = d.open ? '' : '1'; });
   return d;
 }let gmailWatch = null; // the open Gmail editor's redraw on a connection change elsewhere (see gmailFields)
@@ -436,7 +436,7 @@ async function buildAi(card) {
   topicRow.classList.add('sub-row');
   topicRow.hidden = ai.tabGrouping !== 'topic';
   const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
-  const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone. On by default.', idleOrganize);
+  const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone.', idleOrganize);
   // [auto model] Which connected providers Auto may choose from (the model picker's first row; docs/auto-model.md).
   const autoUseBox = h('div', { class: 'auto-use', id: 'ai-auto-use', role: 'group', 'aria-label': tr('settings.ai.autoUse', 'Auto may use') });
   const renderAutoUse = () => {
@@ -473,6 +473,11 @@ async function buildAi(card) {
     ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: (v) => { showPermWarn(v); window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'bypassBackground' } })); } }); // (leaving Bypass switches the background option off: its row follows)
   permissionRow.querySelector('.text').append(permWarn);
   showPermWarn(st.prefs.aiPermissionMode);
+  // [approvals] Bypass in background tasks only means something while Bypass is the chosen mode, so its row shows only then.
+  const bypassRow = toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', ''));
+  const syncBypassRow = () => { bypassRow.hidden = st.prefs.aiPermissionMode !== 'bypass'; };
+  syncBypassRow();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'aiPermissionMode') syncBypassRow(); });
   // Custom instructions: two standing notes the AI gets in every new chat (ai/custom-instructions.js).
   const instructionBox = (key, id, label, placeholder) => {
     const box = h('textarea', { id, rows: 4, maxlength: 1500, spellcheck: 'true', 'aria-label': label, placeholder });
@@ -510,9 +515,14 @@ async function buildAi(card) {
       ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
     toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
   );
-  card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
+  // [approvals] every question about asking first, in one list: how the AI asks, the background option, hands-off, and agents' own windows
+  card.group(tr('settings.ai.groupApprovals', 'Approvals')).append(
     permissionRow,
-    toggle('bypassBackground', tr('settings.ai.bypassBackground', 'Bypass in background tasks and routines too'), tr('settings.ai.bypassBackgroundDesc', '')),
+    bypassRow,
+    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
+    toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Ask before agents act in their own window'), tr('settings.ai.agentsNoAskDesc', 'On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.'), null, { fallback: true, invert: true }),
+  );
+  card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
     toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')), // [plan mode]
     select('aiSubagents', tr('settings.ai.subagents', 'Helpers that work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Auto offers helpers only when your request looks like that, so short questions stay cheap and quick. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a row in the sidebar.'),
       ['auto', 'on', 'off'].map((v) => [v, tr(`settings.ai.subagents.${v}`, { auto: 'Auto', on: 'On', off: 'Off' }[v])])),
@@ -520,16 +530,20 @@ async function buildAi(card) {
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
     toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
     toggle('chatAutocomplete', tr('settings.ai.autocomplete', 'Tab to finish what I’m typing'), tr('settings.ai.autocompleteDesc', ''), undefined, { fallback: true }), // [autocomplete]
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
+  );
+  // [computer access] what the AI may use outside the browser: files, other programs, terminals, Word. The lists of what you allowed are under Privacy.
+  card.group(tr('settings.ai.groupComputer', 'Computer access')).append(
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
     toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')), // [desktop apps]
-    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer. Off by default.')),
+    toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer.')),
     select('aiFilesInApps', tr('settings.ai.filesInApps', 'Work on files in their apps'), tr('settings.ai.filesInAppsDesc', 'In the app opens a document in Word, Excel, PowerPoint or the app that owns it, and reads and edits it there so you can watch (needs the matching switch on). From the file reads and edits the file’s own data and does not open apps. Automatic lets the AI choose.'),
       ['app', 'auto', 'file'].map((v) => [v, tr(`settings.ai.filesInApps.${v}`, { app: 'In the app', auto: 'Automatic', file: 'From the file' }[v])])), // [desktop apps] [word]
     toggle('aiWordControl', tr('settings.ai.wordControl', 'Let the AI use Microsoft Word'), tr('settings.ai.wordControlDesc', 'The AI can read and write Word documents directly (Windows, with Word installed; a .docx file can be read and added to without Word). It asks before it changes a document and shows the file before it saves. Nothing starts until you ask it to work with a document.')), // [word]
+    row(tr('settings.ai.computerLists', 'Apps and files you allowed'), tr('settings.ai.computerListsDesc', 'Apps and files you chose Always for are listed under Privacy, further down this page, where you can revoke them.'),
+      h('button', { type: 'button', id: 'ai-computer-lists', text: tr('settings.ai.computerListsGo', 'Show lists'), onclick: () => { const t = $('ai-desktop-apps'); t?.scrollIntoView({ block: 'center' }); t?.closest('.row')?.querySelector('button')?.focus({ preventScroll: true }); } })),
   );
   // Rarely changed limits and housekeeping, folded away (opened by search when a word matches).
   const advancedRows = [
@@ -546,7 +560,7 @@ async function buildAi(card) {
     select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build, Codex or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build or Codex, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
       [[5, tr('settings.ai.grokKeepIdle.5', '5 minutes')], [15, tr('settings.ai.grokKeepIdle.15', '15 minutes')], [30, tr('settings.ai.grokKeepIdle.30', '30 minutes')], [60, tr('settings.ai.grokKeepIdle.60', '1 hour')], [0, tr('settings.ai.grokKeepIdle.never', 'Never')]], { number: true }),
   ];
-  card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows));
+  card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows, tr('settings.ai.moreDesc', 'Step and chat limits, and how long Grok Build, Codex and Claude Code stay running between messages.')));
   // Control of the whole computer is its own group, apart from the everyday switches above.
   card.at('ai-access').append(...cliAccessRows());
   card.at('tabs-groups').append(
@@ -740,8 +754,9 @@ async function buildAi(card) {
   const mcp = await S.ai.mcpInfo();
   const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', role: 'switch', 'aria-label': 'Allow AI agents to connect', checked: mcp.enabled, onchange: (e) => S.ai.setMcpEnabled(e.target.checked) });
   const agents = card.at('ai-agents');
-  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Off by default.', mcpToggle));
-  agents.append(toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Ask before agents act in their own window'), tr('settings.ai.agentsNoAskDesc', 'On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.'), null, { fallback: true, invert: true }));
+  // [incoming] everything that lets a program or agent outside Lumen use it, in one list. Keep the rows simple: another branch adds a one-click Connect Claude Code button here.
+  agents.group(tr('settings.ai.groupLetAgents', 'Let agents use Lumen'));
+  agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Programs that use Chrome DevTools instead (Playwright) are under Advanced.', mcpToggle));
   const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
     const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
     const note = status();
@@ -808,9 +823,14 @@ async function buildAi(card) {
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
-  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more, or add any MCP server, so the AI can use them.', 'connectors canvas gmail calendar github todoist notion school mail tasks apps mcp tools servers custom').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
 
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
+
+  // [outgoing] services the AI uses once connected (Canvas, Gmail, GitHub, any MCP server)
+  agents.group(tr('settings.ai.groupConnectors', 'Connectors'));
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more, or add any MCP server, so the AI can use them.', 'connectors canvas gmail calendar github todoist notion school mail tasks apps mcp tools servers custom').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
+
+  agents.group(tr('settings.ai.groupOtherTools', 'Other tools'));
 
   buildAntigravity(agents, refreshModels);
   buildTelegram(agents);
@@ -852,7 +872,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.at('automation').append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `For Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
+  card.at('automation').group(tr('settings.advanced.groupAutomation', 'Let agents use Lumen (advanced)')).append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `A separate, lower-level way in than “Allow AI agents to connect” (Settings → AI and agents): for Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
 
 }
 
@@ -924,9 +944,14 @@ function buildAppearance(card) {
     toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
     toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
   );
+  // [side tabs] icons only does nothing on the Top layout, so its row shows only while the layout is Side
+  const collapsedRow = toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it.');
+  const syncCollapsedRow = () => { collapsedRow.hidden = st.prefs.tabLayout !== 'side'; };
+  syncCollapsedRow();
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'tabLayout') syncCollapsedRow(); });
   card.at('tabs-strip').append(
     select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
-    toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it. Only used when Tab layout is Side.'),
+    collapsedRow,
     toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
   );
   // Expert: Chromium's forced dark mode for pages.
@@ -1236,7 +1261,6 @@ async function buildHome(card) {
     toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
     toggle('newTabFrequent', 'Show frequently visited sites', null),
     toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
-    musicReactiveRow(),
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
@@ -2442,8 +2466,8 @@ async function buildPrivacy(card) {
 
   // [files] The remembered files live in General > Files (buildFiles); a pointer here, for people who look for them under Privacy.
   card.group(tr('settings.files.group', 'Files')).append(
-    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Remember and clear them in General > Files.'),
-      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
+    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Files you open are listed on the new-tab page and in the Ctrl+Shift+F picker, on this computer only. Turn that off or clear the list in General > Files.'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.
@@ -2725,7 +2749,7 @@ function buildMemory(group) {
     toggle('aiMemory', tr('settings.ai.memory', 'Let the AI remember things between chats'), tr('settings.ai.memoryDesc', 'When you tell the AI something about yourself or ask it to remember something, it saves a short note, shown in the chat with Undo. Saved notes go to the AI at the start of every chat, as part of the prompt to the model you use. Kept on this computer only, encrypted. Never in temporary chats or private windows. Passwords and card numbers are never saved.')),
     toggle('aiMemoryChatSearch', tr('settings.ai.memoryChatSearch', 'Search past chats'), tr('settings.ai.memoryChatSearchDesc', 'While Memory is on, the AI can look through the titles and text of your saved chats when you refer to an earlier conversation. It gets short snippets, not whole chats.'), undefined, { fallback: true }),
   );
-  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))]);
+  const details = collapsible(tr('settings.ai.memoryEntries', 'Saved memory'), [stackRow(tr('settings.ai.memoryEntries', 'Saved memory'), tr('settings.ai.memoryEntriesDesc', 'What the AI has saved. Up to 200 notes; about 8,000 characters of them go with each chat.'), list, h('div', { class: 'controls' }, result, startOver, deleteAll))], tr('settings.ai.memoryEntriesSummary', 'See, edit or delete the notes the AI has kept.'));
   details.addEventListener('toggle', () => load(details.open)); // (read again when opened: the AI may have saved something since)
   group.append(details);
   M.list().then((v) => { view = v; render(); }).catch(() => render());
@@ -2849,7 +2873,7 @@ async function buildDownloads(card) {
   card.append(
     locationRow,
     toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
-    withKeywords(row(tr('settings.print.label', 'Printing'), tr('settings.print.desc', 'Lumen has no print settings. Press Ctrl+P on any page to preview it, then print it or save it as a PDF.')), 'print printer printing pdf paper page ctrl+p save as pdf'),
+    withKeywords(row(tr('settings.print.label', 'Printing'), tr('settings.print.desc', 'Press Ctrl+P (⌘P on macOS) on a page, or choose Print in the ⋯ menu, to open the print preview. There you pick a printer or Save as PDF, the pages, the layout and the margins; Lumen remembers your choices. Ctrl+Shift+P prints with the system dialog.')), 'print printer printing pdf paper page ctrl+p save as pdf'),
     select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
   );
   const list = h('div', { class: 'list', id: 'downloads-list' });
@@ -3160,7 +3184,7 @@ function buildSwitchTiming(slot) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
 }
 function buildSystem(card) {
-  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.'), 'hardwareAcceleration', 'relaunch'));
+  card.group(tr('settings.advanced.groupGraphics', 'Graphics and effects')).append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.'), 'hardwareAcceleration', 'relaunch'));
   const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
     [['auto', tr('settings.performance.auto', 'Auto')], ['on', tr('settings.performance.on', 'Always on')], ['off', tr('settings.performance.off', 'Off')]], { after: () => showPerfNote() });
   const perfNote = h('span', { class: 'note', id: 'performance-note' });
@@ -3196,7 +3220,7 @@ function buildSystem(card) {
   };
   showGfxNote();
   gfxRow.querySelector('.text').append(gfxNote, gfxRestart, gfxHint);
-  card.append(gfxRow);
+  card.append(gfxRow, musicReactiveRow()); // [look] the new-tab page's effects: the animated effect itself stays on Home > Background beside its live preview
   buildUnloading(card.at('tabs-sleep')); // renderer/settings-unload.js
   buildSwitchTiming(card.at('advanced-more'));
   if (st.platform === 'darwin') {
@@ -3624,6 +3648,7 @@ async function init() {
     try {
       const fresh = await S.get();
       if (st && fresh.prefs.aiSubagents !== st.prefs.aiSubagents) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'aiSubagents' } })); }
+      for (const key of ['aiPermissionMode', 'tabLayout']) if (st && fresh.prefs[key] !== st.prefs[key]) { st = fresh; window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); } // (the rows that show or hide with them)
     } catch { /* the page is closing */ }
   });
   window.setI18n?.(strings); // renderer/i18n.js

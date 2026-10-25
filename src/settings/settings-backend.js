@@ -182,7 +182,6 @@ const DEFAULTS = {
   telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
   telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
-  meetingHelper: true, // [ai] meeting helper panel in sidebar (Ctrl+Shift+E) with live prompting, context, stealth mode and summaries (features/meeting.js)
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
   aiFilesInApps: 'auto', // [ai] app: the AI opens a file in the app that owns it (Word, Excel, PowerPoint...) and reads and edits it there; auto: it chooses; file: it reads and edits the file's own data and does not open apps (agent.js filesInApps, src/word/)
   aiWordControl: true, // [ai] the AI may work with Microsoft Word documents directly (src/word/): Word's own automation on Windows, .docx files without Word; every edit and save still asks first, and nothing starts until the AI first uses it
@@ -206,7 +205,7 @@ const DEFAULTS = {
   researchTabs: true, // [ai] web_search / read_urls also open what they look at in background tabs, grouped "AI: <query>" (features/research-tabs.js)
   groupAiTabs: true, // [ai] tabs the AI opens join one folded "AI tabs" group in their window (main.js joinAiGroup); research tabs keep their own "AI: <query>" groups
   hideAiTabs: false, // [ai] the sidebar's toggle: tabs the AI opened are left out of the tab strip (still open, still the AI's to use; the tab in front stays shown)
-  agentsNoAsk: true, // [mcp] an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
+  agentsNoAsk: true, // [mcp] INVERTED in Settings (switch "Ask before agents act in their own window" is on when this is false): true = an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
   aiPreferFractions: false, // [ai] Settings → AI and agents → Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
@@ -219,11 +218,11 @@ const DEFAULTS = {
   skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
   aiMemory: false, // [ai] Settings → AI and agents → Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
   aiMemoryChatSearch: true, // [ai] ...and, while Memory is on, may search the titles and text of your saved chats (the memory tool's search_chats)
-  aiHandsOff: false,// [ai] hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
+  aiHandsOff: false, // [ai] INVERTED in Settings (switch "Let the AI act on my pages" is on when this is false): true = hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   chatAutocomplete: true, // [autocomplete] the chat box shows a guess at the rest of the message being typed; Tab takes it (renderer/chat-autocomplete.js, ai/autocomplete.js)
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
-  aiStayOnMyTab: false, // [ai] the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
+  aiStayOnMyTab: false, // [ai] INVERTED in Settings (switch "Bring tabs the AI opened to the front" is on when this is false): true = the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'always', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js). Always by default: a tab the user needs stays (the one in front, typed text, sound, keep:true)
   keepViewedAiTabs: true, // [ai] a tab the AI opened stays open after it finishes if the user clicked it in the tab strip to look at it (main.js 'tab:switch'); off: it closes like any other
   dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
@@ -394,6 +393,14 @@ function migrateMaxChatRuns(settings) {
   return { ...settings, ...(Number(settings.maxChatRuns) === 3 ? { maxChatRuns: 0 } : {}), [MAX_CHAT_RUNS_MARK]: true };
 }
 
+// [dead setting] meetingHelper was written by the settings page's defaults but nothing read it (the meeting panel has no switch).
+// Dropped from a settings file that still holds it, once; returns the settings to write, or null when nothing changes.
+function dropMeetingHelper(settings) {
+  if (!settings || !('meetingHelper' in settings)) return null;
+  const { meetingHelper, ...rest } = settings;
+  return rest;
+}
+
 // Settings read before the app is ready: GPU and Chromium feature switches only apply at launch.
 function applyAtLaunch(app, settings) {
   const launched = { hardwareAcceleration: settings.hardwareAcceleration !== false, forceDarkWebsites: settings.forceDarkWebsites === true };
@@ -475,6 +482,7 @@ function create(deps) {
   const { app, session, nativeTheme, dialog, shell, readSettings, writeSettings } = deps;
   const launched = applyAtLaunch(app, readSettings());
   { const moved = migrateMaxChatRuns(readSettings()); if (moved) writeSettings(moved); }
+  { const moved = dropMeetingHelper(readSettings()); if (moved) writeSettings(moved); } // (writeSettings replaces the file, so the key is really gone)
   { const moved = TS.migrate(readSettings()); if (moved) writeSettings({ ...readSettings(), ...moved }); } // [tabs] the old single sleep choice -> master switch, time and memory level
   const userZoomed = new Set(); // hosts the user zoomed by hand: the default zoom leaves them alone
   const siteZoom = createSiteZoom({ readSettings, writeSettings }); // and their level, kept across restarts
@@ -1400,4 +1408,4 @@ function create(deps) {
   };
 }
 
-module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_ALIASES, SECTION_SUBPAGES, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, dropMeetingHelper, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_ALIASES, SECTION_SUBPAGES, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

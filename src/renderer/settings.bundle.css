@@ -625,6 +625,8 @@ details.disclosure > summary:hover, details.adv-rows > summary:hover { backgroun
 details.disclosure > summary::before, details.adv-rows > summary::before { content: none; }
 details.disclosure > summary::after, details.adv-rows > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin: 0 4px 0 2px; border-right: 1.6px solid var(--faint); border-top: 1.6px solid var(--faint); transform: rotate(45deg); transition: transform var(--t-fast) ease-out; }
 details.disclosure[open] > summary::after, details.adv-rows[open] > summary::after { transform: rotate(135deg); }
+details.adv-rows > summary .adv-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+details.adv-rows > summary .adv-desc { color: var(--muted); font-size: 13px; font-weight: 400; line-height: 1.4; }
 details.disclosure > summary:focus-visible, details.adv-rows > summary:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); border-radius: 0; }
 details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px solid var(--hairline); }
 .card > details.adv-rows { border-top: 1px solid var(--hairline); }
