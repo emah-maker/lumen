@@ -2238,33 +2238,40 @@ function buildUnloading(slot) {
 function buildMcpServers() {
   const M = window.lumenSettings.ai.mcpServers;
   const list = h('div', { class: 'list', id: 'mcp-servers' });
-  const note = h('span', { class: 'note', id: 'mcp-servers-status' });
+  const note = h('span', { class: 'note', id: 'mcp-servers-status', 'aria-live': 'polite' });
   const form = h('div', { class: 'mcp-form', id: 'mcp-server-form', hidden: true });
   const add = h('button', { id: 'mcp-server-add', text: 'Add server', onclick: () => openForm(null) });
+  const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+  const act = async (fn, busy) => {
+    try { render(await fn()); } catch (err) { if (busy) { busy.disabled = false; } flash(note, clean(err), 'err'); await M.list().then(render).catch(() => {}); }
+  };
 
   const stateText = (s) => (!s.enabled ? 'Off' : s.state === 'ready' ? `Connected · ${s.tools.length} tool${s.tools.length === 1 ? '' : 's'}${s.skipped ? ` (${s.skipped} left out)` : ''}`
-    : s.state === 'starting' ? 'Starting…' : s.state === 'error' ? `Couldn’t start: ${s.error}` : 'Starts when the AI needs it');
+    : s.state === 'starting' ? 'Starting…' : s.needsAuth && s.auth === 'oauth' ? 'Needs sign-in' : s.state === 'error' ? `Couldn’t start: ${s.error}` : 'Starts when the AI needs it');
 
   function render(servers) {
-    list.replaceChildren(...servers.map((s) => {
-      const on = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `Use ${s.name}`, checked: s.enabled, onchange: async (e) => render(await M.setEnabled(s.id, e.target.checked)) });
-      const refresh = h('button', { text: 'Refresh', disabled: !s.enabled, onclick: async () => { refresh.disabled = true; refresh.textContent = 'Starting…'; render(await M.refresh(s.id)); } });
+    const mine = servers.filter((s) => !s.preset);
+    list.replaceChildren(...mine.map((s) => {
+      const on = h('input', { type: 'checkbox', class: 'switch', role: 'switch', 'aria-label': `Use ${s.name}`, checked: s.enabled, onchange: (e) => act(() => M.setEnabled(s.id, e.target.checked)) });
+      const refresh = h('button', { text: 'Refresh', disabled: !s.enabled, onclick: () => { refresh.disabled = true; refresh.textContent = 'Starting…'; act(() => M.refresh(s.id), refresh); } });
+      const signIn = s.auth === 'oauth' ? h('button', { class: s.needsAuth ? 'primary' : '', text: s.signedIn && !s.needsAuth ? 'Sign in again' : 'Sign in', onclick: () => { signIn.disabled = true; signIn.textContent = 'Waiting for the browser…'; flash(note, 'Finish signing in, in the tab that opened in your browser.', 'ok'); act(() => M.signIn(s.id), signIn); } }) : null;
       const edit = h('button', { text: 'Edit', onclick: () => openForm(s) });
-      const del = h('button', { text: 'Remove', onclick: async () => { if (confirm(`Remove ${s.name}?`)) render(await M.remove(s.id)); } });
+      const del = h('button', { text: 'Remove', onclick: () => { if (confirm(`Remove ${s.name}?`)) act(() => M.remove(s.id)); } });
       const where = s.type === 'http' ? s.url : [s.command, ...s.args].join(' ');
       const tools = s.tools.length ? h('ul', { class: 'mcp-tools' }, s.tools.map((t) => {
         const always = s.alwaysAllow.includes(t.name);
-        const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: always, onchange: async (e) => render(await M.setAlwaysAllow(`${s.name}__${t.name}`, e.target.checked)) });
+        const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: always, onchange: (e) => act(() => M.setAlwaysAllow(`${s.name}__${t.name}`, e.target.checked)) });
         return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: always ? ' · always allowed' : '' }));
       })) : null;
       return h('div', { class: 'snippet', 'data-mcp-server': s.name },
-        h('div', { class: 'item' }, h('span', { class: 'grow' }, s.name, h('span', { class: 'note', text: ` · ${stateText(s)}` })), refresh, edit, del, on),
+        h('div', { class: 'item' }, h('span', { class: 'grow' }, s.name, h('span', { class: 'note', text: ` · ${stateText(s)}` })), signIn, refresh, edit, del, on),
         h('p', { class: 'note mono', text: where }),
         tools ? h('p', { class: 'note', text: 'Ticked tools run without asking, until the AI has read a page in that chat.' }) : null,
         tools,
         s.state === 'error' && s.log ? h('pre', { class: 'mono code', text: s.log }) : null);
     }));
-    if (!servers.length) list.append(h('p', { class: 'note', text: 'No servers yet.' }));
+    if (!mine.length) list.append(h('p', { class: 'note', text: 'No servers of your own yet.' }));
   }
 
   function openForm(s) {
@@ -2278,12 +2285,17 @@ function buildMcpServers() {
     const env = h('textarea', { id: 'mcp-form-env', rows: 3, placeholder: 'Variables it needs, one per line: NAME=value', 'aria-label': 'Environment variables' });
     env.value = (s?.env || []).map((n) => `${n}=`).join('\n');
     const url = h('input', { type: 'url', id: 'mcp-form-url', placeholder: 'https://…', value: s?.url || '', 'aria-label': 'Address' });
+    const auth = h('select', { id: 'mcp-form-auth', 'aria-label': 'How it signs you in' },
+      h('option', { value: '', text: 'A header (or nothing)' }), h('option', { value: 'oauth', text: 'Sign in with the service (OAuth, in your browser)' }));
+    auth.value = s?.auth || '';
     const headerName = h('input', { type: 'text', id: 'mcp-form-header-name', placeholder: 'Header, e.g. Authorization', value: s?.header || '', 'aria-label': 'Header name' });
     const headerValue = h('input', { id: 'mcp-form-header-value', type: 'password', placeholder: s?.header ? 'Saved; type to replace' : 'Value, e.g. Bearer …', 'aria-label': 'Header value' });
+    const headerPart = h('div', {}, headerName, headerValue);
     const stdioPart = h('div', {}, command, args, env, h('p', { class: 'note', text: 'It runs with only the variables you list here (plus PATH and your home folder); Lumen’s API keys aren’t passed on. A saved value stays when you leave it empty after =.' }));
-    const httpPart = h('div', {}, url, headerName, headerValue, h('p', { class: 'note', text: 'https only, or http for a server on this computer.' }));
-    const sync = () => { stdioPart.hidden = type.value !== 'stdio'; httpPart.hidden = type.value !== 'http'; };
+    const httpPart = h('div', {}, url, auth, headerPart, h('p', { class: 'note', text: 'https only, or http for a server on this computer. With OAuth, press Sign in on the server after adding it.' }));
+    const sync = () => { stdioPart.hidden = type.value !== 'stdio'; httpPart.hidden = type.value !== 'http'; headerPart.hidden = auth.value === 'oauth'; };
     type.addEventListener('change', sync);
+    auth.addEventListener('change', sync);
     sync();
     const formNote = h('span', { class: 'note' });
     const saveBtn = h('button', {
@@ -2301,15 +2313,16 @@ function buildMcpServers() {
           });
         } else {
           input.url = url.value;
-          input.header = headerName.value.trim() ? { name: headerName.value.trim(), value: headerValue.value } : null;
+          input.auth = auth.value;
+          input.header = auth.value !== 'oauth' && headerName.value.trim() ? { name: headerName.value.trim(), value: headerValue.value } : null;
         }
         try {
           render(await M.save(input));
           form.hidden = true;
           add.hidden = false;
-          flash(note, s ? 'Saved.' : 'Added. It starts the first time the AI needs it, or press Refresh.', 'ok');
+          flash(note, s ? 'Saved.' : auth.value === 'oauth' && type.value === 'http' ? 'Added. Press Sign in on it to log in.' : 'Added. It starts the first time the AI needs it, or press Refresh.', 'ok');
         } catch (err) {
-          flash(formNote, String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err');
+          flash(formNote, clean(err), 'err');
         }
       },
     });
@@ -2320,11 +2333,12 @@ function buildMcpServers() {
     name.focus();
   }
 
-  M.list().then(render).catch((err) => flash(note, err.message, 'err'));
-  const el = stackRow('Tools from MCP servers',
-    'Give the AI in the sidebar tools from MCP servers you trust (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.',
+  M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
+  const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
+    h('h3', { text: 'Custom MCP servers' }),
+    h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
-  el.id = 'ai-mcp-servers';
+  el.refresh = () => M.list().then(render).catch(() => {});
   return el;
 }
 ;
@@ -2613,10 +2627,14 @@ async function buildFocus(card) {
 
 
 
+
+
 function buildConnectors() {
   const C = window.lumenSettings.ai.connectors;
   const root = h('div', { class: 'conn', id: 'connectors' });
   const note = h('p', { class: 'note', id: 'connectors-status', 'aria-live': 'polite' });
+  const M = window.lumenSettings.ai.mcpServers;
+  let custom = null;
   let open = null;
 
   const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -2630,7 +2648,10 @@ function buildConnectors() {
     if (c.reads.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can read: ' }), c.reads.join('; '), '.'));
     if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
     if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
-    lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    if (c.kind === 'mcp') {
+      lines.push(h('p', { class: 'note', text: `The tools come from ${c.name}’s own MCP server${c.source ? ` (${c.source.replace(/^https:\/\//, '')})` : ''}, so what exactly the AI can do is whatever that server offers. Each call still asks you first and shows what it would send, unless you tick Always allow for a tool once it is connected.` }));
+      lines.push(h('p', { class: 'note', text: c.oauth ? 'You sign in on the service’s own page in your browser. Lumen never sees your password; the sign-in is kept encrypted on this computer, and Disconnect deletes it.' : 'Lumen sends nothing anywhere except this service. The token is kept encrypted on this computer, and Disconnect deletes it.' }));
+    } else lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
     lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
     if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
     return lines;
@@ -2655,12 +2676,15 @@ function buildConnectors() {
       class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
       onclick: async () => {
         go.disabled = true;
-        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : 'Connecting…';
+        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : c.oauth ? 'Waiting for your browser…' : 'Connecting…';
+        if (c.oauth) flash(note, `Finish signing in to ${c.name}, in the tab that opened in your browser.`, 'ok');
         flash(msg, '');
         try {
           const input = Object.fromEntries(c.fields.map((f, i) => [f.id, inputs[i].value]));
           open = null;
           render(await C.connect(c.id, input));
+          if (c.oauth) flash(note, `${c.name} connected.`, 'ok');
+          custom?.refresh();
         } catch (err) {
           go.disabled = false;
           go.textContent = 'Connect';
@@ -2673,16 +2697,28 @@ function buildConnectors() {
   }
 
   function cardFor(c, render) {
-    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token';
-    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google'));
+    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error' || c.status === 'reconnect';
+    const mcp = c.kind === 'mcp';
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google' || mcp));
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
-    if (c.status === 'soon') {
-      buttons.push(h('button', { disabled: true, text: 'Coming soon', 'aria-label': `${c.name}: coming soon` }));
+    if (c.status === 'reconnect') {
+      const label = 'Reconnect through MCP';
+      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-reconnect`, text: 'Reconnect', 'aria-label': `${label}: ${c.name}`, onclick: async (e) => {
+        if (!c.reconnect?.oneClick) { open = c.id; refresh(); return; }
+        const b = e.currentTarget;
+        b.disabled = true;
+        b.textContent = c.oauth ? 'Waiting for your browser…' : 'Connecting…';
+        try { render(await C.connect(c.id, {})); flash(note, `${c.name} connected through its MCP server.`, 'ok'); custom?.refresh(); } catch (err) { b.disabled = false; b.textContent = 'Reconnect'; flash(note, clean(err), 'error'); }
+      } }));
     } else if (!connected || again) {
       buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
     }
-    if (c.status === 'needs-signin' && c.kind !== 'google') {
+    if (mcp && c.mcp) {
+      const rf = h('button', { text: 'Refresh tools', 'aria-label': `Refresh the tools of ${c.name}`, onclick: async () => { rf.disabled = true; rf.textContent = 'Starting…'; try { await M.refresh(c.mcp.id); render(await C.list()); } catch (err) { rf.disabled = false; rf.textContent = 'Refresh tools'; flash(note, clean(err), 'error'); } } });
+      buttons.push(rf);
+    }
+    if (c.status === 'needs-signin' && c.kind !== 'google' && !mcp) {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
 
@@ -2706,20 +2742,32 @@ function buildConnectors() {
       buttons.push(sw);
     }
     if (connected) {
-      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
-        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
-        try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); } catch (err) { flash(note, clean(err), 'error'); }
+      const forget = c.status === 'reconnect';
+      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: forget ? 'Forget' : 'Disconnect', 'aria-label': `${forget ? 'Forget the old connection to' : 'Disconnect'} ${c.name}`, onclick: async () => {
+        if (!confirm(forget ? `Forget the old ${c.name} connection? Lumen deletes what it saved for it.` : `Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        try { render(await C.disconnect(c.id)); flash(note, forget ? `The old ${c.name} connection is gone.` : `${c.name} disconnected.`, 'ok'); custom?.refresh(); } catch (err) { flash(note, clean(err), 'error'); }
       } }));
     }
-    const showing = open === c.id && c.status !== 'soon';
+    const showing = open === c.id;
     return h('div', { class: `conn-card ${c.status}`, 'data-connector': c.id, 'data-status': c.status },
       h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
       h('p', { class: 'conn-summary', text: c.summary }),
       c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
       c.sending === 'on' ? h('p', { class: 'note conn-sending', text: 'Sending allowed: each email shows on a card and goes only when you press Send. If you say in a chat that it may send without asking, that chat sends to the addresses you typed, after a 10 second Undo. Bypass permissions never skips the card.' }) : null,
       c.sending === 'on' ? sendLogView(c) : null,
-      showing ? form(c, render) : (c.status !== 'soon' ? h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)) : null),
+      c.note && !showing && (c.status === 'reconnect' || c.status === 'error') ? h('p', { class: 'note conn-notice', text: c.note }) : null,
+      showing ? form(c, render) : h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)),
+      !showing && c.mcp?.tools.length ? toolsView(c) : null,
       showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
+  }
+
+
+  function toolsView(c) {
+    const items = c.mcp.tools.map((t) => {
+      const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: t.always, onchange: async (e) => { try { await M.setAlwaysAllow(`${c.mcp.name}__${t.name}`, e.target.checked); render(await C.list()); } catch (err) { e.target.checked = !e.target.checked; flash(note, clean(err), 'error'); } } });
+      return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: t.always ? ' · always allowed' : '' }));
+    });
+    return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Ticked tools run without asking, until the AI has read a page in that chat.' }), h('ul', { class: 'mcp-tools' }, items));
   }
 
 
@@ -2749,9 +2797,10 @@ function buildConnectors() {
   function refresh() { if (last) render(last); }
 
   C.list().then(render).catch((err) => flash(note, clean(err), 'error'));
+  custom = buildMcpServers();
   const el = stackRow('Connectors',
     'Connect a service and the AI in the sidebar and the full-page chat can use it: “what’s due on Canvas this week”, “summarize my unread email”. Anything that changes something, like adding a task, asks you first. Nothing is connected until you press Connect.',
-    root, note);
+    root, note, custom);
   el.id = 'ai-connectors';
   return el;
 }
@@ -4200,7 +4249,7 @@ const CATEGORY_ICONS = {
 
 
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, 'mcp-servers': { cat: 'ai', sub: 'connectors' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -4710,8 +4759,7 @@ async function buildAi(card) {
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
-  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors());
-  agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers());
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more, or add any MCP server, so the AI can use them.', 'connectors canvas gmail calendar github todoist notion school mail tasks apps mcp tools servers custom').append(buildConnectors());
 
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps());
 

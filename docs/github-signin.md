@@ -1,6 +1,6 @@
 # Sign in with GitHub
 
-The GitHub card on the new-tab page and the GitHub connector (the AI's `github` tool) share one sign-in. Press **Sign in with GitHub** on the card (or in Settings → Home → Widgets → GitHub) and both are set up. No token to create or paste.
+The GitHub card on the new-tab page signs in with one button. Press **Sign in with GitHub** on the card (or in Settings → Home → Widgets → GitHub). No token to create or paste. (The AI’s GitHub access is separate: the GitHub card under Settings → Connectors adds GitHub’s own MCP server with a token. If you had the old connector following this sign-in, **Reconnect through MCP** there reuses it once.)
 
 ## The three ways in
 
@@ -16,7 +16,7 @@ The device flow asks for `read:user` and `notifications`. That shows who you are
 
 ## Where the token lives
 
-One encrypted string, the widget secret `github` (the system keyring through Electron `safeStorage`, in `settings.json`'s `keys`). The connector reads it from there at each request: `connectors.json` holds only the account name and `"shared": true`, never a copy. The token goes only to `api.github.com` (and the sign-in calls to `github.com`), from the main process. The new-tab page and Settings get who you are, how you signed in and which permissions, never the token. Nothing logs tokens or codes.
+One encrypted string, the widget secret `github` (the system keyring through Electron `safeStorage`, in `settings.json`'s `keys`). The token goes only to `api.github.com` (and the sign-in calls to `github.com`), from the main process. The new-tab page and Settings get who you are, how you signed in and which permissions, never the token. Nothing logs tokens or codes.
 
 ## One-time maintainer step: register the OAuth App
 

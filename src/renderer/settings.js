@@ -232,7 +232,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that category; `focus` scrolls to a slot inside it; sub-page ids open the sub-page.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, 'mcp-servers': { cat: 'ai', sub: 'connectors' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
   accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -742,8 +742,7 @@ async function buildAi(card) {
       note);
   }));
   agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
-  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more so the AI can use them.', 'connectors canvas gmail calendar github todoist notion slack school mail tasks apps').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
-  agents.subpage('mcp-servers', tr('settings.mcpServers', 'Tools from MCP servers'), 'Servers whose tools the sidebar’s AI can use.', 'mcp tools servers').append(buildMcpServers()); // settings-mcp-servers.js: tools from MCP servers, for the sidebar's AI
+  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more, or add any MCP server, so the AI can use them.', 'connectors canvas gmail calendar github todoist notion school mail tasks apps mcp tools servers custom').append(buildConnectors()); // settings-connectors.js: services the AI can use once connected
 
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps()); // settings-external-apps.js
 

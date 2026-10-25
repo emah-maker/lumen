@@ -17,52 +17,52 @@ const fakeSecrets = { available: () => true, encrypt: (s) => `x${Buffer.from(s).
 async function main() {
   console.log('--- registry');
   const ids = registry.CONNECTORS.map((c) => c.id);
-  check('ids are unique and every connector has a name, icon, summary, category and kind', new Set(ids).size === ids.length && registry.CONNECTORS.every((c) => c.name && c.icon?.text && c.icon?.color && c.summary && registry.CATEGORIES.some((k) => k.id === c.category) && ['session', 'token', 'oauth', 'google', 'mcp', 'soon'].includes(c.kind)), ids.join());
-  check('the asked-for categories exist', ['Mail and calendar', 'School', 'Files and docs', 'Work', 'Tasks', 'Music'].every((l) => registry.CATEGORIES.some((k) => k.label === l)), JSON.stringify(registry.CATEGORIES));
-  check('the starting set is there: Canvas, Gmail, Calendar, GitHub, Todoist, Notion; Slack is shown as coming soon (its MCP package is deprecated)', ['canvas', 'gmail', 'gcal', 'github', 'todoist', 'notion', 'slack'].every((id) => registry.get(id)) && registry.get('slack').kind === 'soon' && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token', ids.join());
-  check('a connector not ready yet is shown as soon and offers no action', registry.CONNECTORS.filter((c) => c.kind === 'soon').every((c) => !Object.keys(c.actions).length) && registry.get('drive').kind === 'google' && registry.get('sheets').kind === 'google', '');
-  check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.filter((c) => c.kind !== 'soon').every((c) => c.reads.length) && registry.get('todoist').does.length === 1 && Object.values(registry.get('todoist').actions).filter((a) => a.write).length === 1, '');
-  check('write actions are marked: Gmail create_draft and send (send is gated by Allow sending), Drive create_folder, upload and share_link, Sheets append and create, GitHub comment and create_issue, Notion create_page and append, Todoist add_task (no Calendar write: an iCal address is read-only)', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'gmail.create_draft,gmail.send,drive.create_folder,drive.upload,drive.share_link,sheets.append,sheets.create,github.comment,github.create_issue,notion.create_page,notion.append,todoist.add_task', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join());
+  check('ids are unique and every connector has a name, icon, summary, category and kind', new Set(ids).size === ids.length && registry.CONNECTORS.every((c) => c.name && c.icon?.text && c.icon?.color && c.summary && registry.CATEGORIES.some((k) => k.id === c.category) && ['session', 'token', 'oauth', 'google', 'mcp'].includes(c.kind)), ids.join());
+  check('the asked-for categories exist (no empty Music one: there is no Spotify connector)', ['Mail and calendar', 'School', 'Files and docs', 'Work', 'Tasks'].every((l) => registry.CATEGORIES.some((k) => k.label === l)) && registry.CATEGORIES.length === 5 && registry.CATEGORIES.every((k) => registry.CONNECTORS.some((c) => c.category === k.id)), JSON.stringify(registry.CATEGORIES));
+  check('the built-in set is Canvas, Gmail, Calendar, Drive and Sheets (no official MCP server a personal account can use); GitHub, Notion and Todoist are MCP presets; no placeholders', ids.join() === 'canvas,gmail,gcal,drive,sheets,github,notion,todoist' && ['canvas', 'gmail', 'gcal', 'drive', 'sheets'].every((id) => registry.get(id).kind !== 'mcp') && ['github', 'notion', 'todoist'].every((id) => registry.get(id).kind === 'mcp') && registry.get('canvas').kind === 'session' && !registry.get('slack') && !registry.get('spotify'), ids.join());
+  check('an MCP preset points at the service’s own https server, adds no action to the connector tool, and says where it was checked', registry.CONNECTORS.filter((c) => c.kind === 'mcp').every((c) => c.mcp.type === 'http' && /^https:\/\/[a-z.]+\//.test(c.mcp.url) && /^https:\/\//.test(c.mcp.source) && !Object.keys(c.actions).length && c.replaces === true && (c.mcp.auth === 'oauth') !== Boolean(c.fields.length)), '');
+  check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.every((c) => c.reads.length) && registry.get('drive').does.length === 3 && registry.get('sheets').does.length === 2, '');
+  check('write actions are marked: Gmail create_draft and send (send is gated by Allow sending), Drive create_folder, upload and share_link, Sheets append and create (no Calendar write: an iCal address is read-only; the presets’ writes are MCP tools)', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'gmail.create_draft,gmail.send,drive.create_folder,drive.upload,drive.share_link,sheets.append,sheets.create', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join());
 
   console.log('--- the one tool');
   registry.setConnected([]);
   check('nothing connected: no tool at all', registry.toolDef() === null, JSON.stringify(registry.toolDef()));
   registry.setConnected(['canvas']);
   const one = registry.toolDef();
-  check('one connector connected: the tool names only it', one.name === 'connector' && /canvas:/.test(one.description) && !/github:|gmail:|todoist:/.test(one.description) && JSON.stringify(one.input_schema.properties.app.enum) === '["canvas"]', one.description);
-  registry.setConnected(['canvas', 'gmail', 'gcal', 'github', 'notion', 'todoist']);
+  check('one connector connected: the tool names only it', one.name === 'connector' && /canvas:/.test(one.description) && !/gmail:|gcal:|drive:/.test(one.description) && JSON.stringify(one.input_schema.properties.app.enum) === '["canvas"]', one.description);
+  const ALL = ['canvas', 'gmail', 'gcal', 'drive', 'sheets'];
+  registry.setConnected(ALL);
   const all = registry.toolDef();
   check('every connector connected: one tool, still compact (under 2.4k characters)', JSON.stringify(all).length < 2400, String(JSON.stringify(all).length));
   check('one connector costs under 0.7k characters', (registry.setConnected(['canvas']), JSON.stringify(registry.toolDef()).length) < 700, String(JSON.stringify(registry.toolDef()).length));
-  registry.setConnected(['canvas', 'gmail', 'gcal', 'github', 'notion', 'todoist']);
-  check('the description lists each action with its arguments and marks the writes with !', /add_task\(content,due\?,project_id\?\)!/.test(all.description) && /announcement\(course_id,id\)/.test(all.description) && /upcoming\(days\?,course_id\?\)/.test(all.description), all.description);
+  registry.setConnected(['github', 'notion', 'todoist']);
+  check('an MCP preset never adds anything to the connector tool (its tools are MCP tools)', registry.toolDef() === null && !registry.connectedIds().length, JSON.stringify(registry.toolDef()));
+  registry.setConnected(ALL);
+  check('the description lists each action with its arguments and marks the writes with !', /create_folder\(name,parent_id\?\)!/.test(all.description) && /announcement\(course_id,id\)/.test(all.description) && /upcoming\(days\?,course_id\?\)/.test(all.description), all.description);
   check('the schema is three short properties', Object.keys(all.input_schema.properties).join() === 'app,action,args' && all.input_schema.required.join() === 'app,action', JSON.stringify(all.input_schema));
   const ok = (input) => registry.validate(input);
-  check('valid calls pass', ok({ app: 'canvas', action: 'upcoming', args: { days: 7 } }) === null && ok({ app: 'canvas', action: 'courses' }) === null && ok({ app: 'github', action: 'help' }) === null, '');
-  check('an app that is not connected, or does not exist, is refused with what is connected', /Unknown app/.test(ok({ app: 'slack', action: 'x' })) && /Connected: canvas/.test(ok({ app: 'nope', action: 'x' })), ok({ app: 'nope', action: 'x' }));
+  check('valid calls pass', ok({ app: 'canvas', action: 'upcoming', args: { days: 7 } }) === null && ok({ app: 'canvas', action: 'courses' }) === null && ok({ app: 'gmail', action: 'help' }) === null, '');
+  registry.setConnected(['canvas']);
+  check('an app that is not connected, or does not exist, is refused with what is connected (and so is a preset: it has no connector actions)', /Unknown app/.test(ok({ app: 'drive', action: 'x' })) && /Unknown app/.test(ok({ app: 'github', action: 'prs' })) && /Connected: canvas/.test(ok({ app: 'nope', action: 'x' })), ok({ app: 'nope', action: 'x' }));
+  registry.setConnected(ALL);
   check('an unknown action lists the real ones', /Actions: courses, upcoming/.test(ok({ app: 'canvas', action: 'delete' })), ok({ app: 'canvas', action: 'delete' }));
-  check('a missing required argument is named', ok({ app: 'github', action: 'pr', args: { repo: 'ada/x' } }) === 'Missing argument: number' && ok({ app: 'todoist', action: 'add_task', args: {} }) === 'Missing argument: content', '');
+  check('a missing required argument is named', ok({ app: 'drive', action: 'read', args: {} }) === 'Missing argument: id' && ok({ app: 'sheets', action: 'tabs' }) === 'Missing argument: id' && ok({ app: 'gmail', action: 'search', args: {} }) === 'Missing argument: query', '');
   const sloppy = { app: 'canvas', action: 'upcoming', args: { days: '5' } };
   check('a number sent as text is accepted and fixed; out of range or fractional is not', ok(sloppy) === null && sloppy.args.days === 5 && /between 1 and 90/.test(ok({ app: 'canvas', action: 'upcoming', args: { days: 500 } })) && /whole number/.test(ok({ app: 'canvas', action: 'upcoming', args: { days: 1.5 } })), '');
-  check('an enum and a pattern are enforced', /one of: author, review, assigned/.test(ok({ app: 'github', action: 'prs', args: { role: 'admin' } })) && /expected form/.test(ok({ app: 'github', action: 'pr', args: { repo: '../../etc', number: 1 } })), '');
+  check('a pattern is enforced: a Drive id is never a path, an address list is real addresses', /expected form/.test(ok({ app: 'drive', action: 'files', args: { folder_id: '../../etc' } })) && /expected form/.test(ok({ app: 'gmail', action: 'create_draft', args: { to: 'not an address', subject: 's', body: 'b' } })) && ok({ app: 'drive', action: 'files', args: { folder_id: 'root' } }) === null, '');
   check('args that are not an object, and input that is not an object, are refused', /must be an object/.test(ok({ app: 'canvas', action: 'courses', args: [] })) && /must be an object/.test(ok('x')) && /must be an object/.test(ok(null)), '');
-  check('the step line reads "Using Canvas · Upcoming assignments"', registry.stepLabel({ app: 'canvas', action: 'upcoming' }) === 'Using Canvas · Upcoming assignments' && registry.stepLabel({ app: 'todoist', action: 'add_task' }) === 'Using Todoist · Add a task' && registry.stepLabel({ app: 'github', action: 'pr' }) === 'Using GitHub · Read a pull request', registry.stepLabel({ app: 'canvas', action: 'upcoming' }));
-  check('field checks: tokens by shape; a calendar address must be https on calendar.google.com (webcal:// is read as https)', registry.checkField(registry.get('github').fields[0], 'nope').error && !registry.checkField(registry.get('github').fields[0], TOKENS.github).error && registry.checkField(registry.get('gcal').fields[0], 'http://calendar.google.com/x.ics').error && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://evil.example/x.ics').error) && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://calendar.google.com.evil.example/x.ics').error) && registry.checkField(registry.get('gcal').fields[0], 'webcal://calendar.google.com/calendar/ical/x/basic.ics').value === 'https://calendar.google.com/calendar/ical/x/basic.ics', '');
-  const bs = String.fromCharCode(92);
-  const badRepos = ['../x', 'a/..', './x', 'a/.', 'a/b/c', 'a/b?x=1', 'a/b#f', `a${bs}b/c`, `a/b${bs}c`, '/a/b', 'a/', '..', 'a%2f..%2fb/c'];
-  const repoProblem = (r) => registry.validate({ app: 'github', action: 'pr', args: { repo: r, number: 1 } });
-  check('GitHub repo names: no . or .. segment, no extra /, no ? # or backslash, nothing odd (a path cannot climb out)', badRepos.every((r) => /expected form/.test(repoProblem(r) || '')) && ['ada/lumen-notes', 'a.b/c_d-e', 'x/.github', 'x/a..b'].every((r) => repoProblem(r) === null), badRepos.map(repoProblem).join('|'));
-  check('Todoist project ids are plain words, never a path or query', /expected form/.test(registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '1/../x' } }) || '') && /expected form/.test(registry.validate({ app: 'todoist', action: 'add_task', args: { content: 'a', project_id: 'x&y=1' } }) || '') && registry.validate({ app: 'todoist', action: 'tasks', args: { project_id: '2203306141' } }) === null, '');
+  check('the step line reads "Using Canvas · Upcoming assignments"', registry.stepLabel({ app: 'canvas', action: 'upcoming' }) === 'Using Canvas · Upcoming assignments' && registry.stepLabel({ app: 'drive', action: 'files' }) === 'Using Google Drive · Find files' && registry.stepLabel({ app: 'sheets', action: 'append' }) === 'Using Google Sheets · Add rows', registry.stepLabel({ app: 'canvas', action: 'upcoming' }));
+  check('field checks: a GitHub token by shape; a calendar address must be https on calendar.google.com (webcal:// is read as https)', registry.checkField(registry.get('github').fields[0], 'nope').error && !registry.checkField(registry.get('github').fields[0], TOKENS.github).error && registry.checkField(registry.get('gcal').fields[0], 'http://calendar.google.com/x.ics').error && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://evil.example/x.ics').error) && /Only Google Calendar/.test(registry.checkField(registry.get('gcal').fields[0], 'https://calendar.google.com.evil.example/x.ics').error) && registry.checkField(registry.get('gcal').fields[0], 'webcal://calendar.google.com/calendar/ical/x/basic.ics').value === 'https://calendar.google.com/calendar/ical/x/basic.ics', '');
   check('Canvas addresses: with or without https, a page address works, junk does not', registry.cleanDomain('https://northeastern.instructure.com/courses/1') === 'northeastern.instructure.com' && registry.cleanDomain('School.Instructure.com') === 'school.instructure.com' && registry.cleanDomain('not a domain') === '' && registry.cleanDomain('javascript:alert(1)') === '', '');
 
   console.log('--- the MCP server: the tool goes only to a run Lumen owns');
   const mcp = require('../../src/automation/mcp');
-  registry.setConnected(['github']);
+  registry.setConnected(['canvas']);
   const listSession = async (engine) => {
     const sent = [];
     const { handle } = mcp.createSession({ tools: [{ name: 'read_page', description: 'x', input_schema: { type: 'object' } }], extraTools: (sess) => (sess.engine === 'live-run-tag' ? [registry.toolDef()] : []), callTool: async (name) => ({ content: [{ type: 'text', text: 'ran ' + name }] }), enabled: () => true, onEvent: () => {}, send: (m) => sent.push(m), engine });
     await handle({ id: 1, method: 'tools/list' });
-    await handle({ id: 2, method: 'tools/call', params: { name: 'connector', arguments: { app: 'github', action: 'prs' } } });
+    await handle({ id: 2, method: 'tools/call', params: { name: 'connector', arguments: { app: 'canvas', action: 'courses' } } });
     return { names: sent[0].result.tools.map((t) => t.name), call: sent[1] };
   };
   const own = await listSession('live-run-tag');
@@ -94,15 +94,31 @@ async function main() {
     connect: async () => { throw new Error('no client'); },
     disconnect: async () => { googleFake.disconnected = true; },
   };
-  const mcpFake = { servers: [], list() { return this.servers; }, save(input) { this.saved = input; this.servers = [{ id: 'srv1', name: input.name }]; return this.servers; }, remove(id) { this.removed = id; this.servers = []; return []; } };
+  // A stand-in for the MCP client: what the presets talk to (features/mcp-client.js is tested on its own in test/units/mcp-oauth-units.js).
+  const makeMcp = () => ({
+    servers: [], saved: [], signIns: [], refreshes: [], removed: [], outcome: {},
+    list() { return this.servers; },
+    set(id, patch) { this.servers = this.servers.map((x) => (x.id === id ? { ...x, ...patch } : x)); },
+    save(input) {
+      this.saved.push(input);
+      const old = input.id && this.servers.find((x) => x.id === input.id);
+      const row = { id: old?.id || `srv${this.saved.length}`, name: input.name, preset: input.preset || '', type: input.type, url: input.url || '', auth: input.auth || '', state: 'stopped', error: '', needsAuth: input.auth === 'oauth', authRefused: false, tools: [], alwaysAllow: [] };
+      this.servers = old ? this.servers.map((x) => (x.id === row.id ? row : x)) : [...this.servers, row];
+      return this.servers;
+    },
+    remove(id) { this.removed.push(id); this.servers = this.servers.filter((x) => x.id !== id); return this.servers; },
+    async signIn(id) { this.signIns.push(id); if (this.outcome.signIn) throw new Error(this.outcome.signIn); this.set(id, { state: 'ready', needsAuth: false, ...(this.outcome.after || { tools: [{ name: 'search', description: 'x' }, { name: 'create_task', description: 'y' }] }) }); return this.servers; },
+    async refresh(id) { this.refreshes.push(id); this.set(id, this.outcome.refresh || { state: 'ready', tools: [{ name: 'list_pull_requests', description: 'x' }] }); return this.servers; },
+  });
+  const mcpFake = makeMcp();
   const make = () => service.create({
     userData, secrets: fakeSecrets, fetch: trackedFetch,
     sessionFetch: (url, opts) => trackedFetch(url, { ...opts, headers: { ...opts.headers, ...(signedIn ? { Cookie: COOKIE } : {}) } }),
-    endpoints: () => ({ canvas: fakes.urls.canvas, github: fakes.urls.github, todoist: fakes.urls.todoist, notion: fakes.urls.notion }),
+    endpoints: () => ({ canvas: fakes.urls.canvas }),
     detectHosts: async () => ['www.example.com', 'northeastern.instructure.com', 'canvas.other.edu'], google, mcp: mcpFake, onChange: () => changes.push(1), testLoopback: true,
   });
   let svc = make();
-  check('a fresh profile: nothing connected, the AI gets no tool, the page gets every card', !svc.hasAny() && svc.defs().length === 0 && svc.list().connectors.length === registry.CONNECTORS.length && svc.list().connectors.every((c) => (c.status === 'soon' ? c.statusText === 'Coming soon' : c.status === 'off' && c.statusText === 'Not connected')), JSON.stringify(svc.list().connectors.map((c) => c.status)));
+  check('a fresh profile: nothing connected, the AI gets no tool, the page gets every card', !svc.hasAny() && svc.defs().length === 0 && svc.list().connectors.length === registry.CONNECTORS.length && svc.list().connectors.every((c) => c.status === 'off' && c.statusText === 'Not connected'), JSON.stringify(svc.list().connectors.map((c) => c.status)));
   check('Canvas: the address is found from browsing, and only Canvas-looking hosts are offered', JSON.stringify(await svc.detect('canvas')) === '["northeastern.instructure.com","canvas.other.edu"]', JSON.stringify(await svc.detect('canvas')));
 
   // Canvas: a session connector
@@ -136,40 +152,6 @@ async function main() {
   check('the same read twice in a row is one request (30 s cache)', fakes.seen.length === before, `${fakes.seen.length - before} extra`);
   check('Canvas requests carry the session cookie and no Authorization header', fakes.seen.slice(signedInAt).filter((r) => r.service === 'canvas').every((r) => r.cookie.includes(COOKIE) && !r.auth), JSON.stringify(fakes.seen.filter((r) => r.service === 'canvas')[0]));
 
-  // GitHub: a token connector
-  check('GitHub: a token that does not look like one is refused before it is sent anywhere', /doesn’t look like a GitHub token/.test(await fails(() => svc.connect('github', { secret: 'hunter2' }))) && !fakes.seen.some((r) => r.service === 'github'), '');
-  const wrongToken = 'github_pat_WRONG0123456789abcdefghij';
-  check('GitHub: a well-formed token that GitHub refuses is not saved', /refused that token/.test(await fails(() => svc.connect('github', { secret: wrongToken }))) && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('"github"'), '');
-  await svc.connect('github', { secret: TOKENS.github });
-  check('GitHub: connected as the token’s owner', svc.list().connectors.find((c) => c.id === 'github').statusText === 'Connected · ada-dev', JSON.stringify(svc.list().connectors.find((c) => c.id === 'github')));
-  const onDisk = fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
-  check('the token on disk is encrypted: no plaintext, only a sealed value', !onDisk.includes(TOKENS.github) && /"secret": "x/.test(onDisk) && !JSON.stringify(svc.list()).includes(TOKENS.github), onDisk);
-  const prs = await svc.call({ app: 'github', action: 'prs' });
-  check('my pull requests: repo, number, title, author', /ada\/lumen-notes#12 Add dark mode \(ada-dev\)/.test(prs) && /#9 Fix typo/.test(prs), prs);
-  check('the search asks for the token owner’s open pull requests', fakes.seen.some((r) => r.service === 'github' && decodeURIComponent(r.url).includes('is:pr') && decodeURIComponent(r.url).includes('author:@me') && decodeURIComponent(r.url).includes('is:open')), JSON.stringify(fakes.seen.filter((r) => r.service === 'github').map((r) => r.url)));
-  check('my issues, assigned to me by default', /#3 Crash on start/.test(await svc.call({ app: 'github', action: 'issues' })) && fakes.seen.some((r) => decodeURIComponent(r.url).includes('assignee:@me')), '');
-  const pr = await svc.call({ app: 'github', action: 'pr', args: { repo: 'ada/lumen-notes', number: 12 } });
-  check('read a pull request: state, branches, size, description and changed files', /Add dark mode/.test(pr) && /open · by ada-dev · dark into main/.test(pr) && /2 files, \+30 -4/.test(pr) && /added src\/theme\.js \(\+28 -0\)/.test(pr), pr);
-  check('GitHub requests carry the token in a header, never the cookie', fakes.seen.filter((r) => r.service === 'github').every((r) => r.auth.startsWith('Bearer github_pat_') && !r.cookie), '');
-  check('a pull request that does not exist is a plain message', /can’t find that/.test(await fails(() => svc.call({ app: 'github', action: 'pr', args: { repo: 'ada/none', number: 1 } }))), '');
-
-  // Todoist: read, and one write
-  await svc.connect('todoist', { secret: TOKENS.todoist });
-  check('Todoist: connected as the account’s e-mail', svc.list().connectors.find((c) => c.id === 'todoist').statusText === 'Connected · ada@example.com', '');
-  const tasks = await svc.call({ app: 'todoist', action: 'tasks' });
-  check('tasks: id, text, due date and priority', /9001\s+Read chapter 4 · due \d{4}-\d{2}-\d{2} · p2/.test(tasks) && /9002\s+Email the TA/.test(tasks), tasks);
-  check('add_task is a write, and the confirm card says exactly what will be added', svc.isWrite({ app: 'todoist', action: 'add_task' }) && !svc.isWrite({ app: 'todoist', action: 'tasks' }) && /Add this task to Todoist:\nBuy a stapler\nDue: tomorrow 9am/.test((await svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } })).detail), JSON.stringify(await svc.describeWrite({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } })));
-  check('nothing was posted before the write ran', !fakes.seen.some((r) => r.service === 'todoist' && r.method === 'POST'), '');
-  const added = await svc.call({ app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } });
-  check('add_task posts the task and says what it made', /Added: \d+\s+Buy a stapler/.test(added) && JSON.parse(fakes.seen.find((r) => r.service === 'todoist' && r.method === 'POST').body).due_string === 'tomorrow 9am', added);
-  check('after a write the next read is fresh, not the cached list', /Buy a stapler/.test(await svc.call({ app: 'todoist', action: 'tasks' })), '');
-
-  // Notion and Calendar
-  await svc.connect('notion', { secret: TOKENS.notion });
-  const search = await svc.call({ app: 'notion', action: 'search', args: { query: 'plan' } });
-  check('Notion: search lists pages with their ids', /a1b2c3d4e5f60718293a4b5c6d7e8f90\s+Project plan · page/.test(search), search);
-  const page = await svc.call({ app: 'notion', action: 'page', args: { id: 'https://www.notion.so/Project-plan-a1b2c3d4e5f60718293a4b5c6d7e8f90' } });
-  check('Notion: a page address works, and the text keeps headings and to-dos', /Project plan/.test(page) && /# Goals/.test(page) && /\[x\] Draft outline/.test(page) && /Ship by May\./.test(page), page);
   await svc.connect('gcal', { secret: fakes.icsUrl });
   check('Calendar: connected with the calendar’s own name', svc.list().connectors.find((c) => c.id === 'gcal').statusText === 'Connected · Ada school', '');
   check('Calendar: events in the next days, with place', /Study group · Library room 4/.test(await svc.call({ app: 'gcal', action: 'events', args: { days: 7 } })), await svc.call({ app: 'gcal', action: 'events', args: { days: 7 } }));
@@ -188,17 +170,54 @@ async function main() {
   await svc.disconnect('gmail');
   check('Gmail: the Google sign-in the widget made is left alone on disconnect (it is the widget’s)', googleFake.disconnected !== true, '');
 
-  // MCP preset
-  registry._testRegister({ id: 'fakemcp', name: 'Fake MCP', category: 'work', kind: 'mcp', icon: { text: 'F', color: '#000000' }, summary: 'x', mcp: { name: 'fakemcp', command: 'npx', args: ['-y', 'pinned-pkg@1.2.3'] }, fields: [{ id: 'FAKE_TOKEN', label: 'Token', secret: true }], reads: ['x'], does: [], actions: {} });
-  check('an MCP preset: the field is required', /token/i.test(await fails(() => svc.connect('fakemcp', { FAKE_TOKEN: '' }))), '');
-  await svc.connect('fakemcp', { FAKE_TOKEN: 'mcp-secret-value' });
-  check('an MCP preset: adds an MCP server (Tools from MCP servers) with the secret as its variable, keeps it out of connectors.json, and gives the AI no connector tool of its own', mcpFake.saved?.command === 'npx' && mcpFake.saved.env.some((e) => e.name === 'FAKE_TOKEN' && e.value === 'mcp-secret-value') && svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'connected' && !/fakemcp:/.test(svc.defs()[0].description) && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('mcp-secret-value'), JSON.stringify(mcpFake.saved));
-  mcpFake.servers = [];
-  check('an MCP preset: removed in Tools from MCP servers, the card goes back to Not connected', svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'off', '');
+  // MCP presets: GitHub (a token), Notion and Todoist (OAuth in the browser). One click adds the service's official server; the card is read from that server.
+  const cardOf = (id) => svc.list().connectors.find((c) => c.id === id);
+  const fileText = () => fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
+  check('a preset card starts Not connected, with a token field only where the server needs one (GitHub)', cardOf('notion').status === 'off' && cardOf('notion').oauth === true && !cardOf('notion').fields.length && cardOf('github').fields.length === 1 && cardOf('github').fields[0].secret === true && cardOf('github').oauth === false, JSON.stringify(cardOf('github')));
+  await svc.connect('notion', {});
+  check('Notion: one click adds its official server (https://mcp.notion.com/mcp, OAuth, tagged with the card), signs in, and the card says Connected with the tool count', mcpFake.saved[0].url === 'https://mcp.notion.com/mcp' && mcpFake.saved[0].auth === 'oauth' && mcpFake.saved[0].preset === 'notion' && mcpFake.saved[0].type === 'http' && !mcpFake.saved[0].header && mcpFake.signIns.length === 1 && cardOf('notion').status === 'connected' && cardOf('notion').statusText === 'Connected · 2 tools', JSON.stringify([mcpFake.saved[0], cardOf('notion')]));
+  check('…its tools are on the card with Always allow off, the connector tool is unchanged (nothing for Notion) and nothing about it is written to connectors.json', cardOf('notion').mcp.tools.map((t) => t.name).join() === 'search,create_task' && cardOf('notion').mcp.tools.every((t) => t.always === false) && !/notion/.test(fileText()) && !/notion:/.test(svc.defs()[0]?.description || ''), fileText());
+  mcpFake.outcome.signIn = 'Sign-in was canceled.';
+  check('Todoist: a sign-in the user cancels says so, and leaves no server behind', /canceled/.test(await fails(() => svc.connect('todoist', {}))) && !mcpFake.servers.some((x) => x.name === 'todoist') && cardOf('todoist').status === 'off', JSON.stringify(mcpFake.servers));
+  mcpFake.outcome = {};
+  await svc.connect('todoist', {});
+  check('Todoist: connects through https://ai.todoist.net/mcp', mcpFake.saved.at(-1).url === 'https://ai.todoist.net/mcp' && cardOf('todoist').status === 'connected', '');
+  check('GitHub: the token is required, and must look like one, before anything is added', /personal access token/i.test(await fails(() => svc.connect('github', { secret: '' }))) && /doesn’t look like a GitHub token/.test(await fails(() => svc.connect('github', { secret: 'hunter2' }))) && !mcpFake.servers.some((x) => x.name === 'github'), '');
+  mcpFake.outcome.refresh = { state: 'error', error: 'The server refused the request (401).', authRefused: true };
+  check('GitHub: a well-formed token GitHub refuses is not kept (no server left, no secret saved)', /refused that token/.test(await fails(() => svc.connect('github', { secret: TOKENS.github }))) && !mcpFake.servers.some((x) => x.name === 'github') && !fileText().includes(TOKENS.github), '');
+  mcpFake.outcome = {};
+  await svc.connect('github', { secret: TOKENS.github });
+  const gh = mcpFake.saved.at(-1);
+  check('GitHub: the token goes to the server as its Authorization header (Bearer) at https://api.githubcopilot.com/mcp/, and the card says Connected · 1 tool', gh.url === 'https://api.githubcopilot.com/mcp/' && gh.header.name === 'Authorization' && gh.header.value === `Bearer ${TOKENS.github}` && !gh.auth && cardOf('github').statusText === 'Connected · 1 tool', JSON.stringify(cardOf('github')));
+  check('…and the token is never in connectors.json or in the list the page gets', !fileText().includes(TOKENS.github) && !JSON.stringify(svc.list()).includes(TOKENS.github), '');
+  // the status is read from the server, so every way it can go wrong shows on the card
+  const gid = mcpFake.servers.find((x) => x.name === 'github').id;
+  mcpFake.set(gid, { state: 'error', authRefused: true, error: 'The server refused the request (401).' });
+  check('a token the server later refuses: the card says Token refused (Connect again)', cardOf('github').status === 'bad-token' && cardOf('github').statusText === 'Token refused', JSON.stringify(cardOf('github')));
+  const nid = mcpFake.servers.find((x) => x.name === 'notion').id;
+  mcpFake.set(nid, { state: 'error', needsAuth: true, error: 'Sign in to use this server.' });
+  check('a sign-in that ended: the card says Needs sign-in', cardOf('notion').status === 'needs-signin', JSON.stringify(cardOf('notion')));
+  mcpFake.set(nid, { state: 'error', needsAuth: false, error: 'The server answered 500.' });
+  check('any other failure is shown on the card with its reason', cardOf('notion').status === 'error' && /Couldn’t connect: The server answered 500/.test(cardOf('notion').statusText), JSON.stringify(cardOf('notion')));
+  mcpFake.set(nid, { state: 'error', needsAuth: true });
+  const signIns = mcpFake.signIns.length;
+  await svc.connect('notion', {});
+  check('Connect again on a card whose sign-in ended signs in again on the same server (no second one)', mcpFake.signIns.length === signIns + 1 && mcpFake.servers.filter((x) => x.name === 'notion').length === 1 && cardOf('notion').status === 'connected', JSON.stringify(mcpFake.servers.filter((x) => x.name === 'notion')));
+  mcpFake.set(gid, { state: 'ready', authRefused: false, error: '' });
+  await svc.connect('github', { secret: `ghp_${'B'.repeat(36)}` });
+  check('Connect again on GitHub with a new token replaces the header on the same server', mcpFake.servers.filter((x) => x.name === 'github').length === 1 && mcpFake.saved.at(-1).id === gid && mcpFake.saved.at(-1).header.value === `Bearer ghp_${'B'.repeat(36)}`, JSON.stringify(mcpFake.saved.at(-1)));
+  await svc.disconnect('notion');
+  check('Disconnect removes the server (and with it the sign-in); the card goes back to Not connected', cardOf('notion').status === 'off' && !mcpFake.servers.some((x) => x.name === 'notion') && mcpFake.removed.length >= 2, JSON.stringify(mcpFake.removed));
+  mcpFake.servers = mcpFake.servers.filter((x) => x.name !== 'github');
+  check('a server removed under Custom MCP servers: the card goes back to Not connected by itself', cardOf('github').status === 'off', '');
+  mcpFake.servers.push({ id: 'mine', name: 'github', preset: '', type: 'http', url: 'https://x.example/mcp', auth: '', state: 'ready', error: '', needsAuth: false, authRefused: false, tools: [], alwaysAllow: [] });
+  check('a custom server already called github is not taken over: the message says to remove or rename it', /Custom MCP servers/.test(await fails(() => svc.connect('github', { secret: TOKENS.github }))), '');
+  mcpFake.servers = mcpFake.servers.filter((x) => x.id !== 'mine' && x.name !== 'todoist');
+
 
   // Loads again, and what the network saw
   svc = make();
-  check('restart: what was connected is still connected, with its token readable only here', svc.hasAny() && (await svc.call({ app: 'github', action: 'prs' })).includes('Add dark mode') && svc.list().connectors.find((c) => c.id === 'canvas').status === 'connected', JSON.stringify(svc.list().connectors.map((c) => [c.id, c.status])));
+  check('restart: what was connected is still connected, with its secret readable only here', svc.hasAny() && (await svc.call({ app: 'canvas', action: 'courses' })).includes('Fundamentals') && svc.list().connectors.find((c) => c.id === 'canvas').status === 'connected' && svc.list().connectors.find((c) => c.id === 'gcal').status === 'connected', JSON.stringify(svc.list().connectors.map((c) => [c.id, c.status])));
   check('only the connectors’ own addresses were ever requested', [...requestedHosts].every((h) => Object.values(fakes.urls).some((u) => new URL(u).host === h)), [...requestedHosts].join());
 
   // Another address in a Link header is never followed
@@ -221,34 +240,63 @@ async function main() {
 
   // Disconnect
   const tokenKept = fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
-  check('before disconnecting, the sealed token is on disk', /"github"/.test(tokenKept), '');
+  check('before disconnecting, the sealed calendar address is on disk', /"gcal"/.test(tokenKept), '');
   const calls = fakes.seen.length;
-  await svc.disconnect('github');
+  await svc.disconnect('gcal');
   const afterDisk = fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
-  check('Disconnect deletes the token: nothing of GitHub is left in the file', !/github/.test(afterDisk) && !afterDisk.includes(Buffer.from(TOKENS.github).toString('base64')), afterDisk);
-  check('…the card is Not connected, and the tool no longer lists GitHub', svc.list().connectors.find((c) => c.id === 'github').status === 'off' && !/github:/.test(svc.defs()[0].description) && /Unknown app/.test(svc.validate({ app: 'github', action: 'prs' })), svc.defs()[0].description);
-  check('…and a call fails at once without asking GitHub anything (cached answers are gone too)', /Unknown app|isn’t connected/.test(await fails(() => svc.call({ app: 'github', action: 'prs' }))) && fakes.seen.length === calls, '');
-  for (const id of ['canvas', 'todoist', 'notion', 'gcal']) await svc.disconnect(id);
+  check('Disconnect deletes the secret address: nothing of the calendar is left in the file', !/gcal/.test(afterDisk) && !afterDisk.includes(Buffer.from(fakes.icsUrl).toString('base64')), afterDisk);
+  check('…the card is Not connected, and the tool no longer lists the calendar', svc.list().connectors.find((c) => c.id === 'gcal').status === 'off' && !/gcal:/.test(svc.defs()[0].description) && /Unknown app/.test(svc.validate({ app: 'gcal', action: 'events' })), svc.defs()[0].description);
+  check('…and a call fails at once without asking the calendar anything (cached answers are gone too)', /Unknown app|isn’t connected/.test(await fails(() => svc.call({ app: 'gcal', action: 'events' }))) && fakes.seen.length === calls, '');
+  await svc.disconnect('canvas');
   check('with everything disconnected the AI has no tool again, and the file holds no connector', !svc.hasAny() && svc.defs().length === 0 && JSON.stringify(JSON.parse(fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8')).connected) === '{}', fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8'));
-  check('the page was told about every change', changes.length >= 10, String(changes.length));
-  check('a connector that is only coming soon can’t be connected', /isn’t available yet/.test(await fails(() => svc.connect('spotify', {}))), '');
+  check('the page was told about every change', changes.length >= 5, String(changes.length));
+  check('an unknown service can’t be connected', /isn’t known/.test(await fails(() => svc.connect('spotify', {}))), '');
 
-  // A shared sign-in (the GitHub card's) never replaces a token the connector was connected with.
-  let cardInfo = null;
+  // The upgrade: the old built-in GitHub, Notion and Todoist connectors left entries (a sealed secret each) in connectors.json.
+  const oldDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-old-'));
+  const oldGh = `github_pat_${'Q'.repeat(40)}`;
+  const readOld = () => JSON.parse(fs.readFileSync(path.join(oldDir, 'connectors.json'), 'utf8')).connected;
+  fs.writeFileSync(path.join(oldDir, 'connectors.json'), JSON.stringify({ version: 1, connected: {
+    github: { at: 1, account: 'ada-dev', config: {}, secret: fakeSecrets.encrypt(oldGh) },
+    notion: { at: 1, account: 'Ada’s space', config: {}, secret: fakeSecrets.encrypt('ntn_oldsecretoldsecretoldsecret') },
+    todoist: { at: 1, account: 'ada@example.com', config: {}, secret: fakeSecrets.encrypt('old-todoist-token-0123456789') },
+    canvas: { at: 1, account: 'Ada', config: { domain: 'school.instructure.com' } },
+  } }));
+  const oldMcp = makeMcp();
+  const mig = service.create({ userData: oldDir, secrets: fakeSecrets, mcp: oldMcp, testLoopback: true, shared: {} });
+  const cardM = (id) => mig.list().connectors.find((c) => c.id === id);
+  check('after the upgrade the old GitHub, Notion and Todoist show "Reconnect through MCP" (not silently gone), and the AI gets nothing from them until then', ['github', 'notion', 'todoist'].every((id) => cardM(id).status === 'reconnect' && cardM(id).statusText === 'Reconnect through MCP' && /MCP server/.test(cardM(id).note)) && mig.defs().length === 1 && !/github:|notion:|todoist:/.test(mig.defs()[0].description) && cardM('canvas').status === 'connected', JSON.stringify(mig.list().connectors.map((c) => [c.id, c.status])));
+  check('…and showing the cards deleted nothing: every saved secret is still on disk', ['github', 'notion', 'todoist'].every((id) => readOld()[id]?.secret), JSON.stringify(Object.keys(readOld())));
+  check('GitHub reconnects in one click (its saved token is reused, so no field is asked for); Notion and Todoist need only the browser sign-in', ['github', 'notion', 'todoist'].every((id) => cardM(id).reconnect?.oneClick === true && !cardM(id).fields.length), JSON.stringify(cardM('github').reconnect));
+  await mig.connect('github', {});
+  check('GitHub: the old token went to the server as its header, and only after it worked was the old entry dropped (the others stay)', oldMcp.saved.at(-1).header.value === `Bearer ${oldGh}` && cardM('github').status === 'connected' && !('github' in readOld()) && ['notion', 'todoist', 'canvas'].every((id) => id in readOld()), JSON.stringify([oldMcp.saved.at(-1), Object.keys(readOld())]));
+  oldMcp.outcome.signIn = 'Sign-in was canceled.';
+  check('Notion: a reconnect that fails keeps the old secret and the card (nothing is lost unless it works)', /canceled/.test(await fails(() => mig.connect('notion', {}))) && Boolean(readOld().notion?.secret) && cardM('notion').status === 'reconnect', JSON.stringify(Object.keys(readOld())));
+  oldMcp.outcome = {};
+  await mig.connect('notion', {});
+  check('Notion: reconnecting through the browser drops the old secret', !('notion' in readOld()) && cardM('notion').status === 'connected', JSON.stringify(Object.keys(readOld())));
+  const removedBefore = oldMcp.removed.length;
+  await mig.disconnect('todoist');
+  check('Forget on an old connection deletes its secret and touches no server', !('todoist' in readOld()) && cardM('todoist').status === 'off' && oldMcp.removed.length === removedBefore, JSON.stringify(Object.keys(readOld())));
+  const reopened = service.create({ userData: oldDir, secrets: fakeSecrets, mcp: oldMcp, testLoopback: true, shared: {} });
+  check('after a restart: Canvas is still connected, GitHub and Notion read from their servers, nothing old is left', reopened.list().connectors.find((c) => c.id === 'canvas').status === 'connected' && reopened.list().connectors.find((c) => c.id === 'github').status === 'connected' && reopened.list().connectors.find((c) => c.id === 'todoist').status === 'off', '');
+
+  // The GitHub card's sign-in, which the old connector followed: reused once for the reconnect, never kept following.
   const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-connectors-shared-'));
-  const sh = service.create({ userData: sharedDir, secrets: fakeSecrets, fetch: trackedFetch, testLoopback: true, endpoints: () => ({ github: fakes.urls.github }), shared: { github: { info: () => cardInfo, signOut: () => {} } } });
-  await sh.connect('github', { secret: TOKENS.github });
-  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
-  sh.syncShared('github');
-  check('shared sign-in: a connector connected with its own token keeps it when the card signs in', !sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && /"secret"/.test(fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8')), fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8'));
-  cardInfo = null;
-  sh.syncShared('github');
-  check('shared sign-in: …and when the card signs out', sh.list().connectors.find((c) => c.id === 'github').status === 'connected' && !sh.usesShared('github'), '');
-  await sh.disconnect('github');
-  cardInfo = { token: `gho_${'Z'.repeat(36)}`, account: 'octocat' };
-  sh.syncShared('github');
-  check('shared sign-in: with no token of its own the connector follows the card’s sign-in', sh.usesShared('github') && sh.list().connectors.find((c) => c.id === 'github').status === 'connected', '');
+  fs.writeFileSync(path.join(sharedDir, 'connectors.json'), JSON.stringify({ version: 1, connected: { github: { at: 1, account: 'octocat', config: { shared: true } } } }));
+  const shMcp = makeMcp();
+  let cardToken = `gho_${'Z'.repeat(36)}`;
+  const sh = service.create({ userData: sharedDir, secrets: fakeSecrets, mcp: shMcp, testLoopback: true, shared: { github: { info: () => (cardToken ? { token: cardToken, account: 'octocat' } : null) } } });
+  const cardS = () => sh.list().connectors.find((c) => c.id === 'github');
+  check('a GitHub connector that followed the card’s sign-in: Reconnect is one click while the card is signed in', cardS().status === 'reconnect' && cardS().reconnect.oneClick && !cardS().fields.length, JSON.stringify(cardS()));
+  cardToken = '';
+  check('…and asks for a token when the card is signed out', cardS().status === 'reconnect' && !cardS().reconnect.oneClick && cardS().fields.length === 1, JSON.stringify(cardS()));
+  cardToken = `gho_${'Z'.repeat(36)}`;
+  await sh.connect('github', {});
+  check('the card’s token becomes the MCP server’s header once; the old entry is gone and nothing in connectors.json follows the card any more', shMcp.saved.at(-1).header.value === `Bearer gho_${'Z'.repeat(36)}` && cardS().status === 'connected' && !fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8').includes('shared') && !fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8').includes('gho_'), fs.readFileSync(path.join(sharedDir, 'connectors.json'), 'utf8'));
   fs.rmSync(sharedDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  fs.rmSync(oldDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+
 
   await fakes.stop();
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
