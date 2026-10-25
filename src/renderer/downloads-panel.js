@@ -24,6 +24,7 @@
     cancel: '<path d="M4 4l8 8M12 4l-8 8"/>',
     retry: '<path d="M12.5 8a4.5 4.5 0 1 1-1.4-3.3M12.5 3v2.6H9.9"/>',
     show: '<circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/>',
+    preview: '<path d="M1.6 8S4 3.8 8 3.8 14.4 8 14.4 8 12 12.2 8 12.2 1.6 8 1.6 8z"/><circle cx="8" cy="8" r="1.9"/>',
     file: '<path d="M4 1.8h5.2L13 5.6v8.1c0 .3-.2.5-.5.5h-8.5a.5.5 0 0 1-.5-.5V2.3c0-.3.2-.5.5-.5zM9 1.8v4h4"/>',
   };
   const svg = (name, box = 16) => `<svg viewBox="0 0 ${box} ${box}" aria-hidden="true">${ICONS[name === 'remove' ? 'cancel' : name]}</svg>`;
@@ -67,7 +68,7 @@
   }
   function actionsOf(d) {
     if (d.state === 'progressing') return d.awaitingOk ? ['cancel'] : [d.paused ? 'resume' : 'pause', 'cancel'];
-    if (d.state === 'completed') return d.missing ? ['remove'] : ['show', 'remove'];
+    if (d.state === 'completed') return d.missing ? ['remove'] : d.office ? ['preview', 'show', 'remove'] : ['show', 'remove']; // (a Word, Excel or PowerPoint file can be previewed in a tab)
     return [d.canResume ? 'resume' : 'retry', 'remove'];
   }
   const openable = (d) => d.state === 'completed' && !d.missing;
@@ -146,9 +147,10 @@
     li.draggable = openable(d);
     if (openable(d)) setAttr(li, 'title', t('dlpanel.openTip', { name: d.name }));
     else if (li.hasAttribute('title')) li.removeAttribute('title');
-    if (row.iconSrc !== (d.icon || '')) {
-      row.iconSrc = d.icon || '';
-      if (d.icon) { const img = document.createElement('img'); img.src = d.icon; img.alt = ''; row.icon.replaceChildren(img); } else row.icon.innerHTML = svg('file');
+    const iconSrc = d.thumb || d.icon || ''; // a Word, Excel or PowerPoint file shows its first page once it is drawn
+    if (row.iconSrc !== iconSrc) {
+      row.iconSrc = iconSrc;
+      if (iconSrc) { const img = document.createElement('img'); img.src = iconSrc; img.alt = ''; if (d.thumb) img.className = 'thumb'; row.icon.replaceChildren(img); } else row.icon.innerHTML = svg('file');
     }
     setText(row.name, d.name);
     setText(row.status, statusOf(d));

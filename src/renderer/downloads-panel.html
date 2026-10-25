@@ -39,6 +39,7 @@
     @keyframes row { from { opacity: 0; transform: translateY(-4px); } }
     .icon { width: 32px; height: 32px; display: grid; place-items: center; }
     .icon img { width: 32px; height: 32px; -webkit-user-drag: none; }
+    .icon img.thumb { width: 26px; height: 32px; object-fit: cover; object-position: top; border-radius: 3px; background: #fff; box-shadow: 0 0 0 1px var(--hairline, rgba(128, 128, 128, 0.3)); }
     .icon svg { width: 22px; height: 22px; fill: none; stroke: var(--muted); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
     .text { min-width: 0; }
     .name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 500; }

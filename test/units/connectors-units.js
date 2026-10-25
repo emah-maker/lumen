@@ -17,11 +17,11 @@ const fakeSecrets = { available: () => true, encrypt: (s) => `x${Buffer.from(s).
 async function main() {
   console.log('--- registry');
   const ids = registry.CONNECTORS.map((c) => c.id);
-  check('ids are unique and every connector has a name, icon, summary, category and kind', new Set(ids).size === ids.length && registry.CONNECTORS.every((c) => c.name && c.icon?.text && c.icon?.color && c.summary && registry.CATEGORIES.some((k) => k.id === c.category) && ['session', 'token', 'oauth', 'google', 'mcp', 'soon'].includes(c.kind)), ids.join());
-  check('the asked-for categories exist', ['Mail and calendar', 'School', 'Files and docs', 'Work', 'Tasks', 'Music'].every((l) => registry.CATEGORIES.some((k) => k.label === l)), JSON.stringify(registry.CATEGORIES));
-  check('the starting set is there: Canvas, Gmail, Calendar, GitHub, Todoist, Notion; Slack is shown as coming soon (its MCP package is deprecated)', ['canvas', 'gmail', 'gcal', 'github', 'todoist', 'notion', 'slack'].every((id) => registry.get(id)) && registry.get('slack').kind === 'soon' && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token', ids.join());
-  check('a connector not ready yet is shown as soon and offers no action', registry.CONNECTORS.filter((c) => c.kind === 'soon').every((c) => !Object.keys(c.actions).length) && registry.get('drive').kind === 'google' && registry.get('sheets').kind === 'google', '');
-  check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.filter((c) => c.kind !== 'soon').every((c) => c.reads.length) && registry.get('todoist').does.length === 1 && Object.values(registry.get('todoist').actions).filter((a) => a.write).length === 1, '');
+  check('ids are unique and every connector has a name, icon, summary, category and kind', new Set(ids).size === ids.length && registry.CONNECTORS.every((c) => c.name && c.icon?.text && c.icon?.color && c.summary && registry.CATEGORIES.some((k) => k.id === c.category) && ['session', 'token', 'oauth', 'google', 'mcp'].includes(c.kind)), ids.join());
+  check('the asked-for categories exist (no empty Music one: there is no Spotify connector)', ['Mail and calendar', 'School', 'Files and docs', 'Work', 'Tasks'].every((l) => registry.CATEGORIES.some((k) => k.label === l)) && registry.CATEGORIES.length === 5 && registry.CATEGORIES.every((k) => registry.CONNECTORS.some((c) => c.category === k.id)), JSON.stringify(registry.CATEGORIES));
+  check('the set is Canvas, Gmail, Calendar, Drive, Sheets, GitHub, Todoist and Notion, all built in (their official MCP servers cost far more of every message, see registry.js); no coming-soon placeholders', ids.join() === 'canvas,gmail,gcal,drive,sheets,github,notion,todoist' && registry.CONNECTORS.every((c) => c.kind !== 'mcp') && registry.get('canvas').kind === 'session' && registry.get('github').kind === 'token' && !registry.get('slack') && !registry.get('spotify'), ids.join());
+  check('Drive and Sheets are Google connectors; GitHub, Notion and Todoist say their official MCP server can be added under Custom MCP servers for the full tool set', registry.get('drive').kind === 'google' && registry.get('sheets').kind === 'google' && ['github', 'notion', 'todoist'].every((id) => /Custom MCP servers/.test(registry.get(id).sessionNote) && /mcp/.test(registry.get(id).sessionNote)), '');
+  check('every connector says what it reads, and a connector that writes says what', registry.CONNECTORS.every((c) => c.reads.length) && registry.get('todoist').does.length === 1 && Object.values(registry.get('todoist').actions).filter((a) => a.write).length === 1, '');
   check('write actions are marked: Gmail create_draft and send (send is gated by Allow sending), Drive create_folder, upload and share_link, Sheets append and create, GitHub comment and create_issue, Notion create_page and append, Todoist add_task (no Calendar write: an iCal address is read-only)', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join() === 'gmail.create_draft,gmail.send,drive.create_folder,drive.upload,drive.share_link,sheets.append,sheets.create,github.comment,github.create_issue,notion.create_page,notion.append,todoist.add_task', registry.CONNECTORS.flatMap((c) => Object.entries(c.actions).filter(([, a]) => a.write).map(([n]) => `${c.id}.${n}`)).join());
 
   console.log('--- the one tool');
@@ -94,7 +94,23 @@ async function main() {
     connect: async () => { throw new Error('no client'); },
     disconnect: async () => { googleFake.disconnected = true; },
   };
-  const mcpFake = { servers: [], list() { return this.servers; }, save(input) { this.saved = input; this.servers = [{ id: 'srv1', name: input.name }]; return this.servers; }, remove(id) { this.removed = id; this.servers = []; return []; } };
+  // A stand-in for the MCP client: what the presets talk to (features/mcp-client.js is tested on its own in test/units/mcp-oauth-units.js).
+  const makeMcp = () => ({
+    servers: [], saved: [], signIns: [], refreshes: [], removed: [], outcome: {},
+    list() { return this.servers; },
+    set(id, patch) { this.servers = this.servers.map((x) => (x.id === id ? { ...x, ...patch } : x)); },
+    save(input) {
+      this.saved.push(input);
+      const old = input.id && this.servers.find((x) => x.id === input.id);
+      const row = { id: old?.id || `srv${this.saved.length}`, name: input.name, preset: input.preset || '', type: input.type, url: input.url || '', auth: input.auth || '', state: 'stopped', error: '', needsAuth: input.auth === 'oauth', authRefused: false, tools: [], alwaysAllow: [] };
+      this.servers = old ? this.servers.map((x) => (x.id === row.id ? row : x)) : [...this.servers, row];
+      return this.servers;
+    },
+    remove(id) { this.removed.push(id); this.servers = this.servers.filter((x) => x.id !== id); return this.servers; },
+    async signIn(id) { this.signIns.push(id); if (this.outcome.signIn) throw new Error(this.outcome.signIn); this.set(id, { state: 'ready', needsAuth: false, ...(this.outcome.after || { tools: [{ name: 'search', description: 'x' }, { name: 'create_task', description: 'y' }] }) }); return this.servers; },
+    async refresh(id) { this.refreshes.push(id); this.set(id, this.outcome.refresh || { state: 'ready', tools: [{ name: 'list_pull_requests', description: 'x' }] }); return this.servers; },
+  });
+  const mcpFake = makeMcp();
   const make = () => service.create({
     userData, secrets: fakeSecrets, fetch: trackedFetch,
     sessionFetch: (url, opts) => trackedFetch(url, { ...opts, headers: { ...opts.headers, ...(signedIn ? { Cookie: COOKIE } : {}) } }),
@@ -102,7 +118,7 @@ async function main() {
     detectHosts: async () => ['www.example.com', 'northeastern.instructure.com', 'canvas.other.edu'], google, mcp: mcpFake, onChange: () => changes.push(1), testLoopback: true,
   });
   let svc = make();
-  check('a fresh profile: nothing connected, the AI gets no tool, the page gets every card', !svc.hasAny() && svc.defs().length === 0 && svc.list().connectors.length === registry.CONNECTORS.length && svc.list().connectors.every((c) => (c.status === 'soon' ? c.statusText === 'Coming soon' : c.status === 'off' && c.statusText === 'Not connected')), JSON.stringify(svc.list().connectors.map((c) => c.status)));
+  check('a fresh profile: nothing connected, the AI gets no tool, the page gets every card', !svc.hasAny() && svc.defs().length === 0 && svc.list().connectors.length === registry.CONNECTORS.length && svc.list().connectors.every((c) => c.status === 'off' && c.statusText === 'Not connected'), JSON.stringify(svc.list().connectors.map((c) => c.status)));
   check('Canvas: the address is found from browsing, and only Canvas-looking hosts are offered', JSON.stringify(await svc.detect('canvas')) === '["northeastern.instructure.com","canvas.other.edu"]', JSON.stringify(await svc.detect('canvas')));
 
   // Canvas: a session connector
@@ -188,13 +204,42 @@ async function main() {
   await svc.disconnect('gmail');
   check('Gmail: the Google sign-in the widget made is left alone on disconnect (it is the widget’s)', googleFake.disconnected !== true, '');
 
-  // MCP preset
-  registry._testRegister({ id: 'fakemcp', name: 'Fake MCP', category: 'work', kind: 'mcp', icon: { text: 'F', color: '#000000' }, summary: 'x', mcp: { name: 'fakemcp', command: 'npx', args: ['-y', 'pinned-pkg@1.2.3'] }, fields: [{ id: 'FAKE_TOKEN', label: 'Token', secret: true }], reads: ['x'], does: [], actions: {} });
-  check('an MCP preset: the field is required', /token/i.test(await fails(() => svc.connect('fakemcp', { FAKE_TOKEN: '' }))), '');
-  await svc.connect('fakemcp', { FAKE_TOKEN: 'mcp-secret-value' });
-  check('an MCP preset: adds an MCP server (Tools from MCP servers) with the secret as its variable, keeps it out of connectors.json, and gives the AI no connector tool of its own', mcpFake.saved?.command === 'npx' && mcpFake.saved.env.some((e) => e.name === 'FAKE_TOKEN' && e.value === 'mcp-secret-value') && svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'connected' && !/fakemcp:/.test(svc.defs()[0].description) && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('mcp-secret-value'), JSON.stringify(mcpFake.saved));
+  // MCP presets (a card that adds a service's official MCP server; none ships today, so the tests register two): one with OAuth, one with a token header.
+  registry._testRegister({ id: 'tpoauth', name: 'Test OAuth', category: 'work', kind: 'mcp', icon: { text: 'O', color: '#000000' }, summary: 'x', mcp: { name: 'tpoauth', type: 'http', url: 'https://mcp.example.com/mcp', auth: 'oauth', source: 'https://example.com/docs' }, fields: [], reads: ['x'], does: [], actions: {} });
+  registry._testRegister({ id: 'tptoken', name: 'Test Token', category: 'work', kind: 'mcp', icon: { text: 'T', color: '#000000' }, summary: 'x', mcp: { name: 'tptoken', type: 'http', url: 'https://mcp2.example.com/mcp/', header: { name: 'Authorization', prefix: 'Bearer ' }, fixedHeaders: { 'X-MCP-Toolsets': 'issues' } }, fields: [{ id: 'secret', label: 'Personal access token', secret: true, pattern: 'github' }], reads: ['x'], does: [], actions: {} });
+  const cardOf = (id) => svc.list().connectors.find((c) => c.id === id);
+  const fileText = () => fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
+  check('a preset card starts Not connected, with a token field only where the server needs one', cardOf('tpoauth').status === 'off' && cardOf('tpoauth').oauth === true && !cardOf('tpoauth').fields.length && cardOf('tptoken').fields.length === 1 && cardOf('tptoken').oauth === false, JSON.stringify(cardOf('tptoken')));
+  await svc.connect('tpoauth', {});
+  check('an OAuth preset: one click adds its server (tagged with the card), signs in, and the card says Connected with the tool count', mcpFake.saved[0].url === 'https://mcp.example.com/mcp' && mcpFake.saved[0].auth === 'oauth' && mcpFake.saved[0].preset === 'tpoauth' && !mcpFake.saved[0].header && mcpFake.signIns.length === 1 && cardOf('tpoauth').statusText === 'Connected · 2 tools', JSON.stringify([mcpFake.saved[0], cardOf('tpoauth')]));
+  check('…its tools are on the card (Always allow off), the connector tool is unchanged and nothing about it is written to connectors.json', cardOf('tpoauth').mcp.tools.map((t) => t.name).join() === 'search,create_task' && cardOf('tpoauth').mcp.tools.every((t) => t.always === false) && !/tpoauth/.test(fileText()) && !/tpoauth:/.test(svc.defs()[0]?.description || ''), fileText());
+  mcpFake.outcome.signIn = 'Sign-in was canceled.';
+  mcpFake.servers = mcpFake.servers.filter((x) => x.name !== 'tpoauth');
+  check('a sign-in the user cancels says so, and leaves no server behind', /canceled/.test(await fails(() => svc.connect('tpoauth', {}))) && !mcpFake.servers.length && cardOf('tpoauth').status === 'off', JSON.stringify(mcpFake.servers));
+  mcpFake.outcome = {};
+  check('a token preset: the token is required and must look like one, before anything is added', /personal access token/i.test(await fails(() => svc.connect('tptoken', { secret: '' }))) && /doesn’t look like a GitHub token/.test(await fails(() => svc.connect('tptoken', { secret: 'hunter2' }))) && !mcpFake.servers.length, '');
+  mcpFake.outcome.refresh = { state: 'error', error: 'The server refused the request (401).', authRefused: true };
+  check('a well-formed token the server refuses is not kept (no server left, no secret saved)', /refused that token/.test(await fails(() => svc.connect('tptoken', { secret: TOKENS.github }))) && !mcpFake.servers.length && !fileText().includes(TOKENS.github), '');
+  mcpFake.outcome = {};
+  await svc.connect('tptoken', { secret: TOKENS.github });
+  const tp = mcpFake.saved.at(-1);
+  check('the token goes to the server as its Authorization header (Bearer) with the preset’s fixed headers, and is never in connectors.json or the list the page gets', tp.url === 'https://mcp2.example.com/mcp/' && tp.header.value === `Bearer ${TOKENS.github}` && !tp.auth && tp.fixedHeaders['X-MCP-Toolsets'] === 'issues' && cardOf('tptoken').statusText === 'Connected · 1 tool' && !fileText().includes(TOKENS.github) && !JSON.stringify(svc.list()).includes(TOKENS.github), JSON.stringify(tp));
+  const gid = mcpFake.servers.find((x) => x.name === 'tptoken').id;
+  mcpFake.set(gid, { state: 'error', authRefused: true, error: 'The server refused the request (401).' });
+  check('a token the server later refuses: the card says Token refused (Connect again)', cardOf('tptoken').status === 'bad-token' && cardOf('tptoken').statusText === 'Token refused', JSON.stringify(cardOf('tptoken')));
+  mcpFake.set(gid, { state: 'error', authRefused: false, needsAuth: true, error: 'Sign in to use this server.' });
+  check('a sign-in that ended: the card says Needs sign-in', cardOf('tptoken').status === 'needs-signin', JSON.stringify(cardOf('tptoken')));
+  mcpFake.set(gid, { state: 'error', needsAuth: false, error: 'The server answered 500.' });
+  check('any other failure is shown on the card with its reason', cardOf('tptoken').status === 'error' && /Couldn’t connect: The server answered 500/.test(cardOf('tptoken').statusText), JSON.stringify(cardOf('tptoken')));
+  mcpFake.set(gid, { state: 'ready', needsAuth: false, error: '' });
+  await svc.connect('tptoken', { secret: `ghp_${'B'.repeat(36)}` });
+  check('Connect again with a new token replaces the header on the same server (no second one)', mcpFake.servers.filter((x) => x.name === 'tptoken').length === 1 && mcpFake.saved.at(-1).id === gid && mcpFake.saved.at(-1).header.value === `Bearer ghp_${'B'.repeat(36)}`, JSON.stringify(mcpFake.saved.at(-1)));
+  await svc.disconnect('tptoken');
+  check('Disconnect removes the server (and with it the sign-in or token); the card goes back to Not connected', cardOf('tptoken').status === 'off' && !mcpFake.servers.length && mcpFake.removed.length >= 2, JSON.stringify(mcpFake.removed));
+  mcpFake.servers.push({ id: 'mine', name: 'tptoken', preset: '', type: 'http', url: 'https://x.example/mcp', auth: '', state: 'ready', error: '', needsAuth: false, authRefused: false, tools: [], alwaysAllow: [] });
+  check('a custom server already called the same is not taken over: the message says to remove or rename it', /Custom MCP servers/.test(await fails(() => svc.connect('tptoken', { secret: TOKENS.github }))), '');
   mcpFake.servers = [];
-  check('an MCP preset: removed in Tools from MCP servers, the card goes back to Not connected', svc.list().connectors.find((c) => c.id === 'fakemcp').status === 'off', '');
+  registry.CONNECTORS.splice(registry.CONNECTORS.findIndex((c) => c.id === 'tpoauth'), 2);
 
   // Loads again, and what the network saw
   svc = make();
@@ -231,7 +276,7 @@ async function main() {
   for (const id of ['canvas', 'todoist', 'notion', 'gcal']) await svc.disconnect(id);
   check('with everything disconnected the AI has no tool again, and the file holds no connector', !svc.hasAny() && svc.defs().length === 0 && JSON.stringify(JSON.parse(fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8')).connected) === '{}', fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8'));
   check('the page was told about every change', changes.length >= 10, String(changes.length));
-  check('a connector that is only coming soon can’t be connected', /isn’t available yet/.test(await fails(() => svc.connect('spotify', {}))), '');
+  check('an unknown service can’t be connected', /isn’t known/.test(await fails(() => svc.connect('spotify', {}))), '');
 
   // A shared sign-in (the GitHub card's) never replaces a token the connector was connected with.
   let cardInfo = null;

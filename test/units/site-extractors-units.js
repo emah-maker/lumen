@@ -151,7 +151,7 @@ const run = (url, table, o = {}) => { const r = router(table); return se.readSit
     const post = el({ 'post-title': 'DOM post', 'subreddit-name': 'rust', author: 'op', score: '42', 'comment-count': '3', 'created-timestamp': '2026-10-06T09:00:00.000Z', permalink: '/r/rust/comments/abc123/dom/', domain: 'self.rust' }, { '[slot="text-body"]': el({}, {}, 'dom selftext') });
     const c1 = el({ author: 'op', score: '5', thingid: 't1_a', depth: '0' }, { '[slot="comment"]': el({}, {}, 'first   comment') });
     const c2 = el({ author: 'zed', score: '2', thingid: 't1_b', depth: '1' }, { 'div[id*="richtext"]': el({}, {}, 'nested') });
-    const doc = { body: el({}, {}, 'x'), querySelector: (s) => (s === 'shreddit-post' ? post : null), querySelectorAll: (s) => (s === 'shreddit-comment' ? [c1, c2] : []) };
+    const doc = { body: el({}, {}, 'x'), querySelector: (s) => (s === 'shreddit-post' ? post : null), querySelectorAll: (s) => (s.startsWith('shreddit-comment') ? [c1, c2] : []) };
     const raw = se.redditPageProbe(doc);
     check('reddit page probe reads attrs and bodies', raw.post.title === 'DOM post' && raw.post.text === 'dom selftext' && raw.comments.length === 2 && raw.comments[0].text === 'first comment' && raw.comments[1].depth === '1', JSON.stringify(raw));
     const out = await se.readSiteInPage('https://www.reddit.com/r/rust/comments/abc123/dom/', async (code) => { new Function(`return ${code}`); return JSON.parse(JSON.stringify(raw)); }, { now: () => NOW });
@@ -160,6 +160,128 @@ const run = (url, table, o = {}) => { const r = router(table); return se.readSit
     check('reddit page without a post -> null (normal read)', gone === null);
     const sc = se.extractorFor('https://www.reddit.com/r/rust/').inPage;
     check('reddit inPage is a script string', typeof sc === 'string' && sc.includes('shreddit-post'));
+  }
+
+  // 4b) Reddit signed out, 2026-10 (live-checked): JSON is a 403 block page, old.reddit.com sends signed-out readers to a login page, and the
+  // rendered page's own data is what a normal browser sees. Shapes below are the probe's output on real pages, shortened and sanitized.
+  {
+    const T = (u) => se.redditTarget(u);
+    check('share link /r/x/s/id is a share target', T('https://www.reddit.com/r/programming/s/AbCdEfGh12')?.kind === 'share' && T('https://reddit.com/s/AbCdEfGh12')?.kind === 'share' && T('https://redd.it/1xeqtzb')?.kind === 'share');
+    check('share-link lookalikes are not', T('https://www.reddit.com/r/programming/s/') === null && T('https://www.reddit.com/r/programming/s/a') === null && T('https://redd.it/') === null && T('https://redd.it/a/b') === null);
+    const ut = T('https://www.reddit.com/user/spez/comments/1vgbkge/modernizing_reddits_infrastructure_with_you/');
+    check('a post on a user profile is a thread', ut?.kind === 'thread' && ut.path === '/user/spez/comments/1vgbkge/modernizing_reddits_infrastructure_with_you' && ut.focused === false, JSON.stringify(ut));
+    check('user comments tab is still a user page', T('https://www.reddit.com/user/spez/comments/')?.kind === 'user');
+    const reqs = se.redditRequests(ut);
+    check('profile thread feeds keep the path', /^https:\/\/www\.reddit\.com\/user\/spez\/comments\/1vgbkge\/modernizing_reddits_infrastructure_with_you\.json\?/.test(reqs[0].url), reqs[0].url);
+    check('old/np/m hosts are loaded as www, challenge params dropped', se.redditCanonicalUrl('https://old.reddit.com/r/programming/?sort=top') === 'https://www.reddit.com/r/programming/?sort=top'
+      && se.redditCanonicalUrl('https://www.reddit.com/search/?solution=ab&js_challenge=1&jsc_token=t&jsc_orig_r=&q=electron') === 'https://www.reddit.com/search/?q=electron'
+      && se.redditCanonicalUrl('https://example.com/x') === 'https://example.com/x');
+    check('cleanUrl only touches Reddit', se.cleanUrl('https://www.reddit.com/r/x/?js_challenge=1') === 'https://www.reddit.com/r/x/' && se.cleanUrl('https://news.ycombinator.com/item?id=1&solution=2') === 'https://news.ycombinator.com/item?id=1&solution=2');
+    check('the wall note tells the user what to do', /sign in to Reddit in Lumen/.test(se.redditWallNote) && se.extractorFor('https://www.reddit.com/r/x/').wallNote === se.redditWallNote);
+
+    // a share link: followed to its post, then read like any thread; sent to a login page / blocked -> null (the hidden view follows it)
+    const shareUrl = 'https://www.reddit.com/r/programming/s/AbCdEfGh12';
+    const canon = 'https://www.reddit.com/r/programming/comments/1wy7in8/elm/';
+    const viaShare = await run(shareUrl, { [shareUrl]: res(200, '<html></html>', { url: `${canon}?utm_source=share` }), 'https://www.reddit.com/r/programming/comments/1wy7in8/elm.json': res(200, JSON.stringify(thread)) });
+    check('share link: redirect followed, thread read', viaShare.out && viaShare.out.text.startsWith('Source: reddit (json)') && viaShare.calls[0].url === shareUrl, JSON.stringify(viaShare.calls.map((c) => c.url)));
+    const shareLogin = await run(shareUrl, { [shareUrl]: res(200, '<html></html>', { url: 'https://www.reddit.com/login/?dest=x' }) });
+    check('share link sent to a login page -> null, no feed requests', shareLogin.out === null && shareLogin.calls.length === 1);
+    const shareBlocked = await run(shareUrl, { [shareUrl]: res(403, HTML_BLOCK) });
+    check('share link blocked -> null', shareBlocked.out === null && shareBlocked.calls.length === 1);
+    const short = await run('https://redd.it/1wy7in8', { 'https://redd.it/1wy7in8': res(200, '', { url: canon }), 'https://www.reddit.com/r/programming/comments/1wy7in8/elm.json': res(200, JSON.stringify(thread)) });
+    check('redd.it short link read', short.out && /^Source: reddit/.test(short.out.text), short.out && short.out.text);
+
+    // the two goes: JSON first, the loaded page next, RSS last (RSS has no scores or nesting; the page has both)
+    {
+      const table = { 'https://www.reddit.com/r/programming/comments/1wy7in8/elm.json': res(403, HTML_BLOCK), 'https://www.reddit.com/r/programming/comments/1wy7in8/elm/.rss': res(200, threadRss) };
+      const first = await run(canon, table, { how: se.extractorFor(canon).feedsFirst });
+      check('feedsFirst asks the JSON only (blocked -> null, no RSS yet)', first.out === null && first.calls.length === 1 && /\.json\?/.test(first.calls[0].url), JSON.stringify(first.calls.map((c) => c.url)));
+      const last = await run(canon, table, { how: se.extractorFor(canon).feedsLast });
+      check('feedsLast reads the RSS feeds only', last.out && /^Source: reddit \(rss\)/.test(last.out.text) && last.calls.every((c) => /\.rss\?/.test(c.url)), JSON.stringify(last.calls.map((c) => c.url)));
+      check('other sites read every feed in one go', se.extractorFor('https://news.ycombinator.com/item?id=1').feedsFirst === undefined);
+    }
+
+    // a subreddit page with three server-rendered cards: the feed's own "more posts" address gives the rest
+    {
+      const few = { kind: 'feed', feedUrl: '/svc/shreddit/community-more-posts/hot/?name=programming', items: [1, 2, 3].map((n) => ({ type: 'post', title: `p${n}`, permalink: 'x' })) };
+      const rest = Array.from({ length: 24 }, (_, n) => ({ type: 'post', title: `q${n}`, permalink: 'y' }));
+      let asked = null;
+      const out = await se.expandRedditComments(few, async (code) => { asked = /\(document, (\[.*\])\)$/s.exec(code)[1]; return [{ i: 0, posts: rest }]; });
+      check('feed with few cards: the more-posts address is fetched', out.items.length === 24 && /"feed":true/.test(asked) && asked.includes('community-more-posts'), String(asked));
+      const same = await se.expandRedditComments(few, async () => { throw new Error('page gone'); });
+      check('feed expansion failing keeps the cards', same.items.length === 3);
+      const full = { kind: 'feed', feedUrl: 'x', items: rest.slice(0, 10) };
+      check('a full feed is not fetched again', (await se.expandRedditComments(full, async () => { throw new Error('no'); })) === full);
+    }
+
+    // the page probe on a feed: a subreddit's cards, a profile's comments, search cards (fake elements, real attribute names)
+    const el = (attrs, kids = {}, text = '', all = {}) => ({ tagName: attrs.__tag || '', getAttribute: (k) => (k in attrs ? attrs[k] : null), querySelector: (sel) => kids[sel] || null, querySelectorAll: (sel) => all[sel] || [], innerText: text, textContent: text, parentElement: attrs.__parent || null });
+    const card = (title, extra = {}) => el({ __tag: 'SHREDDIT-POST', 'post-title': title, 'subreddit-name': 'programming', author: 'someone', score: '470', 'comment-count': '67', 'created-timestamp': '2026-10-06T08:00:00.000Z', permalink: '/r/programming/comments/1xe7dp8/slug/', domain: 'example.com', 'view-context': 'SubredditFeed', ...extra });
+    const feedDoc = { location: { pathname: '/r/programming/' }, body: el({}, {}, ''), querySelector: (s) => (s === 'shreddit-post' ? card('x') : null), querySelectorAll: (s) => (/shreddit-post/.test(s) ? [card('First post'), card('Second post', { domain: 'self.programming', score: '12' })] : []) };
+    const feed = se.redditPageProbe(feedDoc);
+    check('page probe: a listing is a feed, not a thread', feed.kind === 'feed' && feed.items.length === 2 && feed.items[0].title === 'First post' && feed.items[0].permalink === 'https://www.reddit.com/r/programming/comments/1xe7dp8/slug/', JSON.stringify(feed));
+    const feedOut = se.formatRedditPage(feed, { now: NOW, url: 'https://www.reddit.com/r/programming/' });
+    check('page feed formatted like the other lists', /^Source: reddit \(page\)\n1\. First post — r\/programming · u\/someone · 470 pts · 67 comments · 4h ago · example\.com\n {3}https:\/\/www\.reddit\.com\/r\/programming\/comments\/1xe7dp8\/slug\/\n2\. Second post — r\/programming · u\/someone · 12 pts/.test(feedOut.text), feedOut.text);
+
+    const pc = (id, title, where, body) => el({ __tag: 'SHREDDIT-PROFILE-COMMENT', href: `/user/spez/comments/1vgbkge/comment/${id}/?context=3` }, { time: el({ datetime: '2026-08-05T17:30:18.963Z' }), '[id^="poster-info"] a': el({}, {}, 'spez'), '[data-testid="profile-name-anchor"]': el({}, {}, where), h2: el({}, {}, title), '[id$="rtjson-content"]': el({}, {}, body) });
+    const userDoc = { location: { pathname: '/user/spez/comments/' }, body: el({}, {}, ''), querySelector: () => null, querySelectorAll: (s) => (/shreddit-profile-comment/.test(s) ? [pc('p1', 'Modernizing Reddit', 'u/spez', 'That was   the thinking.'), pc('p2', 'Q2 earnings', 'r/RDDT', 'Thanks all')] : []) };
+    const user = se.redditPageProbe(userDoc);
+    const userOut = se.formatRedditPage(user, { now: NOW, url: 'https://www.reddit.com/user/spez/comments/' });
+    check('page probe: a profile comment list', user.kind === 'feed' && user.items[0].sub === 'u/spez' && user.items[1].sub === 'RDDT' && user.items[0].text === 'That was the thinking.', JSON.stringify(user));
+    check('profile comments: u/ communities not shown as r/u/', userOut.text.includes('1. [comment] u/spez in u/spez on "Modernizing Reddit"') && userOut.text.includes('2. [comment] u/spez in r/RDDT on "Q2 earnings"') && userOut.text.includes('https://www.reddit.com/user/spez/comments/1vgbkge/comment/p1/?context=3'), userOut.text);
+
+    const anchor = (href, title) => el({ 'data-testid': 'post-title', href }, {}, title);
+    const result = (href, title, community, time, counters) => {
+      const a = anchor(href, title);
+      const c = el({}, { 'a[data-testid="post-title"]': a, time: el({ datetime: time }), '[data-testid="search-counter-row"]': el({}, {}, counters) }, '', { a: [a, el({ href: `/r/${community}/` }, {}, `r/${community}`)] });
+      const comm = c.querySelectorAll('a')[1]; comm.innerText = `r/${community}`;
+      a.parentElement = c;
+      return a;
+    };
+    const anchors = [result('/r/browsers/comments/1xcnax1/arc/', 'Arc is gone', 'browsers', '2026-10-05T10:00:00.000Z', '680 votes·241 comments'), result('/r/electronjs/comments/1x1kp6b/cheeter/', 'Built a browser in Electron', 'electronjs', '2026-09-20T10:00:00.000Z', '0 votes·12 comments')];
+    const searchDoc = { location: { pathname: '/search/' }, body: el({}, {}, ''), querySelector: () => null, querySelectorAll: (s) => (s === 'a[data-testid="post-title"]' ? anchors : []) };
+    const sr = se.redditPageProbe(searchDoc);
+    const srOut = se.formatRedditPage(sr, { now: NOW, url: 'https://www.reddit.com/search/?q=electron+browser' });
+    check('page probe: search result cards', sr.kind === 'feed' && sr.items.length === 2 && sr.items[0].sub === 'browsers' && sr.items[0].comments === '241' && sr.items[0].permalink === 'https://www.reddit.com/r/browsers/comments/1xcnax1/arc/', JSON.stringify(sr));
+    check('search results formatted, with the query', srOut.title === 'Reddit search: "electron browser" (/search)' && srOut.text.includes('1. Arc is gone — r/browsers · 680 pts · 241 comments · 1d ago') && srOut.text.includes('2. Built a browser in Electron — r/electronjs · 0 pts · 12 comments'), JSON.stringify(srOut));
+    check('counters like 2.3k read as numbers', se.formatRedditPage({ kind: 'feed', items: [{ type: 'post', title: 't', sub: 's', score: '2.3k', comments: '1,234', ts: '', permalink: 'x' }] }, { now: NOW, url: 'https://www.reddit.com/search/?q=a' }).text.includes('2.3k pts · 1.2k comments'));
+    check('an empty feed page -> null (normal read)', se.formatRedditPage({ kind: 'feed', items: [] }, { now: NOW }) === null);
+    const none = se.redditPageProbe({ location: { pathname: '/r/secret/' }, body: el({}, {}, 'This community is private'), querySelector: () => null, querySelectorAll: () => [] });
+    check('page probe: a private community page is "gone"', none.gone === 'This community is private', JSON.stringify(none));
+
+    // a thread page with "more replies" buttons in between: they come out as placeholders in page order
+    const mk = (author, depth, text) => el({ author, thingid: `t1_${author}${depth}`, depth: String(depth), score: '3' }, { '[slot="comment"]': el({}, {}, text), time: el({ datetime: '2026-10-06T09:00:00.000Z' }) });
+    const btn = (depth, count, cursor) => el({ src: `/svc/shreddit/more-comments/spez/t3_1vgbkge?sort=CONFIDENCE&startingDepth=${depth}&seeker-session=true`, class: 'more-comments-partial' }, { 'input[name="cursor"]': { value: cursor } }, `${count} more replies`);
+    const threadPost = el({ 'post-title': 'Big thread', 'subreddit-name': 'u_spez', author: 'spez', score: '364', 'comment-count': '483', 'created-timestamp': '2026-08-05T16:03:56.264000+0000', 'view-context': 'CommentsPage', domain: 'self.spez' }, { '[slot="text-body"]': el({}, {}, 'body') });
+    const tdoc = { location: { pathname: '/user/spez/comments/1vgbkge/big/' }, body: el({}, {}, 'x'), querySelector: (s) => (s === 'shreddit-post' ? threadPost : null), querySelectorAll: (s) => (/shreddit-comment/.test(s) ? [mk('a', 0, 'top one'), btn(1, 16, 'CUR1'), mk('b', 0, 'top two'), btn(2, 3, 'CUR2')] : []) };
+    const tr = se.redditPageProbe(tdoc);
+    check('page probe: more-replies buttons are placeholders in page order', tr.kind === 'thread' && tr.comments.length === 4 && tr.comments[1].more === 16 && tr.comments[1].depth === 1 && tr.comments[1].cursor === 'CUR1' && tr.comments[1].src.startsWith('/svc/shreddit/more-comments/') && tr.comments[3].more === 3 && tr.comments[3].depth === 2, JSON.stringify(tr.comments));
+    const collapsed = se.formatRedditPage(tr, { now: NOW, maxChars: 8000, url: 'https://www.reddit.com/user/spez/comments/1vgbkge/big/' });
+    check('collapsed replies are counted in the view', collapsed.text.includes('[d1] +16 more replies') && collapsed.text.includes('[d2] +3 more replies') && collapsed.text.indexOf('top one') < collapsed.text.indexOf('+16 more') && collapsed.text.indexOf('+16 more') < collapsed.text.indexOf('top two'), collapsed.text);
+
+    // expanding them: the page fetches each button's partial (shallowest first); replies replace the button; one more round for nested buttons
+    const calls = [];
+    const fetchRun = async (code) => {
+      const m = /\(document, (\[.*\])\)$/s.exec(code);
+      const asked = JSON.parse(m[1]);
+      calls.push(asked.map((a) => `${a.i}:${a.cursor}`));
+      const reply = (author, depth) => ({ author, thingid: `t1_${author}`, depth: String(depth), score: '1', ts: '2026-10-06T09:30:00.000Z', text: `reply ${author}`, distinguished: '', op: false });
+      return asked.map((a) => ({ i: a.i, comments: a.cursor === 'CUR1' ? [reply('c', 1), { more: 2, depth: 2, src: '/svc/x?startingDepth=2', cursor: 'CUR3' }] : a.cursor === 'CUR3' ? [reply('e', 2)] : a.cursor === 'CUR2' ? [] : [] }));
+    };
+    const ex = await se.expandRedditComments(tr, fetchRun);
+    const order = ex.comments.map((c) => (c.more ? `+${c.more}` : c.author)).join(',');
+    check('expand: replies sit where their button was, nested buttons get a second round', order === 'a,c,e,b,+3' && calls.length === 2, `${order} ${JSON.stringify(calls)}`);
+    check('expand: shallowest buttons asked first', calls[0][0] === '1:CUR1', JSON.stringify(calls));
+    const broken = await se.expandRedditComments(tr, async () => { throw new Error('page gone'); });
+    check('expand: a failing fetch keeps the placeholders', broken.comments.length === 4 && broken.comments[1].more === 16);
+    check('expand: not a thread -> untouched', (await se.expandRedditComments(feed, fetchRun)) === feed);
+    // the in-page script is handed the same function: (document, more) fetches, (document) reads
+    check('inPage reads; the expansion script carries the function', /^\(function redditPageProbe/.test(se.extractorFor('https://www.reddit.com/r/x/').inPage) && /\(document\)$/.test(se.extractorFor('https://www.reddit.com/r/x/').inPage));
+    // only a budget with room for the replies pays for the fetches
+    let asks = 0;
+    const small = await se.readSiteInPage('https://www.reddit.com/user/spez/comments/1vgbkge/big/', async (code) => { if (/\(document, \[/.test(code)) { asks++; return []; } return JSON.parse(JSON.stringify(tr)); }, { now: () => NOW, maxChars: 8000 });
+    const large = await se.readSiteInPage('https://www.reddit.com/user/spez/comments/1vgbkge/big/', async (code) => { if (/\(document, \[/.test(code)) { asks += 10; return []; } return JSON.parse(JSON.stringify(tr)); }, { now: () => NOW, maxChars: 40000 });
+    check('replies are fetched only for a big budget', small && large && asks >= 10 && asks < 20, String(asks));
   }
 
   // 5) Hacker News

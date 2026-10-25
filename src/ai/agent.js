@@ -1528,20 +1528,42 @@ const readerPool = new ReaderPool({
 // the way a page read is sliced (page-health.js slicePage), with the same "next offset" note.
 const SITE_MAX_CHARS = siteExtractors.DEFAULT_MAX_CHARS;
 const SITE_PAGED_MAX = 120000; // the biggest view a later chunk renders
-async function readSiteNetwork(url, { maxChars = SITE_MAX_CHARS, offset = 0 } = {}) {
-  if (!siteExtractors.extractorFor(url)) return null;
+async function readSiteNetwork(url, { maxChars = SITE_MAX_CHARS, offset = 0, last = false } = {}) {
+  const ex = siteExtractors.extractorFor(url);
+  if (!ex) return null;
+  const how = last ? ex.feedsLast : ex.feedsFirst; // (undefined for a site that reads all its feeds in one go)
+  if (last && !how) return null;
   try {
     const ses = require('electron').session.fromPartition('claude-reader');
     const budget = offset > 0 ? Math.min(SITE_PAGED_MAX, offset + maxChars) : maxChars;
-    const site = await siteExtractors.readSite(url, { get: siteExtractors.makeGet((u, o) => ses.fetch(u, o)), maxChars: budget });
-    if (!site) return null;
-    if (!(offset > 0)) { // a view filled to its budget probably left something out: say how to get the rest
-      return site.text.length < maxChars * 0.9 ? site : { ...site, text: `${site.text}\n[view capped at ${maxChars} chars; for more call read_urls again with offset: ${site.text.length}]` };
-    }
-    const slice = pageHealth.slicePage(site.text, { maxChars, offset });
-    const source = site.text.split('\n', 1)[0]; // "Source: <site> (<how>)", kept on every chunk
-    return { ...site, text: [`${source} [continued]`, slice.text, slice.note].filter(Boolean).join('\n') };
+    const site = await siteExtractors.readSite(url, { get: siteExtractors.makeGet((u, o) => ses.fetch(u, o)), maxChars: budget, how });
+    return site ? pageSite(site, maxChars, offset) : null;
   } catch { return null; }
+}
+// Waits until a page has drawn its content: `script` returns how many items are on it; a page that draws more after it loads (`growth`)
+// is polled until the count stops
+// changing, any page until there is something to read. At most 3.5 s.
+async function settleCount(wc, script, growth) {
+  const until = Date.now() + 3500;
+  let last = -1;
+  let stable = 0;
+  while (Date.now() < until) {
+    const n = await pageReading.runIn(wc, script, 2000).catch(() => -1);
+    if (n > 0 && !growth) return;
+    stable = n > 0 && n === last ? stable + 1 : 0;
+    if (stable >= 2) return;
+    last = n;
+    await sleep(250);
+  }
+}
+// The chunk of a site view that was rendered with room for offset + maxChars (see above).
+function pageSite(site, maxChars, offset) {
+  if (!(offset > 0)) { // a view filled to its budget probably left something out: say how to get the rest
+    return site.text.length < maxChars * 0.9 ? site : { ...site, text: `${site.text}\n[view capped at ${maxChars} chars; for more call read_urls again with offset: ${site.text.length}]` };
+  }
+  const slice = pageHealth.slicePage(site.text, { maxChars, offset });
+  const source = site.text.split('\n', 1)[0]; // "Source: <site> (<how>)", kept on every chunk
+  return { ...site, text: [`${source} [continued]`, slice.text, slice.note].filter(Boolean).join('\n') };
 }
 
 // Loads a page in a hidden view (never shown, never in the tab strip) and returns its text.
@@ -1553,15 +1575,40 @@ async function readInBackground(url, guard = () => null, { wait, maxChars, offse
   const wc = entry.wc;
   let healthy = false;
   const redirects = guard(wc);
+  // [site extractors] a supported site whose feeds refused the read (Reddit: 403 / 429 for signed-out readers): the loaded page's own
+  // data. Reddit's old. / m. addresses send a signed-out reader to a login page, so the same path on www is loaded; a share link
+  // or short link is followed by the page load itself.
+  const siteEx = siteExtractors.extractorFor(url);
+  const target = siteEx?.canonicalUrl ? siteEx.canonicalUrl(url) : url;
   try {
-    await loadPage(wc, url, normalizeWait(wait));
+    await loadPage(wc, target, normalizeWait(wait));
     await redirects?.settle();
     await quietWait(wc);
+    if (siteEx?.inPage) {
+      const wait = siteEx.settle?.(url);
+      if (wait) await settleCount(wc, wait.script, wait.growth);
+      const room = maxChars || SITE_MAX_CHARS;
+      const at = offset > 0 ? Math.min(SITE_PAGED_MAX, offset + room) : room;
+      const here = wc.getURL() || target;
+      const site = await siteExtractors.readSiteInPage(here, (code) => pageReading.runIn(wc, code, 15000), { maxChars: at }).catch(() => null);
+      if (!site && siteEx.feedsLast) { // the page gave nothing: the feeds the first go left (Reddit's RSS)
+        const feed = await readSiteNetwork(url, { maxChars: room, offset: offset || 0, last: true });
+        if (feed) { healthy = true; return { url: siteExtractors.cleanUrl(here), title: feed.title, text: feed.text }; }
+      }
+      if (site) {
+        healthy = true;
+        const out = pageSite(site, room, offset || 0);
+        // a share link Reddit sent somewhere other than a post (expired, removed): the page read is not what was asked for, say so
+        const strayed = siteExtractors.redditTarget(url)?.kind === 'share' && siteExtractors.redditTarget(here)?.kind !== 'thread' ? `Note: ${url} is a share link that did not open a post (Reddit sent it to ${siteExtractors.cleanUrl(here)}); it may be expired or removed.\n` : '';
+        return { url: siteExtractors.cleanUrl(here), title: out.title, text: strayed + out.text };
+      }
+    }
     // The article as markdown when the page is one, else the visible text; health line, a note for the next chunk
     // (offset) and compact structured data around it (page-reading.js).
-    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset, requested: url });
+    const page = pageReading.finishRead(await pageReading.readBackground(wc), { maxChars, offset, requested: target });
     healthy = true;
-    return { url: wc.getURL() || url, title: page.title, text: page.text };
+    const wall = siteEx?.wallNote && page.health === 'wall' ? `\n${siteEx.wallNote}` : ''; // [site extractors] Reddit's own wall: say so plainly, with what the user can do
+    return { url: siteExtractors.cleanUrl(wc.getURL() || url), title: page.title, text: page.text + wall };
   } catch (err) {
     return { url, title: '', text: `Could not read this page: ${err.message}` };
   } finally {
@@ -5645,7 +5692,9 @@ ${prompt}` : prompt), historyImages: [] };
     if (external || !found || !this.projectAllows('mcp')) throw new Error(`Unknown tool: ${name}`);
     const holder = taintHolder(run);
     const tainted = Boolean(holder?.tainted) && holder.onlyFrom !== found.server;
-    if (tainted || !ext.isAlwaysAllowed(name)) {
+    // A read-only tool of an official preset (GitHub, Notion, Todoist) runs without a card, as the old connectors' reads did; the chat still counts as having read untrusted content after.
+    const autoRead = Boolean(ext.isReadOnlyPreset?.(name));
+    if (!autoRead && (tainted || !ext.isAlwaysAllowed(name))) {
       let args = JSON.stringify(input ?? {}, null, 2);
       if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
       const answer = await this.askApproval(`${found.server} › ${found.tool}`, emit, signal, { action: 'tool', who, title: `${who} wants to use ${found.tool} from ${found.server}`, args, tainted });
@@ -7090,8 +7139,8 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
         const plain = !input.mode && !input.text_offset && !input.element_offset && input.elements !== true && !input.selector && input.structured !== true;
         if (input.mode === 'site' || plain) {
           const url = wc.getURL();
-          const site = await siteExtractors.readSiteInPage(url, (code) => runScript(wc, code, 8000)).catch(() => null) || await readSiteNetwork(url);
-          if (site) return `<untrusted_page_content url="${url}">
+          const site = await siteExtractors.readSiteInPage(url, (code) => runScript(wc, code, 8000)).catch(() => null) || await readSiteNetwork(url) || await readSiteNetwork(url, { last: true });
+          if (site) return `<untrusted_page_content url="${siteExtractors.cleanUrl(url)}">
 Title: ${site.title}
 ${site.text}
 (Structured view of this site; read_page mode:"full" gives the raw page, mode:"compact" the [id] outline to click.)

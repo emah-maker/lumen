@@ -45,7 +45,8 @@ const nameOf = (deckUrl) => { try { return path.basename(fileURLToPath(deckUrl))
 const CACHE = new Map();
 const CACHE_MAX = 3;
 // { name, width, height, slides, media, mediaInfo, mediaAlias, warnings } or { name, error }. Errors never carry the path.
-async function loadDeck(deckUrl) {
+// first: only the first slide (a thumbnail: features/office-thumb.js), cached apart from the whole deck.
+async function loadDeck(deckUrl, { first = false } = {}) {
   const name = nameOf(deckUrl);
   let file;
   try { file = fileURLToPath(deckUrl); } catch { return { name, error: 'This address is not a file.' }; }
@@ -53,11 +54,11 @@ async function loadDeck(deckUrl) {
   try { stat = await fs.promises.stat(file); } catch { return { name, error: 'The file could not be found. It may have been moved or deleted.' }; }
   if (!stat.isFile()) return { name, error: 'This is not a file.' };
   if (stat.size > pptx.MAX_FILE_BYTES) return { name, error: 'This presentation is too large to open here.' };
-  const key = `${file.toLowerCase()}|${stat.size}|${stat.mtimeMs}`;
+  const key = `${file.toLowerCase()}|${stat.size}|${stat.mtimeMs}${first ? '|first' : ''}`;
   if (CACHE.has(key)) return CACHE.get(key);
   let result;
   try {
-    const deck = await pptx.parsePptx(await fs.promises.readFile(file));
+    const deck = await pptx.parsePptx(await fs.promises.readFile(file), first ? { maxSlides: 1 } : {});
     result = { name, width: deck.width, height: deck.height, slides: deck.slides, media: deck.media, mediaInfo: deck.mediaInfo, mediaAlias: deck.mediaAlias, warnings: deck.warnings, slideCount: deck.slideCount };
   } catch (err) {
     return { name, error: err instanceof pptx.PptxError ? err.message : 'The presentation could not be read.' };
@@ -106,18 +107,24 @@ async function metafilePngs(deck, { cacheDir, platform = process.platform, stats
 }
 
 function create({ cacheDir } = {}) {
-  async function render(wc, url) {
+  // thumb: the first slide only, and only the pictures it uses (features/office-thumb.js draws it in a hidden window).
+  async function render(wc, url, { thumb = false } = {}) {
     const deckUrl = deckUrlOf(url);
-    const data = deckUrl ? await loadDeck(deckUrl) : { name: 'Presentation', error: 'Only PowerPoint files (.pptx) on this computer can be shown here.' };
+    const data = deckUrl ? await loadDeck(deckUrl, { first: thumb }) : { name: 'Presentation', error: 'Only PowerPoint files (.pptx) on this computer can be shown here.' };
     if (wc.isDestroyed() || !sameViewerUrl(wc.getURL(), url)) return;
     // The deck's structure goes first (small), then the pictures one slice at a time, in the order the slides use them, with a turn of the
     // event loop between: 100 pictures are 10+ MB, and one call with all of them held the main process for 20 to 50 ms (stringify and send).
     const { media, ...structure } = data;
     let pictures = media ? Object.entries(media).filter(([, v]) => typeof v === 'string') : [];
+    if (thumb && pictures.length) { // (a part is named in the slide's JSON by its key: the rest of a big deck's pictures are not sent for one thumbnail)
+      const used = JSON.stringify(structure.slides || []);
+      const alias = structure.mediaAlias || {};
+      pictures = pictures.filter(([key]) => used.includes(JSON.stringify(key)) || Object.entries(alias).some(([from, to]) => to === key && used.includes(JSON.stringify(from))));
+    }
     // EMF and WMF go through Windows' own renderer (GDI+, in a hidden child process) while the slides and the other pictures are sent; each one the
     // page would otherwise draw itself (EMFJS) is sent after the rest, as a PNG when Windows drew it, as it is when not.
     const vector = ([, v]) => /^data:image\/x-(emf|wmf);/.test(v);
-    const gdi = pictures.some(vector) ? metafilePngs(data, { cacheDir }).catch(() => ({})) : null;
+    const gdi = pictures.some(vector) ? metafilePngs(thumb ? { ...data, media: Object.fromEntries(pictures) } : data, { cacheDir }).catch(() => ({})) : null;
     if (gdi) pictures = [...pictures.filter((e) => !vector(e)), ...pictures.filter(vector)];
     const alive = () => !wc.isDestroyed() && sameViewerUrl(wc.getURL(), url);
     const call = (code) => wc.executeJavaScript(code).catch(() => {});
@@ -149,7 +156,7 @@ function create({ cacheDir } = {}) {
     wc.executeJavaScript('window.lumenPresent && window.lumenPresent()', true).catch(() => {});
     return true;
   }
-  return { attach, openInPlace, present };
+  return { attach, openInPlace, present, render };
 }
 
 module.exports = { create, metafilePngs, pictureSizes, VIEWER_URL, isViewerUrl, deckUrlOf, viewerUrl, displayUrl, isLocalPptx, shouldOpenInPlace, shouldOpenFinished, loadDeck, loadSlideTexts, nameOf };

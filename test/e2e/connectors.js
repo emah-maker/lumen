@@ -1,5 +1,6 @@
 // Connectors in Lumen (features/connectors/, agent.js `connector` tool, Settings → You and AI → Connectors), with no real network:
 // stand-in Canvas, GitHub and Todoist on 127.0.0.1 (test/fixtures/fake-connectors.js), a fake model in place of Claude.
+//  - the settings page is one page: the gallery, with a "Custom MCP servers" section under it (no second MCP page, no coming-soon cards);
 //  - the settings page shows the gallery; connecting Canvas (the signed-in session), GitHub and Todoist (a pasted token) works from it;
 //  - the token on disk is encrypted, and the page never gets it back;
 //  - connected, the AI has ONE `connector` tool listing just those apps; a read returns the data with a readable step label and no card;
@@ -9,6 +10,7 @@
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const { startFakes, TOKENS } = require('../fixtures/fake-connectors');
@@ -17,6 +19,28 @@ const { openSettingsTab } = require('../helpers/settings-tab');
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 700)}`}`); };
 const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; for (;;) { const v = await fn(); if (v || Date.now() > end) return v; await new Promise((r) => setTimeout(r, 100)); } };
+
+// A stand-in streamable-HTTP MCP server (one tool, bearer token "tok") that records the methods it is asked.
+function mcpServer() {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.method === 'DELETE') { res.writeHead(204); res.end(); return; }
+      if (req.headers.authorization !== 'Bearer tok') { res.writeHead(401); res.end(); return; }
+      const msg = JSON.parse(body);
+      seen.push(msg.method);
+      if (msg.id === undefined) { res.writeHead(202); res.end(); return; }
+      const reply = (result) => { res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'sess-1' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result })); };
+      if (msg.method === 'initialize') return reply({ protocolVersion: msg.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 's', version: '1' } });
+      if (msg.method === 'tools/list') return reply({ tools: [{ name: 'shout', description: 'Upper-cases text.', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } }] });
+      if (msg.method === 'tools/call') return reply({ content: [{ type: 'text', text: String(msg.params.arguments.text || '').toUpperCase() }] });
+      res.writeHead(404); res.end();
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, seen, url: `http://127.0.0.1:${server.address().port}/mcp` })));
+}
 
 async function main() {
   const fakes = await startFakes();
@@ -45,10 +69,12 @@ async function main() {
     await waitFor(async () => (await inSettings("document.querySelectorAll('[data-connector]').length")) > 5);
     const gallery = await inSettings("JSON.stringify({ cats: [...document.querySelectorAll('.conn-cat h3')].map((h) => h.textContent), cards: [...document.querySelectorAll('[data-connector]')].map((c) => [c.dataset.connector, c.dataset.status, c.querySelector('.conn-status')?.textContent, c.querySelector('button')?.textContent]) })");
     const g = JSON.parse(gallery);
-    check('settings: a gallery grouped by Mail and calendar, School, Files and docs, Work, Tasks, Music', g.cats.join() === 'Mail and calendar,School,Files and docs,Work,Tasks,Music', gallery);
-    check('settings: every card starts Not connected with a Connect button; the unfinished ones say Coming soon', g.cards.find((c) => c[0] === 'canvas')?.slice(1).join('|') === 'off|Not connected|Connect' && g.cards.find((c) => c[0] === 'github')?.[2] === 'Not connected' && g.cards.find((c) => c[0] === 'drive')?.[2] === 'Not connected' && g.cards.find((c) => c[0] === 'sheets')?.[2] === 'Not connected' && g.cards.find((c) => c[0] === 'slack')?.[2] === 'Coming soon' && g.cards.find((c) => c[0] === 'spotify')?.[3] === 'Coming soon', gallery);
+    check('settings: a gallery grouped by Mail and calendar, School, Files and docs, Work, Tasks, then Custom MCP servers in the same page (no Music)', g.cats.join() === 'Mail and calendar,School,Files and docs,Work,Tasks,Custom MCP servers', gallery);
+    check('settings: every card starts Not connected with a Connect button, and nothing says coming soon (Slack and Spotify are gone)', g.cards.find((c) => c[0] === 'canvas')?.slice(1).join('|') === 'off|Not connected|Connect' && ['github', 'notion', 'todoist', 'drive', 'sheets'].every((id) => g.cards.find((c) => c[0] === id)?.[2] === 'Not connected') && !g.cards.some((c) => ['slack', 'spotify'].includes(c[0])) && !/coming soon/i.test(await inSettings("document.getElementById('ai-connectors').textContent")), gallery);
     const permsText = await inSettings("(document.querySelector('[data-connector=todoist] .conn-details')?.textContent || '')");
     check('settings: a card says exactly what the AI can read and do before anything is connected', /Your tasks and projects/.test(permsText) && /Add a task \(asks you first\)/.test(permsText) && /Disconnect deletes it/.test(permsText), permsText);
+    const notes = JSON.parse(await inSettings("JSON.stringify(Object.fromEntries(['github', 'notion', 'todoist'].map((id) => [id, document.querySelector('[data-connector=' + id + '] .conn-details')?.textContent || ''])))"));
+    check('settings: the custom MCP servers are inside the Connectors page (one list), there is no second page for them, and GitHub, Notion and Todoist say their official MCP server can be added there', (await inSettings("Boolean(document.querySelector('#ai-connectors #ai-mcp-servers #mcp-server-add')) && !document.querySelector('[data-sub=mcp-servers]') && !document.getElementById('sub-mcp-servers')")) === true && Object.values(notes).every((t) => /official MCP server/.test(t) && /Custom MCP servers/.test(t)), JSON.stringify(notes));
     check('nothing is connected yet, so the AI is offered no connector tool', await app.evaluate(() => global.__connectors.defs().length === 0 && !global.__mcpTools.map((t) => t.name).includes('connector')), '');
 
     // One sidebar run with a fake Claude asking for `toolUses` in order; every card gets `answer`.
@@ -208,6 +234,21 @@ async function main() {
     check('…its write shows the card (even with Bypass permissions on, and with no Always allow) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.noAlways === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
     const cliAllowed = await cli(true);
     check('…and allowing the card adds the task', !cliAllowed.write?.isError && /Added: \d+\s+From the CLI/.test(cliAllowed.write.text) && posts() === before + 1, JSON.stringify(cliAllowed.write));
+
+    console.log('--- Custom MCP servers, in the same page');
+    const mcp = await mcpServer();
+    await inSettings("document.getElementById('mcp-server-add').click(); true");
+    await waitFor(async () => (await inSettings("Boolean(document.getElementById('mcp-form-type'))")) === true);
+    await inSettings(`(() => { const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('change')); }; set('mcp-form-type', 'http'); set('mcp-form-name', 'mine'); set('mcp-form-url', ${JSON.stringify(mcp.url)}); set('mcp-form-header-name', 'Authorization'); set('mcp-form-header-value', 'Bearer tok'); document.getElementById('mcp-form-save').click(); return true; })()`);
+    check('a server added under Custom MCP servers is listed in the same page, with Edit, Remove and a switch', await waitFor(async () => (await inSettings("Boolean(document.querySelector('#ai-connectors #mcp-servers [data-mcp-server=mine] .switch'))")) === true), await inSettings("document.getElementById('mcp-servers')?.outerHTML.slice(0, 300)"));
+    const withMcp = await run({ toolUses: [] });
+    check('its tools reach the model beside the one connector tool', await app.evaluate(async () => (await global.__mcpClient.tools()).defs.some((d) => d.name === 'mine__shout')) && withMcp.requests[0]?.length === 1, JSON.stringify(withMcp.requests));
+    const mineCall = await run({ toolUses: [{ name: 'mine__shout', input: { text: 'hi' } }], answer: false });
+    check('…a call to one asks on a card, and denying it sends nothing to that server', mineCall.events.some((e) => e.type === 'approval' && /mine/.test(e.title)) && mineCall.results[0]?.error && !mcp.seen.includes('tools/call'), JSON.stringify(mineCall.results));
+    await inSettings("document.querySelector('#mcp-servers [data-mcp-server=mine] .item button:nth-of-type(3)')?.click(); true"); // Remove (confirm is stubbed)
+    check('Remove takes it out of the list and the model’s tools', await waitFor(async () => (await inSettings("Boolean(document.querySelector('#mcp-servers [data-mcp-server=mine]'))")) === false) && !(await app.evaluate(async () => (await global.__mcpClient.tools()).defs.some((d) => d.name === 'mine__shout'))), '');
+    mcp.server.closeAllConnections?.();
+    mcp.server.close();
 
     console.log('--- disconnect');
     await inSettings("window.confirm = () => true; document.getElementById('conn-github-disconnect').click(); true");

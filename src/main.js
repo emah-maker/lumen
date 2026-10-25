@@ -78,6 +78,9 @@ const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const windowClose = lazy(() => require('./features/window-close')); // [window close] the last-tab rule and the window-events.jsonl breadcrumb
+let windowLog = null;
+const logWindowEvent = (entry) => { try { windowLog ||= windowClose.createLog({ dir: () => path.join(app.getPath('userData'), 'diagnostics'), version: app.getVersion() }); windowLog(entry); } catch { /* diagnostics only */ } };
 const importer = lazy(() => require('./browser/importer'));
 // [diagnostics] Settings > Advanced > Record tab-switch timings (features/switch-timing.js). Off by default: the module is not even loaded until the setting is on.
 const switchTiming = lazy(() => require('./features/switch-timing').create({
@@ -154,6 +157,9 @@ const slidesViewer = require('./features/slides-viewer'); // PowerPoint decks (.
 const slidesRt = slidesViewer.create({ cacheDir: path.join(app.getPath('userData'), 'slides-picture-cache') });
 const emlViewer = require('./features/eml-viewer'); // saved emails (.eml) shown in a tab (renderer/eml.html)
 const emlRt = emlViewer.create();
+// Word and Excel files in a tab (renderer/office.html) and the first-page thumbnails of Word, Excel and PowerPoint files: loaded on first use (the address checks every tab needs are in file-tabs.js)
+const officeViewer = lazy(() => require('./features/office-viewer'));
+const officeThumbs = lazy(() => require('./features/office-thumb').create({ BrowserWindow, cacheDir: path.join(app.getPath('userData'), 'office-thumb-cache'), encrypt: (text) => safeStorage.encryptString(text).toString('base64'), decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')), available: () => safeStorage.isEncryptionAvailable(), officeRender: (wc, url, o) => officeViewer.render(wc, url, o), slidesRender: (wc, url, o) => slidesRt.render(wc, url, o) }));
 const sessionFiles = require('./features/session-files'); // file tabs in the saved session, and the "moved or deleted" page
 const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
 const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
@@ -195,7 +201,7 @@ const translate = require('./features/translate').createTranslate({
   popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
   openUrl: (tab, url) => tab.view.webContents.loadURL(url).catch(() => {}),
 });
-const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || emlViewer.isViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
+const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || emlViewer.isViewerUrl(url) || fileTabs.isOfficeViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
 const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings > Tabs > Page unloading: When you return to one)
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
@@ -293,7 +299,7 @@ const UI_ONLY_IPC = new Set([
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
-  'uploads:stash', 'uploads:discard', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
+  'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo',
@@ -313,7 +319,7 @@ const UI_ONLY_IPC = new Set([
   'agent:helper-stop', // the Stop button on a helper card in the chat (the chat page has it too: CHAT_IPC)
   'desktop:open', 'desktop:control', // [desktop apps] the Computer card's Open, Resume and Stop (the chat page has them too: CHAT_IPC)
   'passwords:act', // [passwords] the save bar and the key button (features/passwords.js)
-  'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
+  'files:list', 'files:pin', 'files:unpin', 'files:remove', 'files:clear', 'files:open-entry', 'files:show', 'files:find', 'files:relocate', 'files:search', 'files:attach', 'files:scan', 'files:restore', 'files:thumb', // [files] pinned and recent files, the picker (features/files.js; files:open is the dropped files above)
   ...require('./features/background-runner').CHANNELS, // background tasks
   'mission:open', // lumen://tasks from the Tasks panel and the More menu (the page itself is checked in its handlers)
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
@@ -716,7 +722,7 @@ const dialogs = createDialogs({
 const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
 if (TEST) {
   global.__dialogs = dialogs;
-  global.__closeTabInteractive = (id) => requestCloseTab(id);
+  global.__closeTabInteractive = (id) => { const found = tabAnywhere(id); withWindow(found?.rec, () => requestCloseTab(id)); }; // (in the tab's own window, whichever is current)
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
@@ -2136,7 +2142,7 @@ function tabState() {
       return {
         id: t.id,
         title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
-        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : emlViewer.isViewerUrl(url) ? emlViewer.displayUrl(url) : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
+        url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : emlViewer.isViewerUrl(url) ? emlViewer.displayUrl(url) : fileTabs.isOfficeViewerUrl(url) ? fileTabs.officeUrlOf(url) || '' : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
         favicons: t.favicons || (t.favicon ? [t.favicon] : []), // every candidate: the strip falls back through them
@@ -2908,6 +2914,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   pageTools.attach(tab);
   emlRt.attach(tab); // a saved email gets its content once loaded (features/eml-viewer.js)
   slidesRt.attach(tab); // the slide viewer gets its deck once loaded (features/slides-viewer.js)
+  wc.on('did-finish-load', () => { const url = wc.getURL(); if (fileTabs.isOfficeViewerUrl(url)) officeViewer.render(wc, url).catch(() => {}); }); // a Word or Excel file gets its content once loaded (features/office-viewer.js)
   pdfRt.attach(tab); // a PDF's address goes to Lumen's PDF viewer (features/pdf-viewer.js)
   translate.attach(tab);
   passwordsRt?.attach(tab); // [passwords] offers to save a sign-in; features/passwords.js decides which tabs
@@ -3019,7 +3026,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // A PDF or a local deck goes straight to its viewer: loading the file first and swapping once that navigation starts left a cancelled load
     // (and now and then a renderer that failed to start: "binding.startupData is null") behind.
     const absent = sessionFiles.loadTarget(url, ERROR_URL, fs.existsSync); // a file that is not there (moved, deleted): the page that says so, not a blank viewer
-    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : emlViewer.isLocalEml(url) ? emlViewer.viewerUrl(url) : url;
+    const first = absent !== url ? absent : pdfViewer.shouldRoute({ url, setting: pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) }) ? pdfViewer.viewerUrl(url) : slidesViewer.isLocalPptx(url) ? slidesViewer.viewerUrl(url) : emlViewer.isLocalEml(url) ? emlViewer.viewerUrl(url) : fileTabs.isLocalOffice(url) ? fileTabs.officeViewerUrl(url) : url;
     if (tab.rec?.agent && first === 'about:blank') {
       // [agent window] The blank first tab loads in a turn of its own (~4 ms of the main process, stacked on the tab's other work it was a 10 ms stall); unless the agent has already sent it somewhere.
       let moved = false;
@@ -3964,6 +3971,7 @@ function leaveAiGroup(tab) {
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
+  const tabsBefore = { all: tabs.length, closing: tabs.filter((x) => x.closing).length, asleep: tabs.filter((x) => x.sleeping).length, hiddenAi: tabs.filter((x) => aiTabHidden(x)).length, aiClosing: Boolean(tabs[index].aiClosing) };
   if (chatFullTab === id) chatFullTab = null;
   const mate = tabs[index].split ? splitPartner(tabs[index]) : null; // [split view] the other side of its pair stays, and takes the page area
   if (tabs[index].split) splitLayout.unlink(tabs, id);
@@ -3998,8 +4006,9 @@ function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
     // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
     // Nor to "Close them" / Close tabs the AI opened (tab.aiClosing): those close the AI's tabs, not the user's window,
     // even when they were all the window had. (An agent's own window still goes with its last tab.)
-    if ((user || tab.closing) && !(tab.aiClosing && !user && !curRec?.agent)) {
+    if (windowClose.lastTabClosesWindow({ user, closing: tab.closing, aiClosing: tab.aiClosing, agent: Boolean(curRec?.agent) })) {
       const rec = curRec;
+      rec.closeWhy = { reason: curRec?.agent ? 'agent-last-tab' : 'user-closed-last-tab', via: user ? 'direct' : 'requestCloseTab', destroyed, tabsBefore }; // (read by the window's 'close' event: the breadcrumb)
       sendTabs();
       try { rec.win.hide(); } catch {}
       setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
@@ -4066,6 +4075,7 @@ const CLOSE_TIMEOUT_MS = 3000;
 // over what the user is doing): the tab simply stays open and the tool tells the AI the page blocked it.
 function agentRequestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
+  if (tab && !alive(tab)) { tab.aiClosing = true; requestCloseTab(id); tab.aiClosing = false; return; } // (a sleeping tab goes at once; marked the AI's for that close, so it never takes the window with it)
   if (!alive(tab)) { requestCloseTab(id); return; }
   tab.aiClosing = true;
   requestCloseTab(id);
@@ -5288,8 +5298,14 @@ const downloads = createDownloads({
   // a .pptx downloaded from the web is saved as usual, then opens in a new tab beside the one it came from (not after Save Link As).
   openInstead: (item, contents) => {
     const mail = emlViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() });
-    if (!mail && !slidesViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() })) return false;
+    const office = fileTabs.shouldOpenOfficeInPlace({ url: item.getURL(), filename: item.getFilename() }); // a local Word or Excel file: its own viewer
+    if (!mail && !office && !slidesViewer.shouldOpenInPlace({ url: item.getURL(), filename: item.getFilename() })) return false;
     const tab = contents && tabByContents(contents);
+    if (office) { // (a tick later, as for an email: the download that brought us here is still being cancelled)
+      if (tab) setImmediate(() => { if (!contents.isDestroyed()) contents.loadURL(fileTabs.officeViewerUrl(item.getURL())).catch(() => {}); });
+      else openTab(fileTabs.officeViewerUrl(item.getURL()));
+      return true;
+    }
     if (tab) return mail ? emlRt.openInPlace(contents, item.getURL()) : slidesRt.openInPlace(contents, item.getURL());
     openTab(mail ? emlViewer.viewerUrl(item.getURL()) : slidesViewer.viewerUrl(item.getURL()));
     return true;
@@ -5301,6 +5317,8 @@ const downloads = createDownloads({
     if (entry.contents && !from) return; // a private window's, a research tab's or a background download: not opened here
     openTab((mail ? emlViewer : slidesViewer).viewerUrl(pathToFileURL(entry.path).href), { openerId: from?.id ?? null });
   },
+  thumb: (file) => officeThumbs.thumbOf(file), // the panel row of a finished Word, Excel or PowerPoint file shows its first page (features/office-thumb.js)
+  onPreview: (file) => { openTab(/\.pptx$/i.test(file) ? slidesViewer.viewerUrl(pathToFileURL(file).href) : fileTabs.officeViewerUrl(pathToFileURL(file).href)); }, // its Preview button: Lumen's own viewer in a tab
   // A click on a finished .eml in the downloads panel (or the downloads menu) opens it in a Lumen tab, not in whatever program the system has for it.
   openLocal: (file) => {
     if (!emlViewer.shouldOpenFinished({ path: file })) return false;
@@ -5607,6 +5625,16 @@ function showContextMenu(wc, p) {
 
 // ---------- shortcuts (work whether focus is in the UI or a tab) ----------
 
+// Ctrl/Cmd+W and Ctrl+F4 close the tab in front, once per press: a held key (auto-repeat) or the same press reported twice (two listeners on one
+// key) would otherwise close it and then the tab that took its place, and a window's last tab with them.
+let lastKeyClose = 0;
+function closeFrontTabByKey(input) {
+  if (input?.isAutoRepeat) return;
+  const now = Date.now();
+  if (now - lastKeyClose < 100) return;
+  lastKeyClose = now;
+  if (activeId) requestCloseTab(activeId);
+}
 function handleShortcut(event, input) {
   if (input.type !== 'keyDown') return;
   const key = shortcutKey(input); // (the physical key with Ctrl / Cmd / Alt held, so Ctrl+W works on a Russian or Greek layout too)
@@ -5615,7 +5643,7 @@ function handleShortcut(event, input) {
   let handled = true;
   if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
   const extra = extraShortcut(input);
-  if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
+  if (extra && runExtraShortcut(extra, wc, input)) { event.preventDefault(); return; }
   // The full-page chat's own keys (renderer/chat-page.js listens): Ctrl+Shift+S folds or opens the chat list, Ctrl+Shift+O starts a new chat.
   if (mod && input.shift && !input.alt && (key === 's' || key === 'o') && wc && activeTabIsChatPage()) { wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: '${key === 's' ? 'rail' : 'new'}' }))`).catch(() => {}); event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
@@ -5630,7 +5658,7 @@ function handleShortcut(event, input) {
   else if (mod && !input.shift && !input.alt && key === 'n') openNewWindow();
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
-  else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
+  else if (mod && key === 'w') closeFrontTabByKey(input);
   else if (mod && key === 'l') focusAddress();
   else if (mod && !input.shift && !input.alt && key === 'k') openCommandBar(); // the command bar (a page that uses Ctrl+K itself keeps it: page-first-keys.js)
   else if (mod && !input.shift && !input.alt && key === 'e') focusAddress(); // Chrome's "search from the address bar"
@@ -5687,9 +5715,9 @@ function openFindBar() {
 }
 
 // F6 / Alt+D, F3 / Ctrl+G, Ctrl+F4 (browser/shortcut-mod.js extraShortcut). False: not ours here, the key goes on to the page.
-function runExtraShortcut(action, wc) {
+function runExtraShortcut(action, wc, input) {
   if (action === 'focus-address') { focusAddress(); return true; }
-  if (action === 'close-tab') { if (activeId) requestCloseTab(activeId); return true; }
+  if (action === 'close-tab') { closeFrontTabByKey(input); return true; }
   // Find next / previous: opens the find bar when it is closed. The PDF viewer and Settings have their own find.
   if (pdfViewer.isViewerUrl(wc?.getURL()) || tabs.find((t) => t.id === activeId)?.settings) return false;
   ui()?.focus();
@@ -7078,7 +7106,7 @@ function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false,
   chatTabMoved(tabId, dst); // [chat per tab] its chat, and a task working in it, go along
   enterWindow(dst);
   if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
-  if (!keepSrc && !tabsOf(src).length) src.win.close(); // it just lost its last tab
+  if (!keepSrc && !tabsOf(src).length) { src.closeWhy = { reason: 'tab-moved-out' }; src.win.close(); } // it just lost its last tab
   return true;
 }
 // Several tabs at once (a multi-selection, a group), in the order given, from `index` on (the end if none);
@@ -7122,7 +7150,7 @@ function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], 
   if (!moved.length) return false;
   enterWindow(dst);
   if (focus) dst.win.focus();
-  if (rcAlive(src) && !tabsOf(src).length) src.win.close();
+  if (rcAlive(src) && !tabsOf(src).length) { src.closeWhy = { reason: 'tabs-moved-out' }; src.win.close(); }
   return true;
 }
 // The first index at or after `at` that isn't between two tabs of one group (in the current window).
@@ -8230,6 +8258,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
   for (const ev of ['restore', 'show']) w.on(ev, () => withWindow(rec, () => pokePdf(tabs.find((t) => t.id === activeId)))); // (a restored window: the PDF in front draws again)
   w.on('close', () => {
+    const why = rec.closeWhy; rec.closeWhy = null;
+    if (!quitting) logWindowEvent({ event: 'window-closed', reason: why?.reason || 'window-button-or-menu', windows: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).length, tabsNow: tabsOf(rec).length, agent: Boolean(rec.agent), spare: isSpare(rec), ...(why ? { via: why.via, destroyed: why.destroyed, tabsBefore: why.tabsBefore } : {}) }); // (no reason noted: the window's own close button, Alt+F4, File → Close Window, or a close from code)
     if (quitting) return;
     const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
     if (several && !rec.agent && !isSpare(rec) && !rec.mergedAway && !rec.pendingRestore) { // kept for Reopen Closed Window (Ctrl+Shift+T)
@@ -8761,6 +8791,8 @@ const mcpClient = require('./features/mcp-client').create({
     encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
     decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
   },
+  // A sign-in page opens in the user's own browser, never in a Lumen tab: https only (a test may also open its stand-in on 127.0.0.1).
+  openExternal: (url) => { if (!String(url).startsWith('https://') && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(String(url)))) throw new Error('Refusing to open that address.'); if (TEST && global.__mcpSignInOpen) return global.__mcpSignInOpen(String(url)); return shell.openExternal(String(url)); },
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
@@ -10277,6 +10309,7 @@ function fileTabUrl(file) {
   if (/\.pdf$/i.test(file)) return pdfViewer.viewerUrl(href);
   if (emlViewer.shouldOpenInPlace({ url: href, filename: file })) return emlViewer.viewerUrl(href);
   if (slidesViewer.shouldOpenInPlace({ url: href, filename: file })) return slidesViewer.viewerUrl(href);
+  if (fileTabs.shouldOpenOfficeInPlace({ url: href, filename: file })) return fileTabs.officeViewerUrl(href);
   return href;
 }
 const filesShell = (name, p) => (TEST && global.__filesShell ? global.__filesShell(name, p) : name === 'show' ? shell.showItemInFolder(p) : shell.openPath(p)); // tests do not start the OS's programs
@@ -10312,6 +10345,7 @@ const filesApi = () => (filesRt ||= require('./features/files').create({
   },
   send: (channel, payload) => { ui()?.send(channel, payload); },
   broadcast: filesBroadcast,
+  thumb: (p) => officeThumbs.thumbOf(p), // a Word, Excel or PowerPoint file's first page, for the picker and the new-tab card's preview
   // The picker's "Search Documents, Desktop and Downloads" (a click by the user, so no AI-access setting): these folders when they exist,
   // minus what the AI's file access keeps out of reach too (credentials folders, Lumen's own profile).
   scanRoots: () => {
@@ -10342,7 +10376,7 @@ setTimeout(() => { fs.promises.access(path.join(app.getPath('userData'), 'files.
 app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* nothing pending */ } });
 {
   // (the same names as files.js OPS / channelFor, spelled here so this file need not load it at start-up)
-  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'];
+  const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'thumb', 'scan', 'restore'];
   const CHANNELS = { ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`), newtab: (op) => `newtab-files:${op}`, settings: (op) => `settings:files-${op}` };
   const newTabSender = (event) => event.senderFrame === event.sender.mainFrame && isNewTab(event.senderFrame?.url || '') && Boolean(recOfSender(event.sender));
   for (const [kind, name] of Object.entries(CHANNELS)) {
@@ -12121,6 +12155,13 @@ ipcMain.handle('uploads:stash', (_e, file) => {
   } catch (err) { return { ok: false, error: String(err?.message || err) }; }
 });
 ipcMain.on('uploads:discard', (_e, ref) => { try { uploads().discard(String(ref)); } catch { /* gone */ } }); // the chip was removed before sending
+// The first page of an attached Word, Excel or PowerPoint file, for its chip: by the ref of a file this app stashed (a path from the page opens nothing).
+ipcMain.handle('uploads:thumb', async (_e, ref) => {
+  const file = uploads().pendingPath(String(ref || ''));
+  if (!file || !/\.(?:docx|xlsx|pptx)$/i.test(file)) return null;
+  const t = await officeThumbs.thumbOf(file);
+  return t ? { dataUrl: t.dataUrl, w: t.w, h: t.h } : null;
+});
 ipcMain.handle('agent:upload-choose', async (event, approvalId) => {
   const id = Number(approvalId);
   const spec = agent.uploadSpec(id);
@@ -12204,7 +12245,11 @@ ipcMain.handle('images:remote', async (_e, url) => {
 // The chat only ever names a file by the id of a card main sent (aiFiles.shared): a path from a page or the renderer opens nothing.
 // A trusted card (a file the AI wrote in this chat) may preview and open; any other file a reply named asks first (confirmed: true).
 const aiFilesLib = require('./features/ai-files');
-ipcMain.handle('aifiles:preview', (_e, id) => aiFilesLib.previewOf(aiFilesLib.shared.get(String(id))));
+ipcMain.handle('aifiles:preview', async (_e, id) => {
+  const entry = aiFilesLib.shared.get(String(id));
+  if (aiFilesLib.isOfficeCard(entry)) { const t = await officeThumbs.thumbOf(entry.path); return t ? { kind: 'office', dataUrl: t.dataUrl, w: t.w, h: t.h } : null; } // a Word, Excel or PowerPoint file the AI wrote: its first page
+  return aiFilesLib.previewOf(entry);
+});
 const aiFileAutoOpened = new Map(); // id -> when: the sidebar and the chat page both show a reply, and both ask to open its main file: one tab
 ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
   const entry = aiFilesLib.shared.get(String(id));
@@ -12224,7 +12269,7 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
     if (aiFileAutoOpened.size > 200) aiFileAutoOpened.delete(aiFileAutoOpened.keys().next().value);
   }
   const href = aiFilesLib.fileUrlOf(entry.path);
-  const url = entry.kind === 'pdf' ? pdfViewer.viewerUrl(href) : emlViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? emlViewer.viewerUrl(href) : slidesViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? slidesViewer.viewerUrl(href) : href;
+  const url = entry.kind === 'pdf' ? pdfViewer.viewerUrl(href) : emlViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? emlViewer.viewerUrl(href) : slidesViewer.shouldOpenInPlace({ url: href, filename: entry.path }) ? slidesViewer.viewerUrl(href) : fileTabs.shouldOpenOfficeInPlace({ url: href, filename: entry.path }) ? fileTabs.officeViewerUrl(href) : href;
   const rec = recOfSender(event.sender);
   const tab = rec ? withWindow(rec, () => openTab(url, { background: how === 'background' })) : openTab(url, { background: how === 'background' });
   return { ok: true, tabId: tab?.id ?? null };

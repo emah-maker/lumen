@@ -446,6 +446,49 @@ function fileMenuFor(e) {
   else items.push([ft('files.card.pin', 'Pin'), () => fileTogglePin(e)], [ft('files.card.remove', 'Remove from Files'), () => fileRemove(e)]);
   return items;
 }
+// A Word, Excel or PowerPoint file's first page, in a card beside the row after a short hover or focus (main draws it, features/office-thumb.js: the
+// bridge hands back a data: PNG for a file in the list; nothing here names a path). Drawn once per file; a row without one just has no card.
+const filePreviews = new Map(); // id -> data: URL | null
+let filePreviewTimer = 0;
+let filePreviewEl = null;
+const FILE_PNG = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+function hideFilePreview() {
+  clearTimeout(filePreviewTimer);
+  filePreviewEl?.remove();
+  filePreviewEl = null;
+}
+function hookFilePreview(main, e) {
+  if (e.kind === 'folder' || e.missing || !/\.(?:docx|xlsx|pptx)$/i.test(e.name) || typeof globalThis.lumenFiles?.thumb !== 'function') return;
+  const show = async () => {
+    if (!filePreviews.has(e.id)) {
+      let url = null;
+      try { const r = await globalThis.lumenFiles.thumb(e.id); url = r && typeof r.dataUrl === 'string' && FILE_PNG.test(r.dataUrl) ? r.dataUrl : null; } catch { url = null; }
+      filePreviews.set(e.id, url);
+    }
+    const url = filePreviews.get(e.id);
+    if (!url || !main.isConnected || !over) return;
+    hideFilePreview();
+    const card = el('div', 'fl-preview');
+    card.setAttribute('aria-hidden', 'true');
+    const img = el('img');
+    img.src = url;
+    img.alt = '';
+    card.append(img);
+    document.body.append(card);
+    filePreviewEl = card;
+    const r = (main.closest('.w-card') || main).getBoundingClientRect();
+    const m = main.getBoundingClientRect();
+    const w = card.offsetWidth || 224;
+    const room = window.innerWidth - r.right;
+    card.style.left = `${Math.round(room >= w + 16 ? r.right + 10 : Math.max(8, r.left - w - 10))}px`;
+    card.style.top = `${Math.round(Math.max(8, Math.min(window.innerHeight - card.offsetHeight - 8, m.top + m.height / 2 - card.offsetHeight / 2)))}px`;
+  };
+  let over = false; // (the pointer or the keyboard is on the row: set by its own events, so a card never opens for a row that was left)
+  const later = () => { over = true; clearTimeout(filePreviewTimer); filePreviewTimer = setTimeout(show, 450); };
+  main.addEventListener('pointerenter', later);
+  main.addEventListener('focus', later);
+  for (const ev of ['pointerleave', 'blur', 'click', 'contextmenu']) main.addEventListener(ev, () => { over = false; hideFilePreview(); });
+}
 const ICON_MORE = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.4 6h.01M6 6h.01M9.6 6h.01"/></svg>';
 const ICON_PLUS = '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 2.2v7.6M2.2 6h7.6"/></svg>';
 function fileRow(e, now) {
@@ -472,6 +515,7 @@ function fileRow(e, now) {
   }
   words.append(sub);
   main.append(fileIcon(e), words);
+  hookFilePreview(main, e);
   // A missing file does not open: a click anywhere on its row (but its own buttons) is Find it, and the focus goes to the first match when there is one.
   if (e.missing) row.addEventListener('click', (ev) => { if (!ev.target.closest?.('.fl-find, .fl-more')) fileFind(e); });
   else main.addEventListener('click', () => fileOpen(e));

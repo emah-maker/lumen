@@ -19,6 +19,8 @@
 //    connector's own scopes (incremental). Every request gets a fresh access token; the last Google connector to be disconnected
 //    gives the grant back to Google.
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
+//  - Presets (kind 'mcp'): a service's official MCP server, added to the MCP client (features/mcp-client.js) by its card (none ships today: see the
+//    note in registry.js). Whether a card is connected is read from that server (tagged `preset`), never kept here.
 //  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
 //    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
 //    sign-in applies here at once, and nothing is copied. syncShared() makes the entry match the owner's sign-in.
@@ -184,15 +186,28 @@ function create({
   }
 
   // ---- what Settings shows
-  const STATUS_TEXT = { off: 'Not connected', soon: 'Coming soon', 'needs-signin': 'Needs sign-in', 'bad-token': 'Token refused' };
+  const STATUS_TEXT = { off: 'Not connected', 'needs-signin': 'Needs sign-in', 'bad-token': 'Token refused' };
+  const serverOf = (def) => { try { return mcp?.list().find((x) => x.preset === def.id) || null; } catch { return null; } };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  function mcpCard(def) {
+    const srv = serverOf(def);
+    let status = 'off';
+    if (srv) status = srv.authRefused ? 'bad-token' : srv.needsAuth ? 'needs-signin' : srv.state === 'error' ? 'error' : 'connected';
+    const text = status === 'connected' ? `Connected${srv.state === 'ready' ? ` · ${plural(srv.tools.length, 'tool')}` : ''}` : status === 'error' ? `Couldn’t connect: ${srv.error}` : STATUS_TEXT[status];
+    return {
+      id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
+      status, statusText: text, source: def.mcp?.source || '',
+      fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
+      config: {}, reads: def.reads, does: def.does, drafts: null, sending: null, actions: [],
+      oauth: def.mcp?.auth === 'oauth',
+      mcp: srv ? { id: srv.id, name: srv.name, state: srv.state, tools: srv.tools.map((t) => ({ name: t.name, description: t.description, always: srv.alwaysAllow.includes(t.name), auto: Boolean(t.readOnly) })) } : null,
+    };
+  }
+
   function card(def) {
+    if (def.kind === 'mcp') return mcpCard(def);
     const entry = connected[def.id];
-    let status = def.kind === 'soon' ? 'soon' : entry ? 'connected' : 'off';
-    if (entry && def.kind === 'mcp' && mcp && !mcp.list().some((s) => s.id === entry.config?.mcpId)) { // removed in Tools from MCP servers
-      delete connected[def.id];
-      persist();
-      status = 'off';
-    }
+    let status = entry ? 'connected' : 'off';
     const live = status === 'connected' ? runtime.get(def.id) : null;
     if (live === 'needs-signin' || live === 'bad-token') status = live;
     const e = connected[def.id];
@@ -223,7 +238,7 @@ function create({
   // ---- connect / disconnect
   async function connect(id, input = {}) {
     const def = registry.get(id);
-    if (!def || def.kind === 'soon') throw new Error('That one isn’t available yet.');
+    if (!def) throw new Error('That service isn’t known.');
     if (def.kind === 'mcp') return connectMcp(def, input);
     if (def.id === 'gmail') return connectGmail(def);
     if (def.kind === 'google') return connectGoogle(def);
@@ -297,9 +312,11 @@ function create({
     const entry = { at: now(), account: flat(auth.status().email, 80), config: {} };
     const ctx = makeCtx(def, entry, null);
     let probe;
-    try { probe = await provider(def.id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }); } catch (err) { throw new Error(err.message); }
-    if (probe.status === 401 || probe.status === 403) throw new Error(probe.message || `Google refused the request for ${def.name}. Press Connect again and allow everything it asks.`);
-    if (probe.status !== 200) throw new Error(`${def.name} answered ${probe.status}. Try again in a moment.`);
+    // (a sign-in that was just made but then failed the check isn't left behind when no other Google connector uses it)
+    const giveBack = async () => { if (!googleIds().length) { try { await auth.revoke(); } catch { /* forgotten here either way */ } } };
+    try { probe = await provider(def.id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }); } catch (err) { await giveBack(); throw new Error(err.message); }
+    if (probe.status === 401 || probe.status === 403) { await giveBack(); throw new Error(probe.message || `Google refused the request for ${def.name}. Press Connect again and allow everything it asks.`); }
+    if (probe.status !== 200) { await giveBack(); throw new Error(`${def.name} answered ${probe.status}. Try again in a moment.`); }
     connected[def.id] = entry;
     runtime.set(def.id, 'ok');
     cache.clear();
@@ -308,20 +325,35 @@ function create({
     return list();
   }
 
+  // A preset: the service's official MCP server, added (or, for a card that already has one, signed in again or given a new token), started and
+  // checked. A first connect that fails leaves nothing behind. A first connect that fails leaves nothing behind; the old built-in connector's saved secret is dropped only once this works.
   async function connectMcp(def, input) {
     if (!mcp) throw new Error('MCP servers aren’t available here.');
+    const cfg = { ...def.mcp, url: String(endpoints()?.[def.id] || def.mcp.url || '') }; // (a test points a preset at 127.0.0.1)
+    const existing = serverOf(def);
+    if (!existing && mcp.list().some((x) => x.name === cfg.name)) throw new Error(`There is already an MCP server called ${cfg.name} under Custom MCP servers. Remove or rename it there first.`);
+    let token = '';
     const env = [];
     for (const f of def.fields) {
-      const r = registry.checkField(f, input[f.id]);
+      const typed = String(input[f.id] ?? input.secret ?? '').trim();
+      const r = registry.checkField(f, typed);
       if (r.error) throw new Error(r.error);
-      env.push({ name: f.id, value: r.value });
+      if (cfg.type === 'http') token = r.value; else env.push({ name: f.id, value: r.value });
     }
-    const existing = mcp.list().find((s) => s.name === def.mcp.name);
-    if (existing) throw new Error(`There is already an MCP server called ${def.mcp.name} in Tools from MCP servers. Remove it there first.`);
-    const servers = mcp.save({ name: def.mcp.name, type: 'stdio', command: def.mcp.command, args: def.mcp.args, env });
-    const made = servers.find((s) => s.name === def.mcp.name);
-    connected[def.id] = { at: now(), account: '', config: { mcpId: made?.id } };
-    persist();
+    const body = cfg.type === 'http'
+      ? { id: existing?.id, name: cfg.name, type: 'http', url: cfg.url, preset: def.id, ...(cfg.auth === 'oauth' ? { auth: 'oauth' } : { header: { name: cfg.header.name, value: `${cfg.header.prefix || ''}${token}` } }), ...(cfg.fixedHeaders ? { fixedHeaders: cfg.fixedHeaders } : {}) }
+      : { id: existing?.id, name: cfg.name, type: 'stdio', command: cfg.command, args: cfg.args, env, preset: def.id };
+    const made = mcp.save(body).find((x) => x.name === cfg.name);
+    const undo = () => { if (!existing && made) { try { mcp.remove(made.id); } catch { /* already gone */ } } };
+    try {
+      if (cfg.auth === 'oauth') await mcp.signIn(made.id); else await mcp.refresh(made.id);
+    } catch (err) { undo(); throw err; }
+    const now1 = mcp.list().find((x) => x.id === made.id);
+    if (now1?.state !== 'ready') {
+      const refused = now1?.authRefused || now1?.needsAuth;
+      undo();
+      throw new Error(refused && cfg.type === 'http' && cfg.auth !== 'oauth' ? `${def.name} refused that token. Check it and try again.` : refused ? `${def.name} didn’t accept the sign-in. Try again.` : `Couldn’t connect to ${def.name}: ${now1?.error || 'it didn’t answer'}`);
+    }
     changed();
     return list();
   }
@@ -354,13 +386,18 @@ function create({
   async function disconnect(id) {
     const def = registry.get(id);
     const entry = connected[id];
+    if (def?.kind === 'mcp') { // the preset's server goes, with its sign-in
+      const srv = serverOf(def);
+      if (srv) { try { mcp.remove(srv.id); } catch { /* already gone */ } }
+      changed();
+      return list();
+    }
     if (!def || !entry) return list();
     delete connected[id];
     runtime.delete(id);
     for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
     persist();
     if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
-    if (def.kind === 'mcp' && entry.config?.mcpId) { try { mcp?.remove(entry.config.mcpId); } catch { /* already gone */ } }
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
     if (def.kind === 'google' && !googleIds().length) { try { await googleAuth().revoke(); } catch { /* the sign-in is forgotten here either way */ } } // the last Google connector: the grant goes back to Google
     changed();

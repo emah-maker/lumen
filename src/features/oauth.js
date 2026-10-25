@@ -158,7 +158,8 @@ const sameText = (a, b) => {
 // state, and rejects (OAuthError) when the user denied it, the time ran out, or close() was called.
 // A request with the wrong state, a different path or a different Host header (DNS rebinding) is
 // answered and ignored: it can neither finish nor break the sign-in.
-function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messages = {} } = {}) {
+// `port`: a port to try (0, the default: the OS picks); when it is taken this rejects, so the caller can fall back to any port.
+function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messages = {}, port: wantPort = 0 } = {}) {
   const msg = { title: 'Lumen', done: 'You can close this tab and go back to Lumen.', denied: 'Sign-in was canceled. You can close this tab.', ...messages };
   return new Promise((resolve, reject) => {
     let finish;
@@ -188,7 +189,7 @@ function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messag
       close();
     });
     server.on('error', (err) => { close(); reject(new OAuthError(`Lumen couldn’t listen for the sign-in: ${err.message}`)); });
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(wantPort, '127.0.0.1', () => {
       const port = server.address().port;
       timer = setTimeout(() => { fail(new OAuthError('Sign-in timed out. Try again.', { kind: 'timeout' })); close(); }, timeoutMs);
       timer.unref?.();

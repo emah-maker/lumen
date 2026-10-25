@@ -207,4 +207,4 @@ async function readOutline(runScript) {
   return formatOutline(page.outline, { title: page.title, url: page.url, healthLine: health.healthLine(verdict), structured: (() => { const s = health.summarizeStructured(probe); return s ? `Structured data: ${s}` : ''; })() });
 }
 
-module.exports = { readBackground, finishRead, fullReadExtras, readOutline, probeScript, outlineScript, backgroundReadScript, pageProbe, ISLAND_GLOBALS };
+module.exports = { runIn, readBackground, finishRead, fullReadExtras, readOutline, probeScript, outlineScript, backgroundReadScript, pageProbe, ISLAND_GLOBALS };
