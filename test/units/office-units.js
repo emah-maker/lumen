@@ -95,9 +95,10 @@ const textOf = (blocks) => blocks.map((b) => (b.t === 'p' ? b.runs.map((r) => r.
   check('docx: an encrypted package says it is password-protected', locked && /password/.test(locked.message), locked && locked.message);
   const bomb = fx.bombZip('word/document.xml', 100 * 1024 * 1024);
   check('the zip bomb fixture is small on disk', bomb.length < 500 * 1024, `${bomb.length}`);
-  const t0 = Date.now();
   const bombed = await rejects(doc.parseDocx(bomb));
-  check('docx: a part that inflates past the cap is refused (zip bomb), quickly', bombed && /too large/.test(bombed.message) && Date.now() - t0 < 5000, bombed ? `${bombed.message} ${Date.now() - t0} ms` : 'was read');
+  check('docx: a part that inflates past the cap (80 MB) is refused (zip bomb)', bombed && /too large/.test(bombed.message), bombed ? bombed.message : 'was read');
+  const small4 = await rejects(doc.parseDocx(fx.bombZip('word/document.xml', 8 * 1024 * 1024), { maxInflated: 1024 * 1024 }));
+  check('docx: the cap is the inflate limit itself: a lower cap stops a smaller bomb', small4 && /too large/.test(small4.message), small4 && small4.message);
   const bombedX = await rejects(doc.parseXlsx(fx.bombZip('xl/workbook.xml', 100 * 1024 * 1024)));
   check('xlsx: the same cap holds for a workbook', bombedX && /too large/.test(bombedX.message), bombedX && bombedX.message);
   const mediaBomb = fx.zip({

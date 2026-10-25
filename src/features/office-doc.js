@@ -83,9 +83,9 @@ function decode(s) {
 const clean = (s) => String(s).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''); // (control characters never reach the page)
 
 // Opens the package; the same messages as the deck reader's, in this file type's words.
-function open(buf, root, { maxBytes = MAX_INFLATED, damaged }) {
+function open(buf, root, { maxBytes, damaged }) {
   if (!Buffer.isBuffer(buf) || buf.length > MAX_FILE_BYTES) throw new PptxError(`This file is too large to open here.`);
-  try { return createZipReader(buf, { maxBytes, root }); } catch (err) {
+  try { return createZipReader(buf, { maxBytes: maxBytes || MAX_INFLATED, root }); } catch (err) {
     if (err instanceof PptxError && /password/.test(err.message)) throw new PptxError('This file is password-protected.');
     if (err instanceof PptxError && /too large/.test(err.message)) throw new PptxError('This file is too large to open here.');
     throw damaged();
@@ -297,9 +297,9 @@ const stripPending = (blocks) => {
   blocks.forEach(fix);
 };
 
-// opts.maxBlocks: stop after that many paragraphs (a first-page thumbnail); opts.imageBytes: the picture budget.
+// opts.maxInflated: a lower cap on everything inflated (tests); opts.maxBlocks: stop after that many paragraphs (a first-page thumbnail); opts.imageBytes: the picture budget.
 async function parseDocx(buf, opts = {}) {
-  const zip = open(buf, 'word/document.xml', { damaged: damagedDoc });
+  const zip = open(buf, 'word/document.xml', { damaged: damagedDoc, maxBytes: opts.maxInflated });
   try {
     const xml = await zip.text('word/document.xml');
     if (!xml) throw damagedDoc();
@@ -525,7 +525,7 @@ function mergesOf(xml, rowCount, colCount) {
 
 // opts.maxRows / maxCols / maxSheets: the part shown (a thumbnail reads far less than the viewer).
 async function parseXlsx(buf, opts = {}) {
-  const zip = open(buf, 'xl/workbook.xml', { damaged: damagedSheet });
+  const zip = open(buf, 'xl/workbook.xml', { damaged: damagedSheet, maxBytes: opts.maxInflated });
   const maxRows = opts.maxRows || MAX_ROWS;
   const maxCols = opts.maxCols || MAX_COLS;
   try {
