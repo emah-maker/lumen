@@ -123,8 +123,8 @@ function setupAiAgents(deps) {
   const external = (() => {
     let real = null;
     // (an engine session is skipped by the hooks below: the server serves an engine tag only to a live run of Lumen's own, enabled() under startMcp; keep it so)
-    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
-    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
+    const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), findClaude: () => AGENTS.claude.find(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec) }));
+    for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'connect', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
     ipcMain.handle('mcp:external-state', () => (real ? real.invoke.state() : { active: [], prompts: [] })); // (every window asks at start: that must not load it)
     for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
@@ -730,6 +730,7 @@ function setupAiAgents(deps) {
   async function addToAgent(id) {
     if (id === 'codex') return codexConnect.add();
     const key = AGENTS[id] ? id : 'claude';
+    if (key === 'claude') { const r = await external.load().invoke.connect('claude-code'); return { ok: r.ok, text: r.ok ? r.message : r.error }; } // (with its own key, not the shared token-less entry)
     const agent = AGENTS[key];
     const found = await agent.find();
     if (!found) return { ok: false, text: agent.installHint() };

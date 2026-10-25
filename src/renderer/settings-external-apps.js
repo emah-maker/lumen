@@ -8,6 +8,7 @@ function buildExternalApps() {
   const CLIENTS = [['claude-desktop', 'Claude Desktop'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['claude-code', 'Claude Code']];
   let info = null;
   let current = 'claude-desktop';
+  let connectMsg = null; // { kind, text, cls } what the last "Connect" click said (drawSetup shows it under the tab it was for)
   let fresh = null; // { app, setup, added } the app whose setup text is showing (after Add app or "Show setup")
 
   const root = h('div', { class: 'external-apps', id: 'external-apps' });
@@ -66,6 +67,17 @@ function buildExternalApps() {
       fresh = { app: r.app, setup: r.setup, added: true };
       draw(info);
     } });
+    // One click: the app's own token + its config (Claude Code through its CLI; the JSON apps by editing only their "lumen" entry, old file kept as .bak).
+    const connectNote = h('span', { class: 'note', id: 'ea-connect-note', role: 'status' });
+    if (connectMsg?.kind === current) flash(connectNote, connectMsg.text, connectMsg.cls);
+    const connectBtn = h('button', { type: 'button', id: 'ea-connect', class: 'primary', text: tr('settings.ea.connect', 'Connect {name}', { name: label }), onclick: async () => {
+      connectBtn.disabled = true;
+      const r = await X.connect(current).catch((err) => ({ ok: false, error: err.message }));
+      connectMsg = { kind: current, text: r.ok ? r.message : r.error, cls: r.ok ? 'ok' : 'err' };
+      if (r.info) info = r.info;
+      if (r.setup && r.app) fresh = { app: r.app, setup: r.setup, added: false };
+      draw(info);
+    } });
     const openBtn = info.paths[current] ? h('button', { type: 'button', id: 'ea-open', text: tr('settings.ea.openConfig', 'Open the config file'), onclick: async () => {
       const r = await X.openConfig(current).catch(() => ({ ok: false }));
       flash(openNote, r.ok ? (r.missing ? tr('settings.ea.noFile', 'That file doesn’t exist yet; its folder is open. Create the file there.') : '') : tr('settings.ea.noFolder', 'Couldn’t find that app’s folder. Is it installed?'), r.ok ? 'ok' : 'err');
@@ -74,6 +86,7 @@ function buildExternalApps() {
     setupBox.replaceChildren(
       tabs,
       h('div', { class: 'snippet', id: 'ea-panel', role: 'tabpanel', 'aria-labelledby': `ea-tab-${current}` },
+        h('div', { class: 'item' }, connectBtn, connectNote),
         fresh
           ? h('div', { class: 'ea-fresh', id: 'ea-fresh' },
             h('p', { class: 'note ok', text: tr(fresh.added ? 'settings.ea.fresh' : 'settings.ea.shown', fresh.added ? '“{name}” is added. Its token is in a file only you can read; the text below names that file, so it holds no secret.' : 'Setup text for “{name}”. It names the token file; it holds no secret.', { name: shownApp.name }) }),
@@ -95,10 +108,19 @@ function buildExternalApps() {
       const revoke = armedButton(unverified && !always ? tr('settings.ea.disconnect', 'Disconnect') : tr('settings.ea.revoke', 'Revoke'), unverified && !always ? tr('settings.ea.disconnectSure', 'Click again to disconnect') : tr('settings.ea.revokeSure', 'Click again to revoke'), async () => { if (fresh?.app.id === a.id) fresh = null; draw((await X.revoke(a.id)).info); });
       const show = unverified ? null : h('button', { type: 'button', class: 'ea-show', text: tr('settings.ea.show', 'Show setup'), onclick: async () => { const r = await X.setup(a.id); if (r.ok) { fresh = { app: r.app, setup: r.setup, added: false }; drawSetup(); } } });
       const state = a.paused ? tr('settings.ea.paused', 'Paused') : a.busy ? tr('settings.ea.working', 'Working now') : a.connected ? tr('settings.ea.connected', 'Connected') : tr('settings.ea.idle', 'Not connected');
+      const keyNote = h('span', { class: 'note' });
+      const setupKey = a.claudeCode ? h('button', { type: 'button', class: 'ea-setup-key primary', text: tr('settings.ea.setupKey', 'Set up Claude Code’s key'), onclick: async (e) => {
+        e.target.disabled = true;
+        const r = await X.connect('claude-code').catch((err) => ({ ok: false, error: err.message }));
+        connectMsg = { kind: 'claude-code', text: r.ok ? r.message : r.error, cls: r.ok ? 'ok' : 'err' };
+        if (r.setup && r.app) fresh = { app: r.app, setup: r.setup, added: false };
+        if (r.ok) { current = 'claude-code'; draw(r.info); } else { e.target.disabled = false; flash(keyNote, r.error, 'err'); if (r.setup && r.app) drawSetup(); }
+      } }) : null;
       return h('div', { class: 'snippet ea-app', 'data-app': a.name, 'data-app-id': a.id },
         h('div', { class: 'item' },
           h('span', { class: 'grow' }, h('strong', { text: a.name }), h('span', { class: 'note', text: ` · ${state} · ${ago(a.lastUsed)}${unverified ? ` · ${always ? tr('settings.ea.always', 'Unverified: no token, always allowed on this computer') : tr('settings.ea.unverified', 'Unverified: no token, allowed for this session')}` : ''}` })),
-          ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, revoke));
+          ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, setupKey, revoke),
+        a.claudeCode ? h('div', { class: 'item' }, keyNote) : null);
     }));
   }
 
@@ -122,7 +144,7 @@ function buildExternalApps() {
     h('div', { class: 'row' }, statusLine),
     row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session (unless you pick Always allow), never asks less, and can’t use the name of an app you set up.'), requireInput),
     h('div', { class: 'row' }, warning, requireNow),
-    stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app, give it a name, and paste the text into its settings. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
+    stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app and click Connect: Lumen makes the app’s own key and adds itself to its settings (restart the app after). Or give it a name and paste the text yourself. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
     stackRow(tr('settings.ea.apps', 'Apps that can use Lumen'), tr('settings.ea.appsDesc', 'Revoke deletes an app’s token and cuts it off at once.'), appsBox));
 
   X.info().then((i) => draw(i)).catch(() => {});
