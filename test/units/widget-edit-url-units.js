@@ -16,12 +16,10 @@ function check(label, ok, detail = '') {
 (async () => {
   const settingsJs = read('src/renderer/settings.js');
   const mainJs = read('src/main.js');
-  const backend = read('src/settings/settings-backend.js');
   const preload = read('src/preload/settings-preload.js');
 
   // The destination id exists on both sides.
-  const links = /const SECTION_LINKS = \[([\s\S]*?)\];/.exec(backend)[1];
-  check('settings backend: "widgets" is a deep-link id', /'widgets'/.test(links));
+  check('settings backend: "widgets" is a deep-link id', require('../../src/settings/settings-backend').SECTION_LINKS.includes('widgets'));
   check('settings backend: lumen://settings/widgets parses to widgets', /widgets/.test(JSON.stringify(parse('lumen://settings/widgets'))));
   function parse(t) { const m = /^(?:lumen|chrome):\/\/settings\/?([a-z-]*)\/?$/i.exec(t); return m ? { section: m[1] } : null; }
   check('settings.js: widgets is a sub-page slot under Home', /subpage\('widgets', 'Widgets'/.test(settingsJs) && /\['widgets', 'Widgets'\]/.test(settingsJs));

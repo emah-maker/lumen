@@ -23,11 +23,16 @@ const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'setti
 const HTTPS_ONLY_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'https-only.html')).href;
 const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload.js');
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
-// section ids (mapped to a category) and the sub-pages.
+// section ids and natural names (renderer/settings.js ALIASES, each mapped to a category) and every sub-page id.
+// test/units/settings-links-units.js reads renderer/settings.js and fails when this list and the page disagree.
 const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_LINKS = [...SECTIONS, 'you-and-ai', 'memory', 'hands-off', 'ask-before-acting', 'ai-keys', 'telegram', 'voice-input', 'default-browser', 'startup', 'languages', 'accessibility', 'system', 'reset', 'about',
-  'skills', 'macros', 'routines', 'usage', 'internals', 'task-manager', 'widgets', 'site-permissions', 'site-data', 'connect-agents', 'mcp-servers', 'passwords', 'antigravity',
-  'clock-greeting', 'permissions', 'proxy', 'cookies', 'language', 'theme', 'performance', 'diagnostics', 'security', 'engine', 'keys', 'files'];
+const SECTION_ALIASES = ['you-and-ai', 'mcp-servers', 'providers', 'hands-off', 'memory', 'voice-input', 'ask-before-acting', 'antigravity', 'ai-keys',
+  'default-browser', 'startup', 'languages', 'accessibility', 'visual-effects', 'system', 'reset', 'about',
+  'permissions', 'proxy', 'performance', 'diagnostics', 'language', 'cookies', 'passwords', 'security', 'theme', 'newtab', 'new-tab',
+  'engine', 'files', 'focus', 'keys', 'update'];
+const SECTION_SUBPAGES = ['ai-keys-page', 'connect-agents', 'connectors', 'external-apps', 'routines', 'skills', 'macros', 'usage', 'ai-providers', 'extensions-page',
+  'task-manager', 'internals', 'clock-greeting', 'widgets', 'site-permissions', 'site-data', 'telegram'];
+const SECTION_LINKS = [...new Set([...SECTIONS, ...SECTION_ALIASES, ...SECTION_SUBPAGES])];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
@@ -1395,4 +1400,4 @@ function create(deps) {
   };
 }
 
-module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_ALIASES, SECTION_SUBPAGES, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
