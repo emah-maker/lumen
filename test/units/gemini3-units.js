@@ -45,7 +45,7 @@ const callsOf = (msgs) => msgs.find((m) => m.role === 'assistant').tool_calls;
 {
   const bare = [history[0], { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'x', input: {} }] }, history[2]];
   const gem3 = callsOf(providers.toChatMessages('s', bare, { provider: 'gemini', model: 'gemini-3.1-pro-preview' }));
-  check('unsigned call to Gemini 3: first call gets the documented placeholder', gem3[0].extra_content?.google?.thought_signature === 'context_engineering_is_the_way_to_go', JSON.stringify(gem3[0]));
+  check('unsigned call to Gemini 3: first call gets the documented placeholder', gem3[0].extra_content?.google?.thought_signature === 'skip_thought_signature_validator', JSON.stringify(gem3[0]));
   const gem25 = callsOf(providers.toChatMessages('s', bare, { provider: 'gemini', model: 'gemini-2.5-pro' }));
   check('unsigned call to Gemini 2.5: untouched', gem25[0].extra_content === undefined, '');
   const oai = callsOf(providers.toChatMessages('s', history, { provider: 'openai', model: 'gpt-5.6' }));

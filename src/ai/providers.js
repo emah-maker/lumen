@@ -207,8 +207,8 @@ const OLD_TOOL_TEXT_CAP = 2000; // chars; generous enough to keep a compact read
 // Gemini 3 returns a thought signature on a tool call (extra_content.google.thought_signature; only the first of
 // parallel calls) and rejects the next request with a 400 if the current turn's calls come back without it
 // (ai.google.dev/gemini-api/docs/generate-content/thought-signatures, checked 2026-10-24). A call the model never signed
-// (history from another model, a chat saved before this) takes Google's documented placeholder instead.
-const GEMINI_DUMMY_SIGNATURE = 'context_engineering_is_the_way_to_go';
+// (history from another model, a chat saved before this) takes Google's documented placeholder instead: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+const GEMINI_DUMMY_SIGNATURE = 'skip_thought_signature_validator';
 const needsGeminiSignature = (provider, model) => provider === 'gemini' && /^gemini-3/.test(String(model || ''));
 
 // Anthropic-format history -> Chat Completions messages. `target` ({ provider, model }) is who receives it.
