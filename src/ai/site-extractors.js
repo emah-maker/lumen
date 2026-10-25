@@ -138,22 +138,39 @@ const USER_TABS = new Set(['', 'submitted', 'comments', 'overview', 'posts']);
 // URL -> { kind: 'thread'|'listing'|'user'|'search', path, query } | null. Only addresses that have a feed.
 function redditTarget(url) {
   const u = parseUrl(url);
-  if (!u || !REDDIT_HOSTS.has(bareHost(u))) return null;
+  if (!u) return null;
+  if (bareHost(u) === 'redd.it') return /^\/[a-z0-9]{4,10}\/?$/i.test(u.pathname) ? { kind: 'share', path: u.pathname.replace(/\/$/, ''), query: new URLSearchParams(), host: 'redd.it' } : null; // redd.it/<post id>: a short link to the thread
+  if (!REDDIT_HOSTS.has(bareHost(u))) return null;
   const seg = u.pathname.split('/').filter(Boolean);
   const keep = new URLSearchParams();
   for (const k of ['sort', 't', 'q', 'restrict_sr', 'limit']) if (u.searchParams.has(k)) keep.set(k, u.searchParams.get(k));
   const make = (kind, s) => ({ kind, path: `/${s.join('/')}`, query: keep });
   if (seg[0] === 'r' && seg[1]) {
     if (seg[2] === 'comments' && /^[a-z0-9]{4,10}$/i.test(seg[3] || '')) return make('thread', seg.slice(0, seg[5] ? 6 : seg[4] ? 5 : 4)); // + slug + comment id (a focused sub-thread)
+    if (seg[2] === 's' && /^[a-z0-9]{6,14}$/i.test(seg[3] || '') && seg.length === 4) return make('share', seg); // a share link: Reddit redirects it to the post or comment
     if (seg[2] === 'search') return make('search', seg.slice(0, 3));
     if (seg.length === 2) return make('listing', seg);
     if (seg.length === 3 && REDDIT_SORTS.has(seg[2])) return make('listing', seg);
     return null; // wiki, about, submit, ...
   }
   if (seg[0] === 'comments' && /^[a-z0-9]{4,10}$/i.test(seg[1] || '')) return make('thread', seg.slice(0, 2));
+  if ((seg[0] === 'user' || seg[0] === 'u') && seg[1] && seg[2] === 'comments' && /^[a-z0-9]{4,10}$/i.test(seg[3] || '')) return { ...make('thread', ['user', seg[1], 'comments', ...seg.slice(3, seg[5] ? 6 : seg[4] ? 5 : 4)]), focused: Boolean(seg[5]) }; // a post on a user's profile
   if ((seg[0] === 'user' || seg[0] === 'u') && seg[1] && seg.length <= 3 && USER_TABS.has(seg[2] || '')) return make('user', ['user', seg[1], ...(seg[2] && seg[2] !== 'overview' ? [seg[2]] : [])]);
+  if (seg[0] === 's' && seg.length === 2 && /^[a-z0-9]{6,14}$/i.test(seg[1])) return make('share', seg);
   if (seg[0] === 'search' && seg.length === 1 && keep.has('q')) return make('search', seg);
   return null;
+}
+
+// The address a hidden view should load for a Reddit page: old./np./m./amp. hosts send a signed-out reader to a login page
+// (old.reddit.com does for everything now), so the same path on www.reddit.com is read instead; the parameters Reddit's own
+// script adds once it has passed its browser check (solution, js_challenge, jsc_*) are dropped.
+const REDDIT_CHALLENGE_PARAMS = ['solution', 'js_challenge', 'jsc_token', 'jsc_orig_r'];
+function redditCanonicalUrl(url) {
+  const u = parseUrl(url);
+  if (!u || !REDDIT_HOSTS.has(bareHost(u))) return url;
+  u.hostname = 'www.reddit.com';
+  for (const k of REDDIT_CHALLENGE_PARAMS) u.searchParams.delete(k);
+  return u.toString();
 }
 
 function redditRequests(t) {
@@ -284,7 +301,7 @@ function formatRedditList(model, how, meta, { maxChars = DEFAULT_MAX_CHARS, now 
   for (const it of model.items) {
     n++;
     let l;
-    if (it.type === 'comment') l = `${n}. [comment] u/${it.author || '?'}${it.sub ? ` in r/${it.sub}` : ''}${it.postTitle ? ` on "${clip(it.postTitle, 80)}"` : ''}${it.ts ? ` · ${ago(it.ts, now)} ago` : ''}${it.score != null ? ` · ${fmtCount(it.score)} pts` : ''}: ${clip(oneLine(it.text), 240)}\n   ${it.permalink}`;
+    if (it.type === 'comment') l = `${n}. [comment] u/${it.author || '?'}${it.sub ? ` in ${it.sub.startsWith('u/') ? '' : 'r/'}${it.sub}` : ''}${it.postTitle ? ` on "${clip(it.postTitle, 80)}"` : ''}${it.ts ? ` · ${ago(it.ts, now)} ago` : ''}${it.score != null ? ` · ${fmtCount(it.score)} pts` : ''}: ${clip(oneLine(it.text), 240)}\n   ${it.permalink}`;
     else {
       const m = parts(it.sub ? `r/${it.sub}` : '', it.author ? `u/${it.author}` : '', it.score != null ? `${fmtCount(it.score)} pts` : '', it.comments != null ? `${fmtCount(it.comments)} comments` : '', it.ts ? `${ago(it.ts, now)} ago` : '', it.domain, it.flair ? `[${it.flair}]` : '', it.nsfw ? 'NSFW' : '');
       l = `${n}. ${it.title} — ${m}\n   ${it.permalink}${it.text ? `\n   ${clip(oneLine(it.text), 200)}` : ''}`;
@@ -300,15 +317,25 @@ const goneText = (reason, t) => {
   return { title: t.path, text: `Source: reddit\n${t.path} is ${what}; its posts cannot be read signed out.` };
 };
 
+// What to tell the AI when Reddit itself stands in the way (a sign-in page, a block page): plain, with the way round it.
+const redditWallNote = 'Reddit shows this page only to signed-in users. Do not retry or try to get round it; tell the user to sign in to Reddit in Lumen, then read it again (the signed-in read uses their own session).';
+
 const redditExtractor = {
   name: 'reddit',
   matches: (url) => Boolean(redditTarget(url)),
   async read(url, ctx) {
     const t = redditTarget(url);
     if (!t) return null;
+    if (t.kind === 'share') { // a share link (reddit.com/r/x/s/id, redd.it/id): follow its redirect to the post or comment, then read that
+      let res;
+      try { res = await ctx.get(url, { accept: 'text/html' }); } catch { return null; }
+      const to = res.ok && res.url && res.url !== url ? redditTarget(res.url) : null;
+      return to && to.kind !== 'share' ? redditExtractor.read(res.url, ctx) : null; // blocked / sent to a login page: the hidden view follows it
+    }
     const opts = { maxChars: ctx.maxChars, now: ctx.now() };
     let retried = false;
     for (const req of redditRequests(t)) {
+      if (ctx.how && !ctx.how.includes(req.how)) continue; // (the caller reads the feeds in two goes: see feedsFirst)
       let res;
       try { res = await ctx.get(req.url, { accept: req.accept }); } catch { continue; }
       if (res.status === 429 && !retried) { retried = true; await ctx.sleep(1500); try { res = await ctx.get(req.url, { accept: req.accept }); } catch { continue; } }
@@ -320,7 +347,7 @@ const redditExtractor = {
         const m = parseRedditJson(res.text);
         if (!m) continue;
         if (m.type === 'gone') return goneText(m.reason, t);
-        if (m.type === 'thread') return formatRedditThread(m, 'json', { ...opts, focused: t.path.split('/').length > 5 });
+        if (m.type === 'thread') return formatRedditThread(m, 'json', { ...opts, focused: t.focused ?? t.path.split('/').length > 5 });
         if (m.items.length) return formatRedditList(m, 'json', { title: `Reddit ${t.kind}: ${t.path}` }, opts);
         continue;
       }
@@ -339,35 +366,152 @@ const redditExtractor = {
 };
 
 // A loaded (or signed-in) Reddit page: the new shreddit custom elements. Runs in the page; returns plain data.
-function redditPageProbe(doc) {
+//   a post page   -> { kind: 'thread', post, comments: [comment | { more, depth, src, cursor }] } in page order
+//   a feed page (subreddit, user, search) -> { kind: 'feed', items: [post | comment] }
+//   anything else -> { gone: 'text' }  (a private / removed page: the plain page read shows Reddit's own notice)
+// Called with (doc, more) it instead fetches those "N more replies" partials (the POST the page's own button sends) and
+// returns [{ i, comments }]. One self-contained function: it is stringified into the page.
+/* global DOMParser */
+function redditPageProbe(doc, more) {
   const text = (el) => (el ? (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim() : '');
-  const post = doc.querySelector('shreddit-post');
-  const body = text(doc.body);
-  if (!post) {
-    const gone = /this community is private|private community|quarantined|has been banned|this post was removed|post was deleted/i.exec(body.slice(0, 4000));
-    return { gone: gone ? gone[0] : '' };
-  }
-  const attr = (el, k) => el.getAttribute(k);
-  const timeOf = (el) => { const t = el.querySelector('time'); return (t && t.getAttribute('datetime')) || attr(el, 'created-timestamp') || ''; };
-  const comments = [...doc.querySelectorAll('shreddit-comment')].map((c) => {
-    const bodyEl = c.querySelector('[slot="comment"]') || c.querySelector('div[id*="richtext"]') || c.querySelector('p');
-    return { author: attr(c, 'author'), score: attr(c, 'score'), thingid: attr(c, 'thingid'), depth: attr(c, 'depth'), ts: timeOf(c), text: text(bodyEl), distinguished: attr(c, 'is-moderator') != null && attr(c, 'is-moderator') !== 'false' ? 'mod' : '', op: attr(c, 'is-author') != null && attr(c, 'is-author') !== 'false' };
+  const attr = (el, k) => (el ? el.getAttribute(k) : null);
+  const bodyOf = (c) => c.querySelector('[slot="comment"]') || c.querySelector('div[id*="richtext"]') || c.querySelector('p');
+  const flagOn = (el, k) => attr(el, k) != null && attr(el, k) !== 'false';
+  // Comments and the "more replies" buttons between them, in page order.
+  const threadItems = (root) => [...root.querySelectorAll('shreddit-comment, faceplate-partial.more-comments-partial')].map((c) => {
+    if (!c.getAttribute('thingid')) {
+      const src = c.getAttribute('src') || '';
+      const cursor = c.querySelector('input[name="cursor"]');
+      const depth = /[?&]startingDepth=(\d+)/.exec(src);
+      return { more: Number((/\d+/.exec(text(c)) || [])[0]) || 1, depth: depth ? Number(depth[1]) : 0, src, cursor: cursor ? cursor.value : '' };
+    }
+    const t = c.querySelector('time');
+    return { author: attr(c, 'author'), score: attr(c, 'score'), thingid: attr(c, 'thingid'), depth: attr(c, 'depth'), ts: (t && t.getAttribute('datetime')) || attr(c, 'created') || '', text: text(bodyOf(c)), distinguished: flagOn(c, 'is-moderator') ? 'mod' : '', op: flagOn(c, 'is-author') };
   });
-  const sel = post.querySelector('[slot="text-body"]');
-  return {
-    post: { title: attr(post, 'post-title'), sub: attr(post, 'subreddit-name'), author: attr(post, 'author'), permalink: attr(post, 'permalink'), type: attr(post, 'post-type'), score: attr(post, 'score'), comments: attr(post, 'comment-count'), ts: attr(post, 'created-timestamp'), flair: text(post.querySelector('[slot="post-flair"]')), nsfw: attr(post, 'nsfw') != null, spoiler: attr(post, 'spoiler') != null, domain: attr(post, 'domain') || '', url: attr(post, 'content-href') || '', text: text(sel) },
-    comments,
+  const abs = (h) => (h && h[0] === '/' ? `https://www.reddit.com${h}` : h || '');
+  const postItem = (c) => {
+    const sel = c.querySelector('[slot="text-body"]');
+    return { type: 'post', title: attr(c, 'post-title'), sub: attr(c, 'subreddit-name'), author: attr(c, 'author'), score: attr(c, 'score'), comments: attr(c, 'comment-count'), ts: attr(c, 'created-timestamp'), permalink: abs(attr(c, 'permalink')), domain: attr(c, 'domain') || '', flair: text(c.querySelector('[slot="post-flair"]')), nsfw: attr(c, 'nsfw') != null, text: text(sel) };
   };
+  if (more) {
+    return Promise.all(more.map(async (m) => {
+      try {
+        if (m.feed) { // a feed's own "more posts" address (what its infinite scroll asks for)
+          const f = await fetch(m.src, { credentials: 'same-origin', signal: AbortSignal.timeout(6000) });
+          return { i: m.i, posts: f.ok ? [...new DOMParser().parseFromString(await f.text(), 'text/html').querySelectorAll('shreddit-post')].map(postItem) : [] };
+        }
+        const r = await fetch(m.src, { method: 'POST', body: new URLSearchParams({ cursor: m.cursor }), credentials: 'same-origin', signal: AbortSignal.timeout(6000) });
+        if (!r.ok) return { i: m.i, comments: [] };
+        return { i: m.i, comments: threadItems(new DOMParser().parseFromString(await r.text(), 'text/html')) };
+      } catch { return { i: m.i, comments: [] }; }
+    }));
+  }
+  const path = (doc.location && doc.location.pathname) || '';
+  const first = doc.querySelector('shreddit-post');
+  const ctx = attr(first, 'view-context');
+  if (first && (ctx ? ctx === 'CommentsPage' : !path || /\/comments\//.test(path))) {
+    const sel = first.querySelector('[slot="text-body"]');
+    return {
+      kind: 'thread',
+      post: { title: attr(first, 'post-title'), sub: attr(first, 'subreddit-name'), author: attr(first, 'author'), permalink: attr(first, 'permalink'), type: attr(first, 'post-type'), score: attr(first, 'score'), comments: attr(first, 'comment-count'), ts: attr(first, 'created-timestamp'), flair: text(first.querySelector('[slot="post-flair"]')), nsfw: attr(first, 'nsfw') != null, spoiler: attr(first, 'spoiler') != null, domain: attr(first, 'domain') || '', url: attr(first, 'content-href') || '', text: text(sel) },
+      comments: threadItems(doc),
+    };
+  }
+  // A feed: posts and profile comments in page order (a subreddit, a user's overview / posts / comments), or search results.
+  let cards = [...doc.querySelectorAll('shreddit-post, shreddit-profile-comment')];
+  if (!cards.length) { // search results: one card per post-title link (the wrapper elements vary from visit to visit), the smallest ancestor that holds the age
+    const seen = new Set();
+    cards = [...doc.querySelectorAll('a[data-testid="post-title"]')].map((a) => {
+      let n = a;
+      while (n.parentElement && !n.querySelector('time')) n = n.parentElement;
+      return n;
+    }).filter((n) => n && !seen.has(n) && seen.add(n));
+  }
+  const items = cards.map((c) => {
+    const tag = (c.tagName || '').toLowerCase();
+    if (tag === 'shreddit-post') return postItem(c);
+    if (tag === 'shreddit-profile-comment') {
+      const t = c.querySelector('time');
+      const who = c.querySelector('[id^="poster-info"] a');
+      const where = c.querySelector('[data-testid="profile-name-anchor"]');
+      const h2 = c.querySelector('h2');
+      const body = c.querySelector('[id$="rtjson-content"]') || c.querySelector('p');
+      return { type: 'comment', author: text(who).replace(/^u\//, '') || attr(c, 'author') || '', sub: text(where).replace(/^r\//, ''), postTitle: text(h2), ts: (t && t.getAttribute('datetime')) || '', score: attr(c, 'score'), text: text(body), permalink: abs(attr(c, 'href')) };
+    }
+    // a search result card: title link, community, age, counters ("46 comments")
+    const title = c.querySelector('a[data-testid="post-title"]');
+    const comm = [...c.querySelectorAll('a')].find((a) => /^\/r\/[^/]+\/?$/.test(a.getAttribute('href') || ''));
+    const t = c.querySelector('time');
+    const counters = text(c.querySelector('[data-testid="search-counter-row"]'));
+    const num = (re) => { const m = re.exec(counters); return m ? m[1].replace(/,/g, '') : null; };
+    return { type: 'post', title: text(title), sub: text(comm).replace(/^r\//, ''), author: '', score: num(/([\d,.]+[km]?)\s+votes?/i), comments: num(/([\d,.]+[km]?)\s+comments?/i), ts: (t && t.getAttribute('datetime')) || '', permalink: abs(attr(title, 'href')), domain: '', flair: '', nsfw: false, text: '' };
+  }).filter((i) => i.title || i.text);
+  const feedEl = doc.querySelector('shreddit-feed');
+  if (items.length) return { kind: 'feed', items, feedUrl: (feedEl && feedEl.getAttribute('reload-url')) || '' };
+  const body = text(doc.body);
+  const gone = /this community is private|private community|quarantined|has been banned|this post was removed|post was deleted/i.exec(body.slice(0, 4000));
+  return { gone: gone ? gone[0] : '' };
 }
+
+// "46", "1,234", "2.3k" (a search card's counters) -> a number
+const countNum = (v) => {
+  if (v == null || v === '') return null;
+  const m = /^([\d.]+)\s*([km]?)$/i.exec(String(v).replace(/,/g, '').trim());
+  if (!m) return Number.isFinite(Number(v)) ? Number(v) : null;
+  return Math.round(Number(m[1]) * ({ k: 1e3, m: 1e6 }[m[2].toLowerCase()] || 1));
+};
 
 function formatRedditPage(raw, { maxChars = DEFAULT_MAX_CHARS, now = Date.now(), url = '' } = {}) {
   if (!raw) return null;
+  if (raw.kind === 'feed') {
+    const items = (raw.items || []).map((i) => (i.type === 'comment'
+      ? { type: 'comment', author: i.author, sub: i.sub, score: countNum(i.score), ts: Date.parse(i.ts) || null, text: i.text, postTitle: i.postTitle, permalink: i.permalink }
+      : { type: 'post', title: i.title, sub: i.sub, author: i.author, score: countNum(i.score), comments: countNum(i.comments), ts: Date.parse(i.ts) || null, permalink: i.permalink, domain: i.domain && !/reddit\.com$/.test(i.domain) && !/^self\./.test(i.domain) ? i.domain : '', flair: i.flair, nsfw: i.nsfw, text: i.text }));
+    if (!items.length) return null;
+    const t = redditTarget(url);
+    const q = t && t.kind === 'search' ? (parseUrl(url)?.searchParams.get('q') || '') : '';
+    return formatRedditList({ items }, 'page', { title: t ? `Reddit ${t.kind}: ${q ? `"${q}" (${t.path})` : t.path}` : 'Reddit' }, { maxChars, now });
+  }
   if (!raw.post) return null; // a private / removed page: the plain page read shows Reddit's own notice
   const num = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
   const p = raw.post;
   const post = { title: p.title, sub: p.sub, author: p.author, score: num(p.score), comments: num(p.comments), ts: Date.parse(p.ts) || null, flair: p.flair, nsfw: p.nsfw, spoiler: p.spoiler, domain: p.domain && !/reddit\.com$/.test(p.domain) ? p.domain : '', url: p.url && /^https?:/.test(p.url) && p.domain && !/reddit\.com$/.test(p.domain) ? p.url : '', text: p.text };
-  const comments = (raw.comments || []).filter((c) => c.text || c.author).map((c) => ({ depth: num(c.depth) ?? 0, author: c.author, score: num(c.score), ts: Date.parse(c.ts) || null, text: c.text, flags: [...(c.op || (post.author && c.author === post.author) ? ['OP'] : []), ...(c.distinguished ? [c.distinguished] : [])] }));
+  const comments = (raw.comments || []).filter((c) => c.more || c.text || c.author).map((c) => (c.more ? { more: c.more, depth: num(c.depth) ?? 0 } : { depth: num(c.depth) ?? 0, author: c.author, score: num(c.score), ts: Date.parse(c.ts) || null, text: c.text, flags: [...(c.op || (post.author && c.author === post.author) ? ['OP'] : []), ...(c.distinguished ? [c.distinguished] : [])] }));
   return formatRedditThread({ post, comments }, 'page', { maxChars, now });
+}
+
+// A subreddit page server-renders three cards and draws the rest when scrolled into view, which a view nobody looks at never does:
+// the feed's own "more posts" address gives the rest (what the scroll would ask for).
+async function expandRedditFeed(raw, run) {
+  if (!raw || raw.kind !== 'feed' || !raw.feedUrl || raw.items.length >= 8 || raw.items.some((i) => i.type !== 'post')) return raw;
+  try {
+    const got = await run(`(${redditPageProbe})(document, ${JSON.stringify([{ i: 0, feed: true, src: raw.feedUrl }])})`);
+    const posts = Array.isArray(got) && got[0] && got[0].posts;
+    return posts && posts.length > raw.items.length ? { ...raw, items: posts } : raw;
+  } catch { return raw; }
+}
+
+// "N more replies" buttons on a loaded thread: fetch them through the page (what the buttons do), up to two rounds, the shallowest
+// first, and put the replies where their button was. Only run when the budget has room for more than the first screen of comments.
+const MORE_ROUNDS = 2;
+const MORE_PER_ROUND = 12;
+const MORE_COMMENT_CAP = 400;
+async function expandRedditComments(raw, run) {
+  if (raw && raw.kind === 'feed') return expandRedditFeed(raw, run);
+  if (!raw || raw.kind !== 'thread') return raw;
+  let comments = raw.comments;
+  for (let round = 0; round < MORE_ROUNDS; round++) {
+    if (comments.filter((c) => !c.more).length >= MORE_COMMENT_CAP) break;
+    const open = comments.map((c, i) => ({ c, i })).filter(({ c }) => c.more && c.src && c.cursor).sort((a, b) => a.c.depth - b.c.depth || a.i - b.i).slice(0, MORE_PER_ROUND);
+    if (!open.length) break;
+    let got;
+    try { got = await run(`(${redditPageProbe})(document, ${JSON.stringify(open.map(({ c, i }) => ({ i, src: c.src, cursor: c.cursor })))})`); } catch { break; }
+    if (!Array.isArray(got)) break;
+    const byIndex = new Map(got.filter((g) => g && g.comments && g.comments.length).map((g) => [g.i, g.comments]));
+    if (!byIndex.size) break;
+    comments = comments.flatMap((c, i) => byIndex.get(i) || [c]);
+  }
+  return { ...raw, comments };
 }
 
 // ---------- Hacker News ----------
@@ -773,11 +917,22 @@ const githubExtractor = {
 
 redditExtractor.inPage = `(${redditPageProbe})(document)`;
 redditExtractor.formatPage = formatRedditPage;
+redditExtractor.expand = expandRedditComments;
+redditExtractor.canonicalUrl = redditCanonicalUrl;
+redditExtractor.wallNote = redditWallNote;
+// Signed out, Reddit's JSON is blocked and its RSS has no scores, nesting or comment counts (and 429s fast), while the loaded page
+// has all of them: so the JSON is tried first, then the loaded page, then the RSS feeds. `feedsFirst` / `feedsLast` are the `how`s.
+// A feed page draws its cards a few at a time after it loads (three at first, then the rest): the reader waits for the count to settle.
+redditExtractor.settle = (url) => ({ script: "document.querySelectorAll('shreddit-post, shreddit-comment, shreddit-profile-comment, a[data-testid=\"post-title\"]').length", growth: ['listing', 'search', 'user'].includes(redditTarget(url)?.kind) });
+redditExtractor.feedsFirst = ['json'];
+redditExtractor.feedsLast = ['rss'];
 tiktokExtractor.inPage = `(${tiktokPageProbe})(document)`;
 tiktokExtractor.formatPage = formatTikTokPage;
 
 const EXTRACTORS = [redditExtractor, hnExtractor, youtubeExtractor, xExtractor, tiktokExtractor, githubExtractor];
 const extractorFor = (url) => EXTRACTORS.find((e) => e.matches(url)) || null;
+// An address as shown to the AI: a site's own bookkeeping parameters (Reddit's browser-check ones) dropped.
+const cleanUrl = (url) => { const ex = extractorFor(url); return ex && ex.canonicalUrl && /reddit\.com/i.test(String(url)) ? ex.canonicalUrl(url) : url; };
 
 // A GET/POST helper over any fetch-like function (Electron's session.fetch on the cookie-less partition): desktop
 // Chrome user agent, 10 s timeout, no cookies, and a redirect off the known sites is a failure.
@@ -792,35 +947,40 @@ function makeGet(fetchFn) {
   };
 }
 
+const EXPAND_FROM_CHARS = 12000;
 const finish = (r, source, maxChars) => {
   if (!r || typeof r.text !== 'string' || !r.text.trim()) return null;
   return { title: String(r.title || ''), text: cap(r.text, maxChars), source: source.name };
 };
 
 // Network read. null when the address isn't supported or anything went wrong: the caller does its normal read.
-async function readSite(url, { get, maxChars = DEFAULT_MAX_CHARS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, lang = 'en' } = {}) {
+async function readSite(url, { get, maxChars = DEFAULT_MAX_CHARS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now, lang = 'en', how = null } = {}) {
   const ex = extractorFor(url);
   if (!ex || typeof get !== 'function') return null;
   try {
-    return finish(await ex.read(url, { get, maxChars, sleep, now, lang }), ex, maxChars);
+    return finish(await ex.read(url, { get, maxChars, sleep, now, lang, how }), ex, maxChars);
   } catch {
     return null;
   }
 }
 
 // From a loaded page: `run(script)` evaluates in the page (an isolated world) and returns the value.
+// `url` is the address the page is on now (a share link or old.reddit.com address has been redirected to its real page).
 async function readSiteInPage(url, run, { maxChars = DEFAULT_MAX_CHARS, now = Date.now } = {}) {
   const ex = extractorFor(url);
   if (!ex || !ex.inPage || typeof run !== 'function') return null;
   try {
-    return finish(ex.formatPage(await run(ex.inPage), { maxChars, now: now(), url }), ex, maxChars);
+    let raw = await run(ex.inPage);
+    if (ex.expand && (maxChars >= EXPAND_FROM_CHARS || (raw && raw.kind === 'feed'))) raw = await ex.expand(raw, run).catch(() => raw); // [more replies] only a budget that can show them
+    return finish(ex.formatPage(raw, { maxChars, now: now(), url }), ex, maxChars);
   } catch {
     return null;
   }
 }
 
 module.exports = {
-  extractorFor, readSite, readSiteInPage, makeGet, DEFAULT_MAX_CHARS, UA,
+  extractorFor, readSite, readSiteInPage, makeGet, DEFAULT_MAX_CHARS, UA, redditCanonicalUrl, redditWallNote, cleanUrl,
+  expandRedditComments, EXPAND_FROM_CHARS,
   // exported for tests
   redditTarget, parseRedditJson, parseRedditRss, formatRedditThread, formatRedditPage, redditPageProbe, redditRequests,
   hnTarget, formatHnItem, formatHnList, ytId, jsonAfter, pickCaptionTrack, parseTranscript, mergeCues, formatYoutube,
