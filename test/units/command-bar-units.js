@@ -121,7 +121,7 @@ check('locale: every string the bar shows is in locales/en.json', missing.length
 const actionIds = [...rendererJs.matchAll(/^ {4}\['([a-z-]+)', 'commandBar\.act\./gm)].map((m) => m[1]);
 const commands = create(deps()).COMMANDS;
 check('wiring: the commands the bar lists are exactly the ones main.js can run', actionIds.length > 15 && actionIds.every((id) => commands.includes(id)) && commands.every((id) => actionIds.includes(id)), actionIds.join());
-const sectionLine = [...rendererJs.matchAll(/\['([a-z-]+)', '[A-Za-z ]+', '[a-z -]*'\]/g)].map((m) => m[1]);
+const sectionLine = [...rendererJs.matchAll(/^ {4}\['([a-z-]+)', '[^']+', '[a-z -]*'\],$/gm)].map((m) => m[1]);
 check('wiring: the Settings sections the bar lists are the ones main.js accepts', sectionLine.length >= 20 && sectionLine.every((id) => SECTION_IDS.includes(id)) && SECTION_IDS.every((id) => sectionLine.includes(id)), sectionLine.join());
 const settingsBackend = require('../../src/settings/settings-backend');
 check('wiring: every Settings section the bar offers is a real section of lumen://settings', SECTION_IDS.every((id) => settingsBackend.SECTION_LINKS.includes(id)), SECTION_IDS.filter((id) => !settingsBackend.SECTION_LINKS.includes(id)).join());

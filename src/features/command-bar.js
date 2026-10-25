@@ -10,8 +10,10 @@ const MAX_BOOKMARKS = 500;
 const MAX_URL = 300; // a longer link stays in History but is poor to show (as in the address bar's suggestions)
 
 // What a Settings section id may be (the sections of lumen://settings the bar lists).
-const SECTION_IDS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced', 'languages',
-  'accessibility', 'startup', 'system', 'skills', 'macros', 'internals', 'about', 'reset', 'you-and-ai'];
+const SECTION_IDS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'ai', 'updates', 'advanced', 'search', 'downloads', 'languages', 'startup',
+  'default-browser', 'focus', 'accessibility', 'system', 'reset', 'ai-providers', 'ai-keys-page', 'connectors', 'connect-agents',
+  'external-apps', 'routines', 'skills', 'macros', 'usage', 'telegram', 'widgets', 'clock-greeting', 'site-permissions', 'site-data',
+  'passwords', 'extensions', 'task-manager', 'internals'];
 
 // d: { history() -> Map, bookmarks() -> [], isWebUrl(url), act: { name: () => void } }. act holds one function per command id below
 // (the names are the ids with the dashes made camelCase), main.js fills it with the same functions the menus and keys call.

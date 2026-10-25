@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Settings links, Back and the command bar are fixed.** Every page now opens from its lumen://settings link (Focus mode, Connectors, AI providers and more used to land on the last page you had open), Back from a sub-page returns you to where its link was, following a link no longer leaves focus on the previous row, and the command bar lists the current Settings pages instead of old names like "You and AI".
+
 ## 0.5.69 (2026-10-25)
 
 - When Claude Code, Codex, Grok Build or Antigravity updates itself while you send a message, Lumen now waits a few seconds and starts it again instead of failing with "Windows or your security software would not let Lumen run Claude Code". If it still will not start, the message moves to your next connected AI with a note ("Claude Code didn’t start (it may have just updated). Lumen tried again and switched to ..."), and security software is blamed only when Windows really says it blocked the file.
