@@ -224,7 +224,7 @@ async function buildProviders(page) {
       state.classList.toggle('err', Boolean(i.installed && i.signedIn === false));
       const where = statusRow.querySelector('.desc');
       if (i.path) {
-        where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg])))); // (a path breaks after a slash, never mid-name)
+        where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg])))); // (a path breaks after a slash, never mid-name)
         statusRow.dataset.search = `status found at ${i.path}`.toLowerCase();
       }
     }
