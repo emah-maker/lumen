@@ -7496,15 +7496,18 @@ function startChat() {
 
   const tr = (key, english) => { const text = window.t ? window.t(key) : key; return text && text !== key ? text : english; };
   const sameDay = (a, b) => a.toDateString() === b.toDateString();
+
+  const formatters = new Map();
+  const fmt = (options, d) => { const key = JSON.stringify(options); let f = formatters.get(key); if (!f) { f = new Intl.DateTimeFormat([], options); formatters.set(key, f); } return f.format(d); };
   function when(ms) {
     if (!ms) return '';
     const d = new Date(ms);
     const now = new Date();
-    if (sameDay(d, now)) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (sameDay(d, now)) return fmt({ hour: 'numeric', minute: '2-digit' }, d);
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
     if (sameDay(d, yesterday)) return tr('chats.yesterday', 'Yesterday');
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
+    return fmt({ month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) }, d);
   }
 
   const ICONS = {
@@ -7559,7 +7562,7 @@ function startChat() {
         if (months && i === bands.length - 1) {
           const d = new Date(at);
           const key = at ? `${d.getFullYear()}-${d.getMonth()}` : 'none';
-          if (!monthly.has(key)) monthly.set(key, { label: at ? d.toLocaleDateString([], { month: 'long', year: 'numeric' }) : bands[i].label, chats: [] });
+          if (!monthly.has(key)) monthly.set(key, { label: at ? fmt({ month: 'long', year: 'numeric' }, d) : bands[i].label, chats: [] });
           monthly.get(key).chats.push(c);
         } else out[i].chats.push(c);
       }
