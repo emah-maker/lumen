@@ -2421,13 +2421,14 @@ function buildExternalApps() {
     if (!info.apps.length) { appsBox.replaceChildren(h('p', { class: 'note', id: 'ea-none', text: tr('settings.ea.none', 'No apps yet.') })); return; }
     appsBox.replaceChildren(...info.apps.map((a) => {
       const unverified = a.kind !== 'token';
+      const always = a.kind === 'remembered';
       const ask = unverified ? null : h('input', { type: 'checkbox', 'aria-label': tr('settings.ea.askBefore', 'Ask before {name} acts', { name: a.name }), checked: a.ask, onchange: async (e) => draw((await X.setAsk(a.id, e.target.checked)).info) });
-      const revoke = armedButton(unverified ? tr('settings.ea.disconnect', 'Disconnect') : tr('settings.ea.revoke', 'Revoke'), unverified ? tr('settings.ea.disconnectSure', 'Click again to disconnect') : tr('settings.ea.revokeSure', 'Click again to revoke'), async () => { if (fresh?.app.id === a.id) fresh = null; draw((await X.revoke(a.id)).info); });
+      const revoke = armedButton(unverified && !always ? tr('settings.ea.disconnect', 'Disconnect') : tr('settings.ea.revoke', 'Revoke'), unverified && !always ? tr('settings.ea.disconnectSure', 'Click again to disconnect') : tr('settings.ea.revokeSure', 'Click again to revoke'), async () => { if (fresh?.app.id === a.id) fresh = null; draw((await X.revoke(a.id)).info); });
       const show = unverified ? null : h('button', { type: 'button', class: 'ea-show', text: tr('settings.ea.show', 'Show setup'), onclick: async () => { const r = await X.setup(a.id); if (r.ok) { fresh = { app: r.app, setup: r.setup, added: false }; drawSetup(); } } });
       const state = a.paused ? tr('settings.ea.paused', 'Paused') : a.busy ? tr('settings.ea.working', 'Working now') : a.connected ? tr('settings.ea.connected', 'Connected') : tr('settings.ea.idle', 'Not connected');
       return h('div', { class: 'snippet ea-app', 'data-app': a.name, 'data-app-id': a.id },
         h('div', { class: 'item' },
-          h('span', { class: 'grow' }, h('strong', { text: a.name }), h('span', { class: 'note', text: ` · ${state} · ${ago(a.lastUsed)}${unverified ? ` · ${tr('settings.ea.unverified', 'Unverified: no token, allowed for this session')}` : ''}` })),
+          h('span', { class: 'grow' }, h('strong', { text: a.name }), h('span', { class: 'note', text: ` · ${state} · ${ago(a.lastUsed)}${unverified ? ` · ${always ? tr('settings.ea.always', 'Unverified: no token, always allowed on this computer') : tr('settings.ea.unverified', 'Unverified: no token, allowed for this session')}` : ''}` })),
           ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, revoke));
     }));
   }
@@ -2450,7 +2451,7 @@ function buildExternalApps() {
   root.append(
     row(tr('settings.ea.switch', 'Let other apps use Lumen'), tr('settings.ea.switchDesc', 'Lets Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) read and use pages in a Lumen window of their own. Each app gets a token of its own that you can revoke. Off by default.'), switchInput),
     h('div', { class: 'row' }, statusLine),
-    row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session, never asks less, and can’t use the name of an app you set up.'), requireInput),
+    row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session (unless you pick Always allow), never asks less, and can’t use the name of an app you set up.'), requireInput),
     h('div', { class: 'row' }, warning, requireNow),
     stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app, give it a name, and paste the text into its settings. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
     stackRow(tr('settings.ea.apps', 'Apps that can use Lumen'), tr('settings.ea.appsDesc', 'Revoke deletes an app’s token and cuts it off at once.'), appsBox));

@@ -11740,6 +11740,7 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
     bar.replaceChildren(dot, words,
       button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
+      button('external-ask-btn', t('external.always'), () => answer('always')),
       button('external-ask-btn', t('external.deny'), () => answer('deny')));
     bar.title = full;
     bar.setAttribute('aria-description', full);

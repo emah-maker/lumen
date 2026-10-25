@@ -31,7 +31,8 @@ const APPS = {
 const MAX_PROMPTS = 3; // prompts shown at once; more wait their turn in a queue (first come, first served, so a flood of new names delays a real app, never blocks it)
 const MAX_QUEUED = 12;
 const RUN_QUIET_MS = 4000; // an app's run is over once it has made no call for this long
-const PROMPT_WAIT_MS = 90000; // an unanswered "wants to use Lumen" is a Deny (not remembered)
+const PROMPT_WAIT_MS = 10 * 60 * 1000; // an unanswered "wants to use Lumen" is a Deny (not remembered). Long: the agent's call only waits CALL_WAIT_MS for it, tells the user, and the user may come back later
+const CALL_WAIT_MS = 120000; // how long one tool call waits for the user's Allow before it returns "waiting for you to allow" (the prompt stays; the agent's next call waits on the same one)
 const DENY_MEMORY_MS = 10 * 60 * 1000; // a Deny holds for this long, so an app that retries does not ask again and again
 // A name as people read it: NFKC (full-width and look-alike forms fold), control characters to spaces, invisible format characters (zero-width,
 // bidi marks and overrides, soft hyphen, BOM) removed, spaces collapsed. Every comparison (reserved names, prompts) uses nameKey().
@@ -67,10 +68,11 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   };
   const saveSoon = () => { if (!saveTimer) { saveTimer = setTimer(() => save(false), 3000); saveTimer.unref?.(); } }; // (a last-used time is not worth a write per call)
   const runtime = (id) => { let l = live.get(id); if (!l) { l = { sessions: new Set(), busy: 0, controller: new AbortController(), paused: false, ranAt: 0, timer: null, epoch: 0 }; live.set(id, l); } return l; };
+  const persisted = (r) => Boolean(r.secret || r.remembered); // kept in external-apps.json: token apps, and unverified clients the user said "Always allow" to
   const byId = (id) => records.find((r) => r.id === id) || temp.find((r) => r.id === id) || null;
   const pub = (r) => {
     const l = live.get(r.id);
-    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : 'session', unverified: !r.secret, createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
+    return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : r.remembered ? 'remembered' : 'session', unverified: !r.secret, createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
   };
   // (Linux's basic_text backend only obfuscates: that is no keychain)
   const encryptionOk = () => Boolean(safeStorage?.isEncryptionAvailable?.()) && safeStorage.getSelectedStorageBackend?.() !== 'basic_text';
@@ -100,6 +102,17 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     temp.push(rec);
     return rec;
   }
+  // "Always allow <name> on this computer": the user's standing Allow for an unverified client of that name (the name is all that identifies it: it is
+  // still unverified, still asks before it acts, and Settings lists it with a Revoke).
+  const rememberedFor = (name) => records.find((r) => r.remembered && !r.secret && nameKey(r.name) === nameKey(name)) || null;
+  function remember(name) {
+    const existing = rememberedFor(name);
+    if (existing) return existing;
+    const rec = { id: clientToken.make().id, name: cleanName(name) || 'An AI agent', app: 'other', secret: null, remembered: true, createdAt: now(), lastUsed: null, ask: true };
+    records.push(rec);
+    save();
+    return rec;
+  }
   // A name a token-less client may not use: it would pass for an app the user set up (or for one they know).
   const claimed = (name) => { const n = nameKey(name); return n && (Object.entries(APPS).some(([k, l]) => k !== 'other' && l.toLowerCase() === n) || records.some((r) => r.secret && r.name.toLowerCase() === n)); };
   // What a token-less client is called: its own name, or, when that is a token app's or a built-in app's name, that name marked "(no token)" so it never passes for the app.
@@ -107,7 +120,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   function revoke(id) {
     const rec = byId(id);
     if (!rec) return false;
-    if (rec.secret) { records = records.filter((r) => r !== rec); save(); try { fs.rmSync(tokenFileOf(id), { force: true }); } catch {} } else temp.splice(temp.indexOf(rec), 1);
+    if (persisted(rec)) { records = records.filter((r) => r !== rec); save(); if (rec.secret) { try { fs.rmSync(tokenFileOf(id), { force: true }); } catch {} } } else temp.splice(temp.indexOf(rec), 1);
     cut(id);
     live.delete(id);
     onChange();
@@ -143,13 +156,15 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     const l = id && live.get(id);
     if (l && l.sessions.delete(session)) {
       const rec = byId(id);
-      if (rec && !rec.secret && !l.sessions.size) { temp.splice(temp.indexOf(rec), 1); live.delete(id); } // an unverified client's Allow ends with its session
+      if (rec && !persisted(rec) && !l.sessions.size) { temp.splice(temp.indexOf(rec), 1); live.delete(id); } // an unverified client's Allow ends with its session
       onChange();
     }
   }
 
   // The `onInitialize` hook: null to let the session start, or the words it is refused with.
-  async function admit(session, info = {}) {
+  // `defer` (the onInitialize hook): the handshake must not wait on a person, so a client that needs the user's Allow is let start and is asked at its first tool
+  // call instead (admitForCall). Without it (tests, older callers) the Allow is waited for here.
+  async function admit(session, info = {}, { defer = false } = {}) {
     if (session.engine) return null; // Lumen's own engines are not other apps (the server serves an engine tag only to a live run of its own: ai-agents.js enabled())
     if (session.externalId) { // a second initialize on a session already admitted: the name was fixed at admission and stays
       const rec = byId(session.externalId);
@@ -158,7 +173,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
       if (rec && !rec.secret && nameKey(unverifiedName(asked)) !== nameKey(rec.name)) return 'An app can’t change the name it connected with.';
       return null;
     }
-    if (session.pendingPrompt) return 'This connection is already waiting for the user’s answer in Lumen.';
+    if (!defer && session.pendingPrompt) return 'This connection is already waiting for the user’s answer in Lumen.';
     if (session.client) { // it proved a token (identify)
       if (!attach(session, session.client)) return 'This app’s access to Lumen was revoked. Add it again in Lumen: Settings, AI, Let other apps use Lumen.';
       return null;
@@ -168,15 +183,33 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     if (policy === 'open') return null;
     if (policy === 'require') return NEEDS_TOKEN;
     const name = unverifiedName(session.clientName); // a name that belongs to an app set up in Lumen is not refused: it connects as an ordinary unverified client, labelled “… (no token)”, with none of that app's standing
+    const standing = rememberedFor(name); // an "Always allow" from before: no question, however often it reconnects
+    if (standing) { attach(session, standing.id); return null; }
+    if (defer) { session.awaitingAllow = name; return null; }
+    return settle(session, name);
+  }
+  // Ask the user about an unverified client and attach it on Allow: null, or the words it is refused with. `waitMs`: stop waiting (not asking) after that long.
+  async function settle(session, name, waitMs = 0) {
     if (queue.length >= MAX_QUEUED) return 'Too many apps are waiting for the user’s answer in Lumen. Try again later.';
     session.pendingPrompt = true;
     let verdict;
-    try { verdict = await askUser(name, session); } finally { session.pendingPrompt = false; }
+    let timer = null;
+    try {
+      const asked = askUser(name, session);
+      verdict = waitMs ? await Promise.race([asked, new Promise((resolve) => { timer = setTimer(() => resolve(null), waitMs); timer?.unref?.(); })]) : await asked;
+    } finally { session.pendingPrompt = false; clearTimer(timer); }
+    if (!verdict) return `Waiting for you to allow ${name} in Lumen (the pill in Lumen’s toolbar). Tell the user to click Allow there, then try again.`; // (the prompt stays open: the next call waits on the same one)
+    if (session.externalId) return null; // another call of this session was answered first
     if (prefs.policy() === 'require') return NEEDS_TOKEN; // "Require a token" went on while the prompt was open: an Allow no longer counts
-    if (verdict.decision !== 'allow') return `${name || 'The app'} was not allowed to use Lumen. Give it a token in Lumen: Settings, AI, Let other apps use Lumen.`;
+    if (verdict.decision !== 'allow' && verdict.decision !== 'always') return `${name || 'The app'} was not allowed to use Lumen. Give it a token in Lumen: Settings, AI, Let other apps use Lumen.`;
     if (session.controller?.signal.aborted) return 'The connection ended before it was allowed.'; // gone while it waited: no entry is made
-    attach(session, temporary(name).id);
+    attach(session, verdict.decision === 'always' ? remember(name).id : temporary(name).id);
     return null;
+  }
+  // The onCall hook (before each tools/call): the user's Allow for a client that was let start without one. null: it may run; else the reason it may not.
+  async function admitForCall(session) {
+    if (!session || session.engine || session.externalId || session.client || !session.awaitingAllow) return null; // (admitted, a token app, or never initialized: beginCall judges those)
+    return settle(session, session.awaitingAllow, CALL_WAIT_MS);
   }
   const NEEDS_TOKEN = 'Lumen needs a token for every app. Add this app in Lumen: Settings, AI, Let other apps use Lumen, and put its token file in the app’s config.';
   const prefs = { policy: () => 'ask' };
@@ -217,7 +250,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     const queued = !p && queue.find((x) => x.id === id);
     if (!p && !queued) return false;
     p ||= queued;
-    const d = decision === 'allow' && prefs.policy() !== 'require' ? 'allow' : 'deny'; // (an Allow after "Require a token" went on is a refusal)
+    const d = (decision === 'allow' || decision === 'always') && prefs.policy() !== 'require' ? decision : 'deny'; // (an Allow after "Require a token" went on is a refusal)
     prompts.delete(id);
     if (queued) queue.splice(queue.indexOf(queued), 1);
     clearTimer(p.timer);
@@ -287,7 +320,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   function stop(id) {
     const rec = byId(id);
     if (!rec) return false;
-    if (!rec.secret) return revoke(id); // an unverified client's Allow ends with Stop: it has to be asked again
+    if (!persisted(rec)) return revoke(id); // an unverified client's Allow ends with Stop: it has to be asked again (an "Always allow" is the user's standing choice: Stop only ends the run, Revoke takes it back)
     cut(id); runtimeDone(id); onChange();
     return true;
   }
@@ -305,10 +338,10 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
   // Revoke-all (the master switch went off): every app is cut; the approvals stay.
   function disconnectAll() { for (const id of [...live.keys()]) { cut(id); runtimeDone(id); } onChange(); }
   // "Require a token for every app" went on: unverified clients are cut now.
-  function disconnectUnverified() { for (const r of [...temp]) revoke(r.id); }
+  function disconnectUnverified() { for (const r of [...temp]) revoke(r.id); for (const r of records) if (r.remembered) { cut(r.id); runtimeDone(r.id); } onChange(); }
   function flush() { if (saveTimer) save(false); }
 
-  return { add, revoke, setAsk, list, get, identify, attach, detach, admit, answer, pendingPrompts, beginCall, stop, takeOver, resume, state, connectedCount, disconnectAll, disconnectUnverified, tokenFileOf, sessionsOf: (id) => [...(live.get(id)?.sessions || [])], flush, setPolicy: (fn) => { prefs.policy = fn; }, raw: () => records };
+  return { add, revoke, setAsk, list, get, identify, attach, detach, admit, admitForCall, answer, pendingPrompts, beginCall, stop, takeOver, resume, state, connectedCount, disconnectAll, disconnectUnverified, tokenFileOf, sessionsOf: (id) => [...(live.get(id)?.sessions || [])], flush, setPolicy: (fn) => { prefs.policy = fn; }, raw: () => records };
 }
 
 // A file for the token with the user's access only (0600; on Windows the inherited rights are dropped and only this user is granted).
@@ -362,4 +395,4 @@ function setupFor({ command, args, tokenFile = null, token = null, name = 'lumen
   };
 }
 
-module.exports = { createExternalApps, writeTokenFile, nameKey, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, MAX_PROMPTS, cleanName };
+module.exports = { createExternalApps, writeTokenFile, nameKey, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, CALL_WAIT_MS, MAX_PROMPTS, cleanName };
