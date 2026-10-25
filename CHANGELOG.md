@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Lumen's MCP server no longer times out in Claude Code when Lumen is not running yet.** Starting Lumen (or restarting it for an update) takes longer than Claude Code waits to connect, so the server was marked failed even though Lumen came up a few seconds later. The connector now answers the handshake and the tool list straight away, waits for Lumen to finish starting before running a tool, and reconnects (starting Lumen again if needed) when Lumen restarts mid-session.
+
 ## 0.5.69 (2026-10-25)
 
 - When Claude Code, Codex, Grok Build or Antigravity updates itself while you send a message, Lumen now waits a few seconds and starts it again instead of failing with "Windows or your security software would not let Lumen run Claude Code". If it still will not start, the message moves to your next connected AI with a note ("Claude Code didn’t start (it may have just updated). Lumen tried again and switched to ..."), and security software is blamed only when Windows really says it blocked the file.
