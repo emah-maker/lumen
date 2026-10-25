@@ -3910,7 +3910,6 @@
   "card.sub": "{state} · {task}",
   "card.steps.one": "1 step",
   "card.steps.other": "{count} steps",
-  "card.steps.latest": "{steps} · {latest}",
   "card.openPreview": "Go to tab",
   "card.reopenPage": "Reopen page",
   "card.openFile": "Open file",
