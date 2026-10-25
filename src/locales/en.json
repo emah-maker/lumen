@@ -614,6 +614,7 @@
   "external.wantsShort": "“{client}” wants to use Lumen (unverified)",
   "external.wants": "Unverified app “{client}” wants to use Lumen. It has no token: it only says that is its name.",
   "external.allow": "Allow this time",
+  "external.always": "Always allow",
   "external.deny": "Deny",
   "tabs.openedByApp": "Opened by {client}",
   "agentWindow.pending.title": "An agent working in its own window is waiting for your OK. Click to go to that window.",

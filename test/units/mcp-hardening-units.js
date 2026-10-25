@@ -146,6 +146,36 @@ const challenge = async (c) => { await until(() => c.lines.some((l) => l.lumenCh
   ok.stop();
 
   fs.rmSync(userData, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+  // the stdio bridge (root mcp.js, as an agent runs it): replies still arrive when the client closes its stdin right after writing, and a
+  // large reply (a screenshot) crosses whole. Against a real server over the real channel.
+  {
+    const ud = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-mcprelay-'));
+    const big = 'z'.repeat(6 * 1024 * 1024);
+    const rsrv = mcp.startServer({ userData: ud, tools: [{ name: 'big', description: 'b', input_schema: { type: 'object' } }], callTool: async () => ({ content: [{ type: 'text', text: big }], isError: false }), enabled: () => true, onEvent: () => {} });
+    await new Promise((r) => (rsrv.server.listening ? r() : rsrv.server.once('listening', r)));
+    const runBridge = (lines, { closeStdin = true } = {}) => new Promise((resolve) => {
+      const child = require('child_process').spawn(process.execPath, [path.join(__dirname, '..', '..', 'mcp.js')], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_USERDATA: ud }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      let out = ''; let err = '';
+      const timer = setTimeout(() => { try { child.kill(); } catch {} resolve({ out, err, timeout: true }); }, 20000);
+      child.stdout.setEncoding('utf8'); child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('exit', (code) => { clearTimeout(timer); resolve({ out, err, code }); });
+      for (const l of lines) child.stdin.write(`${JSON.stringify(l)}\n`);
+      if (closeStdin) child.stdin.end();
+    });
+    const r = await runBridge([
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'relay-test' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'big', arguments: {} } },
+    ]);
+    const replies = r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    check('bridge: a client that closes stdin after writing still gets every reply (it waits for the answers, then leaves)', !r.timeout && r.code === 0 && [1, 2, 3].every((id) => replies.some((m) => m.id === id)), JSON.stringify({ timeout: r.timeout, code: r.code, ids: replies.map((m) => m.id), err: r.err.slice(0, 200) }));
+    check('bridge: a 6 MB reply (a screenshot) crosses whole', replies.find((m) => m.id === 3)?.result?.content?.[0]?.text?.length === big.length);
+    check('bridge: nothing but JSON-RPC on stdout, and no stderr noise when Lumen is already running', replies.every((m) => m.jsonrpc === '2.0') && r.err === '', r.err.slice(0, 200));
+    rsrv.disconnectAll(); rsrv.close();
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nAll mcp-hardening checks passed');
   process.exit(failures ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

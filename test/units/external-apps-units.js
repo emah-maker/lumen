@@ -6,7 +6,7 @@ const net = require('net');
 const path = require('path');
 const crypto = require('crypto');
 require('../helpers/_tmp-cleanup');
-const { createExternalApps, writeTokenFile, cleanName, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS } = require('../../src/features/external-apps');
+const { createExternalApps, writeTokenFile, cleanName, setupFor, configPath, FILE_PLACEHOLDER, RUN_QUIET_MS, MAX_PROMPTS, PROMPT_WAIT_MS, CALL_WAIT_MS } = require('../../src/features/external-apps');
 const clientToken = require('../../src/automation/client-token');
 const mcp = require('../../src/automation/mcp');
 
@@ -196,7 +196,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     const { ext, events, c } = make();
     ext.setPolicy(() => 'ask');
     const p = ext.admit(session({ clientName: 'Slow App' }), {});
-    c.advance(120000);
+    c.advance(PROMPT_WAIT_MS + 1000);
     check('an unanswered prompt is a Deny, and not remembered', /not allowed/.test((await p) || '') && ext.state().prompts.length === 0);
     check('a bare engine tag is never asked about', (await ext.admit(session({ engine: 'x', clientName: 'Any' }), {})) === null && events.prompts.length === 1);
   }
@@ -370,7 +370,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     const made = ext.add({ name: 'Fake App' });
     ext.add({ name: 'Second App' });
     const server = mcp.startServer({ userData, tools: [{ name: 'list_tabs', description: 'x', input_schema: { type: 'object' } }, { name: 'wait', description: 'x', input_schema: { type: 'object' } }], callTool: async (name, args, s) => { const call = ext.beginCall(s); if (call.refuse) return { content: [{ type: 'text', text: call.refuse }], isError: true }; try { const how = name === 'wait' ? await new Promise((res) => { const t = setTimeout(() => res('done'), 4000); call.signal?.addEventListener('abort', () => { clearTimeout(t); res('stopped'); }); }) : 'ok'; return { content: [{ type: 'text', text: how }], isError: how === 'stopped' }; } finally { call.end(); } },
-      enabled: () => true, onEvent: () => {}, identify: (h) => (h.client === undefined ? null : ext.identify(h)), onInitialize: (s, i) => ext.admit(s, i), onClose: (s) => ext.detach(s) });
+      enabled: () => true, onEvent: () => {}, identify: (h) => (h.client === undefined ? null : ext.identify(h)), onInitialize: (s, i) => ext.admit(s, i, { defer: true }), onCall: (s) => ext.admitForCall(s), onClose: (s) => ext.detach(s) });
     await new Promise((r) => setTimeout(r, 100));
     const sharedToken = fs.readFileSync(mcp.tokenPath(userData), 'utf8').trim();
     // A client the way the bridge is one: proves the shared token, then (with an app token) its own.
@@ -444,21 +444,24 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     // Token-less clients (the shared mcp-token only)
     const legacy = await connect(undefined);
     check('a bridge with no app token still reaches the door (the shared token)', legacy.authed === 'ok');
-    const pendingInit = init(legacy, 'Legacy Agent');
+    const li = await init(legacy, 'Legacy Agent');
+    check('its initialize is answered at once, with no wait for the user (the handshake has a client-side timeout)', li.result?.serverInfo?.name === 'lumen' && events.prompts.length === 0, JSON.stringify(li));
+    const firstCall = call(legacy);
     await new Promise((r2) => setTimeout(r2, 100));
-    check('but it waits for the user before it may start', events.prompts.some((p) => p.prompt.name === 'Legacy Agent'));
+    check('its first tool call waits for the user’s Allow', events.prompts.some((p) => p.prompt.name === 'Legacy Agent'));
     ext.answer(events.prompts.find((p) => p.prompt.name === 'Legacy Agent').prompt.id, 'allow');
-    const li = await pendingInit;
-    check('Allow lets it start (this session)', li.result?.serverInfo?.name === 'lumen');
+    const fc = await firstCall;
+    check('Allow lets the call run (this session)', fc.result?.isError === false, JSON.stringify(fc));
     const renamed = await init(legacy, 'Claude Desktop');
     check('over the real channel, a second initialize as another name is refused and the app keeps its name', /can’t change the name/.test(renamed.error?.message || '') && ext.list().some((x) => x.name === 'Legacy Agent') && !ext.list().some((x) => x.name === 'Claude Desktop'), JSON.stringify(renamed));
     const claim = await connect(undefined);
-    const claimedInit = init(claim, 'Claude Code');
+    const claimedInit = await init(claim, 'Claude Code');
+    const claimedCall = call(claim);
     await new Promise((r2) => setTimeout(r2, 100));
-    check('a token-less client calling itself Claude Code is asked about as "Claude Code (no token)", not refused', events.prompts.some((p) => p.prompt.name === 'Claude Code (no token)'));
+    check('a token-less client calling itself Claude Code is asked about as "Claude Code (no token)", not refused', claimedInit.result?.serverInfo?.name === 'lumen' && events.prompts.some((p) => p.prompt.name === 'Claude Code (no token)'));
     ext.answer(events.prompts.find((p) => p.prompt.name === 'Claude Code (no token)').prompt.id, 'allow');
-    const claimed = await claimedInit;
-    check('...and after Allow it connects, as an unverified client with no app privileges', claimed.result?.serverInfo?.name === 'lumen' && ext.list().some((x) => x.name === 'Claude Code (no token)' && x.unverified), JSON.stringify(claimed));
+    const claimed = await claimedCall;
+    check('...and after Allow it works, as an unverified client with no app privileges', claimed.result?.isError === false && ext.list().some((x) => x.name === 'Claude Code (no token)' && x.unverified), JSON.stringify(claimed));
     const skip = await connect(undefined);
     const skipped = await call(skip);
     check('a client that skips initialize gets no tools', skipped.result?.isError === true && /not been allowed/.test(skipped.result.content[0].text), JSON.stringify(skipped));
@@ -477,25 +480,26 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     {
       ext.add({ name: 'Bridge App' });
       const promptsBefore = events.prompts.length;
-      const runBridge = (clientName, extraEnv = {}) => new Promise((resolve) => {
+      const runBridge = (clientName, extraEnv = {}, withCall = false) => new Promise((resolve) => {
         const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1', LUMEN_USERDATA: userData, ...extraEnv };
         delete env.LUMEN_CLIENT_TOKEN; if (!('LUMEN_CLIENT_TOKEN_FILE' in extraEnv)) delete env.LUMEN_CLIENT_TOKEN_FILE;
         const child = require('child_process').spawn(process.execPath, [path.join(__dirname, '..', '..', 'mcp.js')], { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
         let out = ''; let err = ''; let done = false;
         const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve({ ...v, out, err, kill: () => { try { child.kill(); } catch {} } }); };
         const timer = setTimeout(() => finish({ timeout: true }), 15000);
-        child.stdout.on('data', (d) => { out += d; if (out.includes('"id":1')) setTimeout(() => finish({ replied: true }), 100); });
+        child.stdout.on('data', (d) => { out += d; if (withCall ? out.includes('"id":2') : out.includes('"id":1')) setTimeout(() => finish({ replied: true }), 100); });
         child.stderr.on('data', (d) => { err += d; });
         child.on('exit', () => finish({ exited: true }));
         child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: clientName } } }) + String.fromCharCode(10));
+        if (withCall) child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'list_tabs', arguments: {} } }) + String.fromCharCode(10));
       });
-      const spoof = runBridge('Bridge App');
+      const spoof = runBridge('Bridge App', {}, true);
       await new Promise((r2) => setTimeout(r2, 1500));
       const asked = events.prompts.slice(promptsBefore).find((p) => p.prompt.name === 'Bridge App (no token)');
       check('a spawned bridge with no token that calls itself "Bridge App" is asked about as "Bridge App (no token)" and is not that app', Boolean(asked) && ext.list().find((x) => x.name === 'Bridge App').connected === 0);
       if (asked) ext.answer(asked.prompt.id, 'allow');
       const spoofed = await spoof;
-      check('after Allow it connects, but as the unverified client, never the app', spoofed.replied === true && /"serverInfo"/.test(spoofed.out) && ext.list().find((x) => x.name === 'Bridge App').connected === 0 && ext.list().some((x) => x.name === 'Bridge App (no token)' && x.unverified), JSON.stringify({ out: spoofed.out.slice(0, 200), err: spoofed.err.slice(0, 200) }));
+      check('after Allow its first call runs, but as the unverified client, never the app', spoofed.replied === true && /"serverInfo"/.test(spoofed.out) && /"id":2,"result"/.test(spoofed.out) && ext.list().find((x) => x.name === 'Bridge App').connected === 0 && ext.list().some((x) => x.name === 'Bridge App (no token)' && x.unverified), JSON.stringify({ out: spoofed.out.slice(0, 200), err: spoofed.err.slice(0, 200) }));
       spoofed.kill();
       await new Promise((r2) => setTimeout(r2, 200));
       const bogus = path.join(userData, 'bogus.token'); fs.writeFileSync(bogus, 'lmn_' + '0'.repeat(12) + '_' + '0'.repeat(48));
@@ -503,6 +507,140 @@ const proofFor = (token) => clientToken.hello(token, nonce);
       check('a bridge with a wrong token is refused', wrong.exited === true && /refused/.test(wrong.err) && !/"serverInfo"/.test(wrong.out), JSON.stringify({ out: wrong.out.slice(0, 200), err: wrong.err.slice(0, 200) }));
     }
     server.disconnectAll(); server.close();
+  }
+
+  // ---------- the handshake never waits for the user: the Allow is asked at the first tool call (Claude Code gave up on a server whose initialize hung on the pill)
+  {
+    const { ext, events, c, file } = make();
+    ext.setPolicy(() => 'ask');
+    const tools = [{ name: 'list_tabs', description: 'x', input_schema: { type: 'object' } }];
+    const ran = [];
+    const rig = () => {
+      const out = [];
+      const s = mcp.createSession({ tools, enabled: () => true, onEvent: () => {}, send: (m) => out.push(m), onInitialize: (sess, i) => ext.admit(sess, i, { defer: true }), onCall: (sess) => ext.admitForCall(sess), callTool: async (name, args, sess) => { const call = ext.beginCall(sess); if (call.refuse) return { content: [{ type: 'text', text: call.refuse }], isError: true }; try { ran.push(name); return { content: [{ type: 'text', text: 'ok' }], isError: false }; } finally { call.end(); } } });
+      s.out = out;
+      s.send = (msg) => s.handle(msg);
+      return s;
+    };
+    const tick = () => new Promise((r) => setImmediate(r));
+    const initMsg = (id, name) => ({ jsonrpc: '2.0', id, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name } } });
+    const callMsg = (id) => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'list_tabs', arguments: {} } });
+    const reply = (s, id) => s.out.find((m) => m.id === id);
+
+    const a = rig();
+    a.send(initMsg(1, 'claude-code')); await tick();
+    check('initialize is answered at once while no one has answered the prompt (nothing is asked yet)', reply(a, 1)?.result?.serverInfo?.name === 'lumen' && reply(a, 1).result.protocolVersion === '2025-11-25' && events.prompts.length === 0, JSON.stringify(a.out));
+    a.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    a.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' }); await tick();
+    check('tools/list works before any Allow (clients register the server from it)', reply(a, 2)?.result?.tools?.length === 1);
+    a.send(callMsg(3)); await tick();
+    check('the first tool call asks the user, and waits', events.prompts.length === 1 && events.prompts[0].prompt.name === 'Claude Code (no token)' && !reply(a, 3) && ran.length === 0, JSON.stringify(events.prompts));
+    a.send(callMsg(4)); await tick();
+    check('a second call waits on the same prompt (one question, not two)', events.prompts.length === 1 && !reply(a, 4));
+    ext.answer(events.prompts[0].prompt.id, 'allow');
+    await tick(); await tick();
+    check('Allow lets the waiting calls run', reply(a, 3)?.result?.isError === false && reply(a, 4)?.result?.isError === false && ran.length === 2, JSON.stringify(a.out.slice(-2)));
+    a.send(callMsg(5)); await tick();
+    check('...and later calls on the session run without asking', reply(a, 5)?.result?.isError === false && events.prompts.length === 1);
+    check('"Allow" is for the session only: nothing on disk', !fs.existsSync(file) || !fs.readFileSync(file, 'utf8').includes('Claude Code'));
+    a.close();
+    ext.detach(a.session);
+
+    // the wait is bounded: past CALL_WAIT_MS the call comes back with words the agent can pass on, and the prompt stays
+    const b = rig();
+    b.send(initMsg(1, 'Waiting App')); b.send(callMsg(2)); await tick();
+    c.advance(CALL_WAIT_MS + 1);
+    await tick(); await tick();
+    const waiting = reply(b, 2)?.result;
+    check('an unanswered call returns a tool error that says it is waiting for the user to allow it in Lumen', waiting?.isError === true && /Waiting for you to allow Waiting App in Lumen/.test(waiting.content[0].text) && ran.length === 3, JSON.stringify(waiting));
+    check('...the prompt is still open, and the next call waits on it', ext.state().prompts.some((p) => p.name === 'Waiting App') && (b.send(callMsg(3)), await tick(), !reply(b, 3)));
+    ext.answer(ext.state().prompts.find((p) => p.name === 'Waiting App').id, 'allow');
+    await tick(); await tick();
+    check('...and runs once the user allows', reply(b, 3)?.result?.isError === false);
+    b.close(); ext.detach(b.session);
+
+    // Deny: a tool error with the reason; remembered, so a retry does not ask again
+    const d = rig();
+    d.send(initMsg(1, 'Denied App')); d.send(callMsg(2)); await tick();
+    const promptsBefore = events.prompts.length;
+    ext.answer(events.prompts.at(-1).prompt.id, 'deny');
+    await tick(); await tick();
+    check('Deny gives the call a tool error with the reason', reply(d, 2)?.result?.isError === true && /not allowed/.test(reply(d, 2).result.content[0].text) && ran.length === 4);
+    d.send(callMsg(3)); await tick(); await tick();
+    check('a retry is refused without asking again (a Deny is remembered for a while)', reply(d, 3)?.result?.isError === true && events.prompts.length === promptsBefore);
+    d.close(); ext.detach(d.session);
+
+    // Always allow: remembered by name, on disk, no question on a reconnect, revocable
+    const e1 = rig();
+    e1.send(initMsg(1, 'claude-code')); e1.send(callMsg(2)); await tick();
+    const asks = events.prompts.length;
+    ext.answer(events.prompts.at(-1).prompt.id, 'always');
+    await tick(); await tick();
+    check('"Always allow" lets the call run', reply(e1, 2)?.result?.isError === false);
+    const listed = ext.list().find((x) => x.kind === 'remembered');
+    check('...and is listed as an unverified, remembered client Settings can revoke', Boolean(listed) && listed.unverified === true && listed.name === 'Claude Code (no token)', JSON.stringify(ext.list()));
+    check('...kept in external-apps.json, with no secret', (() => { const r = JSON.parse(fs.readFileSync(file, 'utf8')).apps.find((x) => x.remembered); return Boolean(r) && r.secret === null && r.name === 'Claude Code (no token)'; })());
+    e1.close(); ext.detach(e1.session);
+    check('a remembered client\'s entry survives its session ending', ext.list().some((x) => x.kind === 'remembered'));
+    const e2 = rig();
+    e2.send(initMsg(1, 'claude-code')); e2.send(callMsg(2)); await tick(); await tick();
+    check('a reconnect is not asked again: its first call just runs', reply(e2, 2)?.result?.isError === false && events.prompts.length === asks, JSON.stringify([events.prompts.length, asks]));
+    check('it is the same unverified entry, not a token app, and it asks before it acts', ext.list().filter((x) => x.kind === 'remembered').length === 1 && ext.get(e2.session.externalId).ask === true);
+    const other = rig();
+    other.send(initMsg(1, 'Some Other Agent')); other.send(callMsg(2)); await tick();
+    check('another name is still asked about', !reply(other, 2) && ext.state().prompts.some((p) => p.name === 'Some Other Agent'));
+    ext.answer(ext.state().prompts.find((p) => p.name === 'Some Other Agent').id, 'deny');
+    other.close(); ext.detach(other.session);
+    // a restart keeps it
+    const reborn = createExternalApps({ file, safeStorage: fakeStorage });
+    reborn.setPolicy(() => 'ask');
+    const s3 = session({ clientName: 'Claude Code' });
+    check('a restart of Lumen keeps the choice (no question)', (await reborn.admit(s3, {}, { defer: true })) === null && s3.externalId && !s3.awaitingAllow);
+    // Stop ends the run but keeps the standing Allow; Revoke takes it back
+    ext.stop(e2.session.externalId);
+    check('Stop keeps an "Always allow"', ext.list().some((x) => x.kind === 'remembered'));
+    ext.revoke(ext.list().find((x) => x.kind === 'remembered').id);
+    check('Revoke removes it, from the list and from disk', !ext.list().some((x) => x.kind === 'remembered') && !JSON.parse(fs.readFileSync(file, 'utf8')).apps.some((x) => x.remembered));
+    const e3 = rig();
+    e3.send(initMsg(1, 'claude-code')); e3.send(callMsg(2)); await tick();
+    check('...after which it is asked again', !reply(e3, 2) && ext.state().prompts.some((p) => p.name === 'Claude Code (no token)'));
+    ext.answer(ext.state().prompts.at(-1).id, 'deny'); e3.close(); ext.detach(e3.session);
+    // the client withdrew a call (notifications/cancelled): no reply is sent for it
+    const g = rig();
+    g.send(initMsg(1, 'Cancelling App')); g.send(callMsg(2)); await tick();
+    g.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2 } }); await tick();
+    ext.answer(ext.state().prompts.find((p) => p.name === 'Cancelling App').id, 'allow');
+    await tick(); await tick();
+    check('a call the client cancelled gets no reply', !reply(g, 2));
+    g.close(); ext.detach(g.session);
+
+    // the Settings → AI → Require a token switch also cuts a remembered client
+    const h = make(); h.ext.setPolicy(() => 'ask');
+    const hs = session({ clientName: 'Tester' });
+    await h.ext.admit(hs, {}, { defer: true });
+    const hp = h.ext.admitForCall(hs); await tick();
+    h.ext.answer(h.events.prompts.at(-1).prompt.id, 'always'); await hp;
+    h.ext.disconnectUnverified();
+    check('"Require a token" cuts a remembered client at once (the entry stays, unused)', hs.cut === true && h.ext.list().some((x) => x.kind === 'remembered'));
+    h.ext.setPolicy(() => 'require');
+    check('...and while it is on, the standing Allow does not count', /needs a token/.test((await h.ext.admit(session({ clientName: 'Tester' }), {}, { defer: true })) || ''));
+  }
+
+  // ---------- the bridge's line reader: the limit is per line, not per chunk
+  {
+    const { PassThrough } = require('stream');
+    const got = [];
+    const stream = new PassThrough();
+    mcp.onLines(stream, (l) => got.push(l.length), 7 * 1024 * 1024);
+    const big = 'x'.repeat(6 * 1024 * 1024);
+    stream.write(`${big}\n{"a":1}\n${big}\n`);
+    await new Promise((r) => setTimeout(r, 200));
+    check('a 6 MB line (a screenshot) followed by more lines in the same chunk is delivered whole', got.length === 3 && got[0] === big.length && got[1] === 7 && !stream.destroyed, JSON.stringify(got));
+    const hostile = new PassThrough(); let n = 0;
+    mcp.onLines(hostile, () => { n++; }, 1024);
+    hostile.write('y'.repeat(4096));
+    await new Promise((r) => setTimeout(r, 50));
+    check('a line past the limit still drops the connection', hostile.destroyed && n === 0);
   }
 
   console.log(failures ? `\n${failures} failed` : '\nall passed');

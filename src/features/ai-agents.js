@@ -130,7 +130,7 @@ function setupAiAgents(deps) {
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
     return { load, ext: () => load().ext };
   })();
-  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i)), detach: (s) => { if (s.externalId || s.promptId) external.ext().detach(s); } };
+  const externalApps = { beginCall: (s) => (s?.engine ? { signal: null, ask: false, end() {} } : external.ext().beginCall(s)), identify: (h) => external.ext().identify(h), admit: (s, i) => (s.engine ? null : external.ext().admit(s, i, { defer: true })), admitForCall: (s) => (s.engine || s.externalId || s.client || !s.awaitingAllow ? null : external.ext().admitForCall(s)), detach: (s) => { if (s.externalId || s.promptId) external.ext().detach(s); } };
 
   // Engines made for background tasks, one per run (backgroundEngine below): never the sidebar's own, so
   // each has its own `active` run (and its own MCP tag), and can run beside a sidebar chat.
@@ -598,7 +598,8 @@ function setupAiAgents(deps) {
       // them: a window made for each popped up "randomly" and loaded the app for nothing. The window is made by the session's
       // first call that needs a tab (mcpCallTool), which pays ~1 s once.
       identify: (hello) => (hello.client === undefined ? null : externalApps.identify(hello)), // [external apps] an app that names itself must prove its token
-      onInitialize: (session, info) => { warmNetFetch(); return externalApps.admit(session, info); },
+      onInitialize: (session, info) => { warmNetFetch(); return externalApps.admit(session, info); }, // (never waits for the user: a client that needs an Allow is asked at its first tool call, onCall)
+      onCall: (session) => externalApps.admitForCall(session),
       onClose: (session) => { if (!session.engine) { externalApps.detach(session); deps.agentWindows?.windows.release(session); } }, // its window closes after a grace period
     });
   }
