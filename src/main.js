@@ -7361,6 +7361,16 @@ function mergeWindowItems(src, { hideDisabled = false } = {}) {
 // release ('tab:dragend'); a hard timeout ends a drag whose release was lost.
 const tabDragMath = lazy(() => require('./features/tab-drag-math'));
 let tabDragTimeoutMs = 120000; // with the mouse still and no release seen (see tickTabDrag)
+// The display under a DIP point (see tabDragMath.displayAtPoint); every point in a drag is in DIPs, which is what
+// getCursorScreenPoint, BrowserWindow bounds and workArea all use, so nothing here is multiplied by a scale.
+const displayAt = (point) => tabDragMath.displayAtPoint(screen.getAllDisplays(), point) || screen.getDisplayNearestPoint(point);
+// Moves a window without changing its size, even across displays with different scales (setPosition alone resizes it
+// on Windows, because the size is converted with the scale of the display it leaves); a drifted size is set again
+// with setBoundsSettled, which is exact once the window sits on the target display.
+function moveKeepingSize(win, x, y, want) {
+  win.setPosition(x, y);
+  if (tabDragMath.sizeDrifted(win.getBounds(), want, win.getMinimumSize())) setBoundsSettled(win, { x, y, width: want.width, height: want.height });
+}
 const cursorPoint = () => (TEST && global.__testCursor) || screen.getCursorScreenPoint();
 let tabDrag = null; // { rec, tabId, single, card, origin, grab, size, hover, strips, timer, ... }
 // Windows front first, as far as Lumen can tell: the order they were last focused in (Electron has no
@@ -7507,7 +7517,8 @@ function showDragCard(d, tab, cursor, { compact = false, count = null } = {}) {
   card.owner = d;
   const page = withWindow(d.rec, () => ({ ...contentBounds }));
   const shotHeight = Math.round(CARD_WIDTH * Math.min(0.75, Math.max(0.45, (page.height || 600) / (page.width || 800))));
-  card.win.setBounds({ ...d.cardAt, width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 });
+  card.want = { width: CARD_WIDTH + CARD_PAD * 2, height: CARD_HEAD + shotHeight + CARD_PAD * 2 };
+  setBoundsSettled(card.win, { ...d.cardAt, ...card.want });
   card.loaded.then(() => {
     if (tabDrag !== d || !(d.card || d.chip)) return; // put away (the strip left) before the card was ready
     const icons = d.ghost?.favicons?.length ? d.ghost.favicons : tab.favicon ? [tab.favicon] : [];
@@ -7556,6 +7567,8 @@ function wakeDeferredAside(d) {
 }
 // Puts away the card of drag `d`: never the card of a newer drag that has taken it over meanwhile (a
 // drop's window can take a moment to show, and a quick second drag reuses the one card window).
+// The card follows the cursor across displays of any scale at its own size.
+const moveCard = (x, y) => { if (dragCard.want) moveKeepingSize(dragCard.win, x, y, dragCard.want); else dragCard.win.setPosition(x, y); };
 function hideDragCard(d, kind, landing = null) {
   if (!dragCard || dragCard.win.isDestroyed() || dragCard.owner !== d) return;
   if (kind === 'join' && landing && rcAlive(landing.rec) && !motionReducedMain() && !TEST_BACKGROUND) {
@@ -7703,13 +7716,13 @@ function tickTabDrag() {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
       d.cardAt = at;
-      if (dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(at.x, at.y);
+      if (dragCard && !dragCard.win.isDestroyed()) moveCard(at.x, at.y);
     }
   } else if (moved || !d.last) { // a still cursor needs no display lookup: the window is already where it goes
-    const area = screen.getDisplayNearestPoint(cursor).workArea;
+    const area = displayAt(cursor).workArea;
     const b = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
-    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { d.rec.win.setPosition(b.x, b.y); d.last = b; } // position only: no size drift across displays
-    if (d.chip && dragCard && !dragCard.win.isDestroyed()) dragCard.win.setPosition(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
+    if (!d.last || d.last.x !== b.x || d.last.y !== b.y) { moveKeepingSize(d.rec.win, b.x, b.y, d.size); d.last = b; } // no size drift across displays
+    if (d.chip && dragCard && !dragCard.win.isDestroyed()) moveCard(cursor.x - CARD_HOLD.x, cursor.y - CARD_HOLD.y);
   }
   if (Date.now() - d.stripsAt > 120) { d.stripsAt = Date.now(); refreshDragStrips(d); }
   const hit = tabDragMath.stripHit(cursor, dropTargets(d), 6, d.hover?.rec ?? null);
@@ -7874,7 +7887,7 @@ function finishCardDrag(d, reason, target) {
   // A window of its own, placed so the tab sits under the cursor as it will in the new strip, and no
   // bigger than the display it opens on.
   const cursor = cursorPoint();
-  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  const area = displayAt(cursor).workArea;
   d.size = tabDragMath.fitToDisplay(d.size, area);
   const at = tabDragMath.clampToDisplay(tabDragMath.windowBoundsFor(cursor, d.grab, d.size), area);
   const newWindowFor = () => {
@@ -8007,7 +8020,7 @@ function tearOffTab(src, tabId, point, ids = [tabId], group = null) {
   if (!ids.includes(tabId)) ids = [tabId];
   if (!tab || closableTabCount(src) - ids.length < 1) return false; // a window's last tabs stay where they are
   const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : { x: 0, y: 0 };
-  const area = screen.getDisplayNearestPoint(anchor).workArea;
+  const area = displayAt(anchor).workArea;
   // getSize() on a maximized window is the maximized size, so the new window covered the old one
   // and hung off the work area. The restored size is what the drag path uses, and the window is
   // kept fully on the work area (it is not being dragged, so it should not slide off).

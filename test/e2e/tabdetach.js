@@ -39,8 +39,10 @@ const http = require('http');
 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-tabdetach-'));
   const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' };
+  // LUMEN_TEST_SCALE=1.25 emulates Windows display scaling (Chromium's device scale factor), so the DIP/physical-pixel math is exercised.
+  const scale = Number(process.env.LUMEN_TEST_SCALE) || 1;
   const launch = async () => {
-    const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env });
+    const app = await electron.launch({ args: [...(scale !== 1 ? [`--force-device-scale-factor=${scale}`] : []), path.join(__dirname, '..', '..')], env });
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
     return { app, ui };
