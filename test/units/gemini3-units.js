@@ -54,6 +54,22 @@ const callsOf = (msgs) => msgs.find((m) => m.role === 'assistant').tool_calls;
   check('no target: unchanged shape', none.every((c) => c.extra_content === undefined), '');
 }
 
+// ---- agent.js historyFor: a reloaded chat has no producedBy author, so the model being asked decides
+{
+  const { historyFor, producedBy } = require('../../src/ai/agent');
+  const reloaded = () => history.map((m) => ({ ...m })); // fresh objects: nothing in producedBy
+  const sigsIn = (msgs) => msgs.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.thought_signature).length;
+  check('reloaded chat to Claude: no thought_signature on any block', sigsIn(historyFor(reloaded(), 'claude-sonnet-5-5')) === 0, JSON.stringify(historyFor(reloaded(), 'claude-sonnet-5-5')));
+  check('reloaded chat to OpenAI: no thought_signature', sigsIn(historyFor(reloaded(), 'openai:gpt-5.6')) === 0, '');
+  check('reloaded chat to Claude: tool calls otherwise intact', historyFor(reloaded(), 'claude-sonnet-5-5')[1].content.filter((b) => b.type === 'tool_use').map((b) => b.id).join() === 'c1,c2', '');
+  check('reloaded chat to the same Gemini 3 model: signature kept', sigsIn(historyFor(reloaded(), 'gemini:gemini-3.8-flash')) === 1, '');
+  const live = reloaded();
+  producedBy.set(live[1], 'gemini:gemini-3.8-flash');
+  check('live chat, same Gemini model: signature kept', sigsIn(historyFor(live, 'gemini:gemini-3.8-flash')) === 1, '');
+  check('live chat failed over to Claude: signature dropped', sigsIn(historyFor(live, 'claude-sonnet-5-5')) === 0, '');
+  check('the stored chat itself is not changed by sending it to Claude', history[1].content[1].thought_signature === sigA, '');
+}
+
 // ---- streaming: the signature on a streamed tool-call delta lands on the stored block
 (async () => {
   const chunks = [
