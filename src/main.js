@@ -6019,8 +6019,8 @@ function saveChatOfSoon(id, messages) {
   detachedSaves.set(id, setTimeout(() => { detachedSaves.delete(id); if (!chatRuns.get(id)?.deleted) saveChatOf(id, messages); }, 1000));
 }
 // What the user can see of a run right now (features/chat-runs.js plan).
-function runView(run) {
-  const rec = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+function runView(run, recWanted = null) {
+  const rec = recWanted || (run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec);
   const w = rec === curRec ? win : rec?.win;
   const uiWc = w && !w.isDestroyed() ? w.webContents : null;
   const runTab = run.tabId ?? null;
@@ -6028,9 +6028,15 @@ function runView(run) {
     focused: Boolean(w && !w.isDestroyed() && w.isFocused()),
     sidebarOpen: Boolean((uiWc && sidebarShown.get(uiWc)) || chatPageRt?.chatTabs().some((t) => t.id === activeIdOf(rec || curRec))),
     chatOpen: run.chatId === chatId,
-    onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
+    onAiTab: runTab != null && runTab === activeIdOf(rec || curRec), // the user is on the tab the AI works in
     chatHere: chatBind.chatOf(activeIdOf(rec || curRec)) === run.chatId, // [chat per tab] the user is on the chat's own tab (the AI may be working in another)
   };
+}
+// The same for every window: the chat may be open in a tab of another window than the one the run started in, and a user looking at
+// it there must not get a notification (features/chat-runs.js plan, `views`). The run's own window comes first.
+function runViews(run) {
+  const first = run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec;
+  return [first, ...[...winRecs].filter((r) => r !== first && rcAlive(r))].map((r) => runView(run, r));
 }
 // [widgets] The AI status card (features/aistatus-view.js) looks again when chats start, wait or end; set once the widgets exist.
 let aiStatusSoon = () => {};
@@ -6059,12 +6065,12 @@ const chatBadges = () => new Map([...chats().list().map((c) => c.id), ...chatRun
 // back), and the unread mark when the reply isn't in view.
 function tellUser(run, kind) {
   if (run.deleted) { unreadChats.delete(run.chatId); pushAttention(); return; } // a chat deleted while it worked leaves no unread mark or notification behind
-  const view = runView(run);
-  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, ...view });
+  const views = runViews(run);
+  const decided = chatRunsLib.plan(kind, { settings: readSettings().bgTasks, views });
   if (decided.unread && kind !== 'approval') unreadChats.add(run.chatId);
   pushAttention();
   if (!decided.os) return;
-  if (view.focused) { noteChatInApp(run, kind); return; } // Lumen is in front on another tab: macOS shows no banner for the front app, so the strip's toast says it
+  if (views.some((v) => v.focused)) { noteChatInApp(run, kind); return; } // Lumen is in front on another tab: macOS shows no banner for the front app, so the strip's toast says it
   if (TEST || !Notification.isSupported()) return;
   showNotification(run, kind);
 }

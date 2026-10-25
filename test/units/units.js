@@ -3679,13 +3679,26 @@ async function bgCliRuns() {
 async function backgroundChatRuns() {
   const CR = require('../../src/features/chat-runs');
   const on = { notifications: true, notifyDone: true };
-  const away = { focused: true, sidebarOpen: false, chatOpen: true, onRunTab: true };
-  const watching = { focused: true, sidebarOpen: true, chatOpen: true, onRunTab: true };
+  const away = { focused: true, sidebarOpen: false, chatOpen: true };
+  const watching = { focused: true, sidebarOpen: true, chatOpen: true };
   check('chat runs: a reply the user is watching sends no notification and no unread mark', !CR.plan('done', { settings: on, ...watching }).os && !CR.plan('done', { settings: on, ...watching }).unread, '');
   check('chat runs: finished with the sidebar closed: notification and the unread mark', CR.plan('done', { settings: on, ...away }).os && CR.plan('done', { settings: on, ...away }).unread, '');
-  check('chat runs: finished while the user is on another tab, or Lumen is not in front: notification', CR.plan('done', { settings: on, ...watching, onRunTab: false }).os && CR.plan('done', { settings: on, ...watching, focused: false }).os && !CR.plan('done', { settings: on, ...watching, onRunTab: false }).unread, '');
+  check('chat runs: finished while the user is on another tab, or Lumen is not in front: notification', CR.plan('done', { settings: on, ...watching, focused: false }).os && CR.plan('done', { settings: on, ...away, onAiTab: false }).os && !CR.plan('done', { settings: on, ...watching, focused: false }).unread, '');
   check('chat runs: finished in a chat that is not open: notification, and the chat is marked unread', CR.plan('done', { settings: on, ...watching, chatOpen: false }).os && CR.plan('done', { settings: on, ...watching, chatOpen: false }).unread, '');
-  check('chat runs: on the chat\'s own tab with Lumen in front, no notification, even while the AI worked in another tab or the sidebar is closed', !CR.plan('done', { settings: on, ...watching, onRunTab: false, chatHere: true }).os && !CR.plan('done', { settings: on, ...away, chatHere: true }).os && CR.plan('done', { settings: on, ...watching, focused: false, chatHere: true }).os, '');
+  check('chat runs: on the chat\'s own tab with Lumen in front, no notification, even while the AI worked in another tab or the sidebar is closed', !CR.plan('done', { settings: on, ...watching, chatHere: true }).os && !CR.plan('done', { settings: on, ...away, chatHere: true }).os && CR.plan('done', { settings: on, ...watching, focused: false, chatHere: true }).os, '');
+  // one window, two tabs: (a) on the tab the AI works in, sidebar closed, tab not bound to the chat; (b) on another tab whose sidebar shows the chat
+  check('chat runs: watching the AI own tab finish, sidebar closed and tab not bound to the chat: no notification', !CR.plan('done', { settings: on, ...away, onAiTab: true }).os && CR.plan('done', { settings: on, ...away, onAiTab: true, focused: false }).os, '');
+  check('chat runs: on another tab whose sidebar shows the chat while the AI worked elsewhere: no notification', !CR.plan('done', { settings: on, ...watching, onAiTab: false }).os && CR.plan('done', { settings: on, ...watching, chatOpen: false }).os, '');
+  check('chat runs: an OK needed is held to the same rule as a finished reply', !CR.plan('approval', { settings: on, ...away, onAiTab: true }).os && CR.plan('approval', { settings: on, ...away }).os, '');
+  // [chat in two tabs/windows] one view per window: seen in any focused window's tab or sidebar means no notification
+  const shown = { focused: true, sidebarOpen: false, chatOpen: true, chatHere: true };
+  const unrelated = { focused: true, sidebarOpen: true, chatOpen: false, chatHere: false };
+  const aside = { focused: false, sidebarOpen: true, chatOpen: true, chatHere: true };
+  check('chat runs: the chat open in two windows, the user in the second: no notification, no unread mark', !CR.plan('done', { settings: on, views: [aside, shown] }).os && CR.plan('done', { settings: on, views: [aside, shown] }).unread === false, '');
+  check('chat runs: the chat open in two windows, the focused one shows something else: notification', CR.plan('done', { settings: on, views: [aside, unrelated] }).os, '');
+  check('chat runs: no window in front: notification, whatever is open', CR.plan('done', { settings: on, views: [aside, { ...shown, focused: false }] }).os, '');
+  check('chat runs: one view in a list behaves like the single form', CR.plan('done', { settings: on, views: [watching] }).os === CR.plan('done', { settings: on, ...watching }).os && CR.plan('done', { settings: on, views: [away] }).os, '');
+  check('chat runs: needs-your-OK still comes when the user is on an unrelated tab', CR.plan('approval', { settings: on, views: [aside, unrelated] }).os, '');
   check('chat runs: Stop never notifies', !CR.plan('stopped', { settings: on, ...away }).os && !CR.plan('stopped', { settings: on, ...away }).unread, '');
   check('chat runs: uses the Background tasks setting: off means no notification; "finished" alone can be off', !CR.plan('done', { settings: { notifications: false }, ...away }).os && !CR.plan('done', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('approval', { settings: { ...on, notifyDone: false }, ...away }).os && CR.plan('failed', { settings: { ...on, notifyDone: false }, ...away }).os, '');
   check('chat runs: no setting saved yet means notify', CR.plan('done', { settings: undefined, ...away }).os, '');

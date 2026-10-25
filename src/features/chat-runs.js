@@ -42,19 +42,21 @@ function outcome({ error = null, stopped = false } = {}) {
   return 'done';
 }
 
-// Can the user see this chat's reply right now? Only with Lumen focused, and either on the chat's own tab (`chatHere`:
-// the tab the chat lives in is in front, whichever tab the AI worked in) or with the sidebar (or the chat page) showing
-// this chat and the tab the AI works in on screen. `chatOpen`: it is the chat the sidebar shows.
-const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTab = true, chatHere = false } = {}) => Boolean(focused && (chatHere || (sidebarOpen && chatOpen && onRunTab)));
+// Can the user see this chat's reply right now? Only with Lumen focused, and when any of these holds: `chatHere` (the tab in front is
+// bound to this chat, whichever tab the AI worked in), `onAiTab` (the tab in front is the one the AI works in: the user watches it
+// happen), or the sidebar (or the chat page) in front shows this chat (`sidebarOpen` and `chatOpen`), whatever tab the AI works in.
+const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onAiTab = false, chatHere = false } = {}) => Boolean(focused && (chatHere || onAiTab || (sidebarOpen && chatOpen)));
 
 // What to do about an event of a run (kind: done, failed, approval, stopped):
 //   os      show a system notification
 //   unread  mark the sidebar button (sidebar closed) or the chat in the list (another chat open)
-function plan(kind, { settings, ...view } = {}) {
+// `views`: one view per window (the chat can be open in a tab of another window than the run's); seen in any of them counts.
+function plan(kind, { settings, views = null, ...single } = {}) {
   if (kind === 'stopped') return { os: false, unread: false };
-  const seen = inView(view);
+  const all = Array.isArray(views) && views.length ? views : [single];
+  const seen = all.some(inView);
   const bgPlan = bg.notifyPlan(kind === 'failed' ? 'failed' : kind === 'approval' ? 'approval' : 'done', { settings: bg.normalizeSettings(settings), focused: seen });
-  const hidden = !(view.sidebarOpen && view.chatOpen !== false);
+  const hidden = !all.some((v) => v.sidebarOpen && v.chatOpen !== false);
   return { os: bgPlan.os, unread: hidden };
 }
 
