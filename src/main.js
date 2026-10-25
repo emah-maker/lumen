@@ -2930,8 +2930,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (allowNextUnload || !tab.closing) { allowNextUnload = false; event.preventDefault(); return; }
     if (tab.aiClosing) { // [ai manners] closing a tab the AI opened never asks "Leave site?" (that would pull the tab to the front): the page keeps it, the tab stays open
       tab.aiCloseKept = true;
-      tab.closing = false;
-      event.preventDefault();
+      tab.closing = false; // (no preventDefault: that would let the page unload anyway; left alone, the handler keeps the tab open)
       sendTabs();
       return;
     }
@@ -8693,6 +8692,15 @@ const askTabsList = () => tabs.filter((t) => !t.closing && (alive(t) || t.sleepi
   const url = alive(t) ? realUrl(t.view.webContents) : t.sleepUrl || '';
   return { id: t.id, title: tabTitle(t) || hostOf(url) || '', url, sleeping: Boolean(t.sleeping || t.frozen), active: t.id === activeId, offLimits: agentOffLimits(t), favicon: t.favicon || null, webContents: live ? t.view.webContents : null };
 });
+// [close guard] An autosaving editor's own save indicator: 'saved' | 'saving' | 'unknown' (could not be read: the typed-text check decides).
+const agentSaveState = async (id) => {
+  const t = tabs.find((x) => x.id === id);
+  if (!alive(t)) return 'unknown';
+  try {
+    const answer = await Promise.race([t.view.webContents.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: manners.autosaveScript() }]), new Promise((resolve) => setTimeout(() => resolve('unknown'), 2000))]);
+    return answer === 'saving' || answer === 'saved' ? answer : 'unknown';
+  } catch { return 'unknown'; }
+};
 const agentUnsavedState = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? unsavedInputState(t.view.webContents) : Promise.resolve('no'); }; // [close guard] 'no' | 'yes' | 'unknown'
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
@@ -8993,7 +9001,7 @@ const agent = new Agent({
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
   activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun((id) => closeTab(id, { ai: true })), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
-  hasUnsavedInput: inRun(agentHasUnsavedInput), unsavedState: inRun(agentUnsavedState), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
+  hasUnsavedInput: inRun(agentHasUnsavedInput), unsavedState: inRun(agentUnsavedState), saveState: inRun(agentSaveState), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)

@@ -4214,7 +4214,7 @@ ${prompt}` : prompt), historyImages: [] };
           const label = problem ? null : await this.describeStep(use.name, use.input);
           emit({ type: 'tool', id: use.id, name: use.name, input: use.input, label });
           if (problem) throw Object.assign(new Error(problem), { invalid: true });
-          await this.ensureAllowed(use.name, emit, signal, { input: use.input, who, closeSiblings: use.name === 'close_tab' ? toolUses.filter((u) => u.name === 'close_tab').map((u) => u.input) : null }); // (closeSiblings: one card for every close_tab of this step)
+          await this.ensureAllowed(use.name, emit, signal, { input: use.input, who });
         },
         exec: (use) => abortable(calls.run(use, this.taskTabUrl(), () => this.execute(use.name, use.input)), signal),
         halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
@@ -4918,10 +4918,9 @@ ${prompt}` : prompt), historyImages: [] };
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
   // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
   // its code can fetch() or send the tab anywhere, so an OK to click there doesn't cover it.
-  async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, noAsk = false, input = {}, run = taskScope.getStore(), closeSiblings = null } = {}) {
+  async ensureAllowed(name, emit, signal, { hosts = taskScope.getStore()?.hosts || this.approvedHosts, who = 'Claude', external = false, noAsk = false, input = {}, run = taskScope.getStore() } = {}) {
     this.aiOffCheck(name, input); // before any card: a site with AI off is never asked about
     this.offTabCheck(name, input); // [ai off-tab] ...nor a tab the user keeps the AI off
-    if (name === 'close_tab') { this.planCheck(name, input, run); await this.closeGuard(name, input, { emit, signal, who, external, noAsk, run, siblings: closeSiblings }); } // [close guard] asks instead of refusing
     this.handsOffCheck(name, input); // [ai manners] hands-off mode: no card for an act the user does not allow
     this.planCheck(name, input, run); // [plan mode] only reading while planning: no card for an act that is refused anyway
     const gate = { emit, signal, hosts, who, external, noAsk, run };
@@ -4956,7 +4955,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // app text taints web actions, but not the desktop tool's own acting calls on the same app (src/desktop tracks its sources)
     if (READING_TOOLS.has(name) || (name === 'reading_list' && input?.action === 'list') || ((name === 'navigate' || name === 'open_tab') && input?.read !== false)) this.markTainted(run); // navigate/open_tab return the page's head (read:false: nothing)
     if (!ACTING_TOOLS.has(name)) return;
-    if (name === 'close_tab' && this.closeGrants?.has(input)) return; // [close guard] the user's Close on the card covers closing that tab: no second "interact with <site>" card
+    if (name === 'close_tab') return; // closing a tab never asks (hands-off mode refused it above; unsaved text is left open in execute), and is not "interacting with" the site
     const siteOf = () => {
       const tab = name === 'close_tab' || (name === 'handle_dialog' && input.tab_id !== undefined) ? this.browser.tabById?.(input.tab_id) : this.taskTab();
       const raw = tab?.webContents.getURL() || '';
@@ -5047,55 +5046,32 @@ ${prompt}` : prompt), historyImages: [] };
     if (id !== null && off(id)) refuse();
   }
 
-  // ---- [close guard] close_tab on a tab the user owns (hands-off mode) or with typed text in it: the user is asked, never refused
-  // outright. One card (Close / Keep) covers every such close_tab of the same step; Close closes, Keep says so in the tool's answer.
-  // Bypass and Auto-allow never answer it (noBypass); only a typed "close my tabs without asking" in this chat does (manners.closeGranted),
-  // and a tab with unsaved text asks anyway. Callers that cannot ask (outside agents, background tasks) are refused in plain words.
-  async closeFacts(id) {
+  // ---- [close guard] close_tab never asks and never pauses the run. A tab the user owns (hands-off mode) is refused (handsOffCheck); a tab
+  // holding the user's unsaved text is left open and the tool says so; an autosaving editor (Docs, Sheets, Notion...) counts as saved once its
+  // own indicator says so (waits up to 3 s for a save in progress); text the AI typed itself into a tab it opened is not the user's work.
+  noteAiTyped() { try { const id = this.taskTab()?.id; if (id !== undefined && id !== null) (this.aiTyped ||= new Set()).add(id); } catch { /* no tab */ } }
+  async closeDecisionFor(id) {
     const tab = this.browser.tabById?.(id);
-    if (!tab) return null; // (the tool says "No tab with id")
+    let title = '';
+    let host = '';
+    try { title = tab?.webContents.getTitle() || ''; host = hostOf(tab?.webContents.getURL() || ''); } catch { /* a page going away */ }
     const handsOff = Boolean(this.browser.handsOff?.()) && !this.userRun();
     const ownTab = Boolean(this.browser.isAiTab?.(id));
-    let unsaved;
-    try { unsaved = this.browser.unsavedState ? await this.browser.unsavedState(id) : (await this.browser.hasUnsavedInput?.(id)) ? 'yes' : 'no'; } catch { unsaved = 'unknown'; }
-    const verdict = manners.closeVerdict({ handsOff, ownTab, unsaved });
-    if (!verdict.ask) return null;
-    let title = '';
-    let url = '';
-    try { title = tab.webContents.getTitle() || ''; url = tab.webContents.getURL() || ''; } catch { /* a page going away */ }
-    return { id, title, host: hostOf(url), theirs: verdict.theirs, unsaved: verdict.unsaved };
-  }
-
-  // Decides every close_tab input in `inputs` that is not decided yet: grants (closeGrants) and keeps (closeKeeps) are kept by input object.
-  async askCloses(inputs, { emit, signal, who, run }) {
-    this.closeGrants ||= new WeakSet();
-    this.closeKeeps ||= new WeakMap();
-    const todo = [...new Set(inputs)].filter((i) => i && Number.isInteger(i.tab_id) && !this.closeGrants.has(i) && !this.closeKeeps.has(i));
-    const asked = [];
-    for (const input of todo) {
-      const facts = await this.closeFacts(input.tab_id);
-      if (facts) asked.push({ input, facts });
-    }
-    if (!asked.length) return;
-    const typed = (run?.chat || taskScope.getStore()?.chat)?.typed || [];
-    if (asked.every((a) => a.facts.unsaved === 'no') && manners.closeGranted(typed)) { for (const a of asked) this.closeGrants.add(a.input); return; }
-    const card = manners.closeCard(asked.map((a) => a.facts));
-    const ok = Boolean(await this.askApproval('close tabs', emit, signal, { action: 'tool', who, title: card.title, args: card.args, detail: card.detail, noAlways: true, noBypass: true, note: 'close', allowLabel: card.allowLabel, denyLabel: card.denyLabel }));
-    for (const a of asked) { if (ok) this.closeGrants.add(a.input); else this.closeKeeps.set(a.input, a.facts.title); }
-  }
-
-  async closeGuard(name, input, { emit, signal, who, external, noAsk, run, siblings }) {
-    if (name !== 'close_tab' || !Number.isInteger(input?.tab_id) || this.closeGrants?.has(input)) return;
-    if (!this.closeKeeps?.has(input)) {
-      const canAsk = Boolean(emit) && !external && !noAsk && !this.browser.background && !taskScope.getStore()?.mcp;
-      if (!canAsk) {
-        const facts = await this.closeFacts(input.tab_id);
-        if (facts) throw new Error(facts.theirs ? manners.handsOffRefusal('close_tab') : manners.CLOSE_NO_CHAT);
-        return;
+    let save = null;
+    if (manners.autosaveHost(host) && this.browser.saveState) {
+      const end = Date.now() + 3000;
+      for (;;) {
+        try { save = await this.browser.saveState(id); } catch { save = null; }
+        if (save !== 'saving' || Date.now() >= end) break;
+        await sleep(300);
       }
-      await this.askCloses([input, ...(siblings || [])], { emit, signal, who, run });
+      if (save !== 'saved' && save !== 'saving') save = null; // (could not be read: the typed-text check decides)
     }
-    if (this.closeKeeps?.has(input)) throw new Error(manners.closeKept(this.closeKeeps.get(input)));
+    let unsaved = 'no';
+    if (save !== 'saved') {
+      try { unsaved = this.browser.unsavedState ? await this.browser.unsavedState(id) : (await this.browser.hasUnsavedInput?.(id)) ? 'yes' : 'no'; } catch { unsaved = 'unknown'; }
+    }
+    return { title, ...manners.closeDecision({ handsOff, ownTab, unsaved, save, aiTyped: Boolean(this.aiTyped?.has(id)) }) };
   }
   // ---- [/close guard]
 
@@ -5104,7 +5080,6 @@ ${prompt}` : prompt), historyImages: [] };
   // a tool that clicks, types, scrolls, navigates or runs a script is refused on a tab the AI did not open itself. Reading
   // tools are not touched. features/ai-manners.js has the tool list and the refusal text.
   handsOffCheck(name, input = {}) {
-    if (name === 'close_tab' && this.closeGrants?.has(input)) return; // [close guard] the user said Close
     if (name === 'desktop' && DESKTOP_ACTING.has(String(input?.action || '')) && this.browser.handsOff?.() && !this.userRun()) throw new Error("Hands-off mode is on: the user does not let the AI click or type for them, so this app action was not run. Reading apps (list_apps, read_app, screenshot_app) still works."); // [desktop apps]
     if (name === 'word' && WORD_ACTING.has(String(input?.action || '')) && this.browser.handsOff?.() && !this.userRun()) throw new Error("Hands-off mode is on: the user does not let the AI change things for them, so this Word action was not run. Reading documents (list, read) still works."); // [word]
     if (!manners.isActionTool(name) || !this.browser.handsOff?.() || this.userRun()) return;
@@ -7197,6 +7172,7 @@ ${same}
         return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}`;
       }
       case 'fill_form': {
+        this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
         await this.refreshRegistry(wc); // fresh element registries for label matching (embedded frames' too)
         const report = [];
@@ -7326,6 +7302,7 @@ ${same}
       case 'get_network': { const wc = this.debugTarget(input); return pageDebugShared.network(wc, input, { pageUrl: agentUrl(wc.getURL()) ?? '' }); }
       case 'handle_dialog': { const wc = this.debugTarget(input); pageDebugShared.watch(wc); return pageDebugShared.handleDialog(wc, input); }
       case 'type_text': {
+        this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
         await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
         const inFrame = Boolean(frames.decodeId(input.element_id));
@@ -7359,6 +7336,7 @@ ${same}
         return `Typed into element ${input.element_id}.`;
       }
       case 'press_key': {
+        this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
         if (!KEY_CODES[input.key] && [...input.key].length !== 1) throw new Error(`Unknown key "${input.key}".`);
         const modifiers = input.modifiers || [];
@@ -7444,21 +7422,18 @@ ${same}
         this.foreignTabCheck([id]);
         if (!this.browser.listTabs().some((t) => t.id === id)) throw new Error(`No tab with id ${id}.`);
         if (this.tabBusyElsewhere(id)) throw new Error('That tab is in use by a task running in another chat, so it can\'t be closed now.');
-        // Same care as the user's own close: text typed into a form isn't thrown away without asking,
-        // and a page's own "Leave site?" check still runs (requestCloseTab).
-        const granted = Boolean(this.closeGrants?.has(input)); // [close guard] the user said Close (a card, or typed "without asking")
-        if (!granted && await this.browser.hasUnsavedInput?.(id)) throw new Error(manners.CLOSE_NO_CHAT);
+        // Same care as the user's own close, without the question: text typed into a form is not thrown away (the tab stays open and the
+        // answer says so), and a page's own "Leave site?" check keeps the tab too (requestCloseTab, never shown). The run carries on.
+        const verdict = await this.closeDecisionFor(id);
+        if (verdict.act === 'refuse') throw new Error(manners.CLOSE_REFUSAL);
+        if (verdict.act === 'leave' || verdict.act === 'wait') return manners.closeLeft(verdict.title, verdict.why);
         if (taskScope.getStore()?.tabId === id) this.pinTab(null); // closing its own tab: carry on in whatever is in front
         (this.browser.requestCloseTab || this.browser.closeTab)(id);
         // requestCloseTab finishes once the page lets go: wait for that, so the next step doesn't act
         // on a tab that is about to disappear.
         for (let i = 0; i < 30 && this.browser.listTabs().some((t) => t.id === id); i++) await sleep(100);
-        if (granted && this.browser.listTabs().some((t) => t.id === id)) { // the page's own "Leave site?" check held it, but the user chose Close on a card that said what would be lost
-          this.browser.closeTab?.(id);
-          for (let i = 0; i < 10 && this.browser.listTabs().some((t) => t.id === id); i++) await sleep(100);
-        }
-        if (this.browser.listTabs().some((t) => t.id === id)) return `Tab ${id} did not close: the page blocked it (it may have unsaved changes), so it was left open and the user was not interrupted. Ask the user to close it; check list_tabs.`;
-        return granted ? `Closed tab ${id} (the user chose Close).` : `Closed tab ${id}.`;
+        if (this.browser.listTabs().some((t) => t.id === id)) return manners.closeLeft(verdict.title, 'leave'); // the page's own "Leave site?" check held it
+        return `Closed tab ${id}.`;
       }
       case 'scroll': {
         const wc = this.requireTab();
