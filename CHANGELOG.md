@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Settings now tells you when a change did not save, and Reset only resets what it says.** A switch or choice that fails to save goes back and shows the reason in its row. Reset settings asks in a dialog that lists what will be reset (appearance, search engine, startup, privacy, site permissions, languages and system settings), no longer touches the AI page, widgets, Focus lists, allow-lists or extension pins, and is refused while Focus mode is on. Add buttons pressed with nothing typed say what to type, Proxy shows Not applied yet until you press Apply, and every setting that needs a restart has the same Restart button. Tests: test/units/settings-reset-units.js, test/e2e/settings-saving.js.
+
 ## 0.5.69 (2026-10-25)
 
 - When Claude Code, Codex, Grok Build or Antigravity updates itself while you send a message, Lumen now waits a few seconds and starts it again instead of failing with "Windows or your security software would not let Lumen run Claude Code". If it still will not start, the message moves to your next connected AI with a note ("Claude Code didn’t start (it may have just updated). Lumen tried again and switched to ..."), and security software is blamed only when Windows really says it blocked the file.
