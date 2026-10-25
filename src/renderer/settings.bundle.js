@@ -4149,10 +4149,12 @@ function cutAtWord(d) {
   const full = d.textContent; const line = d.clientHeight / 2;
   let at = full.lastIndexOf(' ', Math.floor(full.length * 2 / Math.max(3, Math.round(d.scrollHeight / line))));
   for (let n = 0; at > 0 && n < 14; n++) {
-    d.textContent = full.slice(0, at).replace(/[s,;:.–—-]+$/, '') + '…';
+    d.textContent = full.slice(0, at).replace(/[\s,;:.–—-]+$/, '') + '…';
     if (d.scrollHeight <= d.clientHeight + 1) break;
     at = full.lastIndexOf(' ', at - 1);
   }
+
+  d.replaceChildren(h('span', { 'aria-hidden': 'true', text: d.textContent }), h('span', { class: 'sr-only', text: full }));
   d.dataset.full = full; d.dataset.w = String(d.clientWidth);
 }
 function restoreDesc(d) { if (d.dataset.full === undefined) return; d.textContent = d.dataset.full; delete d.dataset.full; delete d.dataset.w; }

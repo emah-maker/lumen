@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.70 (2026-10-25)
+
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.
 - **Settings search works the moment Settings opens, and finds the right things.** A search typed right after opening used to wait about 0.8 seconds for the AI providers page to check each command-line AI; it now answers in about 0.1 seconds and the Status rows fill in as the checks finish. Searching for "agents" no longer lists every row of the AI page, "claude" and "grok" list only their own rows, "autofill", "mute", "energy" and "developer" now find a setting, and a search with no match offers the words in it that do.
 - **Settings looks and reads better.** Skills rows no longer crush at narrow widths, AI provider status and paths wrap cleanly, titles stay solid while you scroll, low-contrast text is fixed in both themes, locked switches look locked, tick boxes and time fields match Lumen, the Connectors gallery fills three columns, descriptions cut at a word and warnings are never cut, and screen readers get named groups, row descriptions and a proper heading order.
