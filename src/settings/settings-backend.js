@@ -151,8 +151,8 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
-  aiSubagents: 'auto', // [ai] off | auto | on: the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). Auto offers the tool only for a request with several independent parts (ai/helpers-auto.js); an older true / false is on / off. The sidebar's Helpers row and Settings > AI are this one setting
-  actingHelpers: false, // [ai] Settings > AI > "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
+  aiSubagents: 'auto', // [ai] off | auto | on: the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). Auto offers the tool only for a request with several independent parts (ai/helpers-auto.js); an older true / false is on / off. The sidebar's Helpers row and Settings → AI and agents are this one setting
+  actingHelpers: false, // [ai] Settings → AI and agents → "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
   aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
@@ -161,18 +161,18 @@ const DEFAULTS = {
   imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
-  aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings > AI: Show what the AI couldn't do)
+  aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings → AI and agents: Show what the AI couldn't do)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   aiSharedFiles: [], // [ai] local files the user let the sidebar's AI see with "Allow always for this file": their file:// addresses (features/shared-files.js); added only from its card
   claudeCodeSidebar: true, // [ai] Claude Code is offered in the sidebar's model menu once found (features/ai-agents.js modelOptions); off hides it without uninstalling
-  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
-  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
+  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI and agents → AI providers)
+  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI and agents → AI providers)
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureCardNever: false, // [offers] "Don't show again" on the New in Lumen card (features/feature-offers.js); Lumen records it itself
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
-  telegramChannel: false, // [telegram] Settings > AI > Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
+  telegramChannel: false, // [telegram] Settings → AI and agents → Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
   telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
   telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
@@ -188,7 +188,7 @@ const DEFAULTS = {
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
-  codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings > AI)
+  codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings → AI and agents)
   codexFullAccess: false, // [ai] Codex in the sidebar runs with --sandbox danger-full-access and its own shell, patch and web tools on (ai/codex.js FULL_ON)
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
   grokTerminal: true, // [ai] Grok Build in the sidebar may ask to run terminal commands (approval card each time); off: every call is denied without asking (automation/mcp-http.js terminalDecision)
@@ -202,15 +202,15 @@ const DEFAULTS = {
   agentsNoAsk: true, // [mcp] INVERTED in Settings (switch "Ask before agents act in their own window" is on when this is false): true = an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
-  aiPreferFractions: false, // [ai] Settings > AI > Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
-  aiInstructionsOn: true, // [ai] Settings > AI > Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
+  aiPreferFractions: false, // [ai] Settings → AI and agents → Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
+  aiInstructionsOn: true, // [ai] Settings → AI and agents → Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
   aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
   aiInstructionsStyle: '', // [ai] "How should Lumen respond"
   planModeDefault: false, // [ai] [plan mode] new sidebar chats start with the composer's Plan chip on (ai/plan-mode.js, renderer/plan-mode.js)
   skillsAutoUse: true, // [skills] skills marked "AI can use this on its own" are listed in the system prompt and loaded with use_skill (features/skills.js)
   skillsFromClaudeCode: false, // [skills] also list ~/.claude/skills/*/SKILL.md, read-only (features/skill-md.js)
   skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
-  aiMemory: false, // [ai] Settings > AI > Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
+  aiMemory: false, // [ai] Settings → AI and agents → Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
   aiMemoryChatSearch: true, // [ai] ...and, while Memory is on, may search the titles and text of your saved chats (the memory tool's search_chats)
   aiHandsOff: false, // [ai] INVERTED in Settings (switch "Let the AI act on my pages" is on when this is false): true = hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
@@ -406,7 +406,7 @@ function applyAtLaunch(app, settings) {
   return launched;
 }
 
-// ---- [igpu] Graphics: Automatic / Full effects / Light (Settings > System). "Light" is Lumen's integrated-GPU path: no backdrop blur
+// ---- [igpu] Graphics: Automatic / Full effects / Light (Settings → Advanced). "Light" is Lumen's integrated-GPU path: no backdrop blur
 // (a solid, slightly more opaque tint instead), a cheaper particle effect (fewer particles, a smaller canvas, 24 fps) and no
 // effect that repaints every frame while nothing happens. Automatic picks Light on an integrated GPU.
 //
@@ -713,7 +713,7 @@ function create(deps) {
   };
   // Accept-Language is not a per-request job: Chrome sends the q-weighted list of the browser's languages (Electron's
   // default is the bare "en-US"), and Chromium builds that header itself from the session's list, so it is set once
-  // here and again when Settings → Languages changes. The list is the one navigator.languages uses (and is cut to the
+  // here and again when Settings → General → Language changes. The list is the one navigator.languages uses (and is cut to the
   // 128 bytes that keep the header a CORS-safelisted one, chrome-identity.js); Chromium adds the same q-weights.
   function applyAcceptLanguage(target) {
     const p = prefs();
@@ -940,7 +940,7 @@ function create(deps) {
   }
 
   async function set(key, value) {
-    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI's Ask / Auto-allow / Bypass choice: both settings change together
+    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI and agents's Ask / Auto-allow / Bypass choice: both settings change together
       const patch = permissionMode.patchOf(value);
       if (!patch) throw new Error(`Invalid value for ${key}`);
       writeSettings({ ...readSettings(), ...patch });
@@ -969,9 +969,9 @@ function create(deps) {
     const p = prefs();
     return {
       prefs: { ...p, aiPermissionMode: permissionMode.modeOf(p) },
-      performance: deps.performance?.info() ?? null, // Settings → System notes why Performance mode is on
+      performance: deps.performance?.info() ?? null, // Settings → Advanced notes why Performance mode is on
       graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
-      passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy says whether passkeys can work on this computer
+      passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy and security says whether passkeys can work on this computer
       accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,

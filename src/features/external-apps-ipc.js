@@ -1,4 +1,4 @@
-// Wires features/external-apps.js into Lumen: the Settings > AI > "Let other apps use Lumen" calls, the toolbar pill and the
+// Wires features/external-apps.js into Lumen: the Settings → AI and agents → "Let other apps use Lumen" calls, the toolbar pill and the
 // "wants to use Lumen" prompt (sent to the windows as `external:state`), and the OS notifications. ai-agents.js calls this once and
 // hands the result to the MCP server's hooks (identify, onInitialize, onClose) and to mcpCallTool (beginCall).
 //

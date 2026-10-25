@@ -390,7 +390,7 @@ function fakeHelper(over = {}) {
     rig.store.master = false;
     const n = rig.helper.calls.length;
     await rig.clock.advance(1000);
-    check('Settings > AI switched off mid-run: no more pictures, and the card shows the placeholder', rig.helper.calls.length <= n + 1 && !rig.d.active() && rig.cards()[rig.cards().length - 1].blocked === true, J([rig.helper.calls.length, n, rig.d.active()]));
+    check('Settings → AI and agents switched off mid-run: no more pictures, and the card shows the placeholder', rig.helper.calls.length <= n + 1 && !rig.d.active() && rig.cards()[rig.cards().length - 1].blocked === true, J([rig.helper.calls.length, n, rig.d.active()]));
   }
   {
     // no live picture unless it was switched on

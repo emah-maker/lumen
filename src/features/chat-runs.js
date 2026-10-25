@@ -10,7 +10,7 @@ const bg = require('./background-agents');
 const { plainScripts } = require('../renderer/markdown.js');
 const { plainMath } = require('./plain-math'); // LaTeX as text: a notification can't render math
 
-// The default cap on sidebar runs at once (Settings > AI: Chats working at once; one chat per tab, each
+// The default cap on sidebar runs at once (Settings → AI and agents: Chats working at once; one chat per tab, each
 // driving its own tab). The next one waits its turn (features/tab-chats.js createRunSlots).
 const MAX_RUNS = 3;
 

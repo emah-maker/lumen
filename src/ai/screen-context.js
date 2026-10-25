@@ -19,7 +19,7 @@
 //     with its own message
 //   - by the words alone (no button), pages that look like a payment, checkout, billing, password or one-time-code
 //     screen are left alone too; the button overrides that one, because the user asked
-//   - the user's setting "attach the current page" (Settings > AI) off means the words alone attach nothing
+//   - the user's setting "attach the current page" (Settings → AI and agents) off means the words alone attach nothing
 //   - the capture is the visible part of the tab as the user sees it, never the rest of the page, and it counts as
 //     reading the page (the chat becomes "tainted" for outside destinations, like read_page)
 const intent = require('./screen-intent');

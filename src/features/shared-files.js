@@ -1,6 +1,6 @@
 // "Allow always for this file": the files on this computer the user let the sidebar's AI see (a screenshot and the text of the
 // file in the tab, and read_pdf for a PDF) without being asked again. The card is the only way in: agent.js screenAskFile,
-// when the user's own message points at the file in front of them. Removed in Settings > AI. Stored as settings.json
+// when the user's own message points at the file in front of them. Removed in Settings → AI and agents. Stored as settings.json
 // aiSharedFiles: the files' own file:// addresses (no query, no fragment), newest last, at most MAX.
 // "Turn off AI for local files" (features/ai-sites.js) still wins over everything here.
 const MAX = 200;

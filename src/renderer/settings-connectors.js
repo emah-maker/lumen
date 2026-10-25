@@ -1,4 +1,4 @@
-// Settings → You and AI → Connectors: a gallery of services the AI can use once they are connected (features/connectors/).
+// Settings → AI and agents → Connectors: a gallery of services the AI can use once they are connected (features/connectors/).
 // Each card says what the AI can read and do before anything is connected, shows its state (Not connected, Connected · account,
 // Needs sign-in) and has one button. A token or secret typed here goes to the main process and is saved encrypted; it never comes
 // back to this page, only the state does. GitHub, Notion and Todoist are cards that add the service's own MCP server (their tools are

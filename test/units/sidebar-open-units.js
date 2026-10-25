@@ -27,7 +27,7 @@ check('setting: carried to the UI with the other preferences, and a change is pu
 check('setting: ui-prefs.js keeps it where app.js reads it', /window\.lumenSidebarNewChat = p\.sidebarNewChat !== false/.test(read('src/renderer/ui-prefs.js')));
 const settings = read('src/renderer/settings.js');
 const en = JSON.parse(read('src/locales/en.json'));
-check('Settings > AI: a "Sidebar button starts a new chat" switch, placed before "One chat per tab", with a short description', settings.indexOf("toggle('sidebarNewChat'") > 0 && settings.indexOf("toggle('sidebarNewChat'") < settings.indexOf("toggle('oneChatPerTab'") && en['settings.ai.sidebarNewChat'] === 'Sidebar button starts a new chat' && en['settings.ai.sidebarNewChatDesc'].length < 130);
+check('Settings → AI and agents: a "Sidebar button starts a new chat" switch, placed before "One chat per tab", with a short description', settings.indexOf("toggle('sidebarNewChat'") > 0 && settings.indexOf("toggle('sidebarNewChat'") < settings.indexOf("toggle('oneChatPerTab'") && en['settings.ai.sidebarNewChat'] === 'Sidebar button starts a new chat' && en['settings.ai.sidebarNewChatDesc'].length < 130);
 
 // the wiring: only the button and its shortcut ask; every other way to open the sidebar keeps its chat
 const app = read('src/renderer/app.js');

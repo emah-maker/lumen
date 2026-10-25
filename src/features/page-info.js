@@ -5,7 +5,7 @@
 //   - the site and its connection: secure, not secure (plain http), parts not secure (mixed
 //     content), or reached past a certificate warning;
 //   - its permissions (location, camera and microphone, notifications, clipboard), each with
-//     Ask / Allow / Block, the same decisions Settings → Privacy → Site permissions lists. Ask
+//     Ask / Allow / Block, the same decisions Settings → Privacy and security → Site permissions lists. Ask
 //     forgets the decision, so the site asks again (or is blocked, when the default says so);
 //   - the zoom level remembered for it (features/site-zoom.js), with Reset Zoom for This Site;
 //   - how many cookies it has, and Clear Cookies and Site Data… (asks first): the cookies sent to
