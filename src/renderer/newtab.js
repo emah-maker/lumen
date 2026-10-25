@@ -431,6 +431,9 @@ function privacy(blocked) {
 const greeting = (now) => window.ClockStyles.greetingFor(now); // (features/clock-styles.js)
 
 function render() {
+  // A redraw (the browser sending the page again after a save, a setting change) replaces the tiles: the keyboard stays on the same spot.
+  const was = document.activeElement?.closest?.('nav.grid .cell, nav.frequent .cell');
+  const kept = was ? { kind: was.closest('nav.grid') ? 'favorites' : 'frequent', index: indexOfCell(was) } : null;
   const d = data();
   const { blocked, look, widgets } = d;
   const hid = hiddenState || d.hidden; // (what the user just removed or restored here, until the browser sends the page again)
@@ -458,6 +461,7 @@ function render() {
   window.newtabSize?.fit?.(); // before the cards are drawn: the search box's height and sizes that fit (against the cards as they were)
   window.renderWidgets?.(widgets); // [widgets] newtab-widgets.js
   window.newtabSize?.fit?.(); // and once more with the cards as they are now
+  if (kept && !document.activeElement?.closest?.('nav.grid .cell, nav.frequent .cell')) refocus(kept.kind, kept.index);
 }
 
 // "/" jumps to the search field, like many sites; typing in any field, textarea, select or editable area (or composing with an IME) is left alone.

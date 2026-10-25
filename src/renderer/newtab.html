@@ -305,14 +305,14 @@
     .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px 10px; }
     /* A tile and its hover ⋮ button (newtab.js cell()): the button shows on hover or focus, always on touch. */
     .cell { position: relative; min-width: 0; }
-    .tile-more { appearance: none; position: absolute; top: 4px; right: 4px; z-index: 1; width: 22px; height: 22px; margin: 0; padding: 0; border: 0; border-radius: 999px; background: var(--card); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border); font: 700 14px/22px system-ui, sans-serif; text-align: center; cursor: default; outline: none; opacity: 0; transition: opacity 120ms ease-out; }
+    .tile-more { appearance: none; position: absolute; top: 4px; right: 4px; z-index: 1; width: 24px; height: 24px; margin: 0; padding: 0; border: 0; border-radius: 999px; background: var(--card); color: var(--muted); box-shadow: 0 0 0 0.5px var(--border); font: 700 14px/24px system-ui, sans-serif; text-align: center; cursor: default; outline: none; opacity: 0; transition: opacity 120ms ease-out; }
     .frequent .tile-more { top: 50%; right: 8px; translate: 0 -50%; }
     .cell:hover .tile-more, .cell:focus-within .tile-more, .tile-more:focus-visible { opacity: 1; }
     .tile-more:hover { color: var(--text); background: var(--hover); }
     .tile-more:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
     @media (hover: none) { .tile-more { opacity: 0.7; } }
     .tiles-restore-btn { appearance: none; margin: 0; padding: 0; border: 0; background: none; color: var(--accent-text, var(--accent)); font: inherit; text-decoration: underline; cursor: default; outline: none; }
-    .tiles-restore-btn:focus-visible { box-shadow: 0 0 0 2px var(--accent); border-radius: 3px; }
+    .tiles-restore-btn:focus-visible { box-shadow: 0 0 0 2px var(--accent); border-radius: 4px; }
     .tiles-toast { z-index: 40; }
     .tiles-toast .tiles-toast-undo { appearance: none; border: 0; border-radius: 8px; cursor: default; font: 600 12.5px/18px system-ui, sans-serif; outline: none; }
     .tiles-toast .tiles-toast-undo:focus-visible { box-shadow: 0 0 0 2px var(--accent); }

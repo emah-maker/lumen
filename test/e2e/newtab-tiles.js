@@ -62,7 +62,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(300);
     check('Remove hides the favorite', (await names()).join() === 'Alpha,Charlie,Delta,Echo', await names());
     check('an Undo toast shows', /Removed Bravo/.test(await toast()) && (await home('!!document.querySelector(".tiles-toast button")')), await toast());
-    check('focus moves to the tile that took its place', await home('document.activeElement === document.querySelectorAll(".grid .cell > a")[1]'));
+    const focusedAfter = () => home('document.activeElement === document.querySelectorAll(".grid .cell > a")[1]');
+    for (let i = 0; i < 20 && !(await focusedAfter()); i++) await sleep(100); // (the grid redraws after the save round-trip; an off-screen page can be slow)
+    check('focus moves to the tile that took its place', await focusedAfter(), await home('document.activeElement?.outerHTML?.slice(0, 120)'));
     check('the bookmark itself is kept', (await bookmarkCount()) === 5);
     check('the removal is saved', JSON.stringify((await saved()).newTabHiddenTiles?.favorites) === '["https://bravo.test/"]', JSON.stringify((await saved()).newTabHiddenTiles));
     check('Restore all shows under Favorites', /1 removed/.test(await home('document.querySelector(".tiles-restore")?.textContent || ""')));
