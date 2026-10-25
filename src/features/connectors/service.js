@@ -19,11 +19,11 @@
 //    connector's own scopes (incremental). Every request gets a fresh access token; the last Google connector to be disconnected
 //    gives the grant back to Google.
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
-//  - Presets (kind 'mcp': GitHub, Notion, Todoist): the service's own official MCP server, added to the MCP client (features/mcp-client.js) with
-//    one click. Whether a card is connected is read from that server (tagged `preset`), never kept here, so removing it under Custom MCP
-//    servers or a sign-in that ended shows on the card at once. These three used to be built in: an entry left in connectors.json by the old
-//    connector (a token, or a link to the GitHub card's sign-in) stays untouched, and the card says "Reconnect through MCP" until the user does
-//    (the saved GitHub token is reused for it, so that is one click) or presses Forget. Only then is the old secret dropped.
+//  - Presets (kind 'mcp'): a service's official MCP server, added to the MCP client (features/mcp-client.js) by its card (none ships today: see the
+//    note in registry.js). Whether a card is connected is read from that server (tagged `preset`), never kept here.
+//  - `shared`: a connector whose token is kept elsewhere (GitHub signed in once on its new-tab card, features/github-auth.js) has an
+//    entry with config.shared and no secret of its own; the token is read from its owner at each request, so a revoked or replaced
+//    sign-in applies here at once, and nothing is copied. syncShared() makes the entry match the owner's sign-in.
 'use strict';
 const path = require('path');
 const registry = require('./registry');
@@ -36,6 +36,9 @@ const TIMEOUT_MS = 20e3;
 const MAX_BODY = 3e6;
 const RESULT_CHARS = 40000;
 const BASES = {
+  github: 'https://api.github.com',
+  todoist: 'https://api.todoist.com/api/v1',
+  notion: 'https://api.notion.com/v1',
   drive: 'https://www.googleapis.com/drive/v3',
   sheets: 'https://sheets.googleapis.com/v4',
 };
@@ -45,7 +48,7 @@ const provider = (id) => require(`./providers/${id}`); // loaded when a connecto
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
   google = null, workspace = {}, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
-}) { // shared: { github: { info() -> { token } } }, only to carry the old GitHub card sign-in over to its MCP preset
+}) {
   const file = path.join(userData, FILE);
   let googleSealed = ''; // the shared Google sign-in (Drive, Sheets), sealed
   let unreadable = false; // connectors.json exists but could not be read: a copy was kept, and only the user's own change may replace it
@@ -108,7 +111,7 @@ function create({
 
   function makeCtx(def, entry, signal) {
     const base = baseOf(def, entry);
-    const secret = open(entry.secret);
+    const secret = entry.config?.shared ? String(shared[def.id]?.info?.()?.token || '') : open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
       const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google';
@@ -117,6 +120,7 @@ function create({
         ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → You and AI → Connectors.`
         : signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
+        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → You and AI → Connectors.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
@@ -182,29 +186,24 @@ function create({
   }
 
   // ---- what Settings shows
-  const STATUS_TEXT = { off: 'Not connected', 'needs-signin': 'Needs sign-in', 'bad-token': 'Token refused', reconnect: 'Reconnect through MCP' };
-  // A preset's token left by the old built-in connector: its own, or the GitHub card's sign-in it followed.
-  const legacySecret = (id) => { const e = connected[id]; if (!e) return ''; return e.config?.shared ? String(shared[id]?.info?.()?.token || '') : open(e.secret); };
+  const STATUS_TEXT = { off: 'Not connected', 'needs-signin': 'Needs sign-in', 'bad-token': 'Token refused' };
   const serverOf = (def) => { try { return mcp?.list().find((x) => x.preset === def.id) || null; } catch { return null; } };
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
   function mcpCard(def) {
     const srv = serverOf(def);
-    const old = connected[def.id];
     let status = 'off';
     if (srv) status = srv.authRefused ? 'bad-token' : srv.needsAuth ? 'needs-signin' : srv.state === 'error' ? 'error' : 'connected';
-    else if (old) status = 'reconnect';
     const text = status === 'connected' ? `Connected${srv.state === 'ready' ? ` · ${plural(srv.tools.length, 'tool')}` : ''}` : status === 'error' ? `Couldn’t connect: ${srv.error}` : STATUS_TEXT[status];
-    const needsToken = def.fields.length > 0 && !(status === 'reconnect' && legacySecret(def.id));
     return {
-      id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: status === 'reconnect' ? `Lumen now connects ${def.name} through its own MCP server. Your saved ${def.id === 'github' ? 'token' : 'sign-in details'} stays until you reconnect${def.id === 'github' ? ' (one click, it is reused)' : ''} or press Forget.` : def.sessionNote || '',
+      id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
       status, statusText: text, source: def.mcp?.source || '',
-      fields: needsToken ? def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })) : [],
+      fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: {}, reads: def.reads, does: def.does, drafts: null, sending: null, actions: [],
       oauth: def.mcp?.auth === 'oauth',
-      reconnect: status === 'reconnect' ? { oneClick: !needsToken } : null,
       mcp: srv ? { id: srv.id, name: srv.name, state: srv.state, tools: srv.tools.map((t) => ({ name: t.name, description: t.description, always: srv.alwaysAllow.includes(t.name), auto: Boolean(t.readOnly) })) } : null,
     };
   }
+
   function card(def) {
     if (def.kind === 'mcp') return mcpCard(def);
     const entry = connected[def.id];
@@ -219,7 +218,7 @@ function create({
     const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}` : STATUS_TEXT[status],
+      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
@@ -327,7 +326,7 @@ function create({
   }
 
   // A preset: the service's official MCP server, added (or, for a card that already has one, signed in again or given a new token), started and
-  // checked. A first connect that fails leaves nothing behind; the old built-in connector's saved secret is dropped only once this works.
+  // checked. A first connect that fails leaves nothing behind. A first connect that fails leaves nothing behind; the old built-in connector's saved secret is dropped only once this works.
   async function connectMcp(def, input) {
     if (!mcp) throw new Error('MCP servers aren’t available here.');
     const cfg = { ...def.mcp, url: String(endpoints()?.[def.id] || def.mcp.url || '') }; // (a test points a preset at 127.0.0.1)
@@ -337,7 +336,7 @@ function create({
     const env = [];
     for (const f of def.fields) {
       const typed = String(input[f.id] ?? input.secret ?? '').trim();
-      const r = registry.checkField(f, typed || legacySecret(def.id));
+      const r = registry.checkField(f, typed);
       if (r.error) throw new Error(r.error);
       if (cfg.type === 'http') token = r.value; else env.push({ name: f.id, value: r.value });
     }
@@ -355,7 +354,6 @@ function create({
       undo();
       throw new Error(refused && cfg.type === 'http' && cfg.auth !== 'oauth' ? `${def.name} refused that token. Check it and try again.` : refused ? `${def.name} didn’t accept the sign-in. Try again.` : `Couldn’t connect to ${def.name}: ${now1?.error || 'it didn’t answer'}`);
     }
-    if (connected[def.id]) { delete connected[def.id]; persist(); } // (the old connector's secret goes now that the new link works)
     changed();
     return list();
   }
@@ -388,10 +386,9 @@ function create({
   async function disconnect(id) {
     const def = registry.get(id);
     const entry = connected[id];
-    if (def?.kind === 'mcp') { // the preset's server goes (with its sign-in), and so does an old connector's secret
+    if (def?.kind === 'mcp') { // the preset's server goes, with its sign-in
       const srv = serverOf(def);
       if (srv) { try { mcp.remove(srv.id); } catch { /* already gone */ } }
-      if (entry) { delete connected[id]; persist(); }
       changed();
       return list();
     }
@@ -400,11 +397,38 @@ function create({
     runtime.delete(id);
     for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
     persist();
+    if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
     if (def.kind === 'google' && !googleIds().length) { try { await googleAuth().revoke(); } catch { /* the sign-in is forgotten here either way */ } } // the last Google connector: the grant goes back to Google
     changed();
     return list();
   }
+
+  // Make a shared connector's entry match its owner's sign-in: signed in -> connected (as that account); signed out -> gone.
+  // A connector connected with its own token is left alone either way.
+  function syncShared(id) {
+    const def = registry.get(id);
+    const src = shared[id];
+    if (!def || !src) return list();
+    if (connected[id] && !connected[id].config?.shared) return list(); // connected with its own token: it keeps it (never swapped for the card's broader sign-in)
+    const info = src.info();
+    if (info) connected[id] = { at: now(), account: flat(info.account, 60), config: { shared: true } };
+    else if (connected[id]?.config?.shared) delete connected[id];
+    else return list();
+    runtime.delete(id);
+    for (const key of [...cache.keys()]) if (key.startsWith(`${id}:`)) cache.delete(key);
+    persist();
+    changed();
+    if (info && !info.account) { // a pasted token knows no name: ask the service who it is, once
+      const entry = connected[id];
+      const ctx = makeCtx(def, entry, null);
+      provider(id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }).then((probe) => {
+        if (connected[id] === entry && probe.status === 200 && probe.account) { entry.account = probe.account; persist(false); changed(); }
+      }).catch(() => {});
+    }
+    return list();
+  }
+  const usesShared = (id) => connected[id]?.config?.shared === true;
 
   // ---- the AI's tool
   const defs = ({ readOnly = false } = {}) => { const d = registry.toolDef({ readOnly }); return d ? [d] : []; }; // readOnly: background tasks and routines
@@ -494,7 +518,7 @@ function create({
   }
 
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
-  return { setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

@@ -1,10 +1,10 @@
-// "Sign in with GitHub" for the GitHub card (features/github-auth.js), without Electron and with no real
+// "Sign in with GitHub" for the GitHub card and the GitHub connector (features/github-auth.js), without Electron and with no real
 // network (run from test/units/units.js, or on its own: `node test/units/github-signin-units.js`).
 //  - github-auth.js on its own, with injected requests and waits: the pure parts (stored secret, scopes, GitHub's answers), the polling
 //    schedule (the interval, slow_down adds five seconds, an expired code stops it), the refusals.
 //  - the real thing against a stand-in for github.com and api.github.com on 127.0.0.1 (a throwaway https certificate; openssl ships with
 //    Git for Windows and macOS): sign in -> the card fills in; a pending / slow_down sequence; an expired and a denied code; the gh CLI
-//    (a stub gh in a temp folder on PATH); sign out; a revoked token
+//    (a stub gh in a temp folder on PATH); sign out; the token shared with the connector (and never copied into its file); a revoked token
 //    -> "Sign in again"; the token staying out of every answer the page and Settings get and out of the console.
 require('../helpers/_tmp-cleanup');
 const fs = require('fs');
@@ -151,15 +151,20 @@ module.exports = async function githubSigninUnits(check) {
     fs.writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\necho "$@" >> "$(dirname "$0")/calls.log"\n[ -n "$LUMEN_STUB_GH_SIGNED_OUT" ] && exit 1\nif [ "$1" = auth ] && [ "$2" = status ]; then exit 0; fi\nif [ "$1" = auth ] && [ "$2" = token ]; then echo ${CLI_TOKEN}; exit 0; fi\nexit 1\n`, { mode: 0o755 });
   }
 
-  // The widgets service, wired as main.js wires it.
+  // The widgets service and the connectors service, wired as main.js wires them.
   let nowMs = Date.UTC(2026, 8, 30, 12, 0, 0);
   const settings = {};
   const secrets = {};
   const opened = [];
   const userData = path.join(scratch, 'userData');
   fs.mkdirSync(userData);
+  const vault = { available: () => true, encrypt: (t) => `enc:${Buffer.from(String(t)).toString('base64').split('').reverse().join('')}`, decrypt: (e) => Buffer.from(e.slice(4).split('').reverse().join(''), 'base64').toString('utf8') };
   let widgets = null;
   let clientIdNow = CLIENT;
+  const connectors = require('../../src/features/connectors/service').create({
+    userData, secrets: vault, fetch: (url, o) => fetch(url, o), endpoints: () => ({ github: `${base}/api` }), testLoopback: true,
+    shared: { github: { info: () => { const a = GA.unpack(secrets.github); return a ? { token: a.token, account: a.login } : null; }, signOut: () => widgets.githubSignOut() } },
+  });
   widgets = createWidgets({
     readSettings: () => settings, writeSettings: (s) => { Object.assign(settings, s); },
     fetch: (url, o) => fetch(url, o),
@@ -169,11 +174,14 @@ module.exports = async function githubSigninUnits(check) {
     endpoints: () => ({ github: `${base}/api`, githubLogin: base }),
     githubClientId: () => clientIdNow, githubPollScale: () => 0.01, // a one-second interval waits 10 ms
     openGithubSignIn: (url) => { opened.push(url); },
+    onGithubChange: () => connectors.syncShared('github'),
+    githubInUse: () => connectors.usesShared('github'),
   });
   const card = () => widgets.forPage().find((w) => w.type === 'github');
   const settle = async () => { nowMs += 6 * 60e3; await widgets.refreshAll({ force: true }); return card(); };
   const ghStatus = () => widgets.state().github;
-  const everyTokenGone = (extra = '') => [DEVICE_TOKEN, CLI_TOKEN, PASTED].every((t) => !JSON.stringify([widgets.forPage(), widgets.state(), extra]).includes(t));
+  const conn = () => connectors.list().connectors.find((c) => c.id === 'github');
+  const everyTokenGone = (extra = '') => [DEVICE_TOKEN, CLI_TOKEN, PASTED].every((t) => !JSON.stringify([widgets.forPage(), widgets.state(), connectors.list(), extra]).includes(t));
   for (const k of Object.keys(realConsole)) console[k] = (...args) => { consoleSeen.push(args.map(String).join(' ')); realConsole[k](...args); };
   const restore = () => { delete process.env.LUMEN_STUB_GH_SIGNED_OUT; Object.assign(console, realConsole); if (prevTls === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED; else process.env.NODE_TLS_REJECT_UNAUTHORIZED = prevTls; process.env.PATH = prevPath; if (prevPathWin !== undefined) process.env.Path = prevPathWin; };
   try {
@@ -213,11 +221,21 @@ module.exports = async function githubSigninUnits(check) {
     check('github card: with the sign-in made first, adding the card needs no token and it fills in (5 of 42 review requests, unread count)', saved.widget.type === 'github' && c.data.reviews.items.length === 5 && c.data.reviews.total === 42 && c.data.notifications.count === 7 && !c.data.reconnect, JSON.stringify(c.data).slice(0, 200));
     check('github card: the page gets lists and links, never the token', everyTokenGone(), '');
     check('github card: the API calls carry the token as a Bearer header from the main process, with no cookies', srvLog.filter((l) => l.path.startsWith('/api/search') || l.path === '/api/notifications').every((l) => l.auth === `Bearer ${DEVICE_TOKEN}` && !l.cookie) && srvLog.some((l) => l.path === '/api/search/issues'), '');
+    // ---- one sign-in, both consumers ----
+    await until(() => conn().status === 'connected');
+    const cc = conn();
+    check('connector: the same sign-in set the GitHub connector up (connected as the same account), no second login', cc.status === 'connected' && /octocat/.test(cc.statusText) && connectors.usesShared('github'), JSON.stringify(cc.statusText));
+    await until(() => fs.existsSync(path.join(userData, 'connectors.json')));
+    const diskFile = fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8');
+    check('connector: its file holds no token and no secret of its own (the token is read from the card’s encrypted secret)', !diskFile.includes(DEVICE_TOKEN) && !/"secret"/.test(diskFile) && /"shared": true/.test(diskFile), diskFile);
+    srvLog.length = 0;
+    const prs = await connectors.call({ app: 'github', action: 'prs', args: { role: 'review' } });
+    check('connector: the AI’s GitHub tool works with the card’s token (the stand-in saw the same Bearer)', /Fix thing 1/.test(prs) && srvLog.some((l) => l.path === '/api/search/issues' && l.auth === `Bearer ${DEVICE_TOKEN}`), prs.slice(0, 120));
     // ---- a card's page actions ----
     check('github card: "Sign in with GitHub" and "Use GitHub CLI sign-in" are page actions on a GitHub card, and only those words', widgets.actionFrom(`lumen://newtab/?widget=${saved.widget.id}&do=ghcli`)?.do === 'ghcli' && widgets.actionFrom(`lumen://newtab/?widget=${saved.widget.id}&do=ghcli;rm`)?.invalid === true, '');
     // ---- sign out ----
     widgets.githubSignOut();
-    check('sign out: the token is gone from the card’s slot and Settings says signed out', !secrets.github && !ghStatus().signedIn, JSON.stringify(ghStatus()));
+    check('sign out: the token is gone from the card’s slot, Settings says signed out, the connector is disconnected too', !secrets.github && !ghStatus().signedIn && conn().status === 'off' && !fs.readFileSync(path.join(userData, 'connectors.json'), 'utf8').includes('"github"'), JSON.stringify([ghStatus(), conn().status]));
     c = await settle();
     check('sign out: the card turns into a sign-in card (no raw error), offering the device sign-in and the gh CLI', c.data?.reconnect === true && c.data.reason === 'signedout' && c.data.device === true && c.data.cli === true && !c.error && /Sign in with GitHub/.test(c.data.copy.signin) && !c.data.reviews, JSON.stringify(c.data));
     check('sign out: the code is what the card shows while a sign-in waits, and the card’s button starts it', await (async () => {
@@ -268,11 +286,11 @@ module.exports = async function githubSigninUnits(check) {
     check('github CLI: Settings sees the CLI is signed in', ghStatus().cli === true && !ghCalls().includes('auth token'), ghCalls());
     valid = new Set([CLI_TOKEN]);
     await widgets.githubCli();
-    check('github CLI: its token is taken, checked against GitHub (as cli-user) and stored; repo covers notifications and private repositories', GA.unpack(secrets.github)?.token === CLI_TOKEN && ghStatus().via === 'cli' && ghStatus().login === 'cli-user' && ghStatus().notifications === true && ghStatus().privateRepos === true, JSON.stringify(ghStatus()));
+    check('github CLI: its token is taken, checked against GitHub (as cli-user) and stored; repo covers notifications and private repositories', GA.unpack(secrets.github)?.token === CLI_TOKEN && ghStatus().via === 'cli' && ghStatus().login === 'cli-user' && ghStatus().notifications === true && ghStatus().privateRepos === true && conn().status === 'connected' && /cli-user/.test(conn().statusText), JSON.stringify(ghStatus()));
     check('github CLI: it was run with fixed arguments for github.com only', ghCalls().split(/\r?\n/).filter(Boolean).every((l) => /^auth (status|token) --hostname github\.com\s*$/.test(l)), ghCalls());
     c = await settle();
     check('github CLI: the card fills in with the CLI’s sign-in', c.data.reviews?.total === 42 && !c.data.reconnect, JSON.stringify(c.data).slice(0, 120));
-    check('github CLI: the token never reaches the page, Settings or the console', everyTokenGone(), '');
+    check('github CLI: the token never reaches the page, Settings, the connector list or the console', everyTokenGone(), '');
     widgets.githubSignOut();
     process.env.LUMEN_STUB_GH_SIGNED_OUT = '1';
     const signedOutCli = await widgets.githubCli().then(() => '', (e) => e.message);
@@ -296,20 +314,29 @@ module.exports = async function githubSigninUnits(check) {
     c = await settle();
     check('revoked token: the card says it was signed out and offers "Sign in again" (device and CLI), with no raw GitHub error', c.data?.reconnect === true && c.data.reason === 'expired' && /signed Lumen out/.test(c.data.copy.expired) && c.data.copy.again === 'Sign in again' && c.data.device === true && !/Bad credentials|rejected/i.test(JSON.stringify(c)) && !c.error, JSON.stringify(c.data));
     check('revoked token: Settings says so too (expired) and still names the account', ghStatus().signedIn === true && ghStatus().expired === true && ghStatus().login === 'octocat', JSON.stringify(ghStatus()));
+    const refused = await connectors.call({ app: 'github', action: 'prs' }).then(() => '', (e) => e.message);
+    check('revoked token: the connector fails in the same way, telling the AI to ask the user to sign in again (not to make a token)', /sign in to GitHub again/i.test(refused) && conn().status === 'bad-token', `${refused} / ${conn().status}`);
     // sign in again with a fresh token: both recover
     valid = new Set([DEVICE_TOKEN]);
     await widgets.githubStart({});
     pollScript = [{ access_token: DEVICE_TOKEN, scope: 'read:user,notifications' }];
     await until(() => !ghStatus().expired && ghStatus().signedIn && !ghStatus().pending);
     c = await settle();
-    check('revoked token: signing in again brings the card back', c.data.reviews?.total === 42 && ghStatus().expired === false, JSON.stringify(ghStatus()));
+    check('revoked token: signing in again brings the card and the connector back', c.data.reviews?.total === 42 && ghStatus().expired === false && conn().status === 'connected' && /Fix thing/.test(await connectors.call({ app: 'github', action: 'prs' })), JSON.stringify(ghStatus()));
 
-    // ---- removing the last card takes its sign-in with it; a pasted token (advanced) still works ----
+    // ---- removing the card keeps a sign-in the connector uses; a pasted token (advanced) still works and is shared too ----
     widgets.remove(saved.widget.id);
-    check('removing the GitHub card takes its sign-in with it (nothing else uses the token now)', !secrets.github && !ghStatus().signedIn, '');
+    check('removing the GitHub card keeps the sign-in while the connector uses it', Boolean(secrets.github) && ghStatus().signedIn && conn().status === 'connected', '');
+    widgets.githubSignOut();
     valid = new Set([PASTED]);
     const pastedCard = await widgets.save({ type: 'github', token: PASTED });
-    check('paste a token (advanced): still works and is stored as the sign-in', pastedCard.widget.type === 'github' && GA.unpack(secrets.github)?.token === PASTED && ghStatus().via === 'paste', JSON.stringify(ghStatus()));
+    check('paste a token (advanced): still works, replaces the sign-in, and the connector is set up with it', pastedCard.widget.type === 'github' && GA.unpack(secrets.github)?.token === PASTED && ghStatus().via === 'paste' && conn().status === 'connected', JSON.stringify(ghStatus()));
+    check('paste a token (advanced): the connector learns the account name from GitHub afterwards', await until(() => /pasted-user/.test(conn().statusText)), conn().statusText);
+    srvLog.length = 0;
+    check('paste a token (advanced): the same token serves the AI tool', /Fix thing/.test(await connectors.call({ app: 'github', action: 'prs' })) && srvLog.some((l) => l.auth === `Bearer ${PASTED}`), '');
+    // disconnecting the connector signs the shared card out as well (one sign-in)
+    await connectors.disconnect('github');
+    check('disconnect from the connector: the card’s sign-in goes too (one sign-in, one place)', !secrets.github && !ghStatus().signedIn && conn().status === 'off', JSON.stringify(ghStatus()));
     widgets.remove(pastedCard.widget.id);
 
     check('no token was ever written to the console', consoleSeen.every((l) => ![DEVICE_TOKEN, CLI_TOKEN, PASTED].some((t) => l.includes(t))), '');

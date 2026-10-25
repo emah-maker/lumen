@@ -280,8 +280,6 @@ body.interstitial { display: block; }
 .conn-status { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conn-status.connected { color: var(--success); }
 .conn-status.needs-signin, .conn-status.bad-token, .conn-status.error { color: var(--danger); }
-.conn-status.reconnect { color: var(--accent); }
-.conn-notice { margin: 0; }
 .conn-mcp { margin-top: 22px; }
 .conn-mcp .snippet { margin-bottom: 8px; }
 .conn-summary { margin: 0; font-size: 13px; line-height: 1.4; }

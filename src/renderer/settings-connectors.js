@@ -74,21 +74,12 @@ function buildConnectors() {
   }
 
   function cardFor(c, render) {
-    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error' || c.status === 'reconnect';
+    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error';
     const mcp = c.kind === 'mcp';
     const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google' || mcp)); // (a sign-in ended: connect it again)
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
-    if (c.status === 'reconnect') { // the old built-in connector: one click when its saved token can be reused, else the form for a token
-      const label = 'Reconnect through MCP';
-      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-reconnect`, text: 'Reconnect', 'aria-label': `${label}: ${c.name}`, onclick: async (e) => {
-        if (!c.reconnect?.oneClick) { open = c.id; refresh(); return; }
-        const b = e.currentTarget;
-        b.disabled = true;
-        b.textContent = c.oauth ? 'Waiting for your browser…' : 'Connecting…';
-        try { render(await C.connect(c.id, {})); flash(note, `${c.name} connected through its MCP server.`, 'ok'); custom?.refresh(); } catch (err) { b.disabled = false; b.textContent = 'Reconnect'; flash(note, clean(err), 'error'); }
-      } }));
-    } else if (!connected || again) {
+    if (!connected || again) {
       buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
     }
     if (mcp && c.mcp) {
@@ -119,10 +110,9 @@ function buildConnectors() {
       buttons.push(sw);
     }
     if (connected) {
-      const forget = c.status === 'reconnect';
-      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: forget ? 'Forget' : 'Disconnect', 'aria-label': `${forget ? 'Forget the old connection to' : 'Disconnect'} ${c.name}`, onclick: async () => {
-        if (!confirm(forget ? `Forget the old ${c.name} connection? Lumen deletes what it saved for it.` : `Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
-        try { render(await C.disconnect(c.id)); flash(note, forget ? `The old ${c.name} connection is gone.` : `${c.name} disconnected.`, 'ok'); custom?.refresh(); } catch (err) { flash(note, clean(err), 'error'); }
+      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
+        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); custom?.refresh(); } catch (err) { flash(note, clean(err), 'error'); }
       } }));
     }
     const showing = open === c.id;
@@ -132,7 +122,6 @@ function buildConnectors() {
       c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
       c.sending === 'on' ? h('p', { class: 'note conn-sending', text: 'Sending allowed: each email shows on a card and goes only when you press Send. If you say in a chat that it may send without asking, that chat sends to the addresses you typed, after a 10 second Undo. Bypass permissions never skips the card.' }) : null,
       c.sending === 'on' ? sendLogView(c) : null,
-      c.note && !showing && (c.status === 'reconnect' || c.status === 'error') ? h('p', { class: 'note conn-notice', text: c.note }) : null,
       showing ? form(c, render) : h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)),
       !showing && c.mcp?.tools.length ? toolsView(c) : null,
       showing ? null : h('div', { class: 'conn-actions' }, ...buttons));

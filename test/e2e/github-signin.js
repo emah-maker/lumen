@@ -3,8 +3,8 @@
 //  - the new-tab GitHub card, signed out, offers Sign in with GitHub; pressing it shows the one-time code and the address to open, the
 //    sign-in page is "opened" (recorded, not opened), and the card fills in by itself once the stand-in approves;
 //  - Settings → Widgets → GitHub has the same sign-in (code, who you are, Sign out) and no token field in sight except under Advanced;
-//  - the token appears in neither the page nor connectors.json (GitHub the connector is an MCP preset now and never reads this sign-in);
-//  - a revoked token turns the card into "Sign in again"; Sign out in Settings goes back to the sign-in prompt.
+//  - the same sign-in set up the GitHub connector; the token appears in neither page nor in connectors.json;
+//  - a revoked token turns the card into "Sign in again"; Sign out in Settings takes the connector down with it.
 // Run hidden and under the lock: node scripts/test/e2e-lock.js run --owner <name> -- timeout 600 node test/e2e/github-signin.js
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -69,6 +69,7 @@ const CLIENT = 'Iv1.e2eclient00001';
     await ui.waitForSelector('.tab');
     await app.evaluate((_e, [b, client]) => {
       global.__widgetEndpoints = { github: `${b}/api`, githubLogin: b };
+      global.__connectorEndpoints = { github: `${b}/api` };
       global.__githubClientId = client;
       global.__githubPollScale = 0.01;
       global.__widgetRateMax = 5000;
@@ -91,8 +92,9 @@ const CLIENT = 'Iv1.e2eclient00001';
     valid = new Set([TOKEN]);
     approve = true;
     check('once approved the card fills in by itself (review requests, assigned, unread)', await waitFor(`${card}?.querySelector('.gh-summary') && /42/.test(${card}.textContent) && /7/.test(${card}.textContent) && !${card}.querySelector('.gh-user-code')`), await inTab(`${card}?.textContent`));
-    let connFile = ''; // (no connectors.json at all: GitHub the connector is an MCP preset now)
-    try { connFile = fs.readFileSync(path.join(profile, 'connectors.json'), 'utf8'); } catch { /* none */ }
+    const conn = await app.evaluate(() => global.__connectors.list().connectors.find((c) => c.id === 'github'));
+    check('the same sign-in set up the GitHub connector', conn.status === 'connected' && /octocat/.test(conn.statusText), JSON.stringify(conn.statusText));
+    const connFile = fs.readFileSync(path.join(profile, 'connectors.json'), 'utf8');
     const pageText = await inTab('document.documentElement.outerHTML');
     check('the token is in neither the page nor connectors.json (only the encrypted settings key)', !pageText.includes(TOKEN) && !connFile.includes(TOKEN) && !/"secret"/.test(connFile), '');
     await app.evaluate(() => { if (global.__settingsFlush) global.__settingsFlush(); });
@@ -123,6 +125,8 @@ const CLIENT = 'Iv1.e2eclient00001';
     // ---- sign out in Settings ----
     await sp("document.getElementById('github-signout').click(); true");
     check('Sign out: Settings says not signed in, the card goes back to the sign-in prompt', await spWait("/Not signed in/.test(document.getElementById('github-status')?.textContent || '') && document.getElementById('github-signout').hidden === true") && await waitFor(`/Sign in to GitHub/.test(${card}?.textContent || '') && [...${card}.querySelectorAll('.w-body button')].some((b) => b.textContent === 'Sign in with GitHub')`), await sp("document.getElementById('github-status')?.textContent"));
+    const after = await app.evaluate(() => global.__connectors.list().connectors.find((c) => c.id === 'github').status);
+    check('Sign out: the GitHub connector is off too', after === 'off', after);
     check('the stand-in saw no cookies', seen.every((s) => !s.cookie), JSON.stringify(seen.find((s) => s.cookie)));
   } catch (err) {
     check('the run finished without an error', false, err.stack || err);

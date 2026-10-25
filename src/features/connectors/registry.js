@@ -11,12 +11,15 @@
 // user can change there before allowing it. Background tasks and routines are offered the reads only (toolDef({ readOnly })).
 //
 // kind: 'session' (the user's signed-in Lumen session, read through the site's own JSON endpoints),
-//       'token'   (the user pastes a secret address; encrypted at rest),
+//       'token'   (the user pastes an API token or secret address; encrypted at rest),
 //       'oauth'   (Lumen's existing Google sign-in, shared with the Gmail widget),
 //       'google'  (Google Drive, Sheets: one Google sign-in in the user's own browser, each with its own `google.scopes`),
-//       'mcp'     (a preset that adds a service's own official MCP server; its tools are MCP tools, not part of the connector tool).
-// Built in only where the service has no official remote MCP server Lumen can reach: Canvas (none), and Google's Gmail, Calendar, Drive and
-// Sheets (Google's MCP servers need a Google Cloud project and a developer preview, which a personal account can't use).
+//       'mcp'     (a preset that adds a service's official MCP server to Custom MCP servers on the same page; none ships today).
+// Why GitHub, Notion and Todoist are built in although each has an official MCP server: those servers' tool definitions cost far more of every
+// message than this one tool does (GitHub 24 tools, about 32k characters even limited to the toolsets this covers; Notion 64 tools and Todoist
+// about 45, neither measurable below that), against about 100 characters here. A card says the official server can be added by hand under
+// Custom MCP servers for the full tool set. The rule: replace a built-in only when the official server's definitions are small (about 5k
+// characters) or it does clearly more at a similar cost.
 'use strict';
 
 const CATEGORIES = [
@@ -27,6 +30,9 @@ const CATEGORIES = [
   { id: 'tasks', label: 'Tasks' },
 ];
 
+// owner/name: each part letters, digits, _ . - only, and never "." or ".." (a segment that climbs out of the path), no / \ ? #.
+const REPO = /^(?!\.{1,2}\/)[A-Za-z0-9_.-]{1,100}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
+const WORD = /^[A-Za-z0-9_-]{1,40}$/; // an id used in a query: no separators or dots at all
 const int = (doc, min, max) => ({ type: 'integer', min, max, doc });
 const str = (doc, extra = {}) => ({ type: 'string', max: 200, doc, ...extra });
 const text = (doc, max, extra = {}) => ({ type: 'string', max, multiline: true, doc, ...extra }); // a body the user can edit on the card
@@ -34,6 +40,8 @@ const text = (doc, max, extra = {}) => ({ type: 'string', max, multiline: true, 
 // time (a single regular expression for the whole list backtracks badly on a long wrong one); features/gmail-drafts.js checks them again.
 const ONE_ADDRESS = /^[ \t]*(?:(?:"[^<>,"\\\r\n]{0,100}"|[^<>,"\\\r\n]{0,100})[ \t]*<[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+>|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})+)[ \t]*$/;
 const ADDRESSES = { test: (v) => { const parts = String(v).replace(/,[ \t]*$/, '').split(','); return parts.length <= 50 && parts.every((p) => ONE_ADDRESS.test(p)); } };
+// A Notion page id: 32 hex digits, with or without its dashes, or a notion.so address that ends in one.
+const NOTION_ID = /^(?:https:\/\/(?:www\.)?notion\.so\/[^\s?#]{0,300}?)?[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}(?:[?#]\S{0,200})?$/i;
 
 const GOOGLE_API = 'https://www.googleapis.com/auth';
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,100}$/; // a Drive file id (or "root"): plain characters, never a path or query
@@ -141,39 +149,47 @@ const CONNECTORS = [
       create: { label: 'Make a spreadsheet', write: true, edit: ['title'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }) }, doc: 'Makes an empty spreadsheet and gives its link. The user confirms first.' },
     },
   },
-  // The three below used to be built in (token or secret pasted by hand). Their own makers now run official, maintained MCP servers that cover the same
-  // reads and writes, so Lumen points at those instead of keeping a copy of each service's API: a card is one click to add the server (kind 'mcp',
-  // service.js connectMcp), the tools come from the server, and every call asks first like any MCP tool. `replaces`: people who had the old built-in
-  // connector see "Reconnect through MCP" until they do (service.js keeps their saved secret until then). `mcp`: how the server is added;
-  // auth 'oauth' signs in through the browser (mcp-oauth.js), `header` takes a pasted token as that header's value after the prefix.
   {
-    id: 'github', name: 'GitHub', category: 'work', kind: 'mcp', replaces: true, icon: { text: 'G', color: '#24292f' },
-    summary: 'Pull requests, issues, code and more, through GitHub’s own MCP server.',
-    mcp: { name: 'github', type: 'http', url: 'https://api.githubcopilot.com/mcp/', header: { name: 'Authorization', prefix: 'Bearer ' }, fixedHeaders: { 'X-MCP-Toolsets': 'context,issues,pull_requests' }, source: 'https://github.com/github/github-mcp-server' },
-    fields: [{ id: 'secret', label: 'Personal access token', placeholder: 'github_pat_…', secret: true, help: 'Create a fine-grained token at github.com/settings/personal-access-tokens, with only the access you want the AI to have. GitHub’s server has no automatic sign-in for apps like Lumen, so it takes a token.', pattern: 'github' }],
-    reads: ['What the token can see on GitHub: pull requests, issues, repositories and code'],
-    does: ['Anything the token allows and GitHub’s tools offer, such as commenting or opening an issue (each call asks you first)'],
-    actions: {},
+    id: 'github', name: 'GitHub', category: 'work', kind: 'token', icon: { text: 'G', color: '#24292f' },
+    summary: 'List your pull requests and issues, read a pull request, comment and open issues.',
+    sessionNote: 'The service’s own official MCP server (https://api.githubcopilot.com/mcp/, with a personal access token as an Authorization: Bearer header) can be added under Custom MCP servers, below, for its full set of tools: code, files, Actions, discussions and more. It costs far more of every message than this connector, which is why this one is built in.',
+    fields: [{ id: 'secret', label: 'Personal access token', placeholder: 'github_pat_…', secret: true, help: 'Create a fine-grained token at github.com/settings/personal-access-tokens. Read-only is enough for reading; to comment or open issues, give it Issues and Pull requests “Read and write”.', pattern: 'github' }],
+    reads: ['Pull requests and issues you wrote, are assigned to or are asked to review', 'A pull request’s description and changed files'],
+    does: ['Comment on an issue or pull request (asks you first)', 'Open an issue (asks you first)'],
+    actions: {
+      prs: { label: 'Your pull requests', args: { role: str('author | review | assigned, default author', { enum: ['author', 'review', 'assigned'] }), state: str('open | closed | all, default open', { enum: ['open', 'closed', 'all'] }) }, doc: 'Pull requests you wrote, are asked to review or are assigned to.' },
+      issues: { label: 'Your issues', args: { role: str('author | assigned, default assigned', { enum: ['author', 'assigned'] }), state: str('open | closed | all, default open', { enum: ['open', 'closed', 'all'] }) }, doc: 'Issues assigned to you or opened by you.' },
+      pr: { label: 'Read a pull request', args: { repo: str('owner/name', { required: true, pattern: REPO }), number: { ...int('pull request number', 1, 999999999), required: true } }, doc: 'A pull request’s description, status and changed files.' },
+      comment: { label: 'Comment', write: true, edit: ['body'], args: { repo: str('owner/name', { required: true, pattern: REPO }), number: { ...int('issue or pull request number', 1, 999999999), required: true }, body: text('the comment, Markdown', 20000, { required: true }) }, doc: 'Comments on an issue or pull request. The user confirms first.' },
+      create_issue: { label: 'Open an issue', write: true, edit: ['title', 'body'], args: { repo: str('owner/name', { required: true, pattern: REPO }), title: str('the title', { required: true, max: 256 }), body: text('the description, Markdown', 20000) }, doc: 'Opens an issue. The user confirms first.' },
+    },
   },
   {
-    id: 'notion', name: 'Notion', category: 'work', kind: 'mcp', replaces: true, icon: { text: 'N', color: '#111111' },
-    summary: 'Search your workspace, read and write pages, through Notion’s own MCP server.',
-    mcp: { name: 'notion', type: 'http', url: 'https://mcp.notion.com/mcp', auth: 'oauth', source: 'https://developers.notion.com/guides/mcp/get-started-with-mcp' },
-    sessionNote: 'You sign in to Notion in your own browser and choose what Lumen may reach there.',
-    fields: [],
-    reads: ['The pages and databases you allow when you sign in'],
-    does: ['Create and edit pages, as Notion’s tools offer (each call asks you first)'],
-    actions: {},
+    id: 'notion', name: 'Notion', category: 'work', kind: 'token', icon: { text: 'N', color: '#111111' },
+    summary: 'Search your workspace, read a page, add a page or add to one.',
+    sessionNote: 'The service’s own official MCP server (https://mcp.notion.com/mcp, with Sign in with the service) can be added under Custom MCP servers, below, for its full set of tools: databases, comments, files and more. It costs far more of every message than this connector, which is why this one is built in.',
+    fields: [{ id: 'secret', label: 'Integration secret', placeholder: 'ntn_…', secret: true, help: 'Create an internal integration at notion.so/profile/integrations, then share the pages you want the AI to see with it. To let it add pages, keep “Insert content” on in the integration’s capabilities.', pattern: 'notion' }],
+    reads: ['Pages and databases shared with the integration', 'The text of a page'],
+    does: ['Add a page under a page you shared (asks you first)', 'Add text to the end of a page (asks you first)'],
+    actions: {
+      search: { label: 'Search Notion', args: { query: str('words to look for', { required: true, max: 200 }) }, doc: 'Pages and databases shared with the integration.' },
+      page: { label: 'Read a page', args: { id: str('page id or address', { required: true, max: 200 }) }, doc: 'The text of one page.' },
+      create_page: { label: 'Add a page', write: true, edit: ['title', 'body'], args: { parent_id: str('the page to put it under: id or address', { required: true, max: 500, pattern: NOTION_ID }), title: str('the title', { required: true, max: 200 }), body: text('the text; # headings, - bullets', 20000) }, doc: 'Adds a page under a page shared with the integration. The user confirms first.' },
+      append: { label: 'Add to a page', write: true, edit: ['body'], args: { page_id: str('page id or address', { required: true, max: 500, pattern: NOTION_ID }), body: text('the text to add; # headings, - bullets', 20000, { required: true }) }, doc: 'Adds text to the end of a page. The user confirms first.' },
+    },
   },
   {
-    id: 'todoist', name: 'Todoist', category: 'tasks', kind: 'mcp', replaces: true, icon: { text: 'T', color: '#db4035' },
-    summary: 'See your tasks and add new ones, through Todoist’s own MCP server.',
-    mcp: { name: 'todoist', type: 'http', url: 'https://ai.todoist.net/mcp', auth: 'oauth', source: 'https://github.com/Doist/todoist-mcp' },
-    sessionNote: 'You sign in to Todoist in your own browser.',
-    fields: [],
-    reads: ['Your tasks, projects, labels and sections'],
-    does: ['Add and change tasks, as Todoist’s tools offer (each call asks you first)'],
-    actions: {},
+    id: 'todoist', name: 'Todoist', category: 'tasks', kind: 'token', icon: { text: 'T', color: '#db4035' },
+    summary: 'See your tasks and add new ones.',
+    sessionNote: 'The service’s own official MCP server (https://ai.todoist.net/mcp, with Sign in with the service) can be added under Custom MCP servers, below, for its full set of tools: projects, labels, filters, reminders and more. It costs far more of every message than this connector, which is why this one is built in.',
+    fields: [{ id: 'secret', label: 'API token', placeholder: 'Todoist API token', secret: true, help: 'Todoist, Settings, Integrations, Developer.', pattern: 'todoist' }],
+    reads: ['Your tasks and projects'],
+    does: ['Add a task (asks you first)'],
+    actions: {
+      tasks: { label: 'Your tasks', args: { filter: str('Todoist filter, default “today | overdue”', { max: 200 }), project_id: str('only this project', { max: 40, pattern: WORD }) }, doc: 'Tasks matching a Todoist filter, or one project’s tasks.' },
+      projects: { label: 'Your projects', args: {}, doc: 'Your projects with their ids.' },
+      add_task: { label: 'Add a task', write: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
+    },
   },
 ];
 
@@ -183,9 +199,13 @@ const get = (id) => byId.get(String(id)) || null;
 // Settings' account patterns: a quick check before a token is sent anywhere.
 const PATTERNS = {
   github: /^(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255})$/,
+  notion: /^(?:ntn_|secret_)[A-Za-z0-9]{20,100}$/,
+  todoist: /^[A-Za-z0-9_-]{20,100}$/,
 };
 const PATTERN_MESSAGES = {
   github: 'That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.',
+  notion: 'That doesn’t look like a Notion integration secret (it starts with ntn_).',
+  todoist: 'That doesn’t look like a Todoist API token.',
   url: 'Paste the calendar’s https:// address.',
 };
 function checkField(field, value) {
@@ -327,4 +347,4 @@ function stepLabel(input) {
 // Tests add a connector of their own (an MCP preset needs a real package name, which no shipped connector has today).
 function _testRegister(def) { CONNECTORS.push(def); byId.set(def.id, def); }
 
-module.exports = { setUnlocked, _testRegister, CATEGORIES, CONNECTORS, get, checkField, cleanDomain, looksLikeCanvas, setConnected, connectedIds, toolDef, validate, help, stepLabel, signature, editable, applyEdits };
+module.exports = { setUnlocked, _testRegister, CATEGORIES, CONNECTORS, get, checkField, cleanDomain, looksLikeCanvas, setConnected, connectedIds, toolDef, validate, help, stepLabel, signature, editable, applyEdits, NOTION_ID };

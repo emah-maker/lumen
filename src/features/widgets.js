@@ -2124,7 +2124,7 @@ function createWidgets(deps) {
       Object.assign(widget, WL.firstFit(widgets.map(WL.rectOf), size), size);
     }
     if (secret && CONNECTORS[widget.type].secret) deps.setSecret(CONNECTORS[widget.type].secret, secret);
-    if (secret && widget.type === 'github') gh().markGood();
+    if (secret && widget.type === 'github') { gh().markGood(); deps.onGithubChange?.(); } // a pasted token is the connector's too
     if (widget.type === 'weather') rememberPlaces(widget.wx.places);
     const next = id ? widgets.map((w) => (w.id === id ? widget : w)) : [...widgets, widget];
     save(next);
@@ -2142,7 +2142,7 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret)) {
+    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret) && !(secret === 'github' && deps.githubInUse?.())) { // (the GitHub connector shares the sign-in: removing the card keeps it)
       if (secret === 'gmail') revokeGoogle(OA.decodeCreds(deps.getSecret(secret)));
       deps.setSecret(secret, null);
       spotifyTokens.delete(secret);
@@ -2470,7 +2470,8 @@ function createWidgets(deps) {
     return true;
   }
   // ---- GitHub: sign in (features/github-auth.js) ----
-  // One stored token (the `github` secret) serves the cards. Signing in, out or switching account redraws them at once.
+  // One stored token (the `github` secret) serves the card and the connector. Signing in, out or switching account redraws the
+  // cards at once and tells main.js, which sets the connector up (or takes it down) to match (deps.onGithubChange).
   let ghAuth = null;
   const gh = () => (ghAuth ||= GHA.create({
     post: (url, body) => request(url, { method: 'POST', max: 65536, body, budget: 'auth', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' } }),
@@ -2505,6 +2506,7 @@ function createWidgets(deps) {
     if (what && 'signedIn' in what) {
       if (!what.signedIn) { for (const w of list()) if (w.type === 'github') cache.delete(w.id); }
       else Promise.all(list().filter((w) => w.type === 'github').map((w) => refresh(w, { force: true, user: true }).catch(() => {}))).then(() => deps.onUpdate?.());
+      try { deps.onGithubChange?.(what); } catch { /* the connector looks again next time */ }
     }
   }
   const githubStatus = () => gh().status();
