@@ -315,7 +315,9 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
     try { inner = await wc.executeJavaScript('[innerWidth, innerHeight]', false); } catch { return null; }
     const zoom = wc.getZoomFactor?.() || 1;
     const layoutOff = layoutMismatch(inner, bounds, zoom);
-    const smaller = layoutOff ? false : await surfaceSmaller(view);
+    // (a view that is only not drawn right now, a window behind others or a tab that just came back, reads empty once: confirmed after a repaint before the page is relaid out, a resize the page sees)
+    let smaller = layoutOff ? false : await surfaceSmaller(view);
+    if (smaller) { try { wc.invalidate?.(); } catch { /* going away */ } await new Promise((r) => { const h = setTimeout(r, 120); h.unref?.(); }); smaller = shown() && await surfaceSmaller(view); }
     if (!shown() || (!layoutOff && !smaller)) return null;
     lastFix.set(view, now());
     const dbg = wc.debugger;

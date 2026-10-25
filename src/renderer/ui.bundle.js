@@ -8591,7 +8591,11 @@ function sendBounds(bounds) {
   lastBounds = key;
   window.browser.setContentBounds(bounds);
 }
+
+
+let boundsGate = null;
 function reportBounds() {
+  if (boundsGate) { boundsGate.then(reportBounds); return; }
   if (!boundsHeld) sendBounds(currentBounds());
 }
 
@@ -11086,8 +11090,10 @@ let lastSnapshotEdge = '';
 async function freezePage() {
   const token = ++freezeToken;
 
+
   const r = heldRect || viewport.getBoundingClientRect();
-  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width), height: Math.round(r.height) });
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width * dpr), height: Math.round(r.height * dpr) });
   if (!bytes || token !== freezeToken) return;
 
   const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
@@ -11110,10 +11116,20 @@ async function freezePage() {
   viewport.append(img);
 
 
-  await new Promise((done) => afterPaint(done));
-  if (token !== freezeToken) return;
-  window.browser.freezeShown?.();
+
+
+  let open;
+  const gate = boundsGate = new Promise((done) => { open = done; });
+  gate.then(() => { if (boundsGate === gate) boundsGate = null; });
+  snapshotUp();
+  try {
+    await new Promise((done) => afterPaint(done));
+    if (token !== freezeToken) return;
+    window.browser.freezeShown?.();
+  } finally { open(); }
 }
+let snapshotWaiters = [];
+function snapshotUp() { const w = snapshotWaiters; snapshotWaiters = []; w.forEach((done) => done()); }
 
 function afterPaint(fn) {
   let done = false;
@@ -11177,7 +11193,7 @@ async function showSidebar(visible, { fromTab = false, instant = false, newTab =
   let frozen = false;
   if (!still) {
     const pending = early || (snapshot ? null : freezePage());
-    if (pending) await Promise.race([pending, new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
+    if (pending && !snapshot) await Promise.race([pending, new Promise((done) => snapshotWaiters.push(done)), new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
     if (seq !== showSeq) return;
     frozen = Boolean(snapshot);
   } else if (early) {
@@ -11859,7 +11875,7 @@ window.assistant.onMcpEvent?.((event) => {
     try {
       let level = 0;
       end.dataset.compact = '0';
-      while (level < 2 && !fits()) end.dataset.compact = String(++level);
+      while (level < 4 && !fits()) end.dataset.compact = String(++level);
     } finally { fitting = false; }
   };
   const ro = new ResizeObserver(fitToolbarPills);
