@@ -149,8 +149,13 @@ function clientFor(provider, apiKey) {
 // { ok: null } when it couldn't be checked (offline, or the provider having trouble).
 async function checkKey(provider, apiKey, { fetchImpl = netFetch() } = {}) {
   if (provider === 'local') return { ok: null }; // no key to check
-  const rejected = { ok: false, message: `${PROVIDERS[provider].label} didn't accept that key. Check it and try again.` };
+  const rejected = { ok: false, message: `${PROVIDERS[provider]?.label || 'Anthropic'} didn't accept that key. Check it and try again.` };
   try {
+    if (provider === 'anthropic') { // not in PROVIDERS (it has its own SDK client); the models list is the cheapest authenticated call
+      const res = await fetchImpl('https://api.anthropic.com/v1/models?limit=1', { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, signal: AbortSignal.timeout(10000) });
+      if (res.status === 401 || res.status === 403) return rejected;
+      return { ok: res.ok ? true : null };
+    }
     if (provider === 'openrouter') {
       const res = await fetchImpl(`${PROVIDERS.openrouter.baseURL}/key`, { headers: { Authorization: `Bearer ${apiKey}`, ...PROVIDERS.openrouter.headers }, signal: AbortSignal.timeout(10000) });
       if (res.status === 401 || res.status === 403) return rejected;
