@@ -50,11 +50,13 @@ const inView = ({ focused = false, sidebarOpen = false, chatOpen = true, onRunTa
 // What to do about an event of a run (kind: done, failed, approval, stopped):
 //   os      show a system notification
 //   unread  mark the sidebar button (sidebar closed) or the chat in the list (another chat open)
-function plan(kind, { settings, ...view } = {}) {
+// `views`: one view per window (the chat can be open in a tab of another window than the run's); seen in any of them counts.
+function plan(kind, { settings, views = null, ...single } = {}) {
   if (kind === 'stopped') return { os: false, unread: false };
-  const seen = inView(view);
+  const all = Array.isArray(views) && views.length ? views : [single];
+  const seen = all.some(inView);
   const bgPlan = bg.notifyPlan(kind === 'failed' ? 'failed' : kind === 'approval' ? 'approval' : 'done', { settings: bg.normalizeSettings(settings), focused: seen });
-  const hidden = !(view.sidebarOpen && view.chatOpen !== false);
+  const hidden = !all.some((v) => v.sidebarOpen && v.chatOpen !== false);
   return { os: bgPlan.os, unread: hidden };
 }
 
