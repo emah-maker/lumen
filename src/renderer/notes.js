@@ -182,7 +182,7 @@
       closePanel(false);
       window.ask?.(T('notes.askPrompt', { title, text: text.slice(0, 20000), question: q }));
     };
-    question.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); askNow(); } });
+    question.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); askNow(); } });
     const del = icon(TRASH, T('notes.delete'), async () => {
       const id = open.id;
       dirty = false;

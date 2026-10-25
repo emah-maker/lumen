@@ -23,14 +23,14 @@ module.exports = [
   // Renderer pages load plain <script> files that share one global scope.
   {
     files: ['src/renderer/**/*.js'],
-    languageOptions: { sourceType: 'script', globals: { ...globals.browser } },
+    languageOptions: { sourceType: 'script', globals: { ...globals.browser, isImeEnter: 'readonly' } }, // (isImeEnter: renderer/ime.js)
     rules: {
       'no-unused-vars': ['warn', { vars: 'local', args: 'none', caughtErrors: 'none', ignoreRestSiblings: true }],
       'no-redeclare': ['error', { builtinGlobals: false }],
     },
   },
   // The PDF viewer page is an ES module (pdf.js is) with top-level await.
-  { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser } } },
+  { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser, isImeEnter: 'readonly' } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
   { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },

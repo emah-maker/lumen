@@ -211,7 +211,7 @@ function step(direction) {
 }
 findText.addEventListener('input', () => api.send('private:find', { text: findText.value }));
 findText.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); } else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); step(e.shiftKey ? -1 : 1); } else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
 document.getElementById('find-next').addEventListener('click', () => step(1));
 document.getElementById('find-prev').addEventListener('click', () => step(-1));

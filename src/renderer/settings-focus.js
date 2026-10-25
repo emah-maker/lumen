@@ -59,7 +59,7 @@ async function buildFocus(card) {
   }
   const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
   const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
-  siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addSite(); } });
+  siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addSite(); } });
   const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });
 
   // ---- schedules
@@ -89,7 +89,7 @@ async function buildFocus(card) {
     phraseInput.value = '';
     setSchedules([...schedules(), { ...parsed, on: true }]);
   };
-  phraseInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPhrase(); } });
+  phraseInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPhrase(); } });
   const dayBoxes = [1, 2, 3, 4, 5, 6, 0].map((d) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: String(d), 'data-day': String(d), checked: d >= 1 && d <= 5 }), dayName(d)));
   const fromInput = h('input', { type: 'time', id: 'focus-from', value: '19:00', 'aria-label': tr('settings.focus.from', 'From') });
   const toInput = h('input', { type: 'time', id: 'focus-to', value: '21:00', 'aria-label': tr('settings.focus.to', 'Until') });

@@ -113,4 +113,16 @@ check('warning pages: certificate, HTTPS-only and Safe Browsing wording is in en
   check('downloads: failed rows give a reason and the toolbar button turns red until the panel opens', ['connect', 'lost', 'stopped', 'save'].every((k) => EN['dlpanel.failed.' + k]) && /\.download-btn\.failed \{ color: var\(--danger\)/.test(read('renderer/styles.css')) && /downloads\.toast\.failed/.test(dlSrc), '');
 }
 
+// ---- the tab menu is short: the "sections" helper and the submenu names it uses
+{
+  const m = mainSrc.match(/const sections = (\(\.\.\.groups\) => .*);\r?\n/);
+  const sections = m && new Function('return ' + m[1])();
+  const labels = (list) => list.map((i) => i.label || '---').join('|');
+  check('tab menu: sections() puts one separator between sections and drops empty ones', typeof sections === 'function' && labels(sections([{ label: 'a' }], [], [{ label: 'b' }, { label: 'c' }], [undefined])) === 'a|---|b|c', m && m[1]);
+  check('tab menu: sections() leaves no separator at either end', typeof sections === 'function' && labels(sections([], [{ label: 'a' }], [])) === 'a', '');
+  const tpl = mainSrc.slice(mainSrc.indexOf('function tabMenuTemplate(id)'), mainSrc.indexOf('function cascadedWindowPoint'));
+  check('tab menu: Add to group, Move tab, AI and More are submenus (the long tail), Reload and Close stay on top', ['menu.addToGroup', 'menu.moveTab', 'menu.tabAi', 'menu.tabMore'].every((k) => new RegExp(String.raw`label: t\('${k}'\),\s*submenu`).test(tpl)) && /\{ label: t\('menu\.reload'\)/.test(tpl) && /\{ label: t\('menu\.closeTab'\)/.test(tpl), '');
+  check('tab menu: the new submenu names are strings', ['menu.moveTab', 'menu.tabAi', 'menu.tabMore'].every((k) => typeof EN[k] === 'string' && EN[k]), '');
+}
+
 process.exit(failures ? 1 : 0);

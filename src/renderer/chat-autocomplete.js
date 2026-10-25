@@ -151,7 +151,7 @@
       e.preventDefault();
       e.stopPropagation(); // (Esc takes the guess away first; the next one does what Esc does)
       core.dismiss();
-    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Enter'].includes(e.key)) core.dismiss();
+    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Enter'].includes(e.key) && !isImeEnter(e)) core.dismiss();
   });
   prompt.addEventListener('scroll', () => { if (core.ghost) layer.scrollTop = prompt.scrollTop; }, { passive: true });
   for (const type of ['blur', 'mousedown', 'cut', 'paste', 'drop']) prompt.addEventListener(type, () => core.dismiss());

@@ -143,7 +143,7 @@ async function localRows() {
     flash(note, kind === 'detect' ? (r.note || tr('settings.local.found', 'Found {n} on {server}.', { n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }), server: state.names[state.flavor] })) : tr('settings.local.saved', 'Saved.'), 'ok');
   };
   sw.addEventListener('change', () => run('save'));
-  url.addEventListener('keydown', (e) => { if (e.key === 'Enter') run('save'); });
+  url.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) run('save'); });
   url.addEventListener('change', () => run('save'));
   flavor.addEventListener('change', () => {
     const other = state.defaults[state.flavor];

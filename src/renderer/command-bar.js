@@ -147,7 +147,7 @@ const commandBar = (() => {
       if (!rows.length) return;
       selected = (selected + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
       render(false);
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' && !isImeEnter(e)) {
       e.preventDefault();
       run(rows[selected], { newTab: e.ctrlKey || e.metaKey });
     } else if (e.key === 'Escape') {

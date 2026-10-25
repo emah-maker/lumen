@@ -556,7 +556,7 @@ window.addEventListener('hashchange', () => { hiddenState = null; render(); }); 
   input.addEventListener('keydown', (e) => {
     const toggle = (e.ctrlKey && e.key === '/') || (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A'));
     if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); return; }
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !isImeEnter(e)) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
   });
 
   form.addEventListener('submit', (e) => {
