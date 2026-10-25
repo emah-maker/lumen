@@ -14,7 +14,7 @@ labels: bug
 3.
 
 **Environment**
-- Lumen version (Settings → About Lumen):
+- Lumen version (Settings → Updates):
 - OS and version:
 - Installed with: Lumen-Setup / zip / dmg / built from source
 - AI engine in use (if relevant):

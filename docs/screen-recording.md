@@ -23,7 +23,7 @@ A recording also ends by itself when the tab you were recording closes, when you
 
 ## When you stop
 
-The video is saved in your Downloads folder (or the folder you chose in Settings → Downloads) as a `.webm` file named for what it shows and when:
+The video is saved in your Downloads folder (or the folder you chose in Settings → General → Downloads) as a `.webm` file named for what it shows and when:
 
 - `Lumen tab recording - example.com - 2026-10-19 14-32-05.webm`
 - `Lumen screen recording 2026-10-19 14-32-05.webm`

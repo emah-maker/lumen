@@ -90,7 +90,7 @@ function create(deps) {
     lightened = mode === 'auto' && Array.isArray(features) && features.length > 0;
     if (features) {
       set(features);
-      if (deps.log && features !== 'full' && !logged && (logged = true)) deps.log(`[lumen] accessibility asked for by another program; kept to ${features.length ? features.join(', ') : 'nothing'} (Settings > Accessibility > Screen reader support)`);
+      if (deps.log && features !== 'full' && !logged && (logged = true)) deps.log(`[lumen] accessibility asked for by another program; kept to ${features.length ? features.join(', ') : 'nothing'} (Settings → Appearance → Accessibility > Screen reader support)`);
     }
     return features;
   }

@@ -47,7 +47,7 @@ function saveError(host, err) {
 async function save(key, value, host) {
   try {
     st = await S.set(key, value);
-    window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); // another row for the same setting (Settings → AI → AI providers) follows
+    window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } })); // another row for the same setting (Settings → AI and agents → AI providers) follows
     host?.closest?.('.row')?.querySelector(':scope > .text > .save-error')?.remove();
     applyPageClasses();
     refreshRestartNotes();
@@ -2695,7 +2695,7 @@ function buildMemory(group) {
   M.list().then((v) => { view = v; render(); }).catch(() => render());
 }
 
-// Settings → AI → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
+// Settings → AI and agents → Agents and tools: the Antigravity CLI (Google's coding agent, which replaces Gemini CLI). Installed? The official install
 // command is shown, and runs only on the click.
 function buildAntigravity(slot, refreshModels) {
   const agyNote = status('ai-agy-status');
@@ -2732,7 +2732,7 @@ function buildAntigravity(slot, refreshModels) {
   slot.append(agyRow);
 }
 
-// [telegram] AI and agents > Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
+// [telegram] Settings → AI and agents → Phone (Telegram) (features/telegram.js): the switch, the bot token (goes in, never comes back), pairing.
 function buildTelegram(slot) {
   const page = slot.subpage('telegram', tr('settings.telegram.page', 'Phone (Telegram)'), tr('settings.telegram.pageDesc', 'Send requests to Lumen from your phone through your own Telegram bot.'), 'telegram phone mobile bot botfather message chat remote pair');
   const stateNote = status('telegram-state');
@@ -3030,7 +3030,7 @@ function buildTranslate(card) {
   card.append(collapsible(tr('settings.translate.more', 'Language packs and site lists'), rest));
 }
 
-// Settings → Translation → the language packs on this device (features/translate-local.js): what is
+// Settings → General → Translation → the language packs on this device (features/translate-local.js): what is
 // downloaded and how big, delete, and "Download for offline".
 let offTranslateProgress = null; // stops the previous card's progress listener
 function buildTranslatePacks(card) {

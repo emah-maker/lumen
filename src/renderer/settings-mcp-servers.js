@@ -1,4 +1,4 @@
-// Settings → You and AI → Connectors → "Custom MCP servers": servers you add yourself, whose tools the sidebar's AI can use
+// Settings → AI and agents → Connectors → "Custom MCP servers": servers you add yourself, whose tools the sidebar's AI can use
 // (features/mcp-client.js). The ones a Connectors card added (GitHub, Notion, Todoist) are managed on their cards, not here.
 // Loaded before settings.js and called from settings-connectors.js; it uses settings.js's h(), stackRow() and flash() helpers.
 // Saved secrets never come back to this page: only their names do, and a value left empty when editing keeps the saved one.

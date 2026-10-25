@@ -25,7 +25,7 @@ const NOT_ALLOWED = { name: 'NotAllowedError', message: 'The operation either ti
 function createPasskeys(deps) {
   const {
     ipcMain,
-    enabled = () => true, // Settings → Privacy "Use passkeys and security keys"
+    enabled = () => true, // Settings → Privacy and security "Use passkeys and security keys"
     loadNative = () => require('./webauthn-windows').load(), // lazily, Windows only
     parseDomain = (host) => require('tldts-experimental').parse(host, { allowPrivateDomains: true }),
     context, // (webContents) -> { ok, reason, win, inPrivate } (main.js passkeyContext)
@@ -199,7 +199,7 @@ function createPasskeys(deps) {
     attach,
     // Load the native side early (Windows, setting on) so the first page already knows whether Windows Hello is set up.
     warm: () => { if (enabled()) nativeApi(); },
-    // Settings → Privacy shows whether passkeys can work here.
+    // Settings → Privacy and security shows whether passkeys can work here.
     info: () => { if (process.platform === 'win32') nativeApi(); return { ...status, uvpaa: Boolean(uvpaa), platform: process.platform }; },
     busy: () => Boolean(pending),
     // tests

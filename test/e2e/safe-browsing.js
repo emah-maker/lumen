@@ -108,7 +108,7 @@ const path = require('path');
   await sleep(500);
   check('on without a key: inactive, and no request reaches Google', (await status()).active === false && google.length === 0, JSON.stringify({ status: await status(), google }));
 
-  // 3. The key, entered in Settings > Privacy.
+  // 3. The key, entered in Settings → Privacy and security.
   const sid = await app.evaluate(() => global.__settings.open('privacy'));
   const inSettings = (js) => app.evaluate(async (_e, [i, c]) => global.__settings.contents(i).executeJavaScript(c, true), [sid, js]);
   await waitFor(() => inSettings("Boolean(document.getElementById('safe-browsing-key'))"));

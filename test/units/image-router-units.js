@@ -1,4 +1,4 @@
-// Image generation routing (ai/image-router.js, ai/image-grok.js, the generate_image tool, Settings > AI > Image generation),
+// Image generation routing (ai/image-router.js, ai/image-grok.js, the generate_image tool, Settings → AI and agents → Image generation),
 // plain Node: no Electron, no network, no key, no CLI. Fake providers stand in for every backend.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
@@ -93,7 +93,7 @@ const classify = (e) => fallback.classify(e);
     check('a provider that is not connected is never asked, even when it would be first', r.provider === 'gemini' && J(calls) === J(['gemini']));
     let none = null;
     try { await run({ openai: ok('openai') }, { connected: {} }); } catch (e) { none = e; }
-    check('nothing connected: says so, and never asks for a key in the chat', none?.code === 'none' && /Settings > AI/.test(none.message) && /not ask for a key/.test(none.message), none?.message);
+    check('nothing connected: says so, and never asks for a key in the chat', none?.code === 'none' && /Settings → AI and agents/.test(none.message) && /not ask for a key/.test(none.message), none?.message);
     let off = null;
     calls.length = 0;
     try { await run({ openai: ok('openai') }, { setting: 'off' }); } catch (e) { off = e; }
@@ -181,7 +181,7 @@ const classify = (e) => fallback.classify(e);
     check('the setting defaults to Automatic and takes only Automatic, Off or a provider', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'antigravity') === null && settingsBackend.validate('imageGen', '') === null);
     const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'settings.js'), 'utf8');
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
-    check('Settings > AI shows the choice, with every option named in the locale', /select\('imageGen'/.test(ui) && router.SETTINGS.every((v) => en[`settings.ai.imageGen.${v}`]) && en['settings.ai.imageGen'] && en['settings.ai.imageGenDesc'] && en['genimg.madeWith'] === 'Made with {name}');
+    check('Settings → AI and agents shows the choice, with every option named in the locale', /select\('imageGen'/.test(ui) && router.SETTINGS.every((v) => en[`settings.ai.imageGen.${v}`]) && en['settings.ai.imageGen'] && en['settings.ai.imageGenDesc'] && en['genimg.madeWith'] === 'Made with {name}');
   }
 
   // ---- the tool, every engine

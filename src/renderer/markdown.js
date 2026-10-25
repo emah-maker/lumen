@@ -527,7 +527,7 @@
   }
 
   // ---------- prefer fractions ----------
-  // [prefer fractions] Settings > AI > Prefer fractions: a plain "3/4" the model still wrote is drawn as a stacked fraction (the same
+  // [prefer fractions] Settings → AI and agents → Prefer fractions: a plain "3/4" the model still wrote is drawn as a stacked fraction (the same
   // MathML \frac the model's own $\frac{3}{4}$ gets). Whole numbers only. Left alone: code (fenced and `inline`), links and web addresses,
   // existing math, dates (10/19, 10/19/2026), paths, units (km/h), "24/7"-style phrases, and counts after "page", "step", "question"...
   const FRAC_PROTECT = /(`+[^`\n]*`+|\[[^\]\n]*\]\([^)\n]*\)|<[^>\n]+>|(?:https?:\/\/|www\.)\S+|\d+)/;
