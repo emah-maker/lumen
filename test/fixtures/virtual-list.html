@@ -1,0 +1,20 @@
+<!doctype html><meta charset=utf-8><title>virtual list</title>
+<style>html,body{margin:0;height:100%;background:#121212;color:#fff;font:14px sans-serif}#sc{position:absolute;inset:0;overflow-y:auto}#spacer{height:60000px;position:relative}#win{position:absolute;left:0;right:0}
+.row{display:flex;align-items:center;height:56px;padding:0 16px}.row .c{width:40px;height:40px;background:#444;margin-right:12px}.row .t{flex:1}</style>
+<div id=sc><div id=spacer><div id=win></div></div></div>
+<script>
+// Mimics Spotify's web player: a virtualized track list rebuilt on scroll (about 130 rows x 15 nodes = ~2k nodes churn per frame), hashed class names, hover/selected classes toggling.
+const ROW = 56, SHOW = 130;
+const sc = document.getElementById('sc'), win = document.getElementById('win');
+let first = -1, n = 0;
+const cls = (i) => 'r' + ((i * 2654435761) >>> 0).toString(36).slice(0, 5);
+function render() {
+  const f = Math.max(0, Math.floor(sc.scrollTop / ROW) - 10);
+  if (f === first) return; first = f;
+  let h = '';
+  for (let i = f; i < f + SHOW; i++) h += `<div class="row ${cls(i % 400)} ${i % 7 === 0 ? 'sel-' + (n++ % 50) : ''}" data-i="${i}"><div class="c ${cls(i % 90)}"></div><div class="t"><span class="${cls(i % 60)}">Track ${i}</span><br><a class="${cls(i % 70)}" href="/artist/${i % 500}">Artist ${i % 500}</a></div><div class="${cls(i % 30)}"><span>3:${10 + i % 50}</span><button class="${cls(i % 20)}"><svg width=16 height=16><path d="M0 0h16v16z"/></svg></button></div></div>`;
+  win.style.top = f * ROW + 'px'; win.innerHTML = h;
+}
+let q = false; sc.addEventListener('scroll', () => { if (!q) { q = true; requestAnimationFrame(() => { q = false; render(); }); } }, { passive: true });
+render();
+</script>
