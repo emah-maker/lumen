@@ -17,6 +17,9 @@
 .cv-code { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto; background: var(--field); font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
 .cv-code[hidden], .cv-preview[hidden] { display: none; }
 .cv-preview { flex: 1; min-height: 0; display: flex; background: #fff; }
+.cv[data-mode="image"] .cv-btn:not(.cv-close) { display: none; }
+.cv[data-mode="image"] .cv-preview { display: block; overflow: auto; padding: 16px; box-sizing: border-box; background: var(--field); }
+.cv-image { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--hairline, rgba(127,127,127,.3)); }
 .cv-frame { flex: 1; width: 100%; border: 0; background: #fff; }
 .code-canvas { margin-right: 2px; }
 @media (max-width: 900px) {

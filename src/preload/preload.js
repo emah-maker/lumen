@@ -165,6 +165,7 @@ contextBridge.exposeInMainWorld('assistant', {
   uploads: {
     stash: (file) => ipcRenderer.invoke('uploads:stash', file),
     discard: (ref) => ipcRenderer.send('uploads:discard', ref),
+    thumb: (ref) => ipcRenderer.invoke('uploads:thumb', ref), // a Word, Excel or PowerPoint file's first page, for its chip
     choose: (approvalId) => ipcRenderer.invoke('agent:upload-choose', approvalId),
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
@@ -356,7 +357,7 @@ contextBridge.exposeInMainWorld('skillsApi', {
 });
 
 contextBridge.exposeInMainWorld('lumenFiles', {
-  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
+  ...Object.fromEntries('list pin unpin remove clear show find relocate search attach scan restore thumb'.split(' ').map((o) => [o, (a, b) => ipcRenderer.invoke(`files:${o}`, a, b)])),
   open: (a) => ipcRenderer.invoke('files:open-entry', a), on: (n, cb) => on('files:' + n)(cb),
 });
 // Macros (features/macros-runtime.js): the "/macro" command, the progress toast and the questions a run asks. Making and editing

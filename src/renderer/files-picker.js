@@ -5,6 +5,8 @@
 // dropped, and at most 30 rows are drawn. With nothing typed it lists the pinned and recent files. Names are only set with textContent.
 // A typed query with no match offers one row, "Search Documents, Desktop and Downloads" (Enter or a click): main's bounded scan of those folders
 // (files.js scan, in the index worker), shown as "Searching…" and then under "Found on this computer".
+// A Word, Excel or PowerPoint file under the selection shows its first page in a card beside the picker (main draws it, features/office-thumb.js: asked
+// 180 ms after the selection settles, kept per file). The rows themselves never wait for it.
 // Main side: features/files.js; the keys: main.js openFilesPicker, features/page-first-keys.js.
 
 const filesPicker = (() => {
@@ -19,6 +21,9 @@ const filesPicker = (() => {
   let selected = 0;
   let asked = 0; // the newest question's number
   let timer = 0;
+  let previewEl = null; // the first-page card of the selected Office file
+  let previewTimer = 0;
+  const previews = new Map(); // id -> data: URL | null (asked once)
   let scanShown = false; // the disk search's answer is on screen: a change in the list (the hit being noted as opened) must not replace it
 
   const isOpen = () => Boolean(panel && !panel.hidden);
@@ -77,7 +82,9 @@ const filesPicker = (() => {
       hint.append(kbd, ` ${label}`);
       foot.append(hint);
     }
-    box.append(input, list, foot);
+    previewEl = Object.assign(document.createElement('div'), { className: 'files-picker-preview', hidden: true });
+    previewEl.setAttribute('aria-hidden', 'true'); // (a picture of what the selected row already names)
+    box.append(input, list, foot, previewEl);
     panel.append(scrim, box);
     document.body.append(panel);
     input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => query(input.value), DEBOUNCE_MS); });
@@ -139,6 +146,30 @@ const filesPicker = (() => {
     return li;
   }
 
+  const OFFICE = /\.(?:docx|xlsx|pptx)$/i;
+  const PNG = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+  function showPreview(url) {
+    if (!previewEl) return;
+    if (!url) { previewEl.hidden = true; return; }
+    const img = Object.assign(document.createElement('img'), { src: url, alt: '', decoding: 'async' });
+    previewEl.replaceChildren(img);
+    previewEl.hidden = false;
+  }
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    const e = rows[selected]?.entry;
+    const files = bridge();
+    if (!e || e.kind === 'folder' || e.missing || !OFFICE.test(e.name) || typeof files?.thumb !== 'function') { showPreview(null); return; }
+    if (previews.has(e.id)) { showPreview(previews.get(e.id)); return; }
+    showPreview(null);
+    previewTimer = setTimeout(async () => {
+      let url = null;
+      try { const r = await files.thumb(e.id); url = r && typeof r.dataUrl === 'string' && PNG.test(r.dataUrl) ? r.dataUrl : null; } catch { url = null; }
+      previews.set(e.id, url);
+      if (isOpen() && rows[selected]?.entry?.id === e.id) showPreview(url);
+    }, 180);
+  }
+
   function select(i) {
     const was = document.getElementById(`files-picker-item-${selected}`);
     was?.classList.remove('selected');
@@ -148,6 +179,7 @@ const filesPicker = (() => {
     now?.classList.add('selected');
     now?.setAttribute('aria-selected', 'true');
     if (now) { input.setAttribute('aria-activedescendant', now.id); now.scrollIntoView({ block: 'nearest' }); } else input.removeAttribute('aria-activedescendant');
+    schedulePreview();
   }
 
   // opts: { found: the entries came from the disk scan, offer: show the "Search Documents…" row when nothing matched, status: a line under the rows }
@@ -178,6 +210,7 @@ const filesPicker = (() => {
     list.replaceChildren(frag);
     const current = document.getElementById(`files-picker-item-${selected}`);
     if (current) input.setAttribute('aria-activedescendant', current.id); else input.removeAttribute('aria-activedescendant');
+    schedulePreview();
     window.__filesPerf?.push(['picker-draw', performance.now() - t0]); // (a test makes the array: the draw's own time per answer)
   }
 
@@ -262,6 +295,7 @@ const filesPicker = (() => {
   function close() {
     if (!isOpen()) return;
     clearTimeout(timer);
+    clearTimeout(previewTimer);
     asked++; // an answer still on its way is not drawn
     panel.hidden = true;
     thawPage();

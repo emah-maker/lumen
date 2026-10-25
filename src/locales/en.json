@@ -3342,6 +3342,7 @@
   "dlpanel.action.cancel": "Cancel",
   "dlpanel.action.retry": "Retry",
   "dlpanel.action.show": "Show in folder",
+  "dlpanel.action.preview": "Preview in a tab",
   "dlpanel.action.remove": "Remove from list",
   "dlpanel.action.label": "{action}: {name}",
   "dlpanel.openTip": "{name} — click to open, or drag it into another app",

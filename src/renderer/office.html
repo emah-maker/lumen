@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- A Word or Excel file is drawn from plain JSON with DOM calls (office.js): no scripts but this page's own, no pictures but data: ones, nothing fetched. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src data:; font-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Document</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="office.css" />
+</head>
+<body>
+  <header>
+    <div id="name">Loading…</div>
+    <div id="kind"></div>
+  </header>
+  <div id="note" role="status"></div>
+  <main id="doc"></main>
+  <nav id="sheets" aria-label="Sheets" hidden></nav>
+  <script src="office.js"></script>
+</body>
+</html>
