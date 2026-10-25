@@ -4424,7 +4424,7 @@ class Slot {
   subpage(id, label, desc, more = '') {
     const sub = new Slot(id, label, this.cat);
     sub.pending = ''; sub.isSub = true;
-    if (slots.has(id) && !slots.get(id).isSub) slots.set(`${id}~parent`, slots.get(id));
+    if (slots.has(id) && !slots.get(id).isSub) { slots.get(id).el.id = `sec-${id}-parent`; slots.set(`${id}~parent`, slots.get(id)); }
     slots.set(id, sub);
     const catTitle = categories.get(this.cat).title;
     const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${catTitle}`, onclick: () => { location.hash = `#${this.cat}`; } },
@@ -4437,13 +4437,18 @@ class Slot {
     link.dataset.search += ` ${more}`.toLowerCase();
     link.tabIndex = 0;
     link.setAttribute('role', 'link');
-    link.addEventListener('click', () => { location.hash = `#${id}`; });
-    link.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); location.hash = `#${id}`; } });
+    const open = () => { returnTo = { cat: this.cat, sub: id, y: window.scrollY }; location.hash = `#${id}`; };
+    link.addEventListener('click', open);
+    link.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     sub.link = link;
     this.append(link);
     return sub;
   }
 }
+let returnTo = null;
+let lastSub = null;
+let focusTimers = [];
+let routedEl = null;
 const visibleNow = (el) => el.offsetParent !== null;
 
 
@@ -6451,7 +6456,7 @@ function buildStartup(card) {
     h('span', { class: 'grow mono', text: url }),
     h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
   const radios = [['restore', 'Continue where you left off'], ['newtab', 'Open the New Tab page'], ['pages', 'Open a specific page or set of pages']].map(([value, text]) => {
-    const r = h('input', { type: 'radio', name: 'startup', value, id: `startup-${value}`, checked: st.prefs.startup === value, onchange: () => save('startup', value) });
+    const r = h('input', { type: 'radio', name: 'startup', value, id: `startup-opt-${value}`, checked: st.prefs.startup === value, onchange: () => save('startup', value) });
     return h('label', { class: 'check' }, r, text);
   });
   renderPages();
@@ -7653,6 +7658,10 @@ function revealFolded() {
   requestAnimationFrame(fitDescs);
 }
 function finishRoute({ id, focus, focusEl }) {
+  for (const timer of focusTimers) clearTimeout(timer);
+  focusTimers = [];
+  if (routedEl && document.activeElement === routedEl) routedEl.blur();
+  routedEl = null;
   revealFolded();
   if (document.activeElement === $('search') && !query()) $('search').blur();
   if (query()) $('search').value = '';
@@ -7666,9 +7675,17 @@ function finishRoute({ id, focus, focusEl }) {
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
   const target = groupTitle ? [...document.querySelectorAll(`#cat-${view.cat} .group`)].find((g) => g.dataset.title === groupTitle) : focus && $(`sec-${focus}`);
-  if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); } else window.scrollTo(0, 0);
 
-  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) setTimeout(() => { const el = document.querySelector(focusEl); if (el && document.activeElement !== el && !el.dataset.routed) { el.dataset.routed = '1'; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100);
+  const from = !view.sub && lastSub && slots.get(lastSub);
+  const back = !target && from && from.cat === view.cat && from.link;
+  if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); }
+  else if (back && returnTo?.sub === lastSub && returnTo.cat === view.cat) window.scrollTo(0, returnTo.y);
+  else if (back && visibleNow(back)) back.scrollIntoView({ block: 'center' });
+  else window.scrollTo(0, 0);
+  lastSub = view.sub;
+  if (!view.sub) returnTo = null;
+
+  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) focusTimers.push(setTimeout(() => { const el = document.querySelector(focusEl); if (el && !routedEl && document.activeElement !== el) { routedEl = el; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100));
 }
 
 async function init() {
