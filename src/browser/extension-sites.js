@@ -57,7 +57,7 @@ function idOfKey(key) {
 // Sites worth suggesting for an extension we know the needs of (shown as "Use suggested sites"). Canvas schools host on
 // instructure.com or their own domain, so the user adds theirs.
 const SUGGESTED = {
-  cndibmoanboadcifjkjbdpjgfedanolh: ['instructure.com', 'bettercampus.com', 'canvas.northeastern.edu'], // BetterCampus (was BetterCanvas)
+  cndibmoanboadcifjkjbdpjgfedanolh: ['instructure.com', 'bettercampus.com'], // BetterCampus (was BetterCanvas)
 };
 const suggestedSites = (id) => SUGGESTED[id] || [];
 

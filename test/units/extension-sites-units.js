@@ -45,7 +45,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const key = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
   const id = X.idOfKey(key);
   check('the id is 32 letters a to p, and none without a key', /^[a-p]{32}$/.test(id) && X.idOfKey(undefined) === null && X.idOfKey('') === null, id);
-  check('BetterCampus has suggested sites; others have none', X.suggestedSites('cndibmoanboadcifjkjbdpjgfedanolh').includes('instructure.com') && same(X.suggestedSites(id), []), '');
+  check('BetterCampus has suggested sites (no school\'s own domain); others have none', same(X.suggestedSites('cndibmoanboadcifjkjbdpjgfedanolh'), ['instructure.com', 'bettercampus.com']) && same(X.suggestedSites(id), []), '');
 
   // ---- on disk
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sites-'));

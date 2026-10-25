@@ -7148,7 +7148,7 @@ async function buildExtensions(card) {
   const siteRow = (e) => {
     const only = e.sites.length > 0;
     const mode = h('select', { 'aria-label': `Where ${e.name} can run` }, h('option', { value: 'all', text: 'On all sites', selected: !only }), h('option', { value: 'some', text: 'Only on these sites', selected: only }));
-    const input = h('input', { type: 'text', class: 'grow', placeholder: 'instructure.com, school.edu', value: e.sites.join(', '), 'aria-label': `Sites ${e.name} can run on`, hidden: !only });
+    const input = h('input', { type: 'text', class: 'grow', placeholder: 'instructure.com, your school’s Canvas domain', value: e.sites.join(', '), 'aria-label': `Sites ${e.name} can run on`, hidden: !only });
     const save = async (sites) => render(await S.extensionSites(e.id, sites));
     mode.addEventListener('change', () => { if (mode.value === 'all') save([]); else { input.hidden = false; input.focus(); } });
     input.addEventListener('change', () => save(input.value.split(/[\s,;]+/).filter(Boolean)));
