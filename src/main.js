@@ -78,6 +78,9 @@ const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const windowClose = lazy(() => require('./features/window-close')); // [window close] the last-tab rule and the window-events.jsonl breadcrumb
+let windowLog = null;
+const logWindowEvent = (entry) => { try { windowLog ||= windowClose.createLog({ dir: () => path.join(app.getPath('userData'), 'diagnostics'), version: app.getVersion() }); windowLog(entry); } catch { /* diagnostics only */ } };
 const importer = lazy(() => require('./browser/importer'));
 // [diagnostics] Settings > Advanced > Record tab-switch timings (features/switch-timing.js). Off by default: the module is not even loaded until the setting is on.
 const switchTiming = lazy(() => require('./features/switch-timing').create({
@@ -716,7 +719,7 @@ const dialogs = createDialogs({
 const dialog = { ...electronDialog, showMessageBox: dialogs.showMessageBox };
 if (TEST) {
   global.__dialogs = dialogs;
-  global.__closeTabInteractive = (id) => requestCloseTab(id);
+  global.__closeTabInteractive = (id) => { const found = tabAnywhere(id); withWindow(found?.rec, () => requestCloseTab(id)); }; // (in the tab's own window, whichever is current)
 }
 ipcMain.on('dialog:respond', (event, result) => { if (dialogs.isOwnView(event.sender)) dialogs.respond(result); });
 
@@ -3964,6 +3967,7 @@ function leaveAiGroup(tab) {
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
   if (index === -1) return;
+  const tabsBefore = { all: tabs.length, closing: tabs.filter((x) => x.closing).length, asleep: tabs.filter((x) => x.sleeping).length, hiddenAi: tabs.filter((x) => aiTabHidden(x)).length, aiClosing: Boolean(tabs[index].aiClosing) };
   if (chatFullTab === id) chatFullTab = null;
   const mate = tabs[index].split ? splitPartner(tabs[index]) : null; // [split view] the other side of its pair stays, and takes the page area
   if (tabs[index].split) splitLayout.unlink(tabs, id);
@@ -3998,8 +4002,9 @@ function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
     // went away on its own, or a tab closed by code, leaves a fresh tab instead: the window is never lost to that.
     // Nor to "Close them" / Close tabs the AI opened (tab.aiClosing): those close the AI's tabs, not the user's window,
     // even when they were all the window had. (An agent's own window still goes with its last tab.)
-    if ((user || tab.closing) && !(tab.aiClosing && !user && !curRec?.agent)) {
+    if (windowClose.lastTabClosesWindow({ user, closing: tab.closing, aiClosing: tab.aiClosing, agent: Boolean(curRec?.agent) })) {
       const rec = curRec;
+      rec.closeWhy = { reason: curRec?.agent ? 'agent-last-tab' : 'user-closed-last-tab', via: user ? 'direct' : 'requestCloseTab', destroyed, tabsBefore }; // (read by the window's 'close' event: the breadcrumb)
       sendTabs();
       try { rec.win.hide(); } catch {}
       setImmediate(() => { if (rcAlive(rec)) rec.win.close(); });
@@ -4066,6 +4071,7 @@ const CLOSE_TIMEOUT_MS = 3000;
 // over what the user is doing): the tab simply stays open and the tool tells the AI the page blocked it.
 function agentRequestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
+  if (tab && !alive(tab)) { tab.aiClosing = true; requestCloseTab(id); tab.aiClosing = false; return; } // (a sleeping tab goes at once; marked the AI's for that close, so it never takes the window with it)
   if (!alive(tab)) { requestCloseTab(id); return; }
   tab.aiClosing = true;
   requestCloseTab(id);
@@ -5607,6 +5613,16 @@ function showContextMenu(wc, p) {
 
 // ---------- shortcuts (work whether focus is in the UI or a tab) ----------
 
+// Ctrl/Cmd+W and Ctrl+F4 close the tab in front, once per press: a held key (auto-repeat) or the same press reported twice (two listeners on one
+// key) would otherwise close it and then the tab that took its place, and a window's last tab with them.
+let lastKeyClose = 0;
+function closeFrontTabByKey(input) {
+  if (input?.isAutoRepeat) return;
+  const now = Date.now();
+  if (now - lastKeyClose < 100) return;
+  lastKeyClose = now;
+  if (activeId) requestCloseTab(activeId);
+}
 function handleShortcut(event, input) {
   if (input.type !== 'keyDown') return;
   const key = shortcutKey(input); // (the physical key with Ctrl / Cmd / Alt held, so Ctrl+W works on a Russian or Greek layout too)
@@ -5615,7 +5631,7 @@ function handleShortcut(event, input) {
   let handled = true;
   if (macrosFeature.handleKey(input)) { event.preventDefault(); return; } // a macro's own shortcut (Settings → Macros; never one Lumen uses)
   const extra = extraShortcut(input);
-  if (extra && runExtraShortcut(extra, wc)) { event.preventDefault(); return; }
+  if (extra && runExtraShortcut(extra, wc, input)) { event.preventDefault(); return; }
   // The full-page chat's own keys (renderer/chat-page.js listens): Ctrl+Shift+S folds or opens the chat list, Ctrl+Shift+O starts a new chat.
   if (mod && input.shift && !input.alt && (key === 's' || key === 'o') && wc && activeTabIsChatPage()) { wc.executeJavaScript(`document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: '${key === 's' ? 'rail' : 'new'}' }))`).catch(() => {}); event.preventDefault(); return; }
   if (mod && input.shift && key === 'n') privateWindows.open();
@@ -5630,7 +5646,7 @@ function handleShortcut(event, input) {
   else if (mod && !input.shift && !input.alt && key === 'n') openNewWindow();
   else if (mod && key === 't') openTab();
   else if (mod && key === 'o' && !input.shift && !input.alt) openFileDialog();
-  else if (mod && key === 'w') { if (activeId) requestCloseTab(activeId); }
+  else if (mod && key === 'w') closeFrontTabByKey(input);
   else if (mod && key === 'l') focusAddress();
   else if (mod && !input.shift && !input.alt && key === 'k') openCommandBar(); // the command bar (a page that uses Ctrl+K itself keeps it: page-first-keys.js)
   else if (mod && !input.shift && !input.alt && key === 'e') focusAddress(); // Chrome's "search from the address bar"
@@ -5687,9 +5703,9 @@ function openFindBar() {
 }
 
 // F6 / Alt+D, F3 / Ctrl+G, Ctrl+F4 (browser/shortcut-mod.js extraShortcut). False: not ours here, the key goes on to the page.
-function runExtraShortcut(action, wc) {
+function runExtraShortcut(action, wc, input) {
   if (action === 'focus-address') { focusAddress(); return true; }
-  if (action === 'close-tab') { if (activeId) requestCloseTab(activeId); return true; }
+  if (action === 'close-tab') { closeFrontTabByKey(input); return true; }
   // Find next / previous: opens the find bar when it is closed. The PDF viewer and Settings have their own find.
   if (pdfViewer.isViewerUrl(wc?.getURL()) || tabs.find((t) => t.id === activeId)?.settings) return false;
   ui()?.focus();
@@ -7078,7 +7094,7 @@ function moveTabBetween(src, dst, tabId, index, { focus = true, keepSrc = false,
   chatTabMoved(tabId, dst); // [chat per tab] its chat, and a task working in it, go along
   enterWindow(dst);
   if (focus) dst.win.focus(); // a drag in progress keeps the focus where the mouse is captured
-  if (!keepSrc && !tabsOf(src).length) src.win.close(); // it just lost its last tab
+  if (!keepSrc && !tabsOf(src).length) { src.closeWhy = { reason: 'tab-moved-out' }; src.win.close(); } // it just lost its last tab
   return true;
 }
 // Several tabs at once (a multi-selection, a group), in the order given, from `index` on (the end if none);
@@ -7122,7 +7138,7 @@ function moveTabsBetween(src, dst, ids, index, { focus = true, active = ids[0], 
   if (!moved.length) return false;
   enterWindow(dst);
   if (focus) dst.win.focus();
-  if (rcAlive(src) && !tabsOf(src).length) src.win.close();
+  if (rcAlive(src) && !tabsOf(src).length) { src.closeWhy = { reason: 'tabs-moved-out' }; src.win.close(); }
   return true;
 }
 // The first index at or after `at` that isn't between two tabs of one group (in the current window).
@@ -8230,6 +8246,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   for (const ev of ['minimize', 'restore', 'show', 'hide']) w.on(ev, refreshSchedulerVisibility);
   for (const ev of ['restore', 'show']) w.on(ev, () => withWindow(rec, () => pokePdf(tabs.find((t) => t.id === activeId)))); // (a restored window: the PDF in front draws again)
   w.on('close', () => {
+    const why = rec.closeWhy; rec.closeWhy = null;
+    if (!quitting) logWindowEvent({ event: 'window-closed', reason: why?.reason || 'window-button-or-menu', windows: [...winRecs].filter((r) => rcAlive(r) && !isSpare(r)).length, tabsNow: tabsOf(rec).length, agent: Boolean(rec.agent), spare: isSpare(rec), ...(why ? { via: why.via, destroyed: why.destroyed, tabsBefore: why.tabsBefore } : {}) }); // (no reason noted: the window's own close button, Alt+F4, File → Close Window, or a close from code)
     if (quitting) return;
     const several = [...winRecs].filter((r) => rcAlive(r) && !isSpare(r) && !r.agent).length > 1;
     if (several && !rec.agent && !isSpare(rec) && !rec.mergedAway && !rec.pendingRestore) { // kept for Reopen Closed Window (Ctrl+Shift+T)
