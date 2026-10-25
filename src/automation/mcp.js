@@ -305,7 +305,8 @@ async function relay() {
     if (ready) socket.write(`${line}\n`); else pending.push(line);
   };
   // A client that closes its stdin (a script piping one message in) still gets its answers: the bridge leaves once none are outstanding (or after 2 minutes).
-  const maybeLeave = () => { if (stdinEnded && ready && !inflight.size) { socket.end(); leave(0); } };
+  let leaving = false; // (the bridge ended the connection itself: its 'close' is not news)
+  const maybeLeave = () => { if (stdinEnded && ready && !inflight.size) { leaving = true; socket.end(); leave(0); } };
   onLines(process.stdin, forward);
   process.stdin.on('end', () => {
     stdinEnded = true;
@@ -350,7 +351,7 @@ async function relay() {
       process.stdout.write(`${line}\n`);
       maybeLeave();
     });
-    socket.on('close', () => { log('Lumen closed the connection.'); failAll('Lumen closed the connection.'); leave(0); });
+    socket.on('close', () => { if (leaving) return; log('Lumen closed the connection.'); failAll('Lumen closed the connection.'); leave(0); });
   } catch (err) {
     log(err.message);
     for (const l of pending.splice(0)) {
