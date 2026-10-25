@@ -6,7 +6,7 @@
 //    "Made with <provider · model>", the model is told only that it was made.
 //  - an outage on the first provider moves on to the next; a content-policy refusal does not (its words are the answer).
 //  - "draw a cat" typed to Claude Code never reaches the CLI: it is routed straight to a provider.
-//  - Settings > AI > Image generation: a chosen provider is the only one asked; off asks nobody; nothing unconnected is ever asked.
+//  - Settings → AI and agents → Image generation: a chosen provider is the only one asked; off asks nobody; nothing unconnected is ever asked.
 const fs = require('fs');
 const path = require('path');
 const { Agent } = require('../../src/ai/agent');

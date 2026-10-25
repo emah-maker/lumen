@@ -1,4 +1,4 @@
-// Settings → AI → "Let other apps use Lumen": Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) using Lumen's browser tools.
+// Settings → AI and agents → "Let other apps use Lumen": Claude Desktop, Cursor, VS Code and Claude Code (outside Lumen) using Lumen's browser tools.
 // Loaded before settings.js and mounted by its buildAi() with one line; it uses that file's h(), row(), stackRow(), armedButton() and tr()
 // helpers. The backend is features/external-apps.js (through external-apps-ipc.js). A token is shown once, when "Add app" makes it: only
 // its copy lives in this page, and it is gone when the page is closed or the note dismissed.

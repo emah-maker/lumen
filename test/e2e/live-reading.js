@@ -208,11 +208,11 @@ const VIDEO_URL = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos
   if (yt.images[0]) fs.writeFileSync(path.join(OUT, 'contact-sheet-youtube.jpg'), Buffer.from(yt.images[0], 'base64'));
   check('7 YouTube video_overview', yt.images.length === 1, yt.ms, `${yt.images.length} image(s); ${head(yt, 200)}`);
 
-  // ---- 8. Grok terminal switch renders in Settings > AI
+  // ---- 8. Grok terminal switch renders in Settings → AI and agents
   const { openSettingsTab } = require('../helpers/settings-tab');
   const inSettings = await openSettingsTab(app, 'you-and-ai');
   const sw = await inSettings('(() => { const i = document.getElementById("pref-grokTerminal"); if (!i) return null; const row = i.closest(".row") || i.parentElement; return { checked: i.checked, text: (row?.textContent || "").slice(0, 120), visible: Boolean(i.offsetParent || row?.offsetParent) }; })()');
-  check('8 Settings > AI shows "Let Grok Build ask to run terminal commands" (on by default)', sw && sw.checked === true && /Grok Build/.test(sw.text), null, JSON.stringify(sw));
+  check('8 Settings → AI and agents shows "Let Grok Build ask to run terminal commands" (on by default)', sw && sw.checked === true && /Grok Build/.test(sw.text), null, JSON.stringify(sw));
 
   save();
   const failed = rows.filter((r) => !r.ok).length;

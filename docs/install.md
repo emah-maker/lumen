@@ -51,7 +51,7 @@ You only install Lumen once. After that it updates itself:
 2. It downloads the new version in the background ("Downloading Lumen v…") and checks it against the hash in `latest.yml` / `latest-mac.yml`.
 3. The toolbar shows "Lumen v… is ready: installs when you quit" with **Restart to update**. Click it: Lumen restarts on the new version with your tabs. Your settings, chats and bookmarks are not touched. If you just quit instead, the update installs as Lumen closes (and Lumen is not reopened).
 
-**Settings → About Lumen → Updates** shows the current version and has **Check for updates**. Turn off **Download updates automatically** there to be asked first.
+**Settings → Updates** shows the current version and has **Check for updates**. Turn off **Download updates automatically** there to be asked first.
 
 A copy that can't replace itself (a per-machine install under Program Files, for example) shows **Lumen v… is available** with a **Download** button instead. Lumen 0.2.4 and earlier have no updater: download a newer version by hand once.
 
@@ -75,7 +75,7 @@ If Lumen won't start at all and the install folder is gone, look in the folder t
 
 - **Mac, before 0.4.4: the first launch is blocked.** On macOS 15 Sequoia and later, open Lumen once, then go to **System Settings → Privacy & Security** and click **Open Anyway** next to Lumen. On older macOS, right-click Lumen in Applications and choose **Open**.
 - **"Lumen is still closing from the last time you used it."** The previous Lumen hasn't finished quitting. Wait a few seconds and open it again. If it keeps happening, quit Lumen in Activity Monitor (Mac) or Task Manager (Windows).
-- **The update doesn't show up.** Open **Settings → About Lumen → Updates** and press **Check for updates**; it says why if it can't update.
-- **Something else?** [Report an issue](https://github.com/emah-maker/lumen/issues) with your Lumen version (Settings → About Lumen) and your OS.
+- **The update doesn't show up.** Open **Settings → Updates** and press **Check for updates**; it says why if it can't update.
+- **Something else?** [Report an issue](https://github.com/emah-maker/lumen/issues) with your Lumen version (Settings → Updates) and your OS.
 
 Want to build Lumen yourself instead? See [Build from source](../README.md#build-from-source).

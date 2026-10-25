@@ -14963,7 +14963,7 @@ $('agent-stop')?.addEventListener('click', () => {
     card.el.removeAttribute('aria-busy');
     if (!r || !r.ok) {
       const code = r?.error;
-      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI: Claude Code and the other engines can’t answer a side question mid-task.')
+      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI and agents: Claude Code and the other engines can’t answer a side question mid-task.')
         : code === 'timeout' ? tr('btw.timeout', 'That took too long. Try again.')
           : code === 'busy' ? tr('btw.busy', 'Too many side questions are open. Dismiss one first.')
             : tr('btw.failed', 'That side question failed: {error}', { error: String(code || '').slice(0, 200) });

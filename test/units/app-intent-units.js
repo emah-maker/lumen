@@ -51,7 +51,7 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
   check('prompt: the word tool says to prefer it for a docx and to open it in Word; desktop mentions path; both stay under the 420-character description budget', /\.docx/.test(wd) && /open/i.test(wd) && /path/.test(dd) && wd.length < 420 && dd.length < 420, `${wd.length} ${dd.length}`);
   check('prompt: the default request pays nothing (neither tool listed)', !def('word', {}) && !def('desktop', {}));
 
-  // ---- Settings > AI > Work on files in their apps (aiFilesInApps)
+  // ---- Settings → AI and agents → Work on files in their apps (aiFilesInApps)
   const modeOf = (m) => ({ filesInApps: () => m });
   const csv = user('summarize data.csv and main.m');
   check('apps setting: automatic is the existing behaviour (a .csv or .m alone is not routed; Excel files are)', !offerDesk(csv, modeOf('auto')) && !offerDesk(csv, modeOf('nonsense')) && !offerDesk(csv, {}) && offerDesk(user('edit Budget.xlsx'), modeOf('auto')));

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Settings paths in messages and docs now match the real pages (for example **Settings → AI and agents → Connectors** and **Settings → Updates**, where some still said "You and AI" or "About Lumen"); docs/settings.md lists every setting the code has, and Usage and AI providers now agree on whether Claude Code is installed.
+
 ## 0.5.69 (2026-10-25)
 
 - When Claude Code, Codex, Grok Build or Antigravity updates itself while you send a message, Lumen now waits a few seconds and starts it again instead of failing with "Windows or your security software would not let Lumen run Claude Code". If it still will not start, the message moves to your next connected AI with a note ("Claude Code didn’t start (it may have just updated). Lumen tried again and switched to ..."), and security software is blamed only when Windows really says it blocked the file.

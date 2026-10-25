@@ -60,7 +60,7 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
   const session = OA.createSession({
     tokenUrl: () => ep('googleToken'), post: formPost, now,
     load: creds, save,
-    messages: () => ({ reconnect: 'Google ended the sign-in. Connect again in Settings → You and AI → Connectors.', client: 'Google stopped accepting Lumen’s sign-in. Connect again in Settings; if that fails, add your own Google Cloud client (Settings → Home → Widgets → Gmail → Advanced).' }),
+    messages: () => ({ reconnect: 'Google ended the sign-in. Connect again in Settings → AI and agents → Connectors.', client: 'Google stopped accepting Lumen’s sign-in. Connect again in Settings; if that fails, add your own Google Cloud client (Settings → Home → Widgets → Gmail → Advanced).' }),
   });
 
   let flow = null;

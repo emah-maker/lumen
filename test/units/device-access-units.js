@@ -1,4 +1,4 @@
-// [device access] Settings > AI > "Let the AI use files on this computer" (features/device-access.js, agent.js localFiles,
+// [device access] Settings → AI and agents → "Let the AI use files on this computer" (features/device-access.js, agent.js localFiles,
 // dragTool, clipboardTool), plain Node (no Electron, no network): resolving what the model wrote to a path, the places that
 // are never reachable (Lumen's profile, credentials folders, .env files), list_files, upload_file paths through the real tool
 // layer with a stand-in tab (off by default, the card, nothing set when refused), drag through a stand-in DevTools session,

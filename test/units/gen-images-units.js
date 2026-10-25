@@ -156,7 +156,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
   }
   {
     // Claude, a CLI engine, or an OpenRouter model without picture output: a clear notice, and the text answer still comes
-    // (Settings > AI > Image generation off: nothing is routed to another provider, so the model's own notice is what shows. Routing: test/units/image-router-units.js)
+    // (Settings → AI and agents → Image generation off: nothing is routed to another provider, so the model's own notice is what shows. Routing: test/units/image-router-units.js)
     agent.browser.imageGen = () => 'off';
     for (const [model, who] of [['claude-sonnet-5', 'Claude'], ['claudecode:default', 'Claude Code'], ['grokbuild:default', 'Grok Build'], ['antigravity:default', 'Antigravity']]) {
       const messages = chat(model);
@@ -250,7 +250,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-genimg-'));
     check('full access: "/image a paper plane" reaches Claude Code as plain words', /Generate an image: a paper plane/.test(taskText || '') && !/\/image/.test(taskText || ''), taskText);
     events.length = 0;
     const off = await inChat(() => agent.imageTurn(chat('claudecode:default'), 'draw a cat', new AbortController().signal, emit));
-    check('full access off: the notice still shows, and says how to turn on drawing', off === false && /Settings > AI/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
+    check('full access off: the notice still shows, and says how to turn on drawing', off === false && /Settings → AI and agents/.test(events.find((e) => e.type === 'notice')?.text || ''), J(events));
     const grokFull = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', claudeCodeFullAccess: () => true, grokBuildFullAccess: () => false }, () => null, () => ({}), () => null);
     events.length = 0;
     await grokFull.inTask(null, new AbortController().signal, () => grokFull.imageTurn(chat('grokbuild:default'), 'draw a cat', new AbortController().signal, emit), [], null, { chatId: CHAT });

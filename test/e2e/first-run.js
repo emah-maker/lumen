@@ -3,7 +3,7 @@
 //   - the toolbar button reads "Set up AI" (not just a sparkle), and stops saying it once something is connected, Auto included;
 //   - the sidebar's setup card leads with the ways in that need no install (OpenRouter, an API key), then Claude Code, and a note
 //     says how to bring Codex, Grok Build or Antigravity (no row for an engine that isn't there);
-//   - Settings > AI says "No AI connected yet." with a Connect an AI button, and no empty model picker.
+//   - Settings → AI and agents says "No AI connected yet." with a Connect an AI button, and no empty model picker.
 // Windows are off-screen (LUMEN_TEST_BACKGROUND) and the profile a throwaway.
 'use strict';
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -70,8 +70,8 @@ const launchEnv = (extra = {}) => {
           })()`) : null;
         }).catch(() => null);
       }
-      check('Settings > AI says no AI is connected and offers Connect an AI', Boolean(st) && st.noteShown && st.connectShown && /No AI connected yet/.test(st.text), JSON.stringify(st));
-      check('Settings > AI shows no empty model picker beside it', Boolean(st) && st.pickerShown === false, JSON.stringify(st));
+      check('Settings → AI and agents says no AI is connected and offers Connect an AI', Boolean(st) && st.noteShown && st.connectShown && /No AI connected yet/.test(st.text), JSON.stringify(st));
+      check('Settings → AI and agents shows no empty model picker beside it', Boolean(st) && st.pickerShown === false, JSON.stringify(st));
       await app.evaluate(({ webContents }) => webContents.getAllWebContents().find((x) => /settings\.html/.test(x.getURL())).executeJavaScript("document.getElementById('ai-model-connect').click()"));
       await sleep(500);
       const hash = await app.evaluate(({ webContents }) => webContents.getAllWebContents().find((x) => /settings\.html/.test(x.getURL())).executeJavaScript('location.hash'));

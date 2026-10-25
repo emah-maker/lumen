@@ -1,5 +1,5 @@
 // Reasoning effort per AI: the one place that knows which levels each engine or provider takes and how each is passed.
-// Settings → AI → "AI providers" keeps one choice per provider in the `aiEffort` setting ({ claudecode: 'high', openai: 'low', … }).
+// Settings → AI and agents → "AI providers" keeps one choice per provider in the `aiEffort` setting ({ claudecode: 'high', openai: 'low', … }).
 // '' (or no entry) means "the provider's own default": nothing is passed and nothing changes. Pure: no I/O.
 //
 // How each one takes it (flag names checked offline against `--help`, no model call made):

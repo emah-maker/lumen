@@ -2,7 +2,7 @@
 // whose functions it uses (showAttachNote, sendComposer).
 //
 // Chromium's SpeechRecognition can't work in Electron (no Google speech key), so the page records the microphone itself
-// (getUserMedia + MediaRecorder, WebM/Opus) and main sends the recording, once, to the provider chosen in Settings → AI
+// (getUserMedia + MediaRecorder, WebM/Opus) and main sends the recording, once, to the provider chosen in Settings → AI and agents
 // (ai/dictation.js), with the user's own key; the key never reaches this page. Nothing is saved: the recording lives in
 // memory until its text comes back. Lumen allows the microphone for its own sidebar and chat page only (main.js ownPageMic).
 //

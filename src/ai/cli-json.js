@@ -16,7 +16,7 @@ const { killTree, validModel } = require('./cli-utils');
 
 const TIMEOUT_MS = 60000;
 
-// [cc settings] Settings > AI > "Use my Claude Code settings in Lumen chats" (main.js sets this); off by default.
+// [cc settings] Settings → AI and agents → "Use my Claude Code settings in Lumen chats" (main.js sets this); off by default.
 let userSettingsOn = () => false;
 const configure = (o = {}) => { if (typeof o.userSettings === 'function') userSettingsOn = o.userSettings; };
 
@@ -31,7 +31,7 @@ function claudeArgs({ system, schema, model = 'haiku', userSettings = false }) {
     '--permission-mode', 'dontAsk',
     '--disable-slash-commands',
     '--no-session-persistence',
-    ...(userSettings || userSettingsOn() ? [] : ['--setting-sources', 'project']), // [cc settings] Settings > AI: off, skip the user's CLAUDE.md, rules, memory and hooks
+    ...(userSettings || userSettingsOn() ? [] : ['--setting-sources', 'project']), // [cc settings] Settings → AI and agents: off, skip the user's CLAUDE.md, rules, memory and hooks
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--system-prompt', system, // replaces Claude Code's own (coding) system prompt
     '--json-schema', JSON.stringify(schema),
