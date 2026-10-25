@@ -171,20 +171,20 @@ function providerInfoText(i) {
 
 async function buildProviders(page) {
   const ai = await S.ai.get();
-  const info = Object.fromEntries((await S.cliInfo().catch(() => [])).map((i) => [i.id, i]));
+  // The CLI probes (version, sign-in) take most of a second: the rows are built without them and each Status row is filled in when they answer, so Settings search never waits for them.
+  const probes = S.cliInfo().catch(() => []);
+  const checking = new Map(); // CLI key -> [state span, Status row]
   const autoKeys = new Set((ai.autoProviders || []).map((p) => p.key));
   const keys = { anthropic: { stored: ai.hasStoredKey, env: ai.hasEnvKey }, ...ai.providerKeys };
   const rowsFor = (key) => {
     const out = [];
     if (PROVIDER_CLI[key]) {
-      const i = info[key] || { installed: false };
-      const state = h('span', { class: `note${i.installed && i.signedIn === false ? ' err' : ''}`, id: `provider-state-${key}`, text: providerInfoText(i), title: i.path || '' });
-      // The state sits under the label and the path under it, on its own wrapped line (side by side they cut the path at "@anthropic-…").
-      const status = row('Status', i.path ? `Found at ${i.path}` : 'Where Lumen looks is listed under Connect an AI agent.');
-      const where = status.querySelector('.desc');
-      where.classList.remove('clamp');
-      if (i.path) where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg])))); // (a path breaks after a slash, never mid-name)
-      where.before(state);
+      const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
+      // The state sits under the label and the path under it, on its own wrapped line (side by side they cut the path at "@anthropic-…"); the path is filled in with the state.
+      const status = row('Status', 'Where Lumen looks is listed under Connect an AI agent.');
+      status.querySelector('.desc').classList.remove('clamp');
+      status.querySelector('.desc').before(state);
+      checking.set(key, [state, status]);
       out.push(status);
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
@@ -215,4 +215,18 @@ async function buildProviders(page) {
     page.group(providerName(key));
     page.append(...(key === 'local' ? await localRows() : rowsFor(key)));
   }
+  probes.then((list) => {
+    const info = Object.fromEntries(list.map((i) => [i.id, i]));
+    for (const [key, [state, statusRow]] of checking) {
+      const i = info[key] || { installed: false };
+      state.textContent = providerInfoText(i);
+      state.title = i.path || '';
+      state.classList.toggle('err', Boolean(i.installed && i.signedIn === false));
+      const where = statusRow.querySelector('.desc');
+      if (i.path) {
+        where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg])))); // (a path breaks after a slash, never mid-name)
+        statusRow.dataset.search = `status found at ${i.path}`.toLowerCase();
+      }
+    }
+  });
 }
