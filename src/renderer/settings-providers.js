@@ -165,7 +165,7 @@ async function localRows() {
 
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
-  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
+  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in not checked yet';
   return ['Installed', i.version ? `version ${i.version}` : null, signed, i.offered ? 'in the model menu' : 'not in the model menu'].filter(Boolean).join(' · ');
 }
 
@@ -180,9 +180,12 @@ async function buildProviders(page) {
     const out = [];
     if (PROVIDER_CLI[key]) {
       const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
-      const statusRow = row('Status', 'Where Lumen looks is listed under Connect an AI agent.', state);
-      checking.set(key, [state, statusRow]);
-      out.push(statusRow);
+      // The state sits under the label and the path under it, on its own wrapped line (side by side they cut the path at "@anthropic-…"); the path is filled in with the state.
+      const status = row('Status', 'Where Lumen looks is listed under Connect an AI agent.');
+      status.querySelector('.desc').classList.remove('clamp');
+      status.querySelector('.desc').before(state);
+      checking.set(key, [state, status]);
+      out.push(status);
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
       if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced). Off by default.`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
@@ -219,8 +222,11 @@ async function buildProviders(page) {
       state.textContent = providerInfoText(i);
       state.title = i.path || '';
       state.classList.toggle('err', Boolean(i.installed && i.signedIn === false));
-      const desc = statusRow.querySelector('.desc');
-      if (i.path && desc) { desc.textContent = `Found at ${i.path}`; statusRow.dataset.search = `status found at ${i.path}`.toLowerCase(); }
+      const where = statusRow.querySelector('.desc');
+      if (i.path) {
+        where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg])))); // (a path breaks after a slash, never mid-name)
+        statusRow.dataset.search = `status found at ${i.path}`.toLowerCase();
+      }
     }
   });
 }

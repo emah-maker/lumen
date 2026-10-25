@@ -55,7 +55,7 @@ function siteListRow({ key, label, desc, empty, addLabel, listId, inputId }) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) render(); });
   const add = async (value) => {
     const text = String(value ?? input.value).trim();
-    if (!text) return;
+    if (!text) { flash(note, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); input.focus(); return; }
     const before = (st.prefs[key] || []).length;
     await save(key, [...(st.prefs[key] || []), text]);
     const grew = (st.prefs[key] || []).length > before;

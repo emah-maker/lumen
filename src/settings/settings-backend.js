@@ -16,6 +16,7 @@ const siteData = require('../features/site-data');
 const { t } = require('../features/i18n');
 const permissionMode = require('../features/permission-mode'); // [bypass permissions]
 const TC = require('../features/theme-colors'); // [look] accent colours: the choices and the shades each gives in light and dark
+const RS = require('./reset-scope'); // what Reset settings puts back (the row text and the confirmation read it too)
 const BG = require('../features/backgrounds'); // [look] the new-tab backgrounds and effects, Shuffle daily
 
 const SETTINGS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'settings.html')).href;
@@ -939,6 +940,7 @@ function create(deps) {
       await apply('bypassPermissions');
       return state();
     }
+    if (process.env.CLAUDE_BROWSER_TEST && globalThis.__failPrefsSet === key) throw new Error('Test: the save failed'); // (a hidden e2e makes one save fail to see the page's error and the switch going back)
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if ((key === 'focusSites' || key === 'focusSchedules') && deps.focusLocked?.()) throw new Error('Focus mode is on: its sites and schedules can be changed when it ends.'); // [focus] (editing the list is not a way out of a session)
     if (key === 'homeWidgets') throw new Error('Widgets are changed with prefs:widget-save'); // each one is looked up and checked first
@@ -965,6 +967,8 @@ function create(deps) {
       graphics: deps.graphics?.info() ?? null, // ...and which GPU Graphics (Automatic) found
       passkeys: deps.passkeys?.info() ?? null, // Settings → Privacy and security says whether passkeys can work on this computer
       accent: accentOf(p.accentColor, wallpaperSeed(p)), // [look]
+      resetAreas: RS.AREAS.map(({ id, label }) => ({ id, label })), // the Reset row's text and confirmation
+      resetLocked: Boolean(deps.focusLocked?.()), // Reset is refused while Focus is on
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
@@ -1187,14 +1191,16 @@ function create(deps) {
     return state();
   }
   async function reset() {
+    if (deps.focusLocked?.()) throw new Error(RS.FOCUS_MESSAGE); // [focus] (a reset is not a way out of a session either)
     const s = readSettings();
-    for (const key of [...Object.keys(DEFAULTS), 'searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom', 'extensionSites']) if (key !== 'lastSeenVersion' && key !== 'featureOffersSeen' && key !== 'featureCardNever') delete s[key]; // not a preference: a reset doesn't bring back old release notes
+    const keys = RS.resetKeys(); // only what the Reset row lists (reset-scope.js)
+    for (const key of keys) delete s[key];
     writeSettings(s);
     deps.permissionDecisions.clear();
     deps.deviceGrants?.clear();
     userZoomed.clear();
     httpAllowed.clear();
-    for (const key of Object.keys(DEFAULTS)) await apply(key);
+    for (const key of keys) if (key in DEFAULTS) await apply(key);
     deps.onSearchEngineReset?.();
     return state();
   }
@@ -1385,7 +1391,7 @@ function create(deps) {
   return {
     prefs, set, state, start, attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
-    clearData, uiPrefs, launched, newTabLook,
+    clearData, uiPrefs, launched, newTabLook, reset,
   };
 }
 

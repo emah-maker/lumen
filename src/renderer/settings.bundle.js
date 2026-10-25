@@ -2083,7 +2083,7 @@ function siteListRow({ key, label, desc, empty, addLabel, listId, inputId }) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) render(); });
   const add = async (value) => {
     const text = String(value ?? input.value).trim();
-    if (!text) return;
+    if (!text) { flash(note, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); input.focus(); return; }
     const before = (st.prefs[key] || []).length;
     await save(key, [...(st.prefs[key] || []), text]);
     const grew = (st.prefs[key] || []).length > before;
@@ -2365,7 +2365,7 @@ function buildMcpServers() {
 
   M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
   const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
-    h('h3', { text: 'Custom MCP servers' }),
+    h('h2', { text: 'Custom MCP servers' }),
     h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
   el.refresh = () => M.list().then(render).catch(() => {});
@@ -2598,7 +2598,7 @@ async function buildFocus(card) {
     addSiteButton.disabled = locked();
     resetSites.disabled = locked();
   }
-  const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
+  const addSite = () => { const host = siteInput.value.trim(); if (!host) { flash(siteNote, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); siteInput.focus(); return; } siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
   const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
   siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addSite(); } });
   const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });
@@ -2832,7 +2832,7 @@ function buildConnectors() {
     const sections = data.categories.map((cat) => {
       const cards = data.connectors.filter((c) => c.category === cat.id);
       if (!cards.length) return null;
-      return h('section', { class: 'conn-cat', 'aria-label': cat.label }, h('h3', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
+      return h('section', { class: 'conn-cat', 'data-n': String(Math.min(cards.length, 3)), 'aria-label': cat.label }, h('h2', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
     });
     root.replaceChildren(...sections.filter(Boolean));
   }
@@ -3855,7 +3855,7 @@ async function localRows() {
 
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
-  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
+  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in not checked yet';
   return ['Installed', i.version ? `version ${i.version}` : null, signed, i.offered ? 'in the model menu' : 'not in the model menu'].filter(Boolean).join(' · ');
 }
 
@@ -3870,9 +3870,12 @@ async function buildProviders(page) {
     const out = [];
     if (PROVIDER_CLI[key]) {
       const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
-      const statusRow = row('Status', 'Where Lumen looks is listed under Connect an AI agent.', state);
-      checking.set(key, [state, statusRow]);
-      out.push(statusRow);
+
+      const status = row('Status', 'Where Lumen looks is listed under Connect an AI agent.');
+      status.querySelector('.desc').classList.remove('clamp');
+      status.querySelector('.desc').before(state);
+      checking.set(key, [state, status]);
+      out.push(status);
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
       if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced). Off by default.`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
@@ -3909,8 +3912,11 @@ async function buildProviders(page) {
       state.textContent = providerInfoText(i);
       state.title = i.path || '';
       state.classList.toggle('err', Boolean(i.installed && i.signedIn === false));
-      const desc = statusRow.querySelector('.desc');
-      if (i.path && desc) { desc.textContent = `Found at ${i.path}`; statusRow.dataset.search = `status found at ${i.path}`.toLowerCase(); }
+      const where = statusRow.querySelector('.desc');
+      if (i.path) {
+        where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg]))));
+        statusRow.dataset.search = `status found at ${i.path}`.toLowerCase();
+      }
     }
   });
 }
@@ -4100,35 +4106,74 @@ const tr = (key, english, vars) => {
   return text === key ? (vars ? english.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : english) : text;
 };
 
-async function save(key, value) {
+const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+
+function saveError(host, err) {
+  const message = tr('settings.saveFailed', 'Couldn’t save: {reason}', { reason: errText(err) });
+  const text = host?.closest?.('.row')?.querySelector('.text');
+  if (text) {
+    const note = text.querySelector(':scope > .save-error') || text.appendChild(h('span', { class: 'note error save-error', role: 'alert' }));
+    note.textContent = message;
+    return;
+  }
+  const bar = $('save-error-bar') || document.body.appendChild(h('div', { id: 'save-error-bar', class: 'save-error-bar', role: 'alert' }));
+  bar.textContent = message;
+  clearTimeout(saveError.timer);
+  saveError.timer = setTimeout(() => bar.remove(), 8000);
+}
+
+async function save(key, value, host) {
   try {
     st = await S.set(key, value);
     window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } }));
+    host?.closest?.('.row')?.querySelector(':scope > .text > .save-error')?.remove();
     applyPageClasses();
     refreshRestartNotes();
+    return st;
   } catch (err) {
     console.error(err);
+    saveError(host, err);
+    return null;
   }
-  return st;
 }
 
 
 
 
 const CLAMP_FROM = 60;
+
+const KEEP_WHOLE = /only turn this on|trust it|trick|no list is perfect|can[’']t be undone|cannot be undone|without asking|can[’']t read|keychain|never in private/i;
+
+function cutAtWord(d) {
+  const full = d.textContent; const line = d.clientHeight / 2;
+  let at = full.lastIndexOf(' ', Math.floor(full.length * 2 / Math.max(3, Math.round(d.scrollHeight / line))));
+  for (let n = 0; at > 0 && n < 14; n++) {
+    d.textContent = full.slice(0, at).replace(/[s,;:.–—-]+$/, '') + '…';
+    if (d.scrollHeight <= d.clientHeight + 1) break;
+    at = full.lastIndexOf(' ', at - 1);
+  }
+  d.dataset.full = full; d.dataset.w = String(d.clientWidth);
+}
+function restoreDesc(d) { if (d.dataset.full === undefined) return; d.textContent = d.dataset.full; delete d.dataset.full; delete d.dataset.w; }
 function fitDescs() {
   const todo = [];
+  const searching = document.body.classList.contains('searching');
+  for (const d of document.querySelectorAll('.desc[data-full]')) if (searching || d.dataset.w !== String(d.clientWidth)) restoreDesc(d);
   for (const d of document.querySelectorAll('.desc.clamp')) {
+    if (d.closest('.row.warn')) { d.classList.remove('clamp'); continue; }
     if (!d.offsetParent || d.classList.contains('open')) continue;
     if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue;
     const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
-    todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
+    todo.push([d, has, d.dataset.full !== undefined || d.scrollHeight > d.clientHeight + 1]);
   }
   for (const [d, has, clipped] of todo) {
+    if (clipped && d.dataset.full === undefined && !d.classList.contains('open') && !searching) cutAtWord(d);
     if (clipped && !has) {
       const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
       more.addEventListener('click', () => {
         const open = d.classList.toggle('open');
+        if (open) restoreDesc(d);
         more.setAttribute('aria-expanded', String(open));
         more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
         if (!open) requestAnimationFrame(fitDescs);
@@ -4142,6 +4187,7 @@ const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitDescs, 
 
 
 function highlight(words) {
+  if (words.length) for (const d of document.querySelectorAll('.desc[data-full]')) restoreDesc(d);
   const parents = new Set();
   for (const m of document.querySelectorAll('mark.hit')) { parents.add(m.parentNode); m.replaceWith(document.createTextNode(m.textContent)); }
   for (const el of parents) el.normalize();
@@ -4165,8 +4211,18 @@ function row(label, desc, ...controls) {
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
-  if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
+  describeControl(el);
   return el;
+}
+
+let descSeq = 0;
+function describeControl(el) {
+  const desc = el.querySelector(':scope > .text > .desc');
+  const control = desc && el.querySelector('[role="radiogroup"], input:not([type="hidden"]), select, textarea');
+  if (!control || control.hasAttribute('aria-describedby')) return;
+  desc.id ||= `row-desc-${++descSeq}`;
+  control.setAttribute('aria-describedby', desc.id);
 }
 
 function withKeywords(el, words) {
@@ -4194,6 +4250,7 @@ function stackRow(label, desc, ...content) {
   const el = row(label, desc);
   el.classList.add('stack');
   el.append(...content);
+  describeControl(el);
   return el;
 }
 
@@ -4203,7 +4260,10 @@ function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false,
   const shown = () => (st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key])) !== invert;
   input.checked = shown();
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = shown(); });
-  input.addEventListener('change', async () => { await save(key, input.checked !== invert); after?.(input.checked); });
+  input.addEventListener('change', async () => {
+    if (await save(key, input.checked !== invert, input)) after?.(input.checked);
+    else input.checked = shown();
+  });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
@@ -4246,12 +4306,17 @@ function select(key, label, desc, options, { number = false, after, id = `pref-$
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) el.value = String(st.prefs[key]); });
-  el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
+  el.addEventListener('change', async () => {
+    if (await save(key, number ? Number(el.value) : el.value, el)) after?.(el.value);
+    else el.value = String(st.prefs[key]);
+  });
   const r = row(label, desc, el);
   r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase();
   return r;
 }
 const status = (id) => h('span', { class: 'note', id });
+
+const needSite = (note, input) => { flash(note, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); input.focus(); };
 
 const KEY_PAGES = {
   anthropic: 'https://console.anthropic.com/settings/keys',
@@ -4347,7 +4412,7 @@ class Slot {
     if (!this.card) {
       this.card = h('div', { class: 'card' });
       const shown = this.pending && this.pending.toLowerCase() !== categories.get(this.cat).title.toLowerCase();
-      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h3', { class: 'group-title', text: this.pending }) : null, this.card);
+      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h2', { class: 'group-title', text: this.pending }) : null, this.card);
       this.el.append(g);
       this.groups.push(g);
     }
@@ -4577,11 +4642,13 @@ async function buildAi(card) {
       h('button', { text: 'Turn on AI', onclick: async () => renderOff(await S.ai.setAiSite(site, false)) })))
       : [h('span', { class: 'note', text: 'None. The AI can work on any site you allow.' })]));
   };
+  const offNote = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   card.at('ai-privacy').append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
     h('div', { class: 'controls' }, offInput, h('button', {
       text: 'Turn off AI',
-      onclick: async () => { const site = offInput.value.trim(); if (!site) return; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
-    }))));
+      onclick: async () => { const site = offInput.value.trim(); if (!site) return needSite(offNote, offInput); offNote.textContent = ''; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
+    }), offNote)));
+  offInput.addEventListener('input', () => { offNote.textContent = ''; });
   renderOff();
 
 
@@ -4831,6 +4898,7 @@ async function buildAi(card) {
 
   const endpointFor = (p) => `http://127.0.0.1:${p}/${token}`;
   const copyUrl = h('button', { id: 'ai-automation-copy', text: 'Copy address', onclick: async () => { await navigator.clipboard.writeText(endpointFor(Number(port.value) || 9222)).catch(() => {}); copyUrl.textContent = 'Copied'; setTimeout(() => { copyUrl.textContent = 'Copy address'; }, 1400); } });
+  const autoRestart = h('button', { class: 'primary', id: 'ai-automation-restart', text: tr('settings.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
   const describe = (enabled, p) => {
     const endpoint = endpointFor(p);
     autoNote.className = 'note';
@@ -4838,8 +4906,9 @@ async function buildAi(card) {
     else if (running?.error) flash(autoNote, running.error, 'err');
     else if (running?.listening && running.port === p) autoNote.textContent = `Listening on ${endpoint}. Playwright: chromium.connectOverCDP('${endpoint}')`;
     else autoNote.textContent = `Restart Lumen to open ${endpoint}.`;
+    autoRestart.hidden = !(enabled && !running?.error && !(running?.listening && running.port === p));
   };
-  const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl);
+  const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl, autoRestart);
   portRow.querySelector('.text').append(autoNote);
   const saveAuto = async () => {
     const asked = Number(port.value);
@@ -4909,7 +4978,7 @@ function buildImport(card) {
 
 
 function withRelaunch(row, key, id) {
-  const button = h('button', { class: 'primary relaunch', text: 'Relaunch', hidden: true, onclick: () => S.relaunch() });
+  const button = h('button', { class: 'primary relaunch', text: tr('settings.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
   button.dataset.key = key;
   if (id) button.id = id;
   row.querySelector('.controls').prepend(button);
@@ -4935,7 +5004,7 @@ function buildAppearance(card) {
     toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
   );
 
-  card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
+  card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a restart.'), 'forceDarkWebsites'));
 }
 
 
@@ -5367,7 +5436,7 @@ async function buildWidgets(card) {
 
     const setting = (label, control, hint, ...more) => row(label, hint, control, ...more);
     const block = (label, hint, ...content) => stackRow(label, hint, ...content);
-    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h3', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
+    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h2', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
     const advanced = (rows, foot, open = false) => h('details', { class: 'group wf-advanced', ...(open ? { open: '' } : {}) }, h('summary', { text: 'Advanced' }), h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
 
     const helpLink = (r, key, text) => { r.querySelector('.text').append(h('button', { type: 'button', class: 'linkish', text, onclick: () => S.widgets.help(key) })); return r; };
@@ -6334,9 +6403,9 @@ async function buildWidgets(card) {
   const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'On your new-tab page' }), list),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new-tab page' }), list),
     h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
 
@@ -6403,7 +6472,7 @@ function buildStartup(card) {
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPage(); } });
   input.addEventListener('input', () => { addNote.textContent = ''; });
-  card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
+  card.append(stackRow('On startup', 'What Lumen opens when it starts.', h('div', { class: 'radios', role: 'radiogroup', 'aria-label': tr('settings.startup.label', 'On startup') }, ...radios)));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
     h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
 }
@@ -6472,7 +6541,7 @@ async function buildPrivacy(card) {
       try { renderSb(await S.ai.setSafeBrowsingKey(value)); } catch (err) { flash(keyNote, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
     };
     sbKey.replaceChildren(...[input,
-      h('button', { text: 'Save key', id: 'safe-browsing-save', onclick: () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); } }),
+      h('button', { text: 'Save key', id: 'safe-browsing-save', onclick: () => { if (input.value.trim()) put(input.value.trim()); else { flash(keyNote, tr('settings.needKey', 'Paste the key first.'), 'err'); input.focus(); } } }),
       s.keyStored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
       keyNote].filter(Boolean));
   };
@@ -6486,6 +6555,7 @@ async function buildPrivacy(card) {
 
 
   const allowList = h('div', { class: 'list', id: 'adblock-allow' });
+  const allowNote = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   const allowInput = h('input', { type: 'text', class: 'grow', id: 'adblock-add', placeholder: 'example.com', 'aria-label': tr('settings.adblock.addSite', 'Site to allow ads on') });
   const renderAllow = () => allowList.replaceChildren(...(st.prefs.adblockAllow.length ? st.prefs.adblockAllow.map((host) => h('div', { class: 'item' },
     h('span', { class: 'grow', text: host }),
@@ -6497,8 +6567,8 @@ async function buildPrivacy(card) {
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
       h('div', { class: 'controls' }, allowInput, h('button', {
         text: 'Add site',
-        onclick: async () => { const host = allowInput.value.trim(); if (!host) return; await save('adblockAllow', [...st.prefs.adblockAllow, host]); allowInput.value = ''; renderAllow(); },
-      }))),
+        onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
+      }), allowNote)),
   );
 
 
@@ -6789,7 +6859,7 @@ function buildTelegram(slot) {
     const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
     const tokenNote = status();
     const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
-      if (!input.value.trim()) { input.focus(); return; }
+      if (!input.value.trim()) { flash(tokenNote, tr('settings.telegram.needToken', 'Paste the bot token first.'), 'err'); input.focus(); return; }
       save.disabled = true;
       try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
     } });
@@ -7164,7 +7234,7 @@ function buildSwitchTiming(slot) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
 }
 function buildSystem(card) {
-  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
+  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.'), 'hardwareAcceleration', 'relaunch'));
   const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
     [['auto', tr('settings.performance.auto', 'Auto')], ['on', tr('settings.performance.on', 'Always on')], ['off', tr('settings.performance.off', 'Off')]], { after: () => showPerfNote() });
   const perfNote = h('span', { class: 'note', id: 'performance-note' });
@@ -7217,20 +7287,26 @@ function buildSystem(card) {
   const bypass = h('input', { type: 'text', class: 'grow', id: 'proxy-bypass', placeholder: 'Bypass: localhost, *.internal', value: p.bypass });
   const pac = h('input', { type: 'url', class: 'grow', id: 'proxy-pac', placeholder: 'https://example.com/proxy.pac', value: p.pacUrl });
   const note = status('proxy-status');
+  const apply = h('button', { id: 'proxy-apply', text: 'Apply', disabled: true });
+
+  const current = () => ({ mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
+  const pending = () => { const a = st.prefs.proxy; const c = current(); return c.mode !== a.mode || c.rules !== a.rules || c.bypass !== a.bypass || c.pacUrl !== a.pacUrl; };
   const sync = () => {
     rules.hidden = bypass.hidden = mode.value !== 'fixed_servers';
     pac.hidden = mode.value !== 'pac_script';
+    const changed = pending();
+    apply.disabled = !changed;
+    if (changed) flash(note, tr('settings.proxy.pending', 'Not applied yet'), 'warn');
+    else if (note.className.includes('warn') || note.className.includes('err')) note.textContent = '';
   };
   sync();
-  mode.addEventListener('change', sync);
-  card.append(stackRow('Proxy', 'Applies to every tab straight away.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
-    h('div', { class: 'controls' }, note, h('button', {
-      id: 'proxy-apply', text: 'Apply',
+  for (const el of [mode, rules, bypass, pac]) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
+  card.append(stackRow('Proxy', 'Applies to every tab as soon as you press Apply.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
+    h('div', { class: 'controls' }, note, Object.assign(apply, {
       onclick: async () => {
         if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
         if (mode.value === 'pac_script' && !/^(https?|file):\/\//i.test(pac.value.trim())) { flash(note, 'Enter the address of the script, starting with https://.', 'err'); pac.focus(); return; }
-        await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
-        flash(note, 'Applied.');
+        if (await save('proxy', current(), apply)) { flash(note, 'Applied.'); apply.disabled = true; }
       },
     }))));
 }
@@ -7274,21 +7350,40 @@ async function buildExtensions(card) {
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
 }
 
+
+
+function confirmReset(areas) {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'confirm-dialog', id: 'reset-confirm', 'aria-labelledby': 'reset-confirm-title' },
+      h('h3', { id: 'reset-confirm-title', text: tr('settings.reset.title', 'Reset settings?') }),
+      h('p', { text: tr('settings.reset.lead', 'These go back to their defaults:') }),
+      h('ul', { id: 'reset-confirm-list' }, areas.map((a) => h('li', { text: a.label }))),
+      h('p', { class: 'note', text: tr('settings.reset.stays', 'Bookmarks, history, API keys, sign-ins, AI settings, widgets and Focus lists stay as they are.') }),
+      h('form', { method: 'dialog', class: 'confirm-buttons' },
+        h('button', { value: 'cancel', id: 'reset-confirm-cancel', text: tr('settings.reset.cancel', 'Cancel'), autofocus: true }),
+        h('button', { value: 'reset', class: 'danger', id: 'reset-confirm-go', text: tr('settings.reset.go', 'Reset settings') })));
+    dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'reset'; dlg.remove(); resolve(yes); });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
 function buildReset(card) {
   const note = status('reset-status');
-  const button = h('button', { class: 'danger', id: 'reset', text: 'Reset settings' });
+  const button = h('button', { class: 'danger', id: 'reset', text: tr('settings.reset.button', 'Reset settings…') });
   button.addEventListener('click', async () => {
-    if (!button.dataset.armed) {
-      button.dataset.armed = '1';
-      button.textContent = 'Confirm reset';
-      setTimeout(() => { delete button.dataset.armed; button.textContent = 'Reset settings'; }, 4000);
-      return;
-    }
-    st = await S.reset();
-    flash(note, 'Settings restored to their defaults.');
-    setTimeout(() => location.reload(), 600);
+    note.textContent = '';
+    if (!(await confirmReset(st.resetAreas))) return;
+    try {
+      st = await S.reset();
+      flash(note, tr('settings.reset.done', 'Those settings are back to their defaults.'));
+      setTimeout(() => location.reload(), 600);
+    } catch (err) { flash(note, errText(err), 'err'); }
   });
-  card.append(row('Restore settings to their original defaults', 'Resets appearance, search engine, startup, privacy, site permissions, languages and system settings. Bookmarks, history, API keys and sign-ins stay.', note, button));
+  const areas = st.resetAreas.map((a) => a.label);
+  card.append(row(tr('settings.reset.label', 'Restore settings to their original defaults'),
+    tr('settings.reset.desc', 'Resets {areas}. Bookmarks, history, API keys, sign-ins, AI settings, widgets and Focus lists stay.', { areas: areas.length > 1 ? tr('settings.reset.areasJoin', '{list} and {last}', { list: areas.slice(0, -1).join(', '), last: areas[areas.length - 1] }) : areas[0] || '' }), note, button));
+  if (st.resetLocked) { button.disabled = true; flash(note, tr('settings.reset.locked', 'Focus mode is on: settings can be reset when it ends.'), 'err'); }
 }
 
 async function buildAbout(card) {
