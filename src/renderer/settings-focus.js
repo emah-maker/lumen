@@ -57,7 +57,7 @@ async function buildFocus(card) {
     addSiteButton.disabled = locked();
     resetSites.disabled = locked();
   }
-  const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
+  const addSite = () => { const host = siteInput.value.trim(); if (!host) { flash(siteNote, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); siteInput.focus(); return; } siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
   const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
   siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addSite(); } });
   const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });

@@ -600,3 +600,12 @@ details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px 
 .item.ext-sites-row { border-top: 0; padding-top: 0; flex-wrap: wrap; font-size: var(--fs-sm); }
 .ext-sites-row input[type=text] { min-width: 180px; }
 .ext-sites-row [hidden] { display: none; }
+/* A failed save (the row's own message sits under its description; the bar is for controls with no row) and the Reset confirmation */
+.save-error { display: block; margin-top: 4px; }
+.save-error-bar { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(560px, calc(100vw - 48px)); padding: 10px 14px; border-radius: var(--r-xl); color: var(--danger); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 12px 32px -12px rgb(0 0 0 / 0.5); z-index: 50; }
+.confirm-dialog { width: min(420px, calc(100vw - 48px)); padding: 20px; border: none; border-radius: var(--r-xl); color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 24px 64px -16px rgb(0 0 0 / 0.5); }
+.confirm-dialog::backdrop { background: rgb(0 0 0 / 0.35); }
+.confirm-dialog h3 { margin: 0 0 8px; font-size: 15px; }
+.confirm-dialog p { margin: 0 0 6px; }
+.confirm-dialog ul { margin: 0 0 10px; padding-left: 20px; }
+.confirm-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
