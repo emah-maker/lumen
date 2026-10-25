@@ -5645,7 +5645,9 @@ ${prompt}` : prompt), historyImages: [] };
     if (external || !found || !this.projectAllows('mcp')) throw new Error(`Unknown tool: ${name}`);
     const holder = taintHolder(run);
     const tainted = Boolean(holder?.tainted) && holder.onlyFrom !== found.server;
-    if (tainted || !ext.isAlwaysAllowed(name)) {
+    // A read-only tool of an official preset (GitHub, Notion, Todoist) runs without a card, as the old connectors' reads did; the chat still counts as having read untrusted content after.
+    const autoRead = Boolean(ext.isReadOnlyPreset?.(name));
+    if (!autoRead && (tainted || !ext.isAlwaysAllowed(name))) {
       let args = JSON.stringify(input ?? {}, null, 2);
       if (args.length > 4000) args = `${args.slice(0, 4000)}\n…`;
       const answer = await this.askApproval(`${found.server} › ${found.tool}`, emit, signal, { action: 'tool', who, title: `${who} wants to use ${found.tool} from ${found.server}`, args, tainted });

@@ -343,7 +343,7 @@ class Connection {
       if (JSON.stringify(schema).length > 20000) continue;
       if (!schema.properties) schema = { ...schema, properties: {} };
       if ('$schema' in schema) { schema = { ...schema }; delete schema.$schema; } // some model APIs reject it
-      usable.push({ name, description: typeof t.description === 'string' ? t.description.slice(0, 1000) : '', inputSchema: schema });
+      usable.push({ name, description: typeof t.description === 'string' ? t.description.slice(0, 1000) : '', inputSchema: schema, readOnly: t.annotations?.readOnlyHint === true }); // (the server's own word that the tool changes nothing; only a literal true counts)
     }
     this.skipped = tools.length - usable.length;
     this.tools = usable;
@@ -479,7 +479,7 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
     version,
     fetch: (...a) => fetchImpl(...a),
     envFor: (cfg) => Object.fromEntries((cfg.env || []).map(({ name, value }) => [name, open(value)])),
-    headersFor: (cfg) => (cfg.header ? { [cfg.header.name]: open(cfg.header.value) } : {}),
+    headersFor: (cfg) => ({ ...(cfg.fixed || {}), ...(cfg.header ? { [cfg.header.name]: open(cfg.header.value) } : {}) }),
     authFor: (cfg) => authFor(cfg.id),
   };
   // One OAuth sign-in per server, made on first use (mcp-oauth.js loads only when a server wants it). The blob is sealed into the
@@ -519,7 +519,7 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
         auth: s.auth === 'oauth' ? 'oauth' : '', signedIn: s.auth === 'oauth' ? Boolean(s.oauth) && authFor(s.id).signedIn() : false,
         needsAuth: Boolean(c?.needsAuth) || (s.auth === 'oauth' && !authFor(s.id).signedIn()), authRefused: Boolean(c?.authRefused),
         state: c?.state || 'stopped', error: c?.error || '', log: c?.log ? c.log.slice(-800) : '',
-        tools: (c?.tools || []).map((t) => ({ name: t.name, description: t.description })), skipped: c?.skipped || 0,
+        tools: (c?.tools || []).map((t) => ({ name: t.name, description: t.description, readOnly: Boolean(s.preset && t.readOnly) })), skipped: c?.skipped || 0, // (readOnly: runs without a card, official presets only)
       };
     });
   }
@@ -557,6 +557,14 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
         cfg.auth = 'oauth';
         if (existing?.oauth && existing.url === cfg.url) cfg.oauth = existing.oauth;
       }
+      if (input.fixedHeaders && typeof input.fixedHeaders === 'object') { // plain headers a preset sets (which tools a server offers); nothing secret
+        const fixed = {};
+        for (const [n, v] of Object.entries(input.fixedHeaders).slice(0, 5)) {
+          if (!HEADER_NAME.test(n) || !/^[ -~]{1,200}$/.test(String(v))) throw new Error(`${n} isn’t a valid header.`);
+          fixed[n] = String(v);
+        }
+        if (Object.keys(fixed).length) cfg.fixed = fixed;
+      } else if (existing?.fixed && existing.preset) cfg.fixed = existing.fixed;
       if (cfg.auth === 'oauth' && input.header?.name) throw new Error('A server that signs in with OAuth doesn’t take a header as well.');
       const hn = cfg.auth === 'oauth' ? '' : String(input.header?.name || '').trim();
       if (hn) {
@@ -637,6 +645,13 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
     return s ? { id: s.id, server: s.name, tool: m[2] } : null;
   }
   const isExternal = (name) => Boolean(lookupTool(name));
+  // A tool of an official preset server (GitHub, Notion, Todoist: the old built-in connectors ran their reads without a card) that the server
+  // itself marks readOnlyHint: true. Custom servers never: their hints are not vouched for, so every call asks. No hint, no pass.
+  const isReadOnlyPreset = (name) => {
+    const f = lookupTool(name);
+    const s = f && byId(f.id);
+    return Boolean(s?.preset && connections.get(s.id)?.tools.some((t) => t.name === f.tool && t.readOnly === true));
+  };
   const isAlwaysAllowed = (name) => {
     const f = lookupTool(name);
     return Boolean(f && byId(f.id).alwaysAllow?.includes(f.tool));
@@ -689,14 +704,15 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
     connections.clear();
   }
 
-  return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, tools, call, stopAll };
+  return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, isReadOnlyPreset, tools, call, stopAll };
 }
 
 // Settings → You and AI. The mcp: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only
 // Lumen's own UI and its settings page may call them.
 function registerIpc(ipcMain, client) {
   ipcMain.handle('mcp:servers', () => client.list());
-  ipcMain.handle('mcp:server-save', (_e, input) => client.save(input && typeof input === 'object' ? input : {}));
+  // (the page may not tag a server as a preset or give it fixed headers: that is what lets a read skip its card, and only connectors/service.js says so)
+  ipcMain.handle('mcp:server-save', (_e, input) => { const { preset: _p, fixedHeaders: _f, ...safe } = input && typeof input === 'object' ? input : {}; return client.save(safe); });
   ipcMain.handle('mcp:server-remove', (_e, id) => client.remove(String(id)));
   ipcMain.handle('mcp:server-enable', (_e, id, on) => client.setEnabled(String(id), Boolean(on)));
   ipcMain.handle('mcp:server-refresh', (_e, id) => client.refresh(String(id)));

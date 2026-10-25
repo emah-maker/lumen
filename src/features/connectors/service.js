@@ -202,7 +202,7 @@ function create({
       config: {}, reads: def.reads, does: def.does, drafts: null, sending: null, actions: [],
       oauth: def.mcp?.auth === 'oauth',
       reconnect: status === 'reconnect' ? { oneClick: !needsToken } : null,
-      mcp: srv ? { id: srv.id, name: srv.name, state: srv.state, tools: srv.tools.map((t) => ({ name: t.name, description: t.description, always: srv.alwaysAllow.includes(t.name) })) } : null,
+      mcp: srv ? { id: srv.id, name: srv.name, state: srv.state, tools: srv.tools.map((t) => ({ name: t.name, description: t.description, always: srv.alwaysAllow.includes(t.name), auto: Boolean(t.readOnly) })) } : null,
     };
   }
   function card(def) {
@@ -342,7 +342,7 @@ function create({
       if (cfg.type === 'http') token = r.value; else env.push({ name: f.id, value: r.value });
     }
     const body = cfg.type === 'http'
-      ? { id: existing?.id, name: cfg.name, type: 'http', url: cfg.url, preset: def.id, ...(cfg.auth === 'oauth' ? { auth: 'oauth' } : { header: { name: cfg.header.name, value: `${cfg.header.prefix || ''}${token}` } }) }
+      ? { id: existing?.id, name: cfg.name, type: 'http', url: cfg.url, preset: def.id, ...(cfg.auth === 'oauth' ? { auth: 'oauth' } : { header: { name: cfg.header.name, value: `${cfg.header.prefix || ''}${token}` } }), ...(cfg.fixedHeaders ? { fixedHeaders: cfg.fixedHeaders } : {}) }
       : { id: existing?.id, name: cfg.name, type: 'stdio', command: cfg.command, args: cfg.args, env, preset: def.id };
     const made = mcp.save(body).find((x) => x.name === cfg.name);
     const undo = () => { if (!existing && made) { try { mcp.remove(made.id); } catch { /* already gone */ } } };

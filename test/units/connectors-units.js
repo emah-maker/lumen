@@ -188,7 +188,7 @@ async function main() {
   mcpFake.outcome = {};
   await svc.connect('github', { secret: TOKENS.github });
   const gh = mcpFake.saved.at(-1);
-  check('GitHub: the token goes to the server as its Authorization header (Bearer) at https://api.githubcopilot.com/mcp/, and the card says Connected · 1 tool', gh.url === 'https://api.githubcopilot.com/mcp/' && gh.header.name === 'Authorization' && gh.header.value === `Bearer ${TOKENS.github}` && !gh.auth && cardOf('github').statusText === 'Connected · 1 tool', JSON.stringify(cardOf('github')));
+  check('GitHub: the token goes to the server as its Authorization header (Bearer) at https://api.githubcopilot.com/mcp/, scoped to the context, issues and pull_requests toolsets (what the old connector covered), and the card says Connected · 1 tool', gh.url === 'https://api.githubcopilot.com/mcp/' && gh.header.name === 'Authorization' && gh.header.value === `Bearer ${TOKENS.github}` && !gh.auth && gh.fixedHeaders['X-MCP-Toolsets'] === 'context,issues,pull_requests' && cardOf('github').statusText === 'Connected · 1 tool', JSON.stringify(cardOf('github')));
   check('…and the token is never in connectors.json or in the list the page gets', !fileText().includes(TOKENS.github) && !JSON.stringify(svc.list()).includes(TOKENS.github), '');
   // the status is read from the server, so every way it can go wrong shows on the card
   const gid = mcpFake.servers.find((x) => x.name === 'github').id;

@@ -142,9 +142,9 @@ function buildConnectors() {
   function toolsView(c) {
     const items = c.mcp.tools.map((t) => {
       const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: t.always, onchange: async (e) => { try { await M.setAlwaysAllow(`${c.mcp.name}__${t.name}`, e.target.checked); render(await C.list()); } catch (err) { e.target.checked = !e.target.checked; flash(note, clean(err), 'error'); } } });
-      return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: t.always ? ' · always allowed' : '' }));
+      return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: t.auto ? ' · read only, runs without asking' : t.always ? ' · always allowed' : '' }));
     });
-    return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Ticked tools run without asking, until the AI has read a page in that chat.' }), h('ul', { class: 'mcp-tools' }, items));
+    return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Tools the service marks read only run without asking. Ticked tools run without asking, until the AI has read a page in that chat. Everything else asks first.' }), h('ul', { class: 'mcp-tools' }, items));
   }
 
   // What the AI sent (time, to, subject), newest first: loaded when the section is opened.

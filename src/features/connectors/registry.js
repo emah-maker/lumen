@@ -149,7 +149,7 @@ const CONNECTORS = [
   {
     id: 'github', name: 'GitHub', category: 'work', kind: 'mcp', replaces: true, icon: { text: 'G', color: '#24292f' },
     summary: 'Pull requests, issues, code and more, through GitHub’s own MCP server.',
-    mcp: { name: 'github', type: 'http', url: 'https://api.githubcopilot.com/mcp/', header: { name: 'Authorization', prefix: 'Bearer ' }, source: 'https://github.com/github/github-mcp-server' },
+    mcp: { name: 'github', type: 'http', url: 'https://api.githubcopilot.com/mcp/', header: { name: 'Authorization', prefix: 'Bearer ' }, fixedHeaders: { 'X-MCP-Toolsets': 'context,issues,pull_requests' }, source: 'https://github.com/github/github-mcp-server' },
     fields: [{ id: 'secret', label: 'Personal access token', placeholder: 'github_pat_…', secret: true, help: 'Create a fine-grained token at github.com/settings/personal-access-tokens, with only the access you want the AI to have. GitHub’s server has no automatic sign-in for apps like Lumen, so it takes a token.', pattern: 'github' }],
     reads: ['What the token can see on GitHub: pull requests, issues, repositories and code'],
     does: ['Anything the token allows and GitHub’s tools offer, such as commenting or opening an issue (each call asks you first)'],
