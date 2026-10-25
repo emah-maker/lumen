@@ -2335,7 +2335,7 @@ function buildMcpServers() {
 
   M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
   const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
-    h('h3', { text: 'Custom MCP servers' }),
+    h('h2', { text: 'Custom MCP servers' }),
     h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
   el.refresh = () => M.list().then(render).catch(() => {});
@@ -2802,7 +2802,7 @@ function buildConnectors() {
     const sections = data.categories.map((cat) => {
       const cards = data.connectors.filter((c) => c.category === cat.id);
       if (!cards.length) return null;
-      return h('section', { class: 'conn-cat', 'aria-label': cat.label }, h('h3', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
+      return h('section', { class: 'conn-cat', 'data-n': String(Math.min(cards.length, 3)), 'aria-label': cat.label }, h('h2', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
     });
     root.replaceChildren(...sections.filter(Boolean));
   }
@@ -3825,7 +3825,7 @@ async function localRows() {
 
 function providerInfoText(i) {
   if (!i.installed) return 'Not installed';
-  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in unknown until a message runs';
+  const signed = i.signedIn === true ? `signed in${i.account ? ` as ${i.account}` : ''}` : i.signedIn === false ? 'not signed in' : 'sign-in not checked yet';
   return ['Installed', i.version ? `version ${i.version}` : null, signed, i.offered ? 'in the model menu' : 'not in the model menu'].filter(Boolean).join(' · ');
 }
 
@@ -3839,7 +3839,13 @@ async function buildProviders(page) {
     if (PROVIDER_CLI[key]) {
       const i = info[key] || { installed: false };
       const state = h('span', { class: `note${i.installed && i.signedIn === false ? ' err' : ''}`, id: `provider-state-${key}`, text: providerInfoText(i), title: i.path || '' });
-      out.push(row('Status', i.path ? `Found at ${i.path}` : 'Where Lumen looks is listed under Connect an AI agent.', state));
+
+      const status = row('Status', i.path ? `Found at ${i.path}` : 'Where Lumen looks is listed under Connect an AI agent.');
+      const where = status.querySelector('.desc');
+      where.classList.remove('clamp');
+      if (i.path) where.replaceChildren('Found at ', h('span', { class: 'mono path' }, ...i.path.split(/(?<=[\\/])/).flatMap((seg, n) => (n ? [document.createElement('wbr'), seg] : [seg]))));
+      where.before(state);
+      out.push(status);
       const [pref, fallback] = MENU_PREF[key];
       out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
       if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced). Off by default.`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
@@ -4072,19 +4078,38 @@ async function save(key, value) {
 
 
 const CLAMP_FROM = 60;
+
+const KEEP_WHOLE = /only turn this on|trust it|trick|no list is perfect|can[’']t be undone|cannot be undone|without asking|can[’']t read|keychain|never in private/i;
+
+function cutAtWord(d) {
+  const full = d.textContent; const line = d.clientHeight / 2;
+  let at = full.lastIndexOf(' ', Math.floor(full.length * 2 / Math.max(3, Math.round(d.scrollHeight / line))));
+  for (let n = 0; at > 0 && n < 14; n++) {
+    d.textContent = full.slice(0, at).replace(/[s,;:.–—-]+$/, '') + '…';
+    if (d.scrollHeight <= d.clientHeight + 1) break;
+    at = full.lastIndexOf(' ', at - 1);
+  }
+  d.dataset.full = full; d.dataset.w = String(d.clientWidth);
+}
+function restoreDesc(d) { if (d.dataset.full === undefined) return; d.textContent = d.dataset.full; delete d.dataset.full; delete d.dataset.w; }
 function fitDescs() {
   const todo = [];
+  const searching = document.body.classList.contains('searching');
+  for (const d of document.querySelectorAll('.desc[data-full]')) if (searching || d.dataset.w !== String(d.clientWidth)) restoreDesc(d);
   for (const d of document.querySelectorAll('.desc.clamp')) {
+    if (d.closest('.row.warn')) { d.classList.remove('clamp'); continue; }
     if (!d.offsetParent || d.classList.contains('open')) continue;
     if (d.checkVisibility && !d.checkVisibility({ contentVisibilityAuto: true })) continue;
     const has = d.nextElementSibling?.classList.contains('more') ? d.nextElementSibling : null;
-    todo.push([d, has, d.scrollHeight > d.clientHeight + 1]);
+    todo.push([d, has, d.dataset.full !== undefined || d.scrollHeight > d.clientHeight + 1]);
   }
   for (const [d, has, clipped] of todo) {
+    if (clipped && d.dataset.full === undefined && !d.classList.contains('open') && !searching) cutAtWord(d);
     if (clipped && !has) {
       const more = h('button', { type: 'button', class: 'more', 'aria-expanded': 'false', text: tr('settings.showMore', 'Show more') });
       more.addEventListener('click', () => {
         const open = d.classList.toggle('open');
+        if (open) restoreDesc(d);
         more.setAttribute('aria-expanded', String(open));
         more.textContent = open ? tr('settings.showLess', 'Show less') : tr('settings.showMore', 'Show more');
         if (!open) requestAnimationFrame(fitDescs);
@@ -4098,6 +4123,7 @@ const fitSoon = () => { clearTimeout(fitTimer); fitTimer = setTimeout(fitDescs, 
 
 
 function highlight(words) {
+  if (words.length) for (const d of document.querySelectorAll('.desc[data-full]')) restoreDesc(d);
   const parents = new Set();
   for (const m of document.querySelectorAll('mark.hit')) { parents.add(m.parentNode); m.replaceWith(document.createTextNode(m.textContent)); }
   for (const el of parents) el.normalize();
@@ -4121,8 +4147,18 @@ function row(label, desc, ...controls) {
     h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
-  if (typeof desc === 'string' && desc.length > CLAMP_FROM) el.querySelector('.desc').classList.add('clamp');
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
+  describeControl(el);
   return el;
+}
+
+let descSeq = 0;
+function describeControl(el) {
+  const desc = el.querySelector(':scope > .text > .desc');
+  const control = desc && el.querySelector('[role="radiogroup"], input:not([type="hidden"]), select, textarea');
+  if (!control || control.hasAttribute('aria-describedby')) return;
+  desc.id ||= `row-desc-${++descSeq}`;
+  control.setAttribute('aria-describedby', desc.id);
 }
 
 function withKeywords(el, words) {
@@ -4150,6 +4186,7 @@ function stackRow(label, desc, ...content) {
   const el = row(label, desc);
   el.classList.add('stack');
   el.append(...content);
+  describeControl(el);
   return el;
 }
 
@@ -4303,7 +4340,7 @@ class Slot {
     if (!this.card) {
       this.card = h('div', { class: 'card' });
       const shown = this.pending && this.pending.toLowerCase() !== categories.get(this.cat).title.toLowerCase();
-      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h3', { class: 'group-title', text: this.pending }) : null, this.card);
+      const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h2', { class: 'group-title', text: this.pending }) : null, this.card);
       this.el.append(g);
       this.groups.push(g);
     }
@@ -5323,7 +5360,7 @@ async function buildWidgets(card) {
 
     const setting = (label, control, hint, ...more) => row(label, hint, control, ...more);
     const block = (label, hint, ...content) => stackRow(label, hint, ...content);
-    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h3', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
+    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h2', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
     const advanced = (rows, foot, open = false) => h('details', { class: 'group wf-advanced', ...(open ? { open: '' } : {}) }, h('summary', { text: 'Advanced' }), h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
 
     const helpLink = (r, key, text) => { r.querySelector('.text').append(h('button', { type: 'button', class: 'linkish', text, onclick: () => S.widgets.help(key) })); return r; };
@@ -6290,9 +6327,9 @@ async function buildWidgets(card) {
   const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'On your new-tab page' }), list),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new-tab page' }), list),
     h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
-    h('div', { class: 'group' }, h('h3', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
 
@@ -6359,7 +6396,7 @@ function buildStartup(card) {
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPage(); } });
   input.addEventListener('input', () => { addNote.textContent = ''; });
-  card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
+  card.append(stackRow('On startup', 'What Lumen opens when it starts.', h('div', { class: 'radios', role: 'radiogroup', 'aria-label': tr('settings.startup.label', 'On startup') }, ...radios)));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
     h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
 }

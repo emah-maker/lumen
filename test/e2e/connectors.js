@@ -67,7 +67,7 @@ async function main() {
     console.log('--- the gallery');
     const inSettings = await openSettingsTab(app, 'you-and-ai');
     await waitFor(async () => (await inSettings("document.querySelectorAll('[data-connector]').length")) > 5);
-    const gallery = await inSettings("JSON.stringify({ cats: [...document.querySelectorAll('.conn-cat h3')].map((h) => h.textContent), cards: [...document.querySelectorAll('[data-connector]')].map((c) => [c.dataset.connector, c.dataset.status, c.querySelector('.conn-status')?.textContent, c.querySelector('button')?.textContent]) })");
+    const gallery = await inSettings("JSON.stringify({ cats: [...document.querySelectorAll('.conn-cat h2')].map((h) => h.textContent), cards: [...document.querySelectorAll('[data-connector]')].map((c) => [c.dataset.connector, c.dataset.status, c.querySelector('.conn-status')?.textContent, c.querySelector('button')?.textContent]) })");
     const g = JSON.parse(gallery);
     check('settings: a gallery grouped by Mail and calendar, School, Files and docs, Work, Tasks, then Custom MCP servers in the same page (no Music)', g.cats.join() === 'Mail and calendar,School,Files and docs,Work,Tasks,Custom MCP servers', gallery);
     check('settings: every card starts Not connected with a Connect button, and nothing says coming soon (Slack and Spotify are gone)', g.cards.find((c) => c[0] === 'canvas')?.slice(1).join('|') === 'off|Not connected|Connect' && ['github', 'notion', 'todoist', 'drive', 'sheets'].every((id) => g.cards.find((c) => c[0] === id)?.[2] === 'Not connected') && !g.cards.some((c) => ['slack', 'spotify'].includes(c[0])) && !/coming soon/i.test(await inSettings("document.getElementById('ai-connectors').textContent")), gallery);

@@ -156,7 +156,7 @@ function buildConnectors() {
     const sections = data.categories.map((cat) => {
       const cards = data.connectors.filter((c) => c.category === cat.id);
       if (!cards.length) return null;
-      return h('section', { class: 'conn-cat', 'aria-label': cat.label }, h('h3', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
+      return h('section', { class: 'conn-cat', 'data-n': String(Math.min(cards.length, 3)), 'aria-label': cat.label }, h('h2', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
     });
     root.replaceChildren(...sections.filter(Boolean));
   }
