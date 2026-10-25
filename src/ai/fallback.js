@@ -7,8 +7,9 @@
 //                       limit        usage, rate or quota (with the reset time when the error names one)
 //                       unreachable  network, DNS, a timeout, a 5xx or "overloaded"
 //                       auth         not signed in, or a rejected or missing key
+//                       denied       this key has no access to this model (a 403 that says so): scope 'model'
 //                       other        anything else (a bad request, a content refusal, a stop)
-//                     Only `limit` and `unreachable` ever lead to a switch.
+//                     Only `limit`, `unreachable` and `denied` ever lead to a switch.
 //   cooldowns         which models are being left alone, and until when (in memory, shared by every
 //                     chat and AI feature: one chat finding Opus limited steers the others too)
 //   order / pick      the next usable model: same provider first (Opus -> Sonnet -> Haiku), then the
@@ -28,6 +29,7 @@ const COOLDOWN = {
   rate: 10 * MINUTE, // an API 429 that names no reset time (these clear within minutes)
   plan: 30 * MINUTE, // "usage limit reached" text that names no reset time (a plan window, hours long)
   brief: 2e3, // an engine's own hiccup (see mark's brief): left alone just long enough for this turn's other hops
+  denied: 60 * MINUTE, // a model this key may not use (access changes rarely, but it can: tried again after an hour)
   min: 30e3, // a reset time that is nearly now still leaves the model alone this long
   max: 8 * 24 * 60 * MINUTE, // a weekly limit can be days away; a misread date is never trusted further than this
 };
@@ -45,6 +47,19 @@ const TEXT_LIMIT_WORD_RE = /limit|usage|quota|plan|credits?/i;
 const textLimit = (text) => TEXT_LIMIT_RE.test(text) || (TEXT_RESET_RE.test(text) && TEXT_LIMIT_WORD_RE.test(text));
 const TEXT_AUTH_RE = /not (signed|logged)[ -]?in|sign(ed)?[ -]?in (has )?expired|please (run|sign) ?in|\/login|run `?grok login|add your [\w ]*api key|no api key|invalid (x-)?api[ -]?key|api key (was )?(rejected|invalid|not valid|missing)|no api key|unauthori[sz]ed|authentication[_ ]error|invalid[_ ]authentication|permission[_ ]error|oauth token (has )?expired|(invalid|bad|missing|no|wrong) credentials|credentials (are |is |were )?(invalid|missing|expired|incorrect|rejected)/i;
 const TEXT_NET_RE = /fetch failed|connection (error|failed|refused|reset|closed|lost|timed out|timeout)|(lost|no|failed|dropped) (internet |network )?connection|network (error|is unreachable|request failed|failure|changed|unreachable)|socket hang up|(request|connect|connection|read|gateway|stream) (timed? ?out|timeout)|ETIMEDOUT|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE|HTTP2_\w+|INCOMPLETE_CHUNKED_ENCODING|CONTENT_LENGTH_MISMATCH|QUIC_\w+|SSL_PROTOCOL_ERROR)|other side closed|premature(ly)? (close|end|termination)|(stream|response|body|connection) (ended|closed) (unexpectedly|prematurely|early|before)|unexpected end of (JSON|stream|data)|unterminated string in JSON|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|server (error|is having trouble)|internal server error|at capacity/i;
+// A 403 is not always a bad key (xAI answers a model the team has no access to, a content refusal, a region block or a disabled team with
+// one; its bad-key answer is a 401). What a 403's text says: 'key' (rejected or missing key), 'model' (no access to this model) or 'other'.
+const FORBIDDEN_KEY_RE = /(invalid|incorrect|missing|bad|wrong|expired|revoked|leaked|not valid)[^|]{0,20}\bapi[ _-]?key|\bapi[ _-]?key[^|]{0,30}(invalid|incorrect|missing|not valid|rejected|expired|revoked|leaked)|\bno api key|invalid_api_key|api_key_invalid|invalid[_ ]authentication/i;
+const FORBIDDEN_MODEL_RE = /(do(es)?( not|n't) have|no|lack|without) (access|permission)[^|]{0,60}\bmodels?\b|\bmodels?\b[^|]{0,60}(not (available|found|enabled|supported|accessible|allowed)|no access|not have access|restricted)|(access|permission) (to|for) (this |the |that )?([\w.:-]+ )?models?\b|not (authori[sz]ed|allowed|permitted) to (use|access|call) (this |the |that )?([\w.:-]+ )?models?\b/i;
+function forbiddenKind(text, types = []) {
+  const t = String(text || '');
+  if (FORBIDDEN_KEY_RE.test(t) || types.some((x) => /invalid_api_key|invalid_x-api-key|authentication_error/.test(x))) return 'key';
+  if (FORBIDDEN_MODEL_RE.test(t)) return 'model';
+  // No message (the SDK's "403 status code (no body)"), or Anthropic's bare permission_error/forbidden ("does not have permission"): as before, the key.
+  if (!t.replace(/\b\d{3} status code \(no body\)|\b(Permission ?Denied|API)?Error\b/gi, '').replace(/[\s|]+/g, '') || types.some((x) => /permission_error|forbidden|unauthorized/.test(x))) return 'key';
+  return 'other';
+}
+
 const STATUS_NO_FALLBACK = new Set([400, 404, 405, 409, 413, 415, 422]); // a bad request is the request's fault: another model gets the same answer
 
 const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' && v !== true && v !== false ? Number(v) : null);
@@ -171,6 +186,11 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   if (creditText && !rated) return limit(false);
   if (status === 429 || status === 402 || rated) return limit(status !== null || types.length > 0);
 
+  if (status === 403) {
+    const why = forbiddenKind(text, types);
+    if (why === 'model') return out('denied', { scope: 'model', resetsAt: now + COOLDOWN.denied });
+    if (why === 'other') return out('other');
+  }
   if (status === 401 || status === 403 || types.some((t) => /authentication_error|permission_error|invalid_api_key|invalid_x-api-key|unauthorized|forbidden/.test(t))) return out('auth');
 
   // Network and server trouble, from a status, a system code or an API error type.
@@ -240,9 +260,9 @@ function createCooldowns() {
     return e;
   };
   return {
-    // Leave `model` alone until the failure's reset time (info from classify). Only limit and unreachable cool a model.
+    // Leave `model` alone until the failure's reset time (info from classify). Only limit, unreachable and denied cool a model.
     mark(model, info, at = Date.now()) {
-      if (!info || (info.kind !== 'limit' && info.kind !== 'unreachable')) return null;
+      if (!info || (info.kind !== 'limit' && info.kind !== 'unreachable' && info.kind !== 'denied')) return null;
       // brief: a failure of the engine's own process (a CLI that would not start), not of the service: the next message tries it again.
       const until = info.brief ? at + COOLDOWN.brief : Math.max(info.resetsAt || 0, at + COOLDOWN.min);
       const e = { until, kind: info.kind, scope: info.scope, exact: Boolean(info.exact) };
@@ -432,7 +452,7 @@ const providerName = (id, options = []) => {
   return p === 'anthropic' ? 'Anthropic' : PROVIDER_NAMES[p] || (options.find((x) => x.id === id)?.provider) || p;
 };
 
-// The notice for a switch. kind: 'limit' | 'unreachable' (it just happened) | 'still' (a new turn starts on the
+// The notice for a switch. kind: 'limit' | 'unreachable' | 'denied' (it just happened) | 'still' (a new turn starts on the
 // stand-in) | 'back' (the cooldown ended). `when` formats a time ("3:40 PM"); by default the local clock.
 // restart: the reply had started and its text is dropped, so the notice says it starts over. trim / noImages: the
 // new model can't hold all of the conversation, or can't see images (see choose).
@@ -444,11 +464,12 @@ function noticeFor({ kind, from, to, resetsAt = 0, exact = false, restart = fals
   const back = exact && resetsAt > now && resetsAt - now < 24 * 60 * MINUTE ? ` Back on ${a} at ${clock(resetsAt)}.` : '';
   const why = reason ? ` (${reason})` : '';
   const extra = `${trim ? ' Its context window is smaller, so the oldest messages are left out.' : ''}${noImages ? ' It can’t see images, so the ones in this chat are left out.' : ''}`;
-  if (restart && (kind === 'limit' || kind === 'unreachable')) {
-    const head = kind === 'limit' ? `${a} hit its limit` : `Couldn’t reach ${providerName(from, options)}${why}`;
+  if (restart && (kind === 'limit' || kind === 'unreachable' || kind === 'denied')) {
+    const head = kind === 'limit' ? `${a} hit its limit` : kind === 'denied' ? `Your ${providerName(from, options)} key has no access to ${a}` : `Couldn’t reach ${providerName(from, options)}${why}`;
     return `${head} — restarting the reply on ${b}.${back}${extra}`;
   }
   if (kind === 'limit') return `${a} hit its usage limit, switched to ${b}.${back}${extra}`;
+  if (kind === 'denied') return `Your ${providerName(from, options)} key has no access to ${a}, switched to ${b}.${extra}`;
   if (kind === 'unreachable') return `Couldn’t reach ${providerName(from, options)}${why}, switched to ${b}.${extra}`;
   if (kind === 'still') return `${a} is still unavailable, using ${b} for now.${back}${extra}`;
   if (kind === 'back') return `Back on ${a}.`;
@@ -478,4 +499,4 @@ const SESSION = `${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
 
 const shared = createCooldowns(); // the app's one set of cooldowns
 
-module.exports = { classify, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, sameKindModel, COOLDOWN, MAX_HOPS };
+module.exports = { classify, forbiddenKind, createCooldowns, shared, order, pick, choose, resolve, capsOf, contextChars, SESSION, usable, nameOf, providerName, noticeFor, reasonFor, providerOf, familyOf, isEngine, relatedOf, sameKindModel, COOLDOWN, MAX_HOPS };

@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A 403 from xAI no longer says your key was rejected unless it was.** xAI answers a model your team cannot use, a content refusal, a region block or a disabled team with a 403, and Lumen treated every 403 as a bad key and stopped using the whole provider. Now only a 401, or a 403 that says the key is invalid or missing, is a key problem. A 403 saying you have no access to a model moves the chat to another model of the same provider and the notice names the model; any other 403 shows xAI's own message. Test: test/units/fallback-units.js and test/units/chat-images-units.js.
 - **A dropped connection mid-reply now switches models.** When a provider’s connection broke partway through a reply (a reset, a network change, a cut-off stream), Lumen sometimes just showed an error; it now moves to the next model like any other connection problem, and Stop still just stops.
 - Gemini 3.x models now show a cost in chat usage, and Gemini 3 tool-using chats keep the model's reasoning signatures between steps, so long tool runs no longer fail with a 400 error.
 

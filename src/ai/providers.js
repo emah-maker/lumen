@@ -455,7 +455,7 @@ async function generateOpenRouterImage({ apiKey, prompt, model, signal, client, 
   return { images: found.map((i) => ({ ...i, alt: i.alt || prompt.slice(0, 300) })), model: id, said: '' };
 }
 
-function describeProviderError(err, provider) {
+function describeProviderError(err, provider, model = '') {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
   if (provider === 'local') { // a server on this computer: not the internet, and no key
@@ -471,6 +471,14 @@ function describeProviderError(err, provider) {
   if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   // A model that takes no images, given a chat that holds some (a catalog can be wrong or silent about it).
   if ([400, 404, 415, 422].includes(err.status) && /image|vision|multimodal|modalit/i.test(String(err.message || ''))) return { text: `This ${label} model can't read images. Remove the image from the chat (start a new chat) or pick a model that can see images.` };
+  // A 403 is a bad key only when it says so: xAI also uses it for a model the key has no access to, a content refusal, a region block.
+  const forbidden = err.status === 403 ? require('./fallback').forbiddenKind([err.message, err.error?.message, err.error?.error?.message, err.error?.error, err.error?.code].filter((p) => typeof p === 'string').join(' | '), [err.type, err.error?.type, err.error?.error?.type].filter((t) => typeof t === 'string').map((t) => t.toLowerCase())) : null;
+  if (forbidden === 'model') return { text: `Your ${label} key has no access to ${String(model || '').replace(/^[a-z][a-z0-9]*:/, '') || 'this model'}. Pick another model.` };
+  if (forbidden === 'other') {
+    const said = String(err.error?.message || err.error?.error?.message || err.error?.error || err.message || '').replace(/^\d{3}\s*/, '');
+    const plain = /^\s*[{[]/.test(said) ? (() => { try { const j = JSON.parse(said); return String(j?.error?.message || (typeof j?.error === 'string' ? j.error : '') || j?.message || j?.code || ''); } catch { return ''; } })() : said;
+    return { text: `${label} refused the request (error 403)${plain ? `: ${plain.slice(0, 240)}` : '.'}` };
+  }
   if (err.status === 401 || err.status === 403) return { text: `That ${label} API key was rejected. Add a valid key to continue.`, action: 'settings' };
   if (err.status === 402) return { text: provider === 'openrouter' ? 'Your OpenRouter credits have run out. Add credits at openrouter.ai/settings/credits, or pick a free model.' : `${label} says payment is required. Check your ${label} billing.` };
   if (err.status === 404) return { text: `This ${label} model isn't available for your key. Pick another model.` };
