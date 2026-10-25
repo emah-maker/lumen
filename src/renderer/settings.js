@@ -345,10 +345,10 @@ class Slot {
   subpage(id, label, desc, more = '') {
     const sub = new Slot(id, label, this.cat);
     sub.pending = ''; sub.isSub = true;
-    if (slots.has(id) && !slots.get(id).isSub) slots.set(`${id}~parent`, slots.get(id)); // (the Widgets slot and its sub-page share an id)
+    if (slots.has(id) && !slots.get(id).isSub) { slots.get(id).el.id = `sec-${id}-parent`; slots.set(`${id}~parent`, slots.get(id)); } // (the Widgets slot and its sub-page share an id: the slot's element gets another, the page keeps sec-<id>)
     slots.set(id, sub);
     const catTitle = categories.get(this.cat).title;
-    const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${catTitle}`, onclick: () => { location.hash = `#${this.cat}`; } },
+    const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${catTitle}`, onclick: () => { location.hash = `#${this.cat}`; } }, // (finishRoute puts the page back where the link was)
       h('span', { class: 'chev', 'aria-hidden': 'true' }), catTitle);
     sub.pane = h('div', { class: 'pane subpane', id: `sub-${id}`, hidden: true }, h('div', { class: 'subhead' }, back), h('h1', { class: 'pane-title', text: label }), sub.el);
     $('sections').append(sub.pane);
@@ -358,13 +358,18 @@ class Slot {
     link.dataset.search += ` ${more}`.toLowerCase();
     link.tabIndex = 0;
     link.setAttribute('role', 'link');
-    link.addEventListener('click', () => { location.hash = `#${id}`; });
-    link.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); location.hash = `#${id}`; } });
+    const open = () => { returnTo = { cat: this.cat, sub: id, y: window.scrollY }; location.hash = `#${id}`; };
+    link.addEventListener('click', open);
+    link.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     sub.link = link;
     this.append(link);
     return sub;
   }
 }
+let returnTo = null; // the page and scroll position a sub-page link was followed from: Back (or the browser's) restores it
+let lastSub = null; // the sub-page shown by the previous route
+let focusTimers = []; // the retries that look for a link's target row; a later route cancels them
+let routedEl = null; // the element the last route focused
 const visibleNow = (el) => el.offsetParent !== null; // on screen now (not in a hidden category or filtered out)
 
 // A summary line that folds a handful of rows away. Searching opens it when one of its rows matches (see show()).
@@ -2396,7 +2401,7 @@ function buildStartup(card) {
     h('span', { class: 'grow mono', text: url }),
     h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
   const radios = [['restore', 'Continue where you left off'], ['newtab', 'Open the New Tab page'], ['pages', 'Open a specific page or set of pages']].map(([value, text]) => {
-    const r = h('input', { type: 'radio', name: 'startup', value, id: `startup-${value}`, checked: st.prefs.startup === value, onchange: () => save('startup', value) });
+    const r = h('input', { type: 'radio', name: 'startup', value, id: `startup-opt-${value}`, checked: st.prefs.startup === value, onchange: () => save('startup', value) });
     return h('label', { class: 'check' }, r, text);
   });
   renderPages();
@@ -3590,6 +3595,10 @@ function revealFolded() {
   requestAnimationFrame(fitDescs);
 }
 function finishRoute({ id, focus, focusEl }) {
+  for (const timer of focusTimers) clearTimeout(timer);
+  focusTimers = [];
+  if (routedEl && document.activeElement === routedEl) routedEl.blur(); // (the last link's target keeps no focus once another page is asked for)
+  routedEl = null;
   revealFolded(); // (a page change before the next frame: everything that was folded is there)
   if (document.activeElement === $('search') && !query()) $('search').blur(); // (#search is also the sidebar field's id: the browser would focus it)
   if (query()) $('search').value = '';
@@ -3603,9 +3612,17 @@ function finishRoute({ id, focus, focusEl }) {
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
   const target = groupTitle ? [...document.querySelectorAll(`#cat-${view.cat} .group`)].find((g) => g.dataset.title === groupTitle) : focus && $(`sec-${focus}`);
-  if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); } else window.scrollTo(0, 0);
-  // (Its row may still be loading: looked for over the next second.)
-  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) setTimeout(() => { const el = document.querySelector(focusEl); if (el && document.activeElement !== el && !el.dataset.routed) { el.dataset.routed = '1'; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100);
+  // Back from a sub-page: where its link was (the scroll the page had), else the link itself, else the top.
+  const from = !view.sub && lastSub && slots.get(lastSub);
+  const back = !target && from && from.cat === view.cat && from.link;
+  if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); }
+  else if (back && returnTo?.sub === lastSub && returnTo.cat === view.cat) window.scrollTo(0, returnTo.y);
+  else if (back && visibleNow(back)) back.scrollIntoView({ block: 'center' });
+  else window.scrollTo(0, 0);
+  lastSub = view.sub;
+  if (!view.sub) returnTo = null;
+  // (Its row may still be loading: looked for over the next second, each try cancelled by the next route.)
+  if (focusEl) for (let i = 0, tries = 10; i < tries; i++) focusTimers.push(setTimeout(() => { const el = document.querySelector(focusEl); if (el && !routedEl && document.activeElement !== el) { routedEl = el; el.focus(); el.scrollIntoView({ block: 'center' }); } }, i * 100));
 }
 
 async function init() {
