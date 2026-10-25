@@ -6028,7 +6028,7 @@ function runView(run, recWanted = null) {
     focused: Boolean(w && !w.isDestroyed() && w.isFocused()),
     sidebarOpen: Boolean((uiWc && sidebarShown.get(uiWc)) || chatPageRt?.chatTabs().some((t) => t.id === activeIdOf(rec || curRec))),
     chatOpen: run.chatId === chatId,
-    onRunTab: runTab == null || runTab === activeIdOf(rec || curRec),
+    onAiTab: runTab != null && runTab === activeIdOf(rec || curRec), // the user is on the tab the AI works in
     chatHere: chatBind.chatOf(activeIdOf(rec || curRec)) === run.chatId, // [chat per tab] the user is on the chat's own tab (the AI may be working in another)
   };
 }
