@@ -7,6 +7,7 @@
 let OpenAIModule = null;
 const OpenAISDK = () => (OpenAIModule ||= require('openai'));
 const { netFetch } = require('../browser/net-fetch');
+const { isContextError } = require('./fallback'); // one "too long for the model" matcher for every caller
 const genImages = require('../features/gen-images');
 const effortLib = require('./effort');
 const providerUsage = require('../features/provider-usage');
@@ -468,7 +469,7 @@ function describeProviderError(err, provider, model = '') {
     const how = /TIMEDOUT|TIMEOUT/i.test(code) || /timed? ?out/i.test(String(err.message || '')) ? `${label} took too long to answer. Try again, or pick another model.` : `Could not reach ${label}. Check your internet connection and try again.`;
     return { text: how };
   }
-  if (/context length|maximum context|too many tokens|reduce the length/i.test(String(err.message || ''))) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
+  if (isContextError(err)) return { text: 'This chat has grown too long for the model. Start a new chat (the + at the top of the sidebar) to keep going.' };
   // A model that takes no images, given a chat that holds some (a catalog can be wrong or silent about it).
   if ([400, 404, 415, 422].includes(err.status) && /image|vision|multimodal|modalit/i.test(String(err.message || ''))) return { text: `This ${label} model can't read images. Remove the image from the chat (start a new chat) or pick a model that can see images.` };
   // A 403 is a bad key only when it says so: xAI also uses it for a model the key has no access to, a content refusal, a region block.
