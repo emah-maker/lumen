@@ -4,7 +4,7 @@
 // window, the end column contains its items, the address keeps a usable width, and every pill's buttons can still be reached
 // (visible, in the window, on top, named). The pills go compact (a short label, then icons only) to make the room; the long words
 // stay in the tooltip and the accessible name. The tab strip's pills are checked too.
-// Run alone: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/e2e/toolbar-layout.js   (TOOLBAR_SHOTS=<dir> saves a picture per width of both pills)
+// Run alone: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/e2e/toolbar-layout.js   (TOOLBAR_SHOTS=<dir> saves a picture per width with every pill showing)
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
@@ -18,7 +18,7 @@ const COPY = {
   short: { update: 'Lumen 0.5.5 is ready: installs when you quit', action: 'Restart', agent: 'Lumen is using this tab' },
   long: { update: 'Couldn’t update to Lumen 0.5.5', action: 'Try again', agent: 'A Long Assistant Name is using this tab' },
 };
-const STATES = [{ id: 'none' }, ...['short', 'long'].flatMap((copy) => [{ id: `update ${copy}`, update: true, copy }, { id: `agent ${copy}`, agent: true, copy }, { id: `both ${copy}`, update: true, agent: true, copy }])];
+const STATES = [{ id: 'none' }, ...['short', 'long'].flatMap((copy) => [{ id: `update ${copy}`, update: true, copy }, { id: `agent ${copy}`, agent: true, copy }, { id: `both ${copy}`, update: true, agent: true, copy }, { id: `every pill ${copy}`, update: true, agent: true, all: true, copy }])];
 
 // In the page: put the pills in a state (with the strip's pills shown, and the pills' slide-in turned off so they are measured settled).
 const SETUP = ({ s, copy }) => {
@@ -34,22 +34,53 @@ const SETUP = ({ s, copy }) => {
   document.getElementById('agent-pill-text').textContent = copy.agent;
   document.getElementById('agent-pill').title = copy.agent;
   for (const id of ['organize-tabs', 'hands-off-strip', 'hide-ai-tabs']) { const b = document.getElementById(id); if (b) b.hidden = false; }
+  // "every pill": the rest of the end column's occupants too, built the way the renderer builds them (app.js): an outside agent's window
+  // badge, the approvals count, a working app and an app asking, focus mode on with its time, a download, the zoom pill in the field.
+  const mk = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
+  const btn = (cls, text) => Object.assign(mk('button', cls, text), { type: 'button' });
+  const on = Boolean(s.all);
+  const show = (id, yes) => { const e = document.getElementById(id); if (e) e.hidden = !yes; };
+  const chip = document.getElementById('agent-window-chip');
+  chip.hidden = !on; chip.textContent = on ? 'Claude Code window' : ''; chip.title = chip.textContent;
+  show('agents-pending', on);
+  const pills = document.getElementById('external-pills');
+  const ext = mk('div', 'external-pill');
+  ext.title = 'Claude Desktop is using Lumen';
+  ext.append(mk('span', 'agent-dot'), mk('span', 'external-pill-text', ext.title), btn('external-takeover', 'Take over'), btn('external-stop', 'Stop'));
+  pills.replaceChildren(...(on ? [ext] : []));
+  pills.hidden = !on;
+  const bar = document.getElementById('external-bar');
+  const words = mk('span', 'update-text external-ask-text');
+  words.append(mk('span', 'ea-rest', 'wants to use Lumen: '), mk('span', 'ea-name', 'Claude Desktop'), mk('span', 'ea-rest', ''));
+  bar.replaceChildren(...(on ? [mk('span', 'update-dot'), words, btn('primary external-ask-btn', 'Allow this time'), btn('external-ask-btn', 'Deny')] : []));
+  bar.title = 'Claude Desktop wants to use Lumen';
+  bar.hidden = !on;
+  document.getElementById('focus-btn').classList.toggle('on', on);
+  const ft = document.getElementById('focus-time');
+  ft.hidden = !on; ft.textContent = on ? '1:29:59' : '';
+  show('downloads', on);
+  const zoom = document.getElementById('zoom');
+  if (zoom) { zoom.hidden = !on; zoom.textContent = on ? '250%' : ''; }
+  document.body.classList.toggle('zoomed', on);
 };
 
 // In the page: report the geometry of the settled toolbar.
 const MEASURE = () => {
   const vis = (el) => el && el.getClientRects().length > 0;
-  const R = (el) => { const r = el.getBoundingClientRect(); return { id: el.id || el.className || el.tagName, l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+  const R = (el) => { const r = el.getBoundingClientRect(); return { el, id: el.id || el.className || el.tagName, l: r.left, r: r.right, t: r.top, b: r.bottom }; };
   const tb = document.querySelector('.toolbar').getBoundingClientRect();
   const start = document.querySelector('.toolbar-start');
   const end = document.querySelector('.toolbar-end');
   const omni = document.querySelector('.omnibox');
   const endBox = end.getBoundingClientRect();
   const rects = [...start.children, omni, ...end.children].filter(vis).map(R);
+  // (the pills' own parts too: a pill whose words outgrow it runs its buttons into each other)
+  for (const g of [...end.children].filter(vis)) if (/pill|chip|external/.test(g.className + g.id) && g.children.length > 1) rects.push(...[...g.children].filter((c) => vis(c) && c.getBoundingClientRect().width > 2).map((c) => ({ ...R(c), id: `${g.id || g.className} > ${c.id || c.className}` })));
   const overlaps = [];
   for (let i = 0; i < rects.length; i++) {
     for (let j = i + 1; j < rects.length; j++) {
       const a = rects[i], b = rects[j];
+      if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
       if (a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5) overlaps.push(`${a.id} x ${b.id} (${Math.round(a.l)}-${Math.round(a.r)} / ${Math.round(b.l)}-${Math.round(b.r)})`);
     }
   }
@@ -76,7 +107,7 @@ const MEASURE = () => {
     const r = b.getBoundingClientRect();
     return { id: b.id, inside: r.left >= strip.left - 0.5 && r.right <= strip.right + 0.5, overlap: r.left < tabs.right - 0.5 && r.right > tabs.left + 0.5 };
   });
-  return { overlaps, outside, endOut, pills, stripPills, omniW: omni.getBoundingClientRect().width, compact: end.dataset.compact, vw: innerWidth, sw: document.documentElement.scrollWidth };
+  return { kids: [...end.children].filter(vis).map((c) => (c.id || c.className) + ':' + Math.round(c.getBoundingClientRect().width)).join(' '), overlaps, outside, endOut, pills, stripPills, omniW: omni.getBoundingClientRect().width, compact: end.dataset.compact, vw: innerWidth, sw: document.documentElement.scrollWidth };
 };
 
 (async () => {
@@ -92,7 +123,7 @@ const MEASURE = () => {
     await page.waitForSelector('#update-pill', { state: 'attached' });
     const min = await app.evaluate(({ BrowserWindow }) => [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].getMinimumSize()[0]);
     check('Lumen has a minimum window width of 800 px or less', min > 0 && min <= 800, min);
-    for (const w of [1400, 1200, 1000, 900, 800, 'min']) {
+    for (const w of [1920, 1400, 1280, 1200, 1000, 900, 800, 'min']) {
       await app.evaluate(win, w);
       await page.waitForTimeout(400);
       const vw = await page.evaluate(() => innerWidth);
@@ -105,25 +136,25 @@ const MEASURE = () => {
         await page.waitForTimeout(120);
         const m = await page.evaluate(MEASURE);
         const tag = `${label}, ${s.id}`;
-        if (process.env.TOOLBAR_DEBUG) console.log(tag, JSON.stringify({ compact: m.compact, omniW: m.omniW, pills: m.pills.map((p) => [p.id, p.w]) }));
+        if (process.env.TOOLBAR_DEBUG) console.log(tag, JSON.stringify({ compact: m.compact, omniW: m.omniW, pills: m.pills.map((p) => [p.id, p.w]), kids: m.kids }));
         check(`${tag}: nothing overlaps and nothing leaves the toolbar`, m.overlaps.length === 0 && m.outside.length === 0, JSON.stringify({ overlaps: m.overlaps, outside: m.outside, compact: m.compact }));
-        check(`${tag}: the end column contains its items and the address keeps room`, m.endOut.length === 0 && m.omniW >= 240 - 0.5, JSON.stringify({ endOut: m.endOut, omniW: m.omniW }));
+        check(`${tag}: the end column contains its items and the address keeps room`, m.endOut.length === 0 && m.omniW >= (m.compact === '4' ? 160 : 240) - 0.5, JSON.stringify({ endOut: m.endOut, omniW: m.omniW }));
         const pillsOk = m.pills.length === (s.update ? 1 : 0) + (s.agent ? 1 : 0) && m.pills.every((p) => p.bad.length === 0 && p.name.includes(p.words) && p.title.includes(p.words));
         check(`${tag}: every pill is shown, reachable, named, with its full words in the tooltip`, pillsOk, JSON.stringify(m.pills));
         check(`${tag}: the page does not scroll sideways`, m.sw <= m.vw, `${m.sw} > ${m.vw}`);
         if (s.id === 'both long') {
           for (const p of m.stripPills) check(`${tag}: tab strip #${p.id} is inside the strip and clear of the tabs`, p.inside && !p.overlap, JSON.stringify(p));
-          if (process.env.TOOLBAR_SHOTS) {
-            fs.mkdirSync(process.env.TOOLBAR_SHOTS, { recursive: true });
-            await page.screenshot({ path: path.join(process.env.TOOLBAR_SHOTS, `toolbar-${vw}.png`), clip: { x: 0, y: 0, width: vw, height: 92 } }).catch((e) => console.log('screenshot failed:', e.message));
-          }
+        }
+        if (s.id === 'every pill long' && process.env.TOOLBAR_SHOTS) {
+          fs.mkdirSync(process.env.TOOLBAR_SHOTS, { recursive: true });
+          await page.screenshot({ path: path.join(process.env.TOOLBAR_SHOTS, `toolbar-all-pills-${vw}.png`), clip: { x: 0, y: 0, width: vw, height: 92 } }).catch((e) => console.log('screenshot failed:', e.message));
         }
       }
     }
     // Compaction comes in steps: a wide window keeps the full words, the narrowest is icons only.
     await app.evaluate(win, 1400);
     await page.waitForTimeout(300);
-    await page.evaluate(SETUP, { s: STATES.at(-1), copy: COPY.long });
+    await page.evaluate(SETUP, { s: STATES.find((x) => x.id === 'both long'), copy: COPY.long });
     await page.waitForTimeout(150);
     check('at 1400 px both pills keep their full words', (await page.evaluate(() => document.querySelector('.toolbar-end').dataset.compact)) === '0', 'compact');
     await app.evaluate(win, 'min');
