@@ -6754,6 +6754,16 @@ function saveSession({ excluding = null, background = false } = {}) {
   if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
 }
 
+// The first window's saved session comes back with the chat page in front (restoreSession's own test: any mode but a new tab or chosen pages restores it).
+function chatPageInFront() {
+  try {
+    if (['newtab', 'pages'].includes(settingsBackend.startupPlan().mode)) return false;
+    const saved = readSettings().session;
+    const urls = Array.isArray(saved?.urls) ? saved.urls : [];
+    return Boolean(urls.length) && chatPage.isChatUrl(urls[Math.min(Math.max(0, saved.active || 0), urls.length - 1)]);
+  } catch { return false; }
+}
+
 function restoreSession(entry = null) {
   // [settings] On startup: continue where you left off (default), a new tab, or chosen pages.
   // (Only the first window follows this; a window restored from `more` just gets its own tabs.)
@@ -12853,7 +12863,12 @@ app.whenReady().then(async () => {
   wireSchedulerPower();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
-  const blocking = adblock.setup().then(() => perf.mark('adblockSetup')).catch((err) => console.error('Ad blocker failed to start:', err));
+  // The filter lists' engine loads in one ~0.4 s block of the main process (and the library's code ~0.15 s before it), during which the window's
+  // page cannot commit and nothing answers it. A page of Lumen's own (the chat page in front when the session is restored) has nothing to filter,
+  // so it opens first and the engine loads once that tab has loaded (the startup queue below), like a first run's, which never held the window up.
+  const chatFirst = chatPageInFront();
+  const startBlocker = () => adblock.setup().then(() => perf.mark('adblockSetup')).catch((err) => console.error('Ad blocker failed to start:', err));
+  const blocking = chatFirst ? null : startBlocker();
   // (Neither holds the tabs back more than 3 s: a stuck start must not leave a window with no tabs.)
   const atMost = (p, ms = 3000) => Promise.race([p, new Promise((r) => setTimeout(r, ms))]);
   // Extensions: registered by now if they load quickly; one with a big rule set takes seconds, and the pages must not wait
@@ -12864,6 +12879,7 @@ app.whenReady().then(async () => {
   setTimeout(markFirstTabLoaded, 8000).unref?.(); // (a first tab that never finishes doesn't hold these back)
   // Everything below waits for the first tab to have loaded, then runs one task at a time, a gap apart (features/startup-queue.js).
   const startup = require('./features/startup-queue').createStartupQueue();
+  if (chatFirst) startup.add('ad blocker', startBlocker, { priority: 0 });
   startup.add('spare new-tab page and warm renderer', () => { makeSpareNewTab(); warmSoon(400); }, { priority: 1 }); // a new-tab page ready for the first Ctrl+T, and a renderer for the first web page
   startup.add('performance mode', () => perfMode.start(), { priority: 2 }); // power events, and whether the GPU really draws
   startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
