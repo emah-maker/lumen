@@ -6,7 +6,7 @@
 //   the browser UI        files:<op>           (window.lumenFiles, preload.js)   [files:open is taken by dropped files: files:open-entry]
 //   the new-tab page      newtab-files:<op>    (window.lumenFiles, files-newtab-preload.js)
 //   Settings              settings:files-<op>  (lumenSettings.files, settings-preload.js)
-// Ops: list pin unpin remove clear open show find relocate search attach scan restore. The change event goes to all three:
+// Ops: list pin unpin remove clear open show find relocate search attach thumb scan restore. The change event goes to all three:
 // files:changed (UI), newtab-files:changed (every new-tab page), settings:files-changed (Settings). A file chosen with Alt+Enter goes to the
 // sidebar's composer as files:attach-file { name, type, data (the bytes) } (window.lumenFiles.on('attach-file', cb)).
 //
@@ -20,7 +20,7 @@ const path = require('path');
 const store = require('./files-store');
 const fuzzy = require('./files-fuzzy');
 
-const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'scan', 'restore'];
+const OPS = ['list', 'pin', 'unpin', 'remove', 'clear', 'open', 'show', 'find', 'relocate', 'search', 'attach', 'thumb', 'scan', 'restore'];
 const channelFor = {
   ui: (op) => (op === 'open' ? 'files:open-entry' : `files:${op}`),
   newtab: (op) => `newtab-files:${op}`,
@@ -42,7 +42,7 @@ const extOf = (p) => path.extname(String(p)).slice(1).toLowerCase();
 const isAbs = (p) => typeof p === 'string' && p.length < 4096 && path.isAbsolute(p) && !p.includes('\0') && !/^\\\\|^\/\/[^/]/.test(p); // (network paths are not used)
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
 
-// deps: { file, encrypt, decrypt, available, remember(), ignore(path), openFile(path), openPath(path), showItem(path), pick(kind), send(channel, payload),
+// deps: { file, encrypt, decrypt, available, remember(), ignore(path), openFile(path), openPath(path), showItem(path), pick(kind), thumb(path), send(channel, payload),
 //         broadcast(), scanRoots() -> { roots, blocked(path) }, now, indexer }
 function create(deps) {
   const now = deps.now || (() => Date.now());
@@ -207,6 +207,14 @@ function create(deps) {
       if (transient.size > 500) for (const k of [...transient.keys()].slice(0, 250)) transient.delete(k);
       out.sort((a, b) => b.score - a.score);
       return out.slice(0, SEARCH_LIMIT).map(({ score, ...rest }) => rest);
+    },
+    // The first page of a Word, Excel or PowerPoint file in the list (or one the picker found), for the picker's and the card's preview: { dataUrl, w, h } or null.
+    async thumb(id) {
+      await load();
+      const e = resolve(id);
+      if (!e || e.kind === 'folder' || e.missing || !deps.thumb || !/\.(?:docx|xlsx|pptx)$/i.test(e.path)) return null;
+      const t = await deps.thumb(e.path);
+      return t ? { dataUrl: t.dataUrl, w: t.w, h: t.h } : null;
     },
     // Alt+Enter: the file goes to the sidebar's composer the way a dropped file does (the UI shows the sidebar). -> { ok, reason? }
     async attach(id) {

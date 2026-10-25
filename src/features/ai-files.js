@@ -12,6 +12,7 @@
 //                                (its own Write/Edit result, or written during the run): it may preview and auto-open. Any other
 //                                file a reply names gets a card without a preview, and Open asks first (the local-files rules of #340).
 //   previewOf(entry)             { kind: 'html' | 'svg', text } | { kind: 'image', dataUrl } for a trusted card, else null
+//   isOfficeCard(entry)          a Word, Excel or PowerPoint file: its preview is a first-page picture drawn by main (features/office-thumb.js), asked for by id
 //   pickMain(files)              the one file of a reply worth opening on its own (a page, picture or PDF the AI wrote)
 const fs = require('fs');
 const path = require('path');
@@ -24,16 +25,21 @@ const KINDS = {
   svg: ['svg'],
   image: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
   pdf: ['pdf'],
+  docx: ['docx'], // Word, Excel and PowerPoint: a first-page thumbnail (office-thumb.js) and Lumen's own viewers in a tab
+  xlsx: ['xlsx'],
+  pptx: ['pptx'],
 };
 const KIND_OF = new Map();
 for (const [kind, exts] of Object.entries(KINDS)) for (const e of exts) KIND_OF.set(e, kind);
 // What Chromium shows in a tab by itself: pages, pictures, PDFs (Lumen's viewer), plain text and code.
-const TAB_EXTS = new Set([...KIND_OF.keys(), 'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'xml', 'css', 'js', 'mjs', 'ts', 'tsx', 'jsx', 'py', 'yaml', 'yml', 'toml', 'bmp', 'ico', 'avif', 'pptx']);
+const TAB_EXTS = new Set([...KIND_OF.keys(), 'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'xml', 'css', 'js', 'mjs', 'ts', 'tsx', 'jsx', 'py', 'yaml', 'yml', 'toml', 'bmp', 'ico', 'avif', 'pptx', 'docx', 'xlsx']);
 // Never handed to the system's "open": it would run them.
 const RUNS_CODE = new Set(['exe', 'bat', 'cmd', 'com', 'msi', 'msp', 'scr', 'pif', 'lnk', 'url', 'ps1', 'psm1', 'psd1', 'vbs', 'vbe', 'wsf', 'wsh', 'js', 'jse', 'hta', 'jar', 'reg', 'cpl', 'dll', 'sh', 'bash', 'command', 'app', 'dmg', 'appimage', 'deb', 'rpm', 'apk', 'inf', 'gadget', 'application', 'chm']);
 
 const PREVIEW_MAX = 2 * 1024 * 1024; // the canvas's own limit (renderer/chat-canvas.js)
 const IMAGE_MAX = 8 * 1024 * 1024;
+const OFFICE_KINDS = new Set(['docx', 'xlsx', 'pptx']);
+const OFFICE_MAX = 100 * 1024 * 1024; // a bigger file is not drawn for a thumbnail (office-thumb.js reads the same limits)
 const MAX_FILES = 4; // cards per reply
 const MAX_CANDIDATES = 24;
 
@@ -105,7 +111,7 @@ function resolveFiles(paths, { fsImpl = fs, platform = process.platform } = {}) 
 const idOf = (file) => crypto.createHash('sha1').update(normal(file)).digest('hex').slice(0, 16);
 
 function cardOf(file, trusted) {
-  const previewable = Boolean(trusted) && ((file.kind === 'html' || file.kind === 'svg') ? file.size <= PREVIEW_MAX : file.kind === 'image' ? file.size <= IMAGE_MAX : false);
+  const previewable = Boolean(trusted) && ((file.kind === 'html' || file.kind === 'svg') ? file.size <= PREVIEW_MAX : file.kind === 'image' ? file.size <= IMAGE_MAX : OFFICE_KINDS.has(file.kind) ? file.size <= OFFICE_MAX : false);
   return {
     id: idOf(file.path), name: file.name, dir: file.dir, path: file.path, ext: file.ext, kind: file.kind, size: file.size, trusted: Boolean(trusted), previewable,
     canTab: canOpenInTab(file.ext), canSystem: canOpenInSystem(file.ext),
@@ -155,6 +161,8 @@ function previewOf(entry, { fsImpl = fs } = {}) {
   } catch { /* gone */ }
   return null;
 }
+
+const isOfficeCard = (entry) => Boolean(entry && entry.trusted && OFFICE_KINDS.has(entry.kind)); // (an untrusted card, one the reply only named, gets no preview of any kind)
 
 // The address a tab opens for a file: the PDF viewer and the slide viewer take the file's own address (main.js wraps it).
 const fileUrlOf = (file) => pathToFileURL(file).href;
@@ -216,4 +224,4 @@ function wasWritten(chat, file) {
   return Boolean(set && (set.has(normal(path.resolve(file.path))) || set.has(normal(file.path))));
 }
 
-module.exports = { noteWritten, wasWritten, findPaths, resolveFiles, cardOf, createRegistry, previewOf, pickMain, kindOf, extOf, canOpenInTab, canOpenInSystem, fileUrlOf, idOf, shared, restore, restoreWritten, isFresh, normal, MAX_FILES, PREVIEW_MAX };
+module.exports = { noteWritten, wasWritten, findPaths, resolveFiles, cardOf, createRegistry, previewOf, isOfficeCard, pickMain, kindOf, extOf, canOpenInTab, canOpenInSystem, fileUrlOf, idOf, shared, restore, restoreWritten, isFresh, normal, MAX_FILES, PREVIEW_MAX };

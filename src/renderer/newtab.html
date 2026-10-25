@@ -597,6 +597,8 @@
     .fl-main { appearance: none; flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 0; padding: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: default; outline: none; }
     .fl-main .w-main { min-width: 0; }
     .fl-main:focus-visible, .fl-cand:focus-visible, .fl-find:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+    .fl-preview { position: fixed; z-index: 60; width: 224px; padding: 6px; border-radius: 12px; background: var(--surface-raised, var(--bg)); box-shadow: 0 0 0 0.5px var(--border, rgba(128, 128, 128, 0.35)), 0 14px 36px -10px rgba(0, 0, 0, 0.45); pointer-events: none; }
+    .fl-preview img { display: block; width: 100%; max-height: 300px; object-fit: cover; object-position: top; border-radius: 8px; background: #fff; }
     .fl-icon { flex: none; display: grid; place-items: center; width: 20px; height: 20px; color: var(--muted); }
     .fl-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }
     .fl-icon.k-folder { color: var(--fl-folder); } .fl-icon.k-folder svg { fill: color-mix(in srgb, currentColor 16%, transparent); }

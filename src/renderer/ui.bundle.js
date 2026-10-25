@@ -2717,6 +2717,7 @@ explain describe list find give compare difference summarize summary write rewri
   }
   function open({ lang, code, opener, quiet = false }) {
     panel ||= build();
+    delete panel.aside.dataset.mode;
     lastOpener = opener || null;
     const kind = kindOf(lang, code);
     state = { lang: String(lang || ''), kind, code: String(code || ''), tab: 'code' };
@@ -2730,8 +2731,26 @@ explain describe list find give compare difference summarize summary write rewri
     show(previewable(kind) ? 'preview' : 'code');
     if (!quiet) panel.aside.querySelector('.cv-tab.active, .cv-btn')?.focus();
   }
+
+
+  function openImage({ title, src, opener }) {
+    if (typeof src !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(src)) return;
+    panel ||= build();
+    lastOpener = opener || null;
+    state = { lang: '', kind: 'image', code: '', tab: 'preview' };
+    panel.title.textContent = String(title || '');
+    panel.tabs.hidden = true;
+    panel.codeView.hidden = true;
+    panel.previewBox.hidden = false;
+    panel.previewBox.replaceChildren(el('img', { className: 'cv-image', src, alt: String(title || ''), decoding: 'async' }));
+    panel.aside.dataset.mode = 'image';
+    panel.aside.hidden = false;
+    document.body.classList.add('canvas-open');
+    panel.aside.querySelector('.cv-close')?.focus();
+  }
   function closePanel(restoreFocus) {
     if (!panel) return;
+    delete panel.aside.dataset.mode;
     panel.aside.hidden = true;
     panel.previewBox.replaceChildren();
     document.body.classList.remove('canvas-open');
@@ -2746,10 +2765,11 @@ explain describe list find give compare difference summarize summary write rewri
     b.addEventListener('click', () => open({ lang: pre.dataset.lang, code: pre.querySelector('code')?.textContent ?? pre.textContent, opener: b }));
     copyBtn.before(b);
   }
-  root.chatCanvas = { decorate, open, close: closePanel };
+  root.chatCanvas = { decorate, open, openImage, close: closePanel };
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
 // ---- ai-files.js
+
 
 
 
@@ -2824,12 +2844,18 @@ explain describe list find give compare difference summarize summary write rewri
     host.append(el('div', { className: 'ai-file-head' }, icon, meta), body, bar, status);
 
     const viewable = file.kind === 'html' || file.kind === 'svg';
+    const office = file.kind === 'docx' || file.kind === 'xlsx' || file.kind === 'pptx';
 
     if (viewable && file.previewable && canvasOpen()) bar.append(button(tr('aifile.openCanvas'), async () => {
       const got = await preview(file);
       if (got?.text) window.chatCanvas.open({ lang: file.kind, code: got.text, opener: host.querySelector('.ai-file-btn') });
       else say(host, tr('aifile.gone'));
     }, 'ai-file-btn ai-file-primary'));
+    if (office && file.trusted && file.previewable && canvasOpen() && typeof window.chatCanvas.openImage === 'function') bar.append(button(tr('aifile.openCanvas'), async () => {
+      const got = await preview(file);
+      if (got?.dataUrl && IMAGE.test(got.dataUrl)) window.chatCanvas.openImage({ title: file.name, src: got.dataUrl, opener: host.querySelector('.ai-file-btn') });
+      else say(host, tr('aifile.gone'));
+    }));
     if (file.canTab) bar.append(button(viewable ? tr('aifile.openTab') : tr('aifile.open'), () => openIn(file, host, 'tab'), `ai-file-btn${bar.children.length ? '' : ' ai-file-primary'}`));
     else if (file.canSystem) bar.append(button(tr('aifile.openApp'), () => openIn(file, host, 'system'), 'ai-file-btn ai-file-primary'));
     if (file.canTab && file.canSystem && !viewable && file.kind !== 'image' && file.kind !== 'pdf') bar.append(button(tr('aifile.openApp'), () => openIn(file, host, 'system')));
@@ -2852,10 +2878,18 @@ explain describe list find give compare difference summarize summary write rewri
         const b = button(tr('aifile.showPreview'), () => { b.remove(); show(); });
         body.append(b);
       }
-    } else if (file.trusted && file.previewable && file.kind === 'image') {
+    } else if (file.trusted && file.previewable && (file.kind === 'image' || office)) {
       const load = async () => {
+        if (office) body.replaceChildren(el('div', { className: 'ai-file-skeleton', 'aria-hidden': 'true' }));
         const got = await preview(file);
-        if (got?.dataUrl && IMAGE.test(got.dataUrl)) body.replaceChildren(el('img', { className: 'ai-file-thumb', src: got.dataUrl, alt: file.name, decoding: 'async' }));
+        if (got?.dataUrl && IMAGE.test(got.dataUrl)) {
+          const img = el('img', { className: `ai-file-thumb${office ? ' ai-file-office' : ''}`, src: got.dataUrl, alt: office ? tr('aifile.previewOf', { name: file.name }) : file.name, decoding: 'async' });
+          if (!office) { body.replaceChildren(img); return; }
+          const open = button('', () => openIn(file, host, 'tab'), 'ai-file-thumbbtn');
+          open.title = tr('aifile.openTab');
+          open.append(img);
+          body.replaceChildren(open);
+        } else if (office) body.replaceChildren();
       };
       if (typeof IntersectionObserver === 'function') {
         const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { io.disconnect(); load(); } });
@@ -4542,6 +4576,30 @@ async function addFiles(files) {
   return added > 0;
 }
 
+
+const attachThumbs = new Map();
+const OFFICE_NAME = /\.(?:docx|xlsx|pptx)$/i;
+const PNG_URL = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+function showChipThumb(ref, url) {
+  const chip = [...$('attachments').children].find((c) => c.dataset.ref === ref);
+  if (!chip || chip.querySelector('.attachment-thumb')) return;
+  const text = Object.assign(document.createElement('span'), { className: 'attachment-text' });
+  text.append(...chip.querySelectorAll('.attachment-ext, .attachment-name, .attachment-size'));
+  chip.classList.add('has-thumb');
+  chip.prepend(Object.assign(document.createElement('img'), { className: 'attachment-thumb', src: url, alt: '', decoding: 'async' }), text);
+}
+function requestChipThumb(a) {
+  if (!a.ref || !OFFICE_NAME.test(a.name || '') || typeof window.assistant.uploads?.thumb !== 'function') return;
+  if (attachThumbs.has(a.ref)) { const url = attachThumbs.get(a.ref); if (url) showChipThumb(a.ref, url); return; }
+  attachThumbs.set(a.ref, null);
+  Promise.resolve(window.assistant.uploads.thumb(a.ref)).then((r) => {
+    const url = r && typeof r.dataUrl === 'string' && PNG_URL.test(r.dataUrl) ? r.dataUrl : null;
+    if (!url) return;
+    attachThumbs.set(a.ref, url);
+    showChipThumb(a.ref, url);
+  }).catch(() => {});
+}
+
 function renderAttachments() {
   const strip = $('attachments');
   strip.replaceChildren();
@@ -4559,6 +4617,7 @@ function renderAttachments() {
         Object.assign(document.createElement('span'), { className: 'attachment-name', textContent: a.name }),
         Object.assign(document.createElement('span'), { className: 'attachment-size', textContent: fileSize(a.size) }),
       );
+      if (a.ref) chip.dataset.ref = a.ref;
     } else {
       const img = document.createElement('img');
       img.src = a.url;
@@ -4573,6 +4632,7 @@ function renderAttachments() {
     remove.onclick = () => { const [gone] = attachments.splice(i, 1); if (gone?.ref) window.assistant.uploads?.discard(gone.ref); renderAttachments(); showAttachNote([]); prompt.focus(); };
     chip.append(remove);
     strip.append(chip);
+    if (isFileItem(a)) requestChipThumb(a);
   });
 
   pastes.forEach((text, i) => {

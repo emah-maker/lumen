@@ -4,6 +4,8 @@ A short map of how Lumen is put together, for anyone reading or changing the cod
 
 Lumen is an Electron app with no bundler or framework: plain CommonJS in the main process and plain `<script>` files in its pages.
 
+**Office files.** A `.docx`, `.xlsx` or `.pptx` is a zip of XML. `features/pptx.js` holds the zip and XML readers (size, entry, inflated-byte and node limits, no DTDs); `features/office-doc.js` reads a Word or Excel file into plain JSON with them, and `renderer/office.html` + `office.js` draw that JSON with DOM calls only under a CSP with no network (the same design as the slide viewer and the email viewer). The tab checks every tab needs live in `features/file-tabs.js`; `features/office-viewer.js` is loaded when the first file is shown. `features/office-thumb.js` makes the first-page pictures for file cards, chips, the Files picker and card, and the downloads panel: a hidden, locked-down window loads the same viewer page, is captured, and the PNG is cached by path, size and time (`<profile>/office-thumb-cache`).
+
 ## Processes
 
 ```
