@@ -27,7 +27,11 @@ function sendBounds(bounds) {
   lastBounds = key;
   window.browser.setContentBounds(bounds);
 }
+// A page snapshot is on screen but main has not hidden the live view yet (freezePage): the view keeps its size until it has, or it would
+// reflow in plain sight for the two frames the image needs to paint. See freezePage, which opens and closes this gate.
+let boundsGate = null;
 function reportBounds() {
+  if (boundsGate) { boundsGate.then(reportBounds); return; }
   if (!boundsHeld) sendBounds(currentBounds());
 }
 // sendBounds, resolved once main has resized the page view (never rejects; resolves at once when the size is the one main has).
@@ -2521,9 +2525,11 @@ function edgeColor(img) {
 let lastSnapshotEdge = '';
 async function freezePage() {
   const token = ++freezeToken;
-  // The area the snapshot fills, in CSS pixels: main captures it at that size, not at device size.
+  // The area the snapshot fills, in CSS pixels. Main encodes it at DEVICE pixels (CSS size x devicePixelRatio): at 125-200% display scaling a
+  // CSS-size image drawn at CSS size is stretched by the screen and reads soft next to the live page (it was the blur on every sidebar slide).
   const r = heldRect || viewport.getBoundingClientRect();
-  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width), height: Math.round(r.height) });
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const bytes = await window.browser.freezeView?.({ width: Math.round(r.width * dpr), height: Math.round(r.height * dpr) });
   if (!bytes || token !== freezeToken) return;
   // The JPEG arrives as bytes (not a base64 data URI): a blob URL costs no giant string to build or parse.
   const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
@@ -2546,10 +2552,20 @@ async function freezePage() {
   viewport.append(img);
   // The image sits under the live page view. Only once it is painted does main hide that view: hiding it as soon as the capture was
   // taken left the page area blank for the few frames the image needed to decode and paint (a white flash on every open and close).
-  await new Promise((done) => afterPaint(done));
-  if (token !== freezeToken) return; // thawed meanwhile
-  window.browser.freezeShown?.();
+  // The slide does not wait for those frames (showSidebar starts as soon as the image is in): the page view's new size is held back
+  // by boundsGate until view:frozen has gone to main, and IPC keeps the order, so the view is hidden before it is resized.
+  let open;
+  const gate = boundsGate = new Promise((done) => { open = done; });
+  gate.then(() => { if (boundsGate === gate) boundsGate = null; });
+  snapshotUp();
+  try {
+    await new Promise((done) => afterPaint(done));
+    if (token !== freezeToken) return; // thawed meanwhile
+    window.browser.freezeShown?.();
+  } finally { open(); }
 }
+let snapshotWaiters = []; // showSidebar: waiting for the image to be in
+function snapshotUp() { const w = snapshotWaiters; snapshotWaiters = []; w.forEach((done) => done()); }
 // Runs fn once the UI has painted what it just changed: two frames, or a short timer where no frames are drawn (a minimized window).
 function afterPaint(fn) {
   let done = false;
@@ -2613,7 +2629,7 @@ async function showSidebar(visible, { fromTab = false, instant = false, newTab =
   let frozen = false;
   if (!still) {
     const pending = early || (snapshot ? null : freezePage());
-    if (pending) await Promise.race([pending, new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
+    if (pending && !snapshot) await Promise.race([pending, new Promise((done) => snapshotWaiters.push(done)), new Promise((done) => setTimeout(done, STILL_FREEZE_WAIT_MS))]);
     if (seq !== showSeq) return; // toggled again while waiting: that call carries on
     frozen = Boolean(snapshot);
   } else if (early) { // (pressed on a page that no longer slides: drop the snapshot it started)
