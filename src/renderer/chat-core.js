@@ -183,7 +183,7 @@ optional('setup-codex').onclick = async () => {
   if (await window.assistant.setModel('codex:default')) await loadModels();
   refreshSetup();
 };
-optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity'); // (Settings > AI > Agents: where each one's install command and Download are)
+optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity'); // (Settings → AI and agents → Agents: where each one's install command and Download are)
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;
@@ -2343,7 +2343,7 @@ permButton.setAttribute('aria-haspopup', 'menu');
 permButton.setAttribute('aria-expanded', 'false');
 
 // ---------- helpers: whether the AI may hand read-only jobs to helpers working side by side (the delegate tool) ----------
-// The same setting as Settings > AI > "Let the AI use helpers to work in parallel" (aiSubagents): main keeps it and tells every view,
+// The same setting as Settings → AI and agents → "Let the AI use helpers to work in parallel" (aiSubagents): main keeps it and tells every view,
 // so the two follow each other. Off: the next message is sent without the tool.
 const helpersButton = $('helpers-btn');
 let helpersMode = 'auto'; // off | auto | on (Auto: the AI gets helpers for a request with several separate parts)
@@ -2363,7 +2363,7 @@ if (helpersButton) {
     if (got != null) helpersMode = helpersModeOf(got);
     renderHelpers();
   };
-  window.addEventListener('lumen:helpers', (e) => { helpersMode = helpersModeOf(e.detail); renderHelpers(); }); // Settings → AI changed it
+  window.addEventListener('lumen:helpers', (e) => { helpersMode = helpersModeOf(e.detail); renderHelpers(); }); // Settings → AI and agents changed it
   window.assistant.helpers?.().then((mode) => { if (mode != null) helpersMode = helpersModeOf(mode); renderHelpers(); });
   renderHelpers();
 }
@@ -2466,7 +2466,7 @@ permMenu.addEventListener('keydown', (e) => {
 });
 // A card's "Allow on all sites" turns Auto-allow on (it never lowers Bypass).
 const setAutoAllow = (on) => setPermMode(on ? 'auto' : 'ask');
-window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permMode = e.detail; renderPerm(); } }); // Settings → AI changed it
+window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permMode = e.detail; renderPerm(); } }); // Settings → AI and agents changed it
 window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permMode = mode; renderPerm(); });
 renderPerm();
 

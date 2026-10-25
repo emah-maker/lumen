@@ -1,4 +1,4 @@
-// [word] The AI working with Microsoft Word documents directly (Settings > AI > "Let the AI use Microsoft Word", on by default; the Word helper
+// [word] The AI working with Microsoft Word documents directly (Settings → AI and agents → "Let the AI use Microsoft Word", on by default; the Word helper
 // itself only starts the first time the tool is used). One tool, word(action, ...), whose actions are in spec.js. docs/word.md has the whole model:
 //   - Windows with Word installed: Word's own object model through a hidden helper (com.js): the real document, with its real undo and styles;
 //   - no Word (or another system): a .docx file is read with its structure, and new paragraphs, headings and tables are written straight into the
@@ -120,7 +120,7 @@ function createWord(deps = {}) {
   }
   const isDocx = (p) => /\.docx$/i.test(p);
 
-  // Settings > AI > "Work on files in their apps" (aiFilesInApps): app = open a .docx in Word to read and edit it, file = read and write the .docx itself, auto = as before (Word when it has the document open or for anything but a plain read).
+  // Settings → AI and agents → "Work on files in their apps" (aiFilesInApps): app = open a .docx in Word to read and edit it, file = read and write the .docx itself, auto = as before (Word when it has the document open or for anything but a plain read).
   const mode = () => { try { const v = S.filesInApps?.(); return v === 'app' || v === 'file' ? v : 'auto'; } catch { return 'auto'; } };
 
   // ---- run

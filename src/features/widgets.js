@@ -3130,7 +3130,7 @@ function createWidgets(deps) {
     return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick, compose: Boolean(creds?.refresh) && GV.hasScope(creds.scope, GV.COMPOSE_SCOPE) };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  // "Allow drafts" (Settings → You and AI → Connectors → Gmail): the signed-in account's sign-in again, with the same client,
+  // "Allow drafts" (Settings → AI and agents → Connectors → Gmail): the signed-in account's sign-in again, with the same client,
   // asking Google to add gmail.compose to what it already allows. Only ever started by that button.
   async function gmailAllowDrafts() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));

@@ -73,7 +73,7 @@ const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
-cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings > AI too
+cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings → AI and agents too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
@@ -600,7 +600,7 @@ let cliLoginValid = null;
 const modelNames = require('./features/model-names');
 // [model fallback] ai/fallback.js: a model out of usage or unreachable is left alone for a while and another connected one answers.
 const aiFallback = require('./ai/fallback');
-const fallbackOn = () => readSettings().autoFallback !== false; // Settings > AI: Switch models automatically when one is unavailable
+const fallbackOn = () => readSettings().autoFallback !== false; // Settings → AI and agents: Switch models automatically when one is unavailable
 // [auto model] The picker's "Auto" (ai/auto-model.js, docs/auto-model.md): which connected model answers a request. The router
 // is pure; this is its settings: the models turned off for Auto (autoExclude), the provider the user was on before choosing Auto
 // (autoHome), the models this account was refused (in memory) and the cooldowns fallback.js keeps. Nothing leaves this computer.
@@ -662,7 +662,7 @@ function modelOptions() {
   return options;
 }
 
-// Settings > AI > "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
+// Settings → AI and agents → "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
 function autoProviderList(options = modelOptions()) {
   const seen = new Map();
   for (const o of options) {
@@ -834,7 +834,7 @@ function closeCurrentWindow() {
   if (target && rcAlive(target)) target.win.close();
 }
 
-// Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → Downloads says (features/link-menu.js).
+// Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → General → Downloads says (features/link-menu.js).
 const linkMenu = require('./features/link-menu');
 const saveAsMarks = linkMenu.createSaveAsMarks();
 function saveUrlAs(wc, url) {
@@ -1146,7 +1146,7 @@ app.whenReady().then(() => {
   session.defaultSession.registerPreloadScript({ id: 'lumen-files-newtab', type: 'frame', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }); // [files] the new-tab page's Files widget (features/files.js)
   session.defaultSession.registerPreloadScript({ id: 'lumen-newtab-ai', type: 'frame', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }); // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
   session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
-  // [hide activity] Settings → Privacy: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
+  // [hide activity] Settings → Privacy and security: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
   hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
   session.defaultSession.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD });
   session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
@@ -3942,7 +3942,7 @@ function userTookOver(tab) {
   const rec = tab.rec;
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
 }
-// [ai tabs] Settings → AI tabs → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
+// [ai tabs] Settings → AI and agents → AI tabs → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
 // gray "AI tabs" group there, folded when it is made, so a run that opens dozens of tabs adds one label to the strip. The
 // tab in front shows even in a folded group (app.js), and the user's own unfolding is kept. The group holds no other tabs
 // (one the user takes over leaves it), so when the AI's tabs close it goes too. Runs in the tab's window (tabGroups is that window's).
@@ -5362,7 +5362,7 @@ const UA_METADATA = CHROME_IDENTITY.uaMetadata({
 // secure origin. Requests from tabs otherwise go out with none at all (and the browser's own with
 // Electron's Chromium-only list): a Chrome user agent without them is what bot checks look for.
 const UA_HINT_HEADERS = CHROME_IDENTITY.lowEntropyHeaders(UA_METADATA);
-// The languages a Chrome on this machine reports: Settings → Languages if set, else the system's (Electron's own
+// The languages a Chrome on this machine reports: Settings → General → Language if set, else the system's (Electron's own
 // default gave navigator.languages ["en-US","en-001"] and an Accept-Language of just "en-US"). One list feeds the
 // Accept-Language header (settings-backend.js) and navigator.languages (applyChromeIdentity), so they cannot disagree.
 const chromeLanguages = {
@@ -6210,7 +6210,7 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 scheduler.every('run-slots', 5000, () => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, { whenHidden: 15000 });
-const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
+const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI and agents → AI providers): the menu is rebuilt when one moves
 const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
 onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
@@ -8692,7 +8692,7 @@ const agentActiveTab = () => {
 // ({ show: true }) and the user is looking at the run's own tab. Opening one never moves the omnibox caret or a field's focus.
 // `ai`: the AI is opening it for its work (marked openedBy the run, so it can be closed again and, in hands-off mode,
 // worked in); Undo reopening a tab it closed is not that.
-// [ai manners] Settings → AI → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
+// [ai manners] Settings → AI and agents → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
 const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
 // [ai manners] the run's latest user message asked to see or go to a tab (manners.showsTab): only then may its open_tab / switch_tab come to the front
 const userAskedToSee = () => { try { const m = agent.currentScope()?.chat; for (let i = (m?.length || 0) - 1; i >= 0; i--) { const x = m[i]; if (x?.role !== 'user') continue; const text = typeof x.content === 'string' ? x.content : Array.isArray(x.content) ? x.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : ''; if (!text.trim()) continue; return manners.userAskedToSee(text); } } catch { /* no run */ } return false; };
@@ -8796,7 +8796,7 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
-// [connectors] Services the user connected for the AI (Settings → You and AI → Connectors; features/connectors/). Nothing of it loads at
+// [connectors] Services the user connected for the AI (Settings → AI and agents → Connectors; features/connectors/). Nothing of it loads at
 // startup: the first thing that needs it (a chat turn while something is connected, the Connectors page, a connect) makes the service.
 // Until then "is anything connected" is answered from the small file itself. A request goes only to that service, and tests point each
 // at 127.0.0.1 (global.__connectorEndpoints), with plain http allowed for that address in test mode only.
@@ -8944,7 +8944,7 @@ ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
 ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
-// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings > AI > "Let the AI use Microsoft Word" (aiWordControl, on by default).
+// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI and agents → "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
 const wordLazy = () => (wordCtl ||= require('./word').createWord({
   settings: { enabled: () => readSettings().aiWordControl !== false, filesInApps: () => readSettings().aiFilesInApps }, // (aiFilesInApps: app | auto | file)
@@ -9007,7 +9007,7 @@ const signedInReader = {
 };
 if (TEST) global.__signedInSites = signedInSites;
 
-// [passwords] Saved passwords (features/passwords.js), off until the user turns on Settings → Privacy and
+// [passwords] Saved passwords (features/passwords.js), off until the user turns on Settings → Privacy and security and
 // security → Save passwords. Encrypted with safeStorage (the OS keychain) in <profile>/passwords.bin.
 // Nothing here goes to the Agent below except filledIn(), a yes/no that makes run_script refuse a
 // site in a tab where the user filled a password. The module loads when the feature is on, or when
@@ -9090,13 +9090,13 @@ const agent = new Agent({
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
-  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings > AI > helpers: the delegate tool is offered; which model they use (agent.js delegate)
-  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings > AI > "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
+  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI and agents → helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI and agents → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
-  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings > AI: compact long API chats (agent.js autoCompact)
-  effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
+  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings → AI and agents: compact long API chats (agent.js autoCompact)
+  effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI and agents → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
@@ -9104,13 +9104,13 @@ const agent = new Agent({
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
-  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings > AI > Image generation, and the providers turned off for Auto
+  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings → AI and agents → Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   codexFullAccess: () => readSettings().codexFullAccess === true, // [full access] ai/codex.js FULL_ON
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
-  chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings > AI > Tab to finish what I'm typing (agent.js autocomplete)
+  chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI and agents → Tab to finish what I'm typing (agent.js autocomplete)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
   memory: { // [memory] Settings → AI and agents → Memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
@@ -9189,11 +9189,11 @@ chatPageRt = chatPage.create({
 });
 chatPageRt.register();
 if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), fromHome: (id, o) => chatPageRt.fromHome(id, o), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
-// [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → You and AI → Usage,
+// [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → AI and agents → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/e2e/usage.js).
-const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').findClaude()), grokSession: () => agent.messages?.settings?.gbSession || null,
+const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').resolveClaude(agent.engines?.claudecode)), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
@@ -10063,16 +10063,16 @@ function relaunchLumen(safe) {
 }
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
-  passkeys, // [passkeys] Settings → Privacy
-  usage, // [usage] You and AI → Usage
-  cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI → AI providers: each CLI's version, path and sign-in
+  passkeys, // [passkeys] Settings → Privacy and security
+  usage, // [usage] AI and agents → Usage
+  cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI and agents → AI providers: each CLI's version, path and sign-in
   refreshNewTabs,
   widgets, // [widgets] Settings → Appearance → Widgets
   showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
-  systemLanguages: () => chromeLanguages.list(), // [identity] Accept-Language when Settings → Languages is empty: the system's, as Chrome sends
+  systemLanguages: () => chromeLanguages.list(), // [identity] Accept-Language when Settings → General → Language is empty: the system's, as Chrome sends
   app, session, nativeTheme, dialog, shell, readSettings, writeSettings, ui,
   BrowserWindow, clipboard, // [widgets] the Slack setup window and clipboard watch (features/slack-setup.js)
   broadcastUi: (channel, payload) => { // [ai manners] every window's browser UI and the chat page, not just the one in front
@@ -10111,7 +10111,7 @@ const settingsBackend = settingsPage.create({
   onHideActivityChange: () => activityScripts.refresh(), // [hide activity] the frames' DevTools scripts follow the settings
   performance: perfMode,
   graphics: graphicsMode,
-  translateLocal: () => translateLocal(), // [translate] Settings → Translation → language packs
+  translateLocal: () => translateLocal(), // [translate] Settings → General → Translation → language packs
 });
 accentCss = require('./features/accent-css').create({ rendererDir: path.join(__dirname, 'renderer'), accent: () => settingsBackend.uiPrefs().accent, all: () => require('electron').webContents.getAllWebContents() }); // [look]
 for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
@@ -11264,7 +11264,7 @@ ipcMain.handle('agent:btw', async (event, id, text) => {
 });
 ipcMain.on('agent:btw-cancel', (event, id) => { btwRuns.get(`${event.sender.id}:${id}`)?.abort(); });
 // [autocomplete] Tab to finish the message being typed: a guess at the rest of `prefix` from the open chat (agent.js autocomplete). One guess per
-// view at a time: a newer one (or agent:autocomplete-cancel) stops the one before. Off in Settings > AI, with the AI off, or on a site the AI is kept off.
+// view at a time: a newer one (or agent:autocomplete-cancel) stops the one before. Off in Settings → AI and agents, with the AI off, or on a site the AI is kept off.
 const autocompleteRuns = new Map(); // sender id -> AbortController
 ipcMain.handle('agent:autocomplete', async (event, prefix) => {
   if (typeof prefix !== 'string' || readSettings().chatAutocomplete === false) return { ok: false, error: 'off', text: '' };
@@ -12319,7 +12319,7 @@ ipcMain.handle('agent:auto-allow', (_e, on) => {
   }
   return readSettings().askBeforeActing === false;
 });
-// [bypass permissions] The bolt menu in the sidebar head (and Settings → AI): 'ask' | 'auto' | 'bypass'. No argument: just read it.
+// [bypass permissions] The bolt menu in the sidebar head (and Settings → AI and agents): 'ask' | 'auto' | 'bypass'. No argument: just read it.
 // Both views follow through prefs:ui. Bypass answers every approval card allow (agent.js askApproval); see features/permission-mode.js.
 ipcMain.handle('agent:permission-mode', (_e, mode) => {
   const patch = permissionModes.patchOf(mode);
@@ -12330,7 +12330,7 @@ ipcMain.handle('agent:permission-mode', (_e, mode) => {
   return permissionModes.modeOf(readSettings());
 });
 
-// [subagents] The sidebar's Helpers row (and Settings → AI): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
+// [subagents] The sidebar's Helpers row (and Settings → AI and agents): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
 ipcMain.handle('agent:helpers', (_e, mode) => {
   const next = mode === true ? 'on' : mode === false ? 'off' : ['off', 'auto', 'on'].includes(mode) ? mode : null;
   if (next) {
@@ -12342,7 +12342,7 @@ ipcMain.handle('agent:helpers', (_e, mode) => {
   return v === true || v === 'on' ? 'on' : v === false || v === 'off' ? 'off' : 'auto';
 });
 
-// [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.
+// [prefer fractions] /fractions on|off in the chat: the Settings → AI and agents switch (aiPreferFractions). No argument: just read it. New chats pick it up.
 ipcMain.handle('agent:prefer-fractions', (_e, on) => {
   if (typeof on === 'boolean') {
     writeSettings({ ...readSettings(), aiPreferFractions: on });
@@ -12436,7 +12436,7 @@ ipcMain.handle('settings:get', () => {
     fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
     autoFallback: fallbackOn(),
     models: pickerOptions(options),
-    autoProviders: autoProviderList(options), // Settings > AI: which providers Auto may use
+    autoProviders: autoProviderList(options), // Settings → AI and agents: which providers Auto may use
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
@@ -12468,7 +12468,7 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   await safeBrowsing.refresh().catch(() => {});
   return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
 });
-// ---- [local AI] Settings → AI → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
+// ---- [local AI] Settings → AI and agents → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
 const localState = () => {
   const lm = require('./ai/local-models');
   const c = lm.clean(readSettings().localAI);

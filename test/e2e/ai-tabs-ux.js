@@ -81,7 +81,7 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
       return { hidden: b.hidden, pressed: b.getAttribute('aria-pressed'), title: b.title, aria: b.getAttribute('aria-description') || '', popup: b.getAttribute('aria-haspopup'), needs: b.classList.contains('needs-you'), chip: document.getElementById('hide-ai-tabs-label').textContent, chipShown: !document.getElementById('hide-ai-tabs-label').hidden };
     });
 
-    // -- Settings > AI > AI tabs
+    // -- Settings → AI and agents → AI tabs
     const sid = await app.evaluate((_e, s) => global.__settings.open(s), 'ai');
     const inTab = (code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return 'ERROR ' + (err?.message || err); } }, [sid, code]);
     await waitFor(() => inTab("Boolean(document.getElementById('pref-hideAiTabs'))"));

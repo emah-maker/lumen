@@ -10,7 +10,7 @@
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
 //   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
-//   /fractions on|off  [prefer fractions] the Settings → AI switch: exact fractions, stacked, instead of decimals (new chats).
+//   /fractions on|off  [prefer fractions] the Settings → AI and agents switch: exact fractions, stacked, instead of decimals (new chats).
 //   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI and agents → Memory.
 //   /help      lists every command.
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows
@@ -131,7 +131,7 @@
     card.el.removeAttribute('aria-busy');
     if (!r || !r.ok) {
       const code = r?.error;
-      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI: Claude Code and the other engines can’t answer a side question mid-task.')
+      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI and agents: Claude Code and the other engines can’t answer a side question mid-task.')
         : code === 'timeout' ? tr('btw.timeout', 'That took too long. Try again.')
           : code === 'busy' ? tr('btw.busy', 'Too many side questions are open. Dismiss one first.')
             : tr('btw.failed', 'That side question failed: {error}', { error: String(code || '').slice(0, 200) });

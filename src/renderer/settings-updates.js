@@ -1,4 +1,4 @@
-// About Lumen → Updates (features/updates.js): the version, "Check for updates", what was found,
+// Settings → Updates (features/updates.js): the version, "Check for updates", what was found,
 // and "Download updates automatically". Uses settings.js's row helpers; settings.js calls
 // buildUpdates(card) while it builds the About section. Every string is an updates.settings.* key
 // (locales/en.json), looked up with the page's window.t (renderer/i18n.js) like the toolbar pill's.

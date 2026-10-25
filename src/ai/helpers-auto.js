@@ -1,4 +1,4 @@
-// Helpers: Off | Auto | On (the aiSubagents setting; Settings > AI and the sidebar's Helpers row). In Auto, whether a chat's requests list the `delegate`
+// Helpers: Off | Auto | On (the aiSubagents setting; Settings → AI and agents and the sidebar's Helpers row). In Auto, whether a chat's requests list the `delegate`
 // tool is worked out from what the user has said, with a cheap local check and no model call: a task with several independent parts ("apply to
 // these 10 jobs", "for each of these sites", "compare A, B and C", a list of links) gets the tool; a single-step request, a question about one
 // page or chit-chat does not, which keeps its definition out of the prompt. Pure functions (no Electron, no disk): agent.js helpersOffered feeds

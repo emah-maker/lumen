@@ -614,7 +614,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     check('a call the client cancelled gets no reply', !reply(g, 2));
     g.close(); ext.detach(g.session);
 
-    // the Settings → AI → Require a token switch also cuts a remembered client
+    // the Settings → AI and agents → Require a token switch also cuts a remembered client
     const h = make(); h.ext.setPolicy(() => 'ask');
     const hs = session({ clientName: 'Tester' });
     await h.ext.admit(hs, {}, { defer: true });

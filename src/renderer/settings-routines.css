@@ -1,4 +1,4 @@
-/* Settings → AI → Routines (renderer/settings-routines.js) */
+/* Settings → AI and agents → Routines (renderer/settings-routines.js) */
 .rt-bar { display: flex; gap: 8px; padding: 4px 0; }
 .rt-list, .rt-templates { display: flex; flex-direction: column; width: 100%; }
 .rt-item, .rt-template { padding: 10px 0; }

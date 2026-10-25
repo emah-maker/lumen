@@ -32,7 +32,7 @@ function releaseNotes(version, changelog) {
     `| Mac with Apple silicon (M1 and later) | \`Lumen-${v}-mac-arm64.dmg\`: open it and drag Lumen onto Applications. |`,
     `| Mac with Intel | \`Lumen-${v}-mac-x64.dmg\`: open it and drag Lumen onto Applications. |`,
     '',
-    'Already have Lumen? It updates itself: look for **Restart to update** in the toolbar, or open **Settings → About Lumen → Updates**.',
+    'Already have Lumen? It updates itself: look for **Restart to update** in the toolbar, or open **Settings → Updates**.',
     '',
     '<details><summary>The other files (for Lumen\'s updater; you don\'t need them)</summary>',
     '',

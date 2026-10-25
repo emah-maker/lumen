@@ -1,4 +1,4 @@
-// Local AI (Ollama / LM Studio) in the real app, against a fake Ollama on 127.0.0.1 (no real network): Settings → AI → AI providers →
+// Local AI (Ollama / LM Studio) in the real app, against a fake Ollama on 127.0.0.1 (no real network): Settings → AI and agents → AI providers →
 // Local (switch, Detect, the models list with what each can do, an address that isn't on this computer asks first), the models in
 // the picker, a full chat turn (streamed text + a tool call that runs), the plain-chat fallback for a model without tools, and a
 // stopped server: the chat stays local (it is never handed to a cloud model).
@@ -63,7 +63,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   // A cloud model must never be asked for anything in this suite: count its calls.
   await app.evaluate(() => { global.__cloudCalls = 0; global.__agent.getClient = () => { global.__cloudCalls++; throw new Error('the cloud client was used'); }; });
 
-  // ---- Settings → AI → AI providers → Local
+  // ---- Settings → AI and agents → AI providers → Local
   const inSettings = await openSettingsTab(app, 'providers');
   await waitFor(() => inSettings("Boolean(document.getElementById('local-detect'))"));
   check('the Local block shows an unchecked switch, Ollama, and its usual address', (await inSettings("(() => { const s = (id) => document.getElementById(id); return JSON.stringify([s('local-enabled').checked, s('local-flavor').value, s('local-url').value, s('local-url').placeholder]); })()")) === JSON.stringify([false, 'ollama', 'http://127.0.0.1:11434', 'http://127.0.0.1:11434']));
