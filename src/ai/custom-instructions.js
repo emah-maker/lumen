@@ -1,4 +1,4 @@
-// Settings > AI > "Custom instructions": two standing notes the user writes once (like ChatGPT's Custom
+// Settings → AI and agents → "Custom instructions": two standing notes the user writes once (like ChatGPT's Custom
 // Instructions): who they are, and how they want answers. block() turns them into the part of the system
 // prompt agent.js's systemFor appends. They are the user's own words, so they are delimited as preferences,
 // never as a rule that outranks the safety and approval rules above them.

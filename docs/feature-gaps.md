@@ -21,7 +21,7 @@ Each item is wired into its menus, has a shortcut where browsers usually have on
 | **New Window** | `Ctrl+N` / `Cmd+N`, ⋯ → New Window, File → New Window (macOS; works with no window open). Opens a normal window with one new tab, offset from the window in front. |
 | **Close Window** | `Ctrl+Shift+W` / `Shift+Cmd+W`, File → Close Window (macOS). |
 | **Page info** | Click the lock (or **Not secure**) beside the address, press Enter on it, or go to ⋯ → This Page → Site Information… The menu shows the site and its connection, **Ask / Allow / Block** for location, camera and microphone, notifications and clipboard, the site's remembered zoom with a reset, how many cookies it has, **Clear Cookies and Site Data…** (asks first), and **Site Settings…** |
-| **Link and image menu** | Right-click a link for **Open Link in New Window**, **Open Link in Private Window** and **Save Link As…**. Right-click an image for **Save Image As…** and **Copy Image Address**. Save … As always asks where to save, whatever Settings → Downloads says. The page menu gets **Print…**. |
+| **Link and image menu** | Right-click a link for **Open Link in New Window**, **Open Link in Private Window** and **Save Link As…**. Right-click an image for **Save Image As…** and **Copy Image Address**. Save … As always asks where to save, whatever Settings → General → Downloads says. The page menu gets **Print…**. |
 | **Per-site zoom, remembered** | A zoom you set by hand (`Ctrl+=` / `Ctrl+-`) is kept for that site across restarts (`siteZoom` in settings.json). `Ctrl+0` or the zoom pill forgets it. |
 | **Crash recovery** | If Lumen didn't quit normally and **On startup** is set to open a new tab or specific pages, the next launch asks "Lumen didn't shut down correctly. Restore the N tabs you had open?" (**Not Now / Restore**). With **Continue where you left off** (the default), the tabs come back anyway, so it doesn't ask. |
 | **Keyboard Shortcuts** | `Ctrl+Shift+/` (`Ctrl+?`), ⋯ → Keyboard Shortcuts, or Help → Keyboard Shortcuts on macOS. A sheet lists every shortcut for the platform you're on. |
@@ -36,7 +36,7 @@ Polish in the same round:
 - The error page names what went wrong and what to try for the common network errors ("You're offline", "This site can't be found: check the address for a typo", "refused to connect", "took too long to respond", a redirect loop with a hint to clear the site's cookies, the ad blocker), instead of one "Can't open this page" for all of them.
 - English strings that bypassed `t()` now go through it: the page menu's Save Page As and View Page Source, the video menu (Picture in Picture, Open Video in New Tab, Copy Video Address), the spelling items (No Spelling Suggestions, Add to Dictionary), the risky-download prompt, the Open File dialog and the Export Chat dialog.
 - Windows high contrast (forced colors): the active and selected tabs, pressed toolbar buttons, the address field, focus rings and Settings' switches stay visible. Before, they were drawn with backgrounds the system flattens.
-- Settings → About Lumen has **Copy version details** and **Report a problem**, for bug reports.
+- Settings → Updates has **Copy version details** and **Report a problem**, for bug reports.
 - On macOS the UI's shortcut hints read the Mac way (New tab (⌘T), Search tabs (⇧⌘A)) instead of "Ctrl+".
 - The lock is now a real, focusable button with a focus ring, an accessible name and `aria-haspopup`. Before, it was a picture with a tooltip.
 
@@ -60,7 +60,7 @@ Polish in the same round:
 | **Site permissions** | Prompt, defaults, per-site list in Settings, page info from the lock (added) | Same | Same | Same | Have (4 kinds: location, camera and microphone, notifications, clipboard) | — | — |
 | **Page info / security** | Lock states (secure, mixed, not secure, past a certificate warning), page info (added), certificate warning page | Plus a certificate viewer | Same as Chrome | Plus a certificate viewer | Partial: no certificate viewer | Later: Electron gives no certificate object for a page that loaded fine; it would need a fetch with `ses.setCertificateVerifyProc` | M |
 | **Cookies and site data** | Clear all, by time range, or per site from page info or Settings → Site data (both added) | "See all site data" list | Same as Chrome | Manage Website Data | Have | — | — |
-| **Clear browsing data** | Settings → Privacy, by time range, `Ctrl+Shift+Delete` (added) | Same | Same | Same | Have | — | — |
+| **Clear browsing data** | Settings → Privacy and security, by time range, `Ctrl+Shift+Delete` (added) | Same | Same | Same | Have | — | — |
 | **Privacy toggles** | HTTPS-only, Do Not Track, GPC (on), third-party cookies (requests only), ad and tracker blocker, Safe Browsing (opt-in); on by default: window-size hiding, canvas/WebGL/audio fingerprint noise per site, tracking-parameter stripping, ping/beacon blocking; opt-in: tab-focus hiding, WebRTC IP protection ([privacy-protections.md](privacy-protections.md)) | Same; Brave blocks by default | Same | ITP | Have (third-party cookie blocking is best effort) | — | — |
 | **Settings search** | Yes (`Ctrl+F` or `/` on the page) | Same | Same | Same | Have | — | — |
 | **Keyboard shortcuts** | Chrome's set, plus a shortcuts sheet (added) | No sheet | Sheet | Menus only | Have | — | — |

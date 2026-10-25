@@ -181,7 +181,7 @@ const path = require('path');
   const last = orRequests[orRequests.length - 1];
   check('openrouter: chat-only model gets no tools', last.body.model === 'acme/chat-1' && !last.body.tools, JSON.stringify(last.body).slice(0, 200));
   check('openrouter: chat-only model says it cannot act', events.some((e) => e.type === 'notice' && /chat only/.test(e.text)), JSON.stringify(events.filter((e) => e.type === 'notice')));
-  // 402: no credits. With automatic switching off (Settings > AI), the error stands and says why; on (the
+  // 402: no credits. With automatic switching off (Settings → AI and agents), the error stands and says why; on (the
   // default), the turn moves to another connected model instead (ai/fallback.js), covered after.
   await app.evaluate(() => global.__agent.setModel('openrouter:acme/broke'));
   const failed = await app.evaluate(() => {

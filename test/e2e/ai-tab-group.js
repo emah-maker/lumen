@@ -1,4 +1,4 @@
-// Settings → AI tabs → "Group tabs the AI opens" (groupAiTabs, on; main.js joinAiGroup): every tab the AI opens with the real open_tab
+// Settings → AI and agents → AI tabs → "Group tabs the AI opens" (groupAiTabs, on; main.js joinAiGroup): every tab the AI opens with the real open_tab
 // joins one gray "AI tabs" group in its window, folded when made, so the strip shows one label instead of a row of tabs. A second chat's
 // tabs join the same group; the user's unfolding is kept; a tab the user types in leaves the group; the group goes when its tabs close;
 // with the setting off, tabs stay loose. Real Lumen, throwaway profile, a fake model, local pages.

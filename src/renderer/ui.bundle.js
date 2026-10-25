@@ -11798,7 +11798,16 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
     const [before = '', after = ''] = t('external.wantsShort', { client: MARK }).split(MARK);
     const words = el('span', 'update-text external-ask-text');
     words.append(el('span', 'ea-rest', before), el('span', 'ea-name', ask.name), el('span', 'ea-rest', after));
-    bar.replaceChildren(dot, words,
+
+    const setupKey = !ask.claudeCode || !window.assistant.externalApps.connectClaudeCode ? null : button('external-ask-btn external-setup-key', t('external.setupKey'), async () => {
+      setupKey.disabled = true;
+      setupKey.textContent = t('external.setupBusy');
+      const r = await window.assistant.externalApps.connectClaudeCode().catch((err) => ({ ok: false, error: err.message }));
+      setupKey.disabled = false;
+      setupKey.textContent = t(r.ok ? 'external.setupDone' : 'external.setupFailed');
+      setupKey.title = r.ok ? r.message : r.error || '';
+    });
+    bar.replaceChildren(dot, words, ...(setupKey ? [setupKey] : []),
       button('primary external-ask-btn', t('external.allow'), () => answer('allow')),
       button('external-ask-btn', t('external.always'), () => answer('always')),
       button('external-ask-btn', t('external.deny'), () => answer('deny')));
@@ -14963,7 +14972,7 @@ $('agent-stop')?.addEventListener('click', () => {
     card.el.removeAttribute('aria-busy');
     if (!r || !r.ok) {
       const code = r?.error;
-      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI: Claude Code and the other engines can’t answer a side question mid-task.')
+      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI and agents: Claude Code and the other engines can’t answer a side question mid-task.')
         : code === 'timeout' ? tr('btw.timeout', 'That took too long. Try again.')
           : code === 'busy' ? tr('btw.busy', 'Too many side questions are open. Dismiss one first.')
             : tr('btw.failed', 'That side question failed: {error}', { error: String(code || '').slice(0, 200) });

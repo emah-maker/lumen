@@ -2053,7 +2053,7 @@ function siteListRow({ key, label, desc, empty, addLabel, listId, inputId }) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) render(); });
   const add = async (value) => {
     const text = String(value ?? input.value).trim();
-    if (!text) return;
+    if (!text) { flash(note, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); input.focus(); return; }
     const before = (st.prefs[key] || []).length;
     await save(key, [...(st.prefs[key] || []), text]);
     const grew = (st.prefs[key] || []).length > before;
@@ -2353,6 +2353,7 @@ function buildExternalApps() {
   const CLIENTS = [['claude-desktop', 'Claude Desktop'], ['cursor', 'Cursor'], ['vscode', 'VS Code'], ['claude-code', 'Claude Code']];
   let info = null;
   let current = 'claude-desktop';
+  let connectMsg = null;
   let fresh = null;
 
   const root = h('div', { class: 'external-apps', id: 'external-apps' });
@@ -2411,6 +2412,17 @@ function buildExternalApps() {
       fresh = { app: r.app, setup: r.setup, added: true };
       draw(info);
     } });
+
+    const connectNote = h('span', { class: 'note', id: 'ea-connect-note', role: 'status' });
+    if (connectMsg?.kind === current) flash(connectNote, connectMsg.text, connectMsg.cls);
+    const connectBtn = h('button', { type: 'button', id: 'ea-connect', class: 'primary', text: tr('settings.ea.connect', 'Connect {name}', { name: label }), onclick: async () => {
+      connectBtn.disabled = true;
+      const r = await X.connect(current).catch((err) => ({ ok: false, error: err.message }));
+      connectMsg = { kind: current, text: r.ok ? r.message : r.error, cls: r.ok ? 'ok' : 'err' };
+      if (r.info) info = r.info;
+      if (r.setup && r.app) fresh = { app: r.app, setup: r.setup, added: false };
+      draw(info);
+    } });
     const openBtn = info.paths[current] ? h('button', { type: 'button', id: 'ea-open', text: tr('settings.ea.openConfig', 'Open the config file'), onclick: async () => {
       const r = await X.openConfig(current).catch(() => ({ ok: false }));
       flash(openNote, r.ok ? (r.missing ? tr('settings.ea.noFile', 'That file doesn’t exist yet; its folder is open. Create the file there.') : '') : tr('settings.ea.noFolder', 'Couldn’t find that app’s folder. Is it installed?'), r.ok ? 'ok' : 'err');
@@ -2419,6 +2431,7 @@ function buildExternalApps() {
     setupBox.replaceChildren(
       tabs,
       h('div', { class: 'snippet', id: 'ea-panel', role: 'tabpanel', 'aria-labelledby': `ea-tab-${current}` },
+        h('div', { class: 'item' }, connectBtn, connectNote),
         fresh
           ? h('div', { class: 'ea-fresh', id: 'ea-fresh' },
             h('p', { class: 'note ok', text: tr(fresh.added ? 'settings.ea.fresh' : 'settings.ea.shown', fresh.added ? '“{name}” is added. Its token is in a file only you can read; the text below names that file, so it holds no secret.' : 'Setup text for “{name}”. It names the token file; it holds no secret.', { name: shownApp.name }) }),
@@ -2440,10 +2453,19 @@ function buildExternalApps() {
       const revoke = armedButton(unverified && !always ? tr('settings.ea.disconnect', 'Disconnect') : tr('settings.ea.revoke', 'Revoke'), unverified && !always ? tr('settings.ea.disconnectSure', 'Click again to disconnect') : tr('settings.ea.revokeSure', 'Click again to revoke'), async () => { if (fresh?.app.id === a.id) fresh = null; draw((await X.revoke(a.id)).info); });
       const show = unverified ? null : h('button', { type: 'button', class: 'ea-show', text: tr('settings.ea.show', 'Show setup'), onclick: async () => { const r = await X.setup(a.id); if (r.ok) { fresh = { app: r.app, setup: r.setup, added: false }; drawSetup(); } } });
       const state = a.paused ? tr('settings.ea.paused', 'Paused') : a.busy ? tr('settings.ea.working', 'Working now') : a.connected ? tr('settings.ea.connected', 'Connected') : tr('settings.ea.idle', 'Not connected');
+      const keyNote = h('span', { class: 'note' });
+      const setupKey = a.claudeCode ? h('button', { type: 'button', class: 'ea-setup-key primary', text: tr('settings.ea.setupKey', 'Set up Claude Code’s key'), onclick: async (e) => {
+        e.target.disabled = true;
+        const r = await X.connect('claude-code').catch((err) => ({ ok: false, error: err.message }));
+        connectMsg = { kind: 'claude-code', text: r.ok ? r.message : r.error, cls: r.ok ? 'ok' : 'err' };
+        if (r.setup && r.app) fresh = { app: r.app, setup: r.setup, added: false };
+        if (r.ok) { current = 'claude-code'; draw(r.info); } else { e.target.disabled = false; flash(keyNote, r.error, 'err'); if (r.setup && r.app) drawSetup(); }
+      } }) : null;
       return h('div', { class: 'snippet ea-app', 'data-app': a.name, 'data-app-id': a.id },
         h('div', { class: 'item' },
           h('span', { class: 'grow' }, h('strong', { text: a.name }), h('span', { class: 'note', text: ` · ${state} · ${ago(a.lastUsed)}${unverified ? ` · ${always ? tr('settings.ea.always', 'Unverified: no token, always allowed on this computer') : tr('settings.ea.unverified', 'Unverified: no token, allowed for this session')}` : ''}` })),
-          ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, revoke));
+          ask ? h('label', { class: 'note' }, ask, ` ${tr('settings.ea.ask', 'Ask before it acts')}`) : null, show, setupKey, revoke),
+        a.claudeCode ? h('div', { class: 'item' }, keyNote) : null);
     }));
   }
 
@@ -2467,7 +2489,7 @@ function buildExternalApps() {
     h('div', { class: 'row' }, statusLine),
     row(tr('settings.ea.require', 'Require a token for every app'), tr('settings.ea.requireDesc', 'On: an app without a token is refused. Off: it waits for your Allow each time it connects, as an “unverified app”; Allow lasts that session (unless you pick Always allow), never asks less, and can’t use the name of an app you set up.'), requireInput),
     h('div', { class: 'row' }, warning, requireNow),
-    stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app, give it a name, and paste the text into its settings. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
+    stackRow(tr('settings.ea.setup', 'Set up an app'), tr('settings.ea.setupDesc', 'Pick the app and click Connect: Lumen makes the app’s own key and adds itself to its settings (restart the app after). Or give it a name and paste the text yourself. Sites you’ve turned the AI off for, Lumen’s own pages, and “ask before acting” apply to these apps as they do to Lumen’s AI.'), setupBox),
     stackRow(tr('settings.ea.apps', 'Apps that can use Lumen'), tr('settings.ea.appsDesc', 'Revoke deletes an app’s token and cuts it off at once.'), appsBox));
 
   X.info().then((i) => draw(i)).catch(() => {});
@@ -2546,7 +2568,7 @@ async function buildFocus(card) {
     addSiteButton.disabled = locked();
     resetSites.disabled = locked();
   }
-  const addSite = () => { const host = siteInput.value.trim(); if (!host) return; siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
+  const addSite = () => { const host = siteInput.value.trim(); if (!host) { flash(siteNote, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); siteInput.focus(); return; } siteInput.value = ''; setSites([...new Set([...sites(), host])]); };
   const addSiteButton = h('button', { id: 'focus-site-button', type: 'button', text: tr('settings.focus.add', 'Add'), onclick: addSite });
   siteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addSite(); } });
   const resetSites = h('button', { id: 'focus-sites-reset', type: 'button', text: tr('settings.focus.restore', 'Restore the default list'), onclick: () => setSites(DEFAULT_SITES) });
@@ -4034,16 +4056,36 @@ const tr = (key, english, vars) => {
   return text === key ? (vars ? english.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : english) : text;
 };
 
-async function save(key, value) {
+const errText = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+
+
+function saveError(host, err) {
+  const message = tr('settings.saveFailed', 'Couldn’t save: {reason}', { reason: errText(err) });
+  const text = host?.closest?.('.row')?.querySelector('.text');
+  if (text) {
+    const note = text.querySelector(':scope > .save-error') || text.appendChild(h('span', { class: 'note error save-error', role: 'alert' }));
+    note.textContent = message;
+    return;
+  }
+  const bar = $('save-error-bar') || document.body.appendChild(h('div', { id: 'save-error-bar', class: 'save-error-bar', role: 'alert' }));
+  bar.textContent = message;
+  clearTimeout(saveError.timer);
+  saveError.timer = setTimeout(() => bar.remove(), 8000);
+}
+
+async function save(key, value, host) {
   try {
     st = await S.set(key, value);
     window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key } }));
+    host?.closest?.('.row')?.querySelector(':scope > .text > .save-error')?.remove();
     applyPageClasses();
     refreshRestartNotes();
+    return st;
   } catch (err) {
     console.error(err);
+    saveError(host, err);
+    return null;
   }
-  return st;
 }
 
 
@@ -4137,7 +4179,10 @@ function toggle(key, label, desc, after, { id = `pref-${key}`, fallback = false,
   const shown = () => (st.prefs[key] === undefined ? fallback : Boolean(st.prefs[key])) !== invert;
   input.checked = shown();
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) input.checked = shown(); });
-  input.addEventListener('change', async () => { await save(key, input.checked !== invert); after?.(input.checked); });
+  input.addEventListener('change', async () => {
+    if (await save(key, input.checked !== invert, input)) after?.(input.checked);
+    else input.checked = shown();
+  });
   const r = row(label, desc, input);
   r.querySelector('.label').addEventListener('click', () => input.click());
   return r;
@@ -4180,12 +4225,17 @@ function select(key, label, desc, options, { number = false, after, id = `pref-$
     options.map(([value, text]) => h('option', { value: String(value), text })));
   el.value = String(st.prefs[key]);
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === key) el.value = String(st.prefs[key]); });
-  el.addEventListener('change', async () => { await save(key, number ? Number(el.value) : el.value); after?.(el.value); });
+  el.addEventListener('change', async () => {
+    if (await save(key, number ? Number(el.value) : el.value, el)) after?.(el.value);
+    else el.value = String(st.prefs[key]);
+  });
   const r = row(label, desc, el);
   r.dataset.keywords = options.map(([, text]) => text).join(' ').toLowerCase();
   return r;
 }
 const status = (id) => h('span', { class: 'note', id });
+
+const needSite = (note, input) => { flash(note, tr('settings.needSite', 'Type a site first, for example example.com.'), 'err'); input.focus(); };
 
 const KEY_PAGES = {
   anthropic: 'https://console.anthropic.com/settings/keys',
@@ -4516,11 +4566,13 @@ async function buildAi(card) {
       h('button', { text: 'Turn on AI', onclick: async () => renderOff(await S.ai.setAiSite(site, false)) })))
       : [h('span', { class: 'note', text: 'None. The AI can work on any site you allow.' })]));
   };
+  const offNote = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   card.at('ai-privacy').append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
     h('div', { class: 'controls' }, offInput, h('button', {
       text: 'Turn off AI',
-      onclick: async () => { const site = offInput.value.trim(); if (!site) return; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
-    }))));
+      onclick: async () => { const site = offInput.value.trim(); if (!site) return needSite(offNote, offInput); offNote.textContent = ''; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
+    }), offNote)));
+  offInput.addEventListener('input', () => { offNote.textContent = ''; });
   renderOff();
 
 
@@ -4770,6 +4822,7 @@ async function buildAi(card) {
 
   const endpointFor = (p) => `http://127.0.0.1:${p}/${token}`;
   const copyUrl = h('button', { id: 'ai-automation-copy', text: 'Copy address', onclick: async () => { await navigator.clipboard.writeText(endpointFor(Number(port.value) || 9222)).catch(() => {}); copyUrl.textContent = 'Copied'; setTimeout(() => { copyUrl.textContent = 'Copy address'; }, 1400); } });
+  const autoRestart = h('button', { class: 'primary', id: 'ai-automation-restart', text: tr('settings.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
   const describe = (enabled, p) => {
     const endpoint = endpointFor(p);
     autoNote.className = 'note';
@@ -4777,8 +4830,9 @@ async function buildAi(card) {
     else if (running?.error) flash(autoNote, running.error, 'err');
     else if (running?.listening && running.port === p) autoNote.textContent = `Listening on ${endpoint}. Playwright: chromium.connectOverCDP('${endpoint}')`;
     else autoNote.textContent = `Restart Lumen to open ${endpoint}.`;
+    autoRestart.hidden = !(enabled && !running?.error && !(running?.listening && running.port === p));
   };
-  const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl);
+  const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl, autoRestart);
   portRow.querySelector('.text').append(autoNote);
   const saveAuto = async () => {
     const asked = Number(port.value);
@@ -4848,7 +4902,7 @@ function buildImport(card) {
 
 
 function withRelaunch(row, key, id) {
-  const button = h('button', { class: 'primary relaunch', text: 'Relaunch', hidden: true, onclick: () => S.relaunch() });
+  const button = h('button', { class: 'primary relaunch', text: tr('settings.restart', 'Restart'), hidden: true, onclick: () => S.relaunch() });
   button.dataset.key = key;
   if (id) button.id = id;
   row.querySelector('.controls').prepend(button);
@@ -4874,7 +4928,7 @@ function buildAppearance(card) {
     toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
   );
 
-  card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a relaunch.'), 'forceDarkWebsites'));
+  card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a restart.'), 'forceDarkWebsites'));
 }
 
 
@@ -6411,7 +6465,7 @@ async function buildPrivacy(card) {
       try { renderSb(await S.ai.setSafeBrowsingKey(value)); } catch (err) { flash(keyNote, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
     };
     sbKey.replaceChildren(...[input,
-      h('button', { text: 'Save key', id: 'safe-browsing-save', onclick: () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); } }),
+      h('button', { text: 'Save key', id: 'safe-browsing-save', onclick: () => { if (input.value.trim()) put(input.value.trim()); else { flash(keyNote, tr('settings.needKey', 'Paste the key first.'), 'err'); input.focus(); } } }),
       s.keyStored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
       keyNote].filter(Boolean));
   };
@@ -6425,6 +6479,7 @@ async function buildPrivacy(card) {
 
 
   const allowList = h('div', { class: 'list', id: 'adblock-allow' });
+  const allowNote = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
   const allowInput = h('input', { type: 'text', class: 'grow', id: 'adblock-add', placeholder: 'example.com', 'aria-label': tr('settings.adblock.addSite', 'Site to allow ads on') });
   const renderAllow = () => allowList.replaceChildren(...(st.prefs.adblockAllow.length ? st.prefs.adblockAllow.map((host) => h('div', { class: 'item' },
     h('span', { class: 'grow', text: host }),
@@ -6436,8 +6491,8 @@ async function buildPrivacy(card) {
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
       h('div', { class: 'controls' }, allowInput, h('button', {
         text: 'Add site',
-        onclick: async () => { const host = allowInput.value.trim(); if (!host) return; await save('adblockAllow', [...st.prefs.adblockAllow, host]); allowInput.value = ''; renderAllow(); },
-      }))),
+        onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
+      }), allowNote)),
   );
 
 
@@ -6728,7 +6783,7 @@ function buildTelegram(slot) {
     const input = h('input', { type: 'password', class: 'grow', id: 'telegram-token', autocomplete: 'off', placeholder: s.hasToken ? tr('settings.telegram.tokenSaved', 'Token saved') : tr('settings.telegram.tokenPlaceholder', '123456789:AA…'), 'aria-label': tr('settings.telegram.token', 'Bot token') });
     const tokenNote = status();
     const save = h('button', { id: 'telegram-save', text: tr('settings.telegram.save', 'Save token'), onclick: async () => {
-      if (!input.value.trim()) { input.focus(); return; }
+      if (!input.value.trim()) { flash(tokenNote, tr('settings.telegram.needToken', 'Paste the bot token first.'), 'err'); input.focus(); return; }
       save.disabled = true;
       try { render(await S.ai.telegram.setToken(input.value.trim())); } catch (err) { save.disabled = false; flash(tokenNote, errText(err), 'err'); }
     } });
@@ -7103,7 +7158,7 @@ function buildSwitchTiming(slot) {
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
 }
 function buildSystem(card) {
-  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a relaunch.'), 'hardwareAcceleration', 'relaunch'));
+  card.append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.'), 'hardwareAcceleration', 'relaunch'));
   const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
     [['auto', tr('settings.performance.auto', 'Auto')], ['on', tr('settings.performance.on', 'Always on')], ['off', tr('settings.performance.off', 'Off')]], { after: () => showPerfNote() });
   const perfNote = h('span', { class: 'note', id: 'performance-note' });
@@ -7156,20 +7211,26 @@ function buildSystem(card) {
   const bypass = h('input', { type: 'text', class: 'grow', id: 'proxy-bypass', placeholder: 'Bypass: localhost, *.internal', value: p.bypass });
   const pac = h('input', { type: 'url', class: 'grow', id: 'proxy-pac', placeholder: 'https://example.com/proxy.pac', value: p.pacUrl });
   const note = status('proxy-status');
+  const apply = h('button', { id: 'proxy-apply', text: 'Apply', disabled: true });
+
+  const current = () => ({ mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
+  const pending = () => { const a = st.prefs.proxy; const c = current(); return c.mode !== a.mode || c.rules !== a.rules || c.bypass !== a.bypass || c.pacUrl !== a.pacUrl; };
   const sync = () => {
     rules.hidden = bypass.hidden = mode.value !== 'fixed_servers';
     pac.hidden = mode.value !== 'pac_script';
+    const changed = pending();
+    apply.disabled = !changed;
+    if (changed) flash(note, tr('settings.proxy.pending', 'Not applied yet'), 'warn');
+    else if (note.className.includes('warn') || note.className.includes('err')) note.textContent = '';
   };
   sync();
-  mode.addEventListener('change', sync);
-  card.append(stackRow('Proxy', 'Applies to every tab straight away.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
-    h('div', { class: 'controls' }, note, h('button', {
-      id: 'proxy-apply', text: 'Apply',
+  for (const el of [mode, rules, bypass, pac]) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
+  card.append(stackRow('Proxy', 'Applies to every tab as soon as you press Apply.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
+    h('div', { class: 'controls' }, note, Object.assign(apply, {
       onclick: async () => {
         if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
         if (mode.value === 'pac_script' && !/^(https?|file):\/\//i.test(pac.value.trim())) { flash(note, 'Enter the address of the script, starting with https://.', 'err'); pac.focus(); return; }
-        await save('proxy', { mode: mode.value, rules: rules.value, bypass: bypass.value, pacUrl: pac.value });
-        flash(note, 'Applied.');
+        if (await save('proxy', current(), apply)) { flash(note, 'Applied.'); apply.disabled = true; }
       },
     }))));
 }
@@ -7213,21 +7274,40 @@ async function buildExtensions(card) {
     h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
 }
 
+
+
+function confirmReset(areas) {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'confirm-dialog', id: 'reset-confirm', 'aria-labelledby': 'reset-confirm-title' },
+      h('h3', { id: 'reset-confirm-title', text: tr('settings.reset.title', 'Reset settings?') }),
+      h('p', { text: tr('settings.reset.lead', 'These go back to their defaults:') }),
+      h('ul', { id: 'reset-confirm-list' }, areas.map((a) => h('li', { text: a.label }))),
+      h('p', { class: 'note', text: tr('settings.reset.stays', 'Bookmarks, history, API keys, sign-ins, AI settings, widgets and Focus lists stay as they are.') }),
+      h('form', { method: 'dialog', class: 'confirm-buttons' },
+        h('button', { value: 'cancel', id: 'reset-confirm-cancel', text: tr('settings.reset.cancel', 'Cancel'), autofocus: true }),
+        h('button', { value: 'reset', class: 'danger', id: 'reset-confirm-go', text: tr('settings.reset.go', 'Reset settings') })));
+    dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'reset'; dlg.remove(); resolve(yes); });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
 function buildReset(card) {
   const note = status('reset-status');
-  const button = h('button', { class: 'danger', id: 'reset', text: 'Reset settings' });
+  const button = h('button', { class: 'danger', id: 'reset', text: tr('settings.reset.button', 'Reset settings…') });
   button.addEventListener('click', async () => {
-    if (!button.dataset.armed) {
-      button.dataset.armed = '1';
-      button.textContent = 'Confirm reset';
-      setTimeout(() => { delete button.dataset.armed; button.textContent = 'Reset settings'; }, 4000);
-      return;
-    }
-    st = await S.reset();
-    flash(note, 'Settings restored to their defaults.');
-    setTimeout(() => location.reload(), 600);
+    note.textContent = '';
+    if (!(await confirmReset(st.resetAreas))) return;
+    try {
+      st = await S.reset();
+      flash(note, tr('settings.reset.done', 'Those settings are back to their defaults.'));
+      setTimeout(() => location.reload(), 600);
+    } catch (err) { flash(note, errText(err), 'err'); }
   });
-  card.append(row('Restore settings to their original defaults', 'Resets appearance, search engine, startup, privacy, site permissions, languages and system settings. Bookmarks, history, API keys and sign-ins stay.', note, button));
+  const areas = st.resetAreas.map((a) => a.label);
+  card.append(row(tr('settings.reset.label', 'Restore settings to their original defaults'),
+    tr('settings.reset.desc', 'Resets {areas}. Bookmarks, history, API keys, sign-ins, AI settings, widgets and Focus lists stay.', { areas: areas.length > 1 ? tr('settings.reset.areasJoin', '{list} and {last}', { list: areas.slice(0, -1).join(', '), last: areas[areas.length - 1] }) : areas[0] || '' }), note, button));
+  if (st.resetLocked) { button.disabled = true; flash(note, tr('settings.reset.locked', 'Focus mode is on: settings can be reset when it ends.'), 'err'); }
 }
 
 async function buildAbout(card) {

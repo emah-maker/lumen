@@ -2,19 +2,27 @@
 
 Claude Desktop, Cursor, VS Code (Copilot, Continue) and Claude Code can read and use pages in Lumen, through Lumen's MCP server. Each app gets a name and a token of its own, you see when it is working, and you can stop it, take over or revoke it at any time.
 
-It is off until you turn it on: **Settings → AI → Let other apps use Lumen**.
+It is off until you turn it on: **Settings → AI and agents → Let other apps use Lumen**.
 
 ## How it works
 
 - Each app works in a Lumen window of its own. It never sees your tabs, Lumen's settings, saved passwords or chat history.
-- Every call goes through the same rules as Lumen's own AI: sites where you turned the AI off stay off, tabs you keep the AI off stay off, and new sites ask you first (the approval card shows in the app's window; a count in your toolbar tells you one is waiting). A new app asks before it acts by default (the **Ask before it acts** box on its row), even when Settings → AI → *Ask before agents act in their own window* is off.
+- Every call goes through the same rules as Lumen's own AI: sites where you turned the AI off stay off, tabs you keep the AI off stay off, and new sites ask you first (the approval card shows in the app's window; a count in your toolbar tells you one is waiting). A new app asks before it acts by default (the **Ask before it acts** box on its row), even when Settings → AI and agents → *Ask before agents act in their own window* is off.
 - The connection is Lumen's stdio bridge (`mcp.js`), which also starts Lumen if it isn't running. Claude Desktop only speaks stdio, and a local port would change on every start, so this is the one transport for all four apps.
 - The token proves who the app is. The bridge never sends it: it proves it knows it for each connection (a fresh challenge every time, so a recorded proof is useless later). That protects the secret, not the channel: a program that sits on Lumen's channel and passes both sides' messages along could still use a connection the real app opens, which is why the channel is per user.
 - Lumen keeps each token encrypted with your system keychain (Windows DPAPI, macOS Keychain, the Secret Service on Linux) in `external-apps.json` in the profile folder, and the token also lives in a file of its own, `external-app-tokens/<id>.token`, that only your user can read. Without a keychain Lumen makes no tokens. This keeps other users and a stolen disk out; a program running as you can read your files, as with any local app.
 
 ## Set up an app
 
-1. Open **Settings → AI → Let other apps use Lumen** and turn it on. **Require a token for every app** is on.
+**The quick way:** pick the app's tab and press **Connect <app>**. Lumen makes (or reuses) that app's token and token file and puts Lumen into the app's own config with it, then says what to restart.
+
+- **Claude Code**: Lumen runs the real CLI (`claude mcp remove lumen --scope user`, then `claude mcp add lumen --scope user ...` with the token file). It never writes a project-scope `.mcp.json`. If the CLI is not installed it says so and shows the command to copy.
+- **Claude Desktop, Cursor, VS Code**: Lumen edits only the `lumen` entry of the app's user-level config file, writes it in one step, and keeps the old file next to it as `<file>.bak`. A file that is not plain JSON (VS Code's `mcp.json` with comments, for example) is left alone and you paste the text instead. Restart the app afterwards.
+- A **token-less Claude Code** (the toolbar says "Claude Code (no token)" and asks Allow) has a **Set up Claude Code's key** button on that prompt and on its row in the list: the same one click.
+
+By hand:
+
+1. Open **Settings → AI and agents → Let other apps use Lumen** and turn it on. **Require a token for every app** is on.
 2. Pick the app's tab, give it a name, and press **Add app**. The text below the tab now names the app's token file. It holds a path, not the secret, so there is nothing to copy and keep safe, and **Show setup** on the app's row brings the text back any time.
 3. Paste it where the app keeps its MCP servers:
 

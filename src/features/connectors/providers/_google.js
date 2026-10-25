@@ -18,7 +18,7 @@ function failure(ctx, res, { thing = 'that', hint = '' } = {}) {
   const name = ctx.id === 'sheets' ? 'Google Sheets' : 'Google Drive';
   if (res.status === 429 || /rateLimit|quota/i.test(reason)) return new ConnectorError(`${name} is busy (rate limit). Try again in a minute.`, 'rate');
   if (res.status === 403 && /accessNotConfigured|SERVICE_DISABLED/i.test(reason)) return new ConnectorError(`The ${name} API isn’t turned on in the Google Cloud project Lumen signs in with. Tell the user: with their own Google Cloud client, enable the ${name} API there.`, 'other');
-  if (res.status === 403 && /^insufficientPermissions$|SCOPE_INSUFFICIENT/i.test(reason)) return new ConnectorError(`Google didn’t give Lumen that permission. Tell the user to connect ${name} again in Settings → You and AI → Connectors and allow everything it asks.`, 'auth');
+  if (res.status === 403 && /^insufficientPermissions$|SCOPE_INSUFFICIENT/i.test(reason)) return new ConnectorError(`Google didn’t give Lumen that permission. Tell the user to connect ${name} again in Settings → AI and agents → Connectors and allow everything it asks.`, 'auth');
   if (res.status === 403 || res.status === 404) return new ConnectorError(`${name} can’t find ${thing}, or this account can’t use it.${hint ? ` ${hint}` : ''}`, 'missing');
   if (res.status === 400) return new ConnectorError(`${name} didn’t accept that${message ? ` (${message})` : ''}.`, 'args');
   return new ConnectorError(`${name} answered ${res.status}${message ? ` (${message})` : ''}. Try again in a moment.`, 'other');

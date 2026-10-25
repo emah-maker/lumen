@@ -1,4 +1,4 @@
-// Prefer fractions (Settings > AI): the system-prompt block (only when on, every engine, inside the Grok prompt budget) and the
+// Prefer fractions (Settings → AI and agents): the system-prompt block (only when on, every engine, inside the Grok prompt budget) and the
 // markdown converter that stacks a plain 3/4 (renderer/markdown.js fractionize). Plain Node: no Electron, no network.
 const fs = require('fs');
 const path = require('path');

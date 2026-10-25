@@ -19,7 +19,7 @@ Lumen's image router (`src/ai/image-router.js`) hands the request to a provider 
 
 Antigravity and Codex are not image providers here (Codex's free tier is limited; Antigravity's image tool is denied by Lumen's tool gate).
 
-**Settings → AI → Image generation** (`imageGen`):
+**Settings → AI and agents → Image generation** (`imageGen`):
 
 - **Automatic** (default). The chat's own provider first when it makes pictures (a Grok Build, OpenAI, Gemini or Grok chat), then Grok Build, Grok, Gemini, OpenAI, OpenRouter. A provider that is out of usage right now (the same cooldowns the model fallback uses) goes last. A provider you turned off for Auto ("Auto may use") is left out, unless it is the chat's own.
 - **A single provider.** Only that one is asked; if it isn't connected, Lumen says so instead of switching.

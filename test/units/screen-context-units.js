@@ -361,7 +361,7 @@ const base = { text: 'what is this', url: WEB, vision: true };
     check('the rule is one short line (under 160 characters)', (sys.split('\n').find((l) => /screenshot first/.test(l)) || '').length < 160, sys.split('\n').find((l) => /screenshot first/.test(l)));
     check('the CLI engines get the rule through the same prompt', /screenshot first/.test(require('../../src/ai/agent').cliSystemPrompt({ model: 'grokbuild:default', adhdMode: true }, 'grokbuild')) && /screenshot first/.test(require('../../src/ai/agent').cliSystemPrompt({ model: 'claudecode:default' }, 'claudecode')));
     const mcp = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'automation', 'mcp.js'), 'utf8');
-    check('the MCP instructions tell outside agents to call screenshot for "this" / "here"', /instructions: '[^']*"this"[^']*call screenshot instead of asking/.test(mcp));
+    check('the MCP instructions tell outside agents to call screenshot for "this" / "here"', /INSTRUCTIONS = '[^']*"this"[^']*call screenshot instead of asking/.test(mcp));
   }
   // ---- wiring (strings only: main and the preloads are Electron files)
   {

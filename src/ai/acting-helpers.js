@@ -3,7 +3,7 @@
 // provider. Electron-free (the model call, the tools and the tabs are injected), so test/units/acting-helpers-units.js covers it in plain
 // Node. agent.js wires it in (Agent.parallelTasks): the helper tabs, site approvals, usage and the helper cards in the chat.
 //
-// Off by default (Settings > AI and agents > "Let helpers act in tabs", actingHelpers) and offered to the API engines only: the CLI
+// Off by default (Settings → AI and agents → "Let helpers act in tabs", actingHelpers) and offered to the API engines only: the CLI
 // engines (Claude Code, Grok Build, Antigravity, Codex) have subagents of their own. A helper gets the browser's acting tools on its
 // own tab and nothing else: no run_script, upload_file, desktop, connector, memory, delegate, tab switching or tab closing.
 const subagents = require('./subagents');

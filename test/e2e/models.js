@@ -95,11 +95,11 @@ const path = require('path');
   p = await lastParams();
   check('Opus 5.5: a short plain question uses low effort and a small cap', p.model === 'claude-opus-5-5' && p.output_config?.effort === 'low' && p.max_tokens === 8000, JSON.stringify({ ...p, messages: undefined }).slice(0, 300));
 
-  // Settings → AI → AI providers: the user's effort for the Claude API replaces the built-in one, only for a model that already takes one.
+  // Settings → AI and agents → AI providers: the user's effort for the Claude API replaces the built-in one, only for a model that already takes one.
   await app.evaluate(() => global.__patchSettings({ aiEffort: { anthropic: 'medium' } }));
   await sendFromUi('what is the capital of Spain');
   p = await lastParams();
-  check('Opus 5.5: the effort chosen in Settings → AI providers is sent (medium), over the built-in low', p.output_config?.effort === 'medium', JSON.stringify(p.output_config));
+  check('Opus 5.5: the effort chosen in Settings → AI and agents providers is sent (medium), over the built-in low', p.output_config?.effort === 'medium', JSON.stringify(p.output_config));
   const apiUse = await app.evaluate(() => global.__usage.summary({ cached: true }).then((s) => s.providers.anthropic));
   check('the Claude API turns are logged per provider with an estimated cost from the price table', apiUse && apiUse.week.turns >= 1 && apiUse.week.tokens >= 110 && apiUse.week.costUSD > 0 && /claude-opus-5-5/.test(apiUse.lastModel || ''), JSON.stringify(apiUse));
   await ui.selectOption('#model', 'claude-sonnet-5-5');
@@ -117,7 +117,7 @@ const path = require('path');
   // The choice persists.
   check('choice is saved', (await ui.evaluate(() => window.assistant.getSettings())).model === 'claude-fable-5-1', 'not saved');
 
-  // ---- Settings → AI → Model: the sidebar's own menu and the sidebar's own choice ----
+  // ---- Settings → AI and agents → Model: the sidebar's own menu and the sidebar's own choice ----
   const sid = await app.evaluate(() => global.__settings.open('ai'));
   const inSettings = (code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return 'ERROR ' + (err?.message || err); } }, [sid, code]);
   const until = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { v = await fn(); if (v) return v; await new Promise((r) => setTimeout(r, 100)); } return v; };

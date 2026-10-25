@@ -1,4 +1,4 @@
-// Settings → AI → Routines: every routine in one list (switch, schedule in words, next and last run, Edit, Run now, Stop, Delete, run
+// Settings → AI and agents → Routines: every routine in one list (switch, schedule in words, next and last run, Edit, Run now, Stop, Delete, run
 // history), the one-click templates, and quiet hours. features/background-runner.js is the backend (settings:routines and
 // settings:routines-act, answered to the Settings tab only); the full editor lives in the sidebar, so Edit and New Routine open it there.
 // Loaded before settings.js and built only when the page is first shown (settings.js's builder table). Everything shown is set with

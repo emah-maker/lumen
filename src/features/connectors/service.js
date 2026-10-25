@@ -117,10 +117,10 @@ function create({
       const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google';
       state(signIn ? 'needs-signin' : 'bad-token');
       return new ConnectorError(def.kind === 'google'
-        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → You and AI → Connectors.`
+        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → AI and agents → Connectors.`
         : signIn
-        ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → You and AI → Connectors has a button), then try again.`
-        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → You and AI → Connectors.`
+        ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → AI and agents → Connectors has a button), then try again.`
+        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → AI and agents → Connectors.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
@@ -485,7 +485,7 @@ function create({
     const sending = def.id === 'gmail' && input.action === 'send';
     if (sending) { // allowed by a card click or the user's typed permission (agent.js passes how), the switch is on, under 10 an hour
       if (!sendVia) throw new Error('A send needs the user’s approval first. Nothing was sent.');
-      if (!sendingOn()) throw new Error('Sending is off (Settings → You and AI → Connectors → Gmail → Allow sending). Nothing was sent.');
+      if (!sendingOn()) throw new Error('Sending is off (Settings → AI and agents → Connectors → Gmail → Allow sending). Nothing was sent.');
       try { sendLog().room(); } catch (err) { throw new Error(err.message); }
     }
     const hit = !write && cache.get(key);

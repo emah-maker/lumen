@@ -1,4 +1,4 @@
-// [bypass permissions] Settings → AI → "Bypass in background tasks and routines too" (bypassBackground), plain Node: a
+// [bypass permissions] Settings → AI and agents → "Bypass in background tasks and routines too" (bypassBackground), plain Node: a
 // background task's agent (TaskAgent, features/background-runner.js) answers its cards itself only when Bypass permissions
 // AND this switch are on, the buy / send / submit step included, and lists each as a step; with either off the card waits
 // for the user. Plus the default, the strings, and the docs.

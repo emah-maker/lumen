@@ -1,7 +1,7 @@
 // What a page sees of WebAuthn (passkeys, Windows Hello, security keys). Two modes, picked per frame by the main
 // process (features/passkeys.js answers preload/webauthn-preload.js's 'webauthn:mode'):
 //
-// - 'native' (Windows 10 1903+, Settings → Privacy "Use passkeys and security keys" on): installPasskeys replaces
+// - 'native' (Windows 10 1903+, Settings → Privacy and security "Use passkeys and security keys" on): installPasskeys replaces
 //   navigator.credentials.create/get for publicKey requests and the PublicKeyCredential family with an implementation
 //   that hands the request to the main process, which checks it (origin, relying party id, the tab in front, no AI)
 //   and runs the ceremony through Windows' own WebAuthn API (features/webauthn-windows.js). Electron's Chromium can't:
