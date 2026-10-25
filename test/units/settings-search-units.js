@@ -56,6 +56,54 @@ check('settings.js: a page shown in place while searching is ordered by its best
 check('settings.js: the AI switches that were negatives are inverted switches over the same keys', ['aiHandsOff', 'aiStayOnMyTab', 'agentsNoAsk'].every((k) => new RegExp(`toggle\\('${k}'[^\\n]*invert: true`).test(settingsSrc)));
 check('the no-results state has a suggestions block', settingsSrc.includes('no-results-suggest') && fsx.readFileSync(pathx.join(__dirname, '..', '..', 'src', 'renderer', 'settings.html'), 'utf8').includes('no-results-suggest'));
 
+// ---- The ranking table: query -> the rows that are found (best first), over rows shaped like the real ones. ----
+{
+  const AI = 'AI and agents';
+  const R = (label, group, cat, desc = '', keywords = '', sub = '') => ({ label, group, cat, sub, search: `${label} ${desc}`.toLowerCase(), keywords });
+  const rows = [
+    R('Model', 'Assistant', AI, 'Which AI answers in the sidebar'),
+    R('Short, focused answers', 'Assistant', AI, 'Asks the AI for brief replies'),
+    R('Asking before it acts', 'Agents and tools', AI, 'The AI agent asks before it clicks or types in a tab'),
+    R('Allow AI agents to connect', 'Agents and tools', AI, 'Lets an outside agent use Lumen through MCP'),
+    R('Status', 'Claude Code', AI, 'Found at C:/claude.exe', '', 'AI providers'),
+    R('Offer in the model menu', 'Claude Code', AI, 'Shows Claude Code and its models in every model picker', '', 'AI providers'),
+    R('Status', 'Grok Build', AI, 'Found at C:/grok.exe', '', 'AI providers'),
+    R('Offer in the model menu', 'Grok Build', AI, 'Shows Grok Build and its models in every model picker', '', 'AI providers'),
+    R('Translate with', 'Language', 'General', 'Pages are translated by Lumen using an AI model'),
+    R('Show the AI read-only button in the address bar', 'Toolbar', 'Appearance', 'Ask the AI about a page'),
+    R('Save passwords', 'Passwords', 'Privacy and security', 'Offers to save a password when you sign in', 'autofill auto fill sign-in login logins credentials keychain'),
+    R('Unload inactive tabs', 'Page unloading', 'Tabs', 'Closes the page of a background tab to free its memory', 'unload sleep memory ram tabs master on off enable energy power saver saving'),
+    R('Unload after', 'Page unloading', 'Tabs', 'How long a background tab can go unused', 'unload sleep memory ram tabs minutes'),
+    R('Tabs playing audio or video', 'Page unloading', 'Tabs', 'A tab that is playing sound or video stays loaded.', 'unload sleep memory ram tabs music sound mute muted media playing'),
+    R('Allow automation tools (Chrome DevTools Protocol)', 'Automation', 'Advanced', 'For Playwright and other CDP tools', 'developer developers devtools debugging remote debugging cdp playwright puppeteer'),
+    R('Default for new sites', 'Site settings', 'Privacy and security', 'Ask shows a prompt the first time a site asks', 'camera microphone location notifications clipboard permission ask block', 'Site permissions'),
+  ];
+  // "Label|Group" of every row the query finds, best first.
+  const hits = (query) => { const sc = S.rank(S.parse(query), rows); return rows.map((r, i) => [r, sc[i]]).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]).map(([r]) => `${r.label}|${r.group}`); };
+  // Every `want` prefix is found and no `not` prefix is.
+  const ranks = (name, query, want, not = []) => {
+    const got = hits(query);
+    check(name, want.every((w) => got.some((g) => g.startsWith(w))) && not.every((n) => !got.some((g) => g.startsWith(n))), `${query}: ${got.join(' ; ')}`);
+  };
+
+  ranks("'agents' finds the rows about agents, not every row of the AI page", 'agents', ['Asking before it acts', 'Allow AI agents to connect'], ['Model|', 'Short, focused', 'Status', 'Offer in']);
+  check("the page's own name ('ai and agents') still lists the whole page", hits('ai and agents').length === rows.filter((r) => r.cat === AI).length, hits('ai and agents').join(' ; '));
+  check("a page's first word names the page, its last word does not", S.categoryHit(S.parse('ai'), AI) && S.categoryHit(S.parse('ai agents'), AI) && !S.categoryHit(S.parse('agents'), AI) && S.categoryHit(S.parse('privacy'), 'Privacy and security') && !S.categoryHit(S.parse('security'), 'Privacy and security'));
+  check("a longer query is not a near match ('privacy settings' is not the Privacy page)", !S.categoryHit(S.parse('privacy settings'), 'Privacy and security'));
+  ranks("'claude' finds Claude Code's rows and only those", 'claude', ['Status|Claude Code', 'Offer in the model menu|Claude Code'], ['Model|', 'Translate with', 'Show the AI', 'Status|Grok', 'Offer in the model menu|Grok']);
+  ranks("'grok' finds Grok Build's rows and not Claude Code's", 'grok', ['Status|Grok Build', 'Offer in the model menu|Grok Build'], ['Model|', 'Translate with', 'Show the AI', 'Status|Claude', 'Offer in the model menu|Claude']);
+  check("'claude' and 'grok' do not return the same rows", hits('claude').join() !== hits('grok').join());
+  check("a plural also finds its singular ('agents' -> agent, 'cookies' -> cookie)", S.matchesAll('the ai agent asks', S.parse('agents')) && S.matchesAll('block third-party cookie', S.parse('cookies')));
+  check("'autofill' finds Save passwords first", hits('autofill')[0]?.startsWith('Save passwords'), hits('autofill').join(' ; '));
+  ranks("'mute' finds the tabs-playing-sound row", 'mute', ['Tabs playing audio or video']);
+  ranks("'energy' finds Unload inactive tabs, not every unload row", 'energy', ['Unload inactive tabs'], ['Unload after']);
+  ranks("'developer' finds the automation (DevTools) row", 'developer', ['Allow automation tools']);
+  ranks("'notification' and 'notifications' find the permissions row that sets them", 'notification', ['Default for new sites']);
+  ranks("'notifications' finds it too", 'notifications', ['Default for new sites']);
+  check('a query nothing answers finds nothing', hits('zebra crossing').length === 0);
+  check('rank(): no words rank nothing', S.rank([], rows).every((s) => s === 0));
+}
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);
 

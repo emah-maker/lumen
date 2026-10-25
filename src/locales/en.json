@@ -1546,6 +1546,8 @@
   "settings.navgroup.ai": "Assistant",
   "settings.navgroup.updates": "System",
   "settings.noResultsHint": "Try a different word, like “privacy”, “theme” or “download”.",
+  "settings.noResultsPartial": "These words match on their own:",
+  "settings.ai.checking": "Checking…",
   "settings.noResultsFor": "Nothing matches “{q}”",
   "settings.clearSearch": "Clear search",
   "settings.connectors": "Connectors",

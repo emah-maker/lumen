@@ -90,7 +90,7 @@ function buildUnloading(slot) {
   // ---- 1. on or off, and when ----
   const master = kw(toggle('tabSleep', un('master', 'Unload inactive tabs'),
     un('masterDesc', 'Closes the page of a background tab you have not used for a while to free its memory; it reloads when you come back. Turn off to keep every tab loaded.'),
-    (on) => { if (on && st.prefs.tabSleepMode === 'off') save('tabSleepMode', 'both'); refresh(); }), 'master on off enable');
+    (on) => { if (on && st.prefs.tabSleepMode === 'off') save('tabSleepMode', 'both'); refresh(); }), 'master on off enable energy power saver saving');
 
   const afterControls = presetWithCustom({ key: 'tabSleepMinutes', label: un('after', 'Unload after'), presets: C.minutes.concat(0), text: unloadMinutesText, unitText: un('unitMinutes', 'minutes'), min: 1, max: C.maxMinutes, selectId: 'pref-tabSleepMinutes', numberId: 'pref-tabSleepMinutesCustom' });
   const perfNote = h('span', { class: 'note', id: 'unload-perf-note' });
@@ -133,7 +133,7 @@ function buildUnloading(slot) {
     return row(label, desc, h('span', { class: 'note', text: un('alwaysOn', 'Always on') }), input);
   };
   const exceptions = [
-    kw(toggle('tabSleepKeepAudio', un('keepAudio', 'Tabs playing audio or video'), un('keepAudioDesc', 'A tab that is playing sound or video stays loaded.'), undefined, { fallback: true }), 'music sound media playing'),
+    kw(toggle('tabSleepKeepAudio', un('keepAudio', 'Tabs playing audio or video'), un('keepAudioDesc', 'A tab that is playing sound or video stays loaded.'), undefined, { fallback: true }), 'music sound mute muted media playing'),
     kw(toggle('tabSleepKeepPinned', un('keepPinned', 'Pinned tabs'), un('keepPinnedDesc', 'Pinned tabs stay loaded.'), undefined, { fallback: true }), 'pin'),
     kw(toggle('tabSleepKeepForms', un('keepForms', 'Tabs with unsaved input or a “Leave site?” prompt'), un('keepFormsDesc', 'A tab with typed, unsent text, or a page that would ask “Leave site?” before closing, stays loaded.'), undefined, { fallback: true }), 'form typed draft beforeunload leave'),
     locked('unload-keep-calls', un('keepCalls', 'Tabs in a call or sharing their screen'), un('keepCallsDesc', 'A tab using the camera or microphone, or sharing the screen, always stays loaded, so a call or a share is never cut.')),
