@@ -8791,6 +8791,8 @@ const mcpClient = require('./features/mcp-client').create({
     encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
     decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
   },
+  // A sign-in page opens in the user's own browser, never in a Lumen tab: https only (a test may also open its stand-in on 127.0.0.1).
+  openExternal: (url) => { if (!String(url).startsWith('https://') && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(String(url)))) throw new Error('Refusing to open that address.'); if (TEST && global.__mcpSignInOpen) return global.__mcpSignInOpen(String(url)); return shell.openExternal(String(url)); },
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());

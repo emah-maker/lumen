@@ -7,7 +7,9 @@
 //    tools (or the user presses Refresh);
 //  - a stdio server gets a minimal environment (no API keys or Lumen's own variables, only what the
 //    user typed for it) and runs in a Lumen-owned folder;
-//  - an http server must be https, or http on this computer only; redirects are refused;
+//  - an http server must be https, or http on this computer only; redirects are refused; one that wants OAuth (Notion, Todoist and most
+//    hosted servers) signs in through the user's own browser (mcp-oauth.js: discovery, client registration, PKCE), its tokens sealed
+//    with the OS's encryption like any other secret here;
 //  - every call asks the user first, with the arguments on the card (agent.js allowExternal), unless
 //    the user chose "Always allow" for that tool; after the chat has read page content every call
 //    asks, whatever was chosen before;
@@ -148,10 +150,13 @@ class StdioTransport {
 }
 
 class HttpTransport {
-  constructor(cfg, { headers, fetchImpl }) {
+  // auth: a sign-in (mcp-oauth.js) for a server that uses OAuth; onLost(reason): the server forgot our session.
+  constructor(cfg, { headers, fetchImpl, auth = null, onLost = null }) {
     this.url = checkUrl(cfg.url);
     this.headers = headers;
     this.fetch = fetchImpl;
+    this.auth = auth;
+    this.onLost = onLost;
     this.session = null;
     this.version = null;
     this.onMessage = null;
@@ -163,7 +168,7 @@ class HttpTransport {
   send(msg) {
     // Answers arrive through onMessage, like stdio; a failed POST answers the request with an error.
     this.post(msg).catch((err) => {
-      if (msg.id !== undefined && msg.method) this.onMessage?.({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: err.message } });
+      if (msg.id !== undefined && msg.method) this.onMessage?.({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: err.message, ...(err.authRequired || err.authRefused ? { data: { authRequired: Boolean(err.authRequired), authRefused: Boolean(err.authRefused) } } : {}) } });
     });
   }
 
@@ -171,12 +176,13 @@ class HttpTransport {
     const controller = new AbortController();
     this.controllers.add(controller);
     try {
-      const res = await this.fetch(this.url, {
+      const send = async () => this.fetch(this.url, {
         method: 'POST',
         redirect: 'error',
         signal: controller.signal,
         headers: {
           ...this.headers,
+          ...(this.auth ? await this.auth.header().then((h) => (h ? { authorization: h } : {})) : {}),
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           ...(this.session ? { 'mcp-session-id': this.session } : {}),
@@ -184,10 +190,26 @@ class HttpTransport {
         },
         body: JSON.stringify(msg),
       });
+      let res = await send();
+      if (res.status === 401 && this.auth) { // a token that ran out is refreshed once; with no sign-in (or a refused refresh) the user must sign in
+        try { await res.arrayBuffer(); } catch { /* unused */ }
+        if (!(await this.auth.afterUnauthorized(res.headers.get('www-authenticate')))) { const e = new Error('Sign in to use this server.'); e.authRequired = true; throw e; }
+        res = await send();
+        if (res.status === 401) { const e = new Error('The server refused the new sign-in. Sign in again.'); e.authRequired = true; throw e; }
+      }
       const session = res.headers.get('mcp-session-id');
       if (session && /^[\x21-\x7e]{1,200}$/.test(session)) this.session = session;
       if (res.status === 202 || res.status === 204) return;
-      if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? `The server refused the request (${res.status}). Check the header in its settings.` : `The server answered ${res.status}.`);
+      if (res.status === 404 && this.session && msg.method !== 'initialize') { // the server dropped our session: the next request starts a new one
+        this.session = null;
+        this.onLost?.('The server ended the session.');
+        throw new Error('The server ended the session. Try again.');
+      }
+      if (!res.ok) {
+        const e = new Error(res.status === 401 || res.status === 403 ? `The server refused the request (${res.status}). Check the header in its settings.` : `The server answered ${res.status}.`);
+        if (res.status === 401 || res.status === 403) e.authRefused = true;
+        throw e;
+      }
       const type = res.headers.get('content-type') || '';
       if (type.includes('text/event-stream')) await this.readEvents(res);
       else {
@@ -249,6 +271,8 @@ class Connection {
     this.log = '';
     this.tools = []; // [{ name, description, inputSchema }] as the server lists them
     this.skipped = 0;
+    this.needsAuth = false; // an OAuth server with no (or an ended) sign-in
+    this.authRefused = false; // a 401/403 for the header's token
     this.pending = new Map();
     this.seq = 0;
     this.transport = null;
@@ -269,10 +293,12 @@ class Connection {
   async run() {
     this.state = 'starting';
     this.error = '';
+    this.needsAuth = false;
+    this.authRefused = false;
     try {
       const { cfg, deps } = this;
       this.transport = cfg.type === 'http'
-        ? new HttpTransport(cfg, { headers: deps.headersFor(cfg), fetchImpl: deps.fetch })
+        ? new HttpTransport(cfg, { headers: deps.headersFor(cfg), fetchImpl: deps.fetch, auth: cfg.auth === 'oauth' ? deps.authFor(cfg) : null, onLost: (r) => this.lost(r) })
         : new StdioTransport(cfg, {
           cwd: path.join(deps.dir, cfg.id),
           env: { ...baseEnv(), ...deps.envFor(cfg) },
@@ -293,6 +319,8 @@ class Connection {
       this.stop();
       this.state = 'error';
       this.error = err.message;
+      this.needsAuth = Boolean(err.authRequired);
+      this.authRefused = Boolean(err.authRefused);
       this.failedAt = Date.now();
       throw err;
     }
@@ -315,7 +343,7 @@ class Connection {
       if (JSON.stringify(schema).length > 20000) continue;
       if (!schema.properties) schema = { ...schema, properties: {} };
       if ('$schema' in schema) { schema = { ...schema }; delete schema.$schema; } // some model APIs reject it
-      usable.push({ name, description: typeof t.description === 'string' ? t.description.slice(0, 1000) : '', inputSchema: schema });
+      usable.push({ name, description: typeof t.description === 'string' ? t.description.slice(0, 1000) : '', inputSchema: schema, readOnly: t.annotations?.readOnlyHint === true }); // (the server's own word that the tool changes nothing; only a literal true counts)
     }
     this.skipped = tools.length - usable.length;
     this.tools = usable;
@@ -338,7 +366,12 @@ class Connection {
     const { resolve, reject, timer } = this.pending.get(msg.id);
     this.pending.delete(msg.id);
     clearTimeout(timer);
-    if (msg.error) reject(new Error(String(msg.error.message || 'The server returned an error.').slice(0, 500)));
+    if (msg.error) {
+      const e = new Error(String(msg.error.message || 'The server returned an error.').slice(0, 500));
+      if (msg.error.data?.authRequired) e.authRequired = true;
+      if (msg.error.data?.authRefused) e.authRefused = true;
+      reject(e);
+    }
     else resolve(msg.result);
   }
 
@@ -381,7 +414,18 @@ class Connection {
 
   async call(tool, args) {
     await this.start();
-    return this.request('tools/call', { name: tool, arguments: args || {} }, CALL_TIMEOUT);
+    try {
+      return await this.request('tools/call', { name: tool, arguments: args || {} }, CALL_TIMEOUT);
+    } catch (err) {
+      if (err.authRequired) { // the sign-in ended while it ran: the server shows as needing a new one, and the next start asks for it
+        this.stop();
+        this.state = 'error';
+        this.error = err.message;
+        this.needsAuth = true;
+        this.failedAt = Date.now();
+      }
+      throw err;
+    }
   }
 }
 
@@ -405,7 +449,8 @@ function resultText(result, source, images = null) {
 
 // ---- the set of servers the user configured
 
-function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
+// openExternal(url): opens a sign-in page in the user's browser (main.js allows https only).
+function create({ userData, version, secrets, fetchImpl = globalThis.fetch, openExternal = null, signInMs }) {
   const file = path.join(userData, CONFIG_FILE);
   const dir = path.join(userData, 'mcp-servers');
   const connections = new Map(); // id -> Connection
@@ -434,8 +479,26 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
     version,
     fetch: (...a) => fetchImpl(...a),
     envFor: (cfg) => Object.fromEntries((cfg.env || []).map(({ name, value }) => [name, open(value)])),
-    headersFor: (cfg) => (cfg.header ? { [cfg.header.name]: open(cfg.header.value) } : {}),
+    headersFor: (cfg) => ({ ...(cfg.fixed || {}), ...(cfg.header ? { [cfg.header.name]: open(cfg.header.value) } : {}) }),
+    authFor: (cfg) => authFor(cfg.id),
   };
+  // One OAuth sign-in per server, made on first use (mcp-oauth.js loads only when a server wants it). The blob is sealed into the
+  // server's own entry: it never goes to a page, and it goes when the server is removed.
+  const auths = new Map();
+  function authFor(id) {
+    let a = auths.get(id);
+    if (!a) {
+      const mcpOauth = require('./mcp-oauth');
+      a = mcpOauth.createAuth({
+        serverUrl: byId(id)?.url, fetch: (...x) => fetchImpl(...x), openExternal, now: Date.now, signInMs,
+        load: () => { const s = byId(id); return s?.oauth ? mcpOauth.decode(open(s.oauth)) : null; },
+        save: (blob) => { const s = byId(id); if (!s) return; if (blob) s.oauth = seal(JSON.stringify(blob)); else delete s.oauth; persist(); },
+      });
+      auths.set(id, a);
+    }
+    return a;
+  }
+  const dropAuth = (id) => { auths.get(id)?.cancel(); auths.delete(id); };
   const conn = (cfg) => {
     let c = connections.get(cfg.id);
     if (!c) { c = new Connection(cfg, deps); connections.set(cfg.id, c); }
@@ -452,8 +515,11 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
         command: s.command || '', args: s.args || [], url: s.url || '',
         env: (s.env || []).map((e) => e.name), header: s.header ? s.header.name : '',
         alwaysAllow: s.alwaysAllow || [],
+        preset: s.preset || '', // the Connectors card that added it (shown there, not in Custom MCP servers)
+        auth: s.auth === 'oauth' ? 'oauth' : '', signedIn: s.auth === 'oauth' ? Boolean(s.oauth) && authFor(s.id).signedIn() : false,
+        needsAuth: Boolean(c?.needsAuth) || (s.auth === 'oauth' && !authFor(s.id).signedIn()), authRefused: Boolean(c?.authRefused),
         state: c?.state || 'stopped', error: c?.error || '', log: c?.log ? c.log.slice(-800) : '',
-        tools: (c?.tools || []).map((t) => ({ name: t.name, description: t.description })), skipped: c?.skipped || 0,
+        tools: (c?.tools || []).map((t) => ({ name: t.name, description: t.description, readOnly: Boolean(s.preset && t.readOnly) })), skipped: c?.skipped || 0, // (readOnly: runs without a card, official presets only)
       };
     });
   }
@@ -487,7 +553,20 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
       cfg.env = env;
     } else {
       cfg.url = checkUrl(input.url);
-      const hn = String(input.header?.name || '').trim();
+      if (input.auth === 'oauth' || (existing?.auth === 'oauth' && input.auth !== '')) { // OAuth: the sign-in stays while the address does
+        cfg.auth = 'oauth';
+        if (existing?.oauth && existing.url === cfg.url) cfg.oauth = existing.oauth;
+      }
+      if (input.fixedHeaders && typeof input.fixedHeaders === 'object') { // plain headers a preset sets (which tools a server offers); nothing secret
+        const fixed = {};
+        for (const [n, v] of Object.entries(input.fixedHeaders).slice(0, 5)) {
+          if (!HEADER_NAME.test(n) || !/^[ -~]{1,200}$/.test(String(v))) throw new Error(`${n} isn’t a valid header.`);
+          fixed[n] = String(v);
+        }
+        if (Object.keys(fixed).length) cfg.fixed = fixed;
+      } else if (existing?.fixed && existing.preset) cfg.fixed = existing.fixed;
+      if (cfg.auth === 'oauth' && input.header?.name) throw new Error('A server that signs in with OAuth doesn’t take a header as well.');
+      const hn = cfg.auth === 'oauth' ? '' : String(input.header?.name || '').trim();
       if (hn) {
         if (!HEADER_NAME.test(hn)) throw new Error(`${hn} isn’t a valid header name.`);
         if (input.header.value) cfg.header = { name: hn, value: seal(input.header.value) };
@@ -495,14 +574,18 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
         else throw new Error(`Enter a value for the ${hn} header.`);
       }
     }
+    const preset = existing?.preset || (/^[a-z0-9_-]{1,24}$/.test(String(input.preset || '')) ? String(input.preset) : '');
+    if (preset) cfg.preset = preset;
     servers = existing ? servers.map((s) => (s.id === cfg.id ? cfg : s)) : [...servers, cfg];
     persist();
+    if (existing && cfg.oauth !== existing.oauth) dropAuth(cfg.id);
     connections.get(cfg.id)?.stop();
     connections.delete(cfg.id);
     return list();
   }
 
   function remove(id) {
+    dropAuth(id);
     connections.get(id)?.stop();
     connections.delete(id);
     servers = servers.filter((s) => s.id !== id);
@@ -530,6 +613,19 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
     return list();
   }
 
+  // Sign in to an OAuth server in the user's browser, then start it. Throws with what went wrong (the user said no, the server has no
+  // automatic sign-in); the server stays either way, so Sign in can be pressed again.
+  async function signIn(id) {
+    const s = byId(id);
+    if (!s || s.type !== 'http' || s.auth !== 'oauth') throw new Error('That server doesn’t sign in with OAuth.');
+    if (!secrets?.available()) throw new Error('This computer’s secure storage isn’t available, so a sign-in can’t be kept safely.');
+    await authFor(id).signIn();
+    connections.get(id)?.stop();
+    connections.delete(id);
+    if (s.enabled) await conn(s).start().catch(() => {});
+    return list();
+  }
+
   function setAlwaysAllowed(exposed, on) {
     const found = lookupTool(exposed);
     if (!found) return list();
@@ -549,6 +645,13 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
     return s ? { id: s.id, server: s.name, tool: m[2] } : null;
   }
   const isExternal = (name) => Boolean(lookupTool(name));
+  // A tool of an official preset server (GitHub, Notion, Todoist: the old built-in connectors ran their reads without a card) that the server
+  // itself marks readOnlyHint: true. Custom servers never: their hints are not vouched for, so every call asks. No hint, no pass.
+  const isReadOnlyPreset = (name) => {
+    const f = lookupTool(name);
+    const s = f && byId(f.id);
+    return Boolean(s?.preset && connections.get(s.id)?.tools.some((t) => t.name === f.tool && t.readOnly === true));
+  };
   const isAlwaysAllowed = (name) => {
     const f = lookupTool(name);
     return Boolean(f && byId(f.id).alwaysAllow?.includes(f.tool));
@@ -601,17 +704,19 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch }) {
     connections.clear();
   }
 
-  return { list, save, remove, setEnabled, refresh, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, tools, call, stopAll };
+  return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, isReadOnlyPreset, tools, call, stopAll };
 }
 
 // Settings → You and AI. The mcp: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only
 // Lumen's own UI and its settings page may call them.
 function registerIpc(ipcMain, client) {
   ipcMain.handle('mcp:servers', () => client.list());
-  ipcMain.handle('mcp:server-save', (_e, input) => client.save(input && typeof input === 'object' ? input : {}));
+  // (the page may not tag a server as a preset or give it fixed headers: that is what lets a read skip its card, and only connectors/service.js says so)
+  ipcMain.handle('mcp:server-save', (_e, input) => { const { preset: _p, fixedHeaders: _f, ...safe } = input && typeof input === 'object' ? input : {}; return client.save(safe); });
   ipcMain.handle('mcp:server-remove', (_e, id) => client.remove(String(id)));
   ipcMain.handle('mcp:server-enable', (_e, id, on) => client.setEnabled(String(id), Boolean(on)));
   ipcMain.handle('mcp:server-refresh', (_e, id) => client.refresh(String(id)));
+  ipcMain.handle('mcp:server-signin', (_e, id) => client.signIn(String(id)));
   ipcMain.handle('mcp:tool-always', (_e, name, on) => client.setAlwaysAllowed(String(name), Boolean(on)));
 }
 

@@ -50,7 +50,7 @@ module.exports = [
   // settings-focus.js (Settings → General → Focus mode): loaded before settings.js; it also assigns the page's `st` after a change.
   { files: ['src/renderer/settings-focus.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', withKeywords: 'readonly', S: 'readonly', st: 'writable' } } },
   { files: ['src/renderer/settings-external-apps.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', $: 'readonly' } } },
-  { files: ['src/renderer/settings-mcp-servers.js', 'src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
+  { files: ['src/renderer/settings-mcp-servers.js', 'src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly', buildMcpServers: 'readonly' } } },
   // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
   { files: ['src/renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.

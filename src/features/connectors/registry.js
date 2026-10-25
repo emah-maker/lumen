@@ -14,8 +14,12 @@
 //       'token'   (the user pastes an API token or secret address; encrypted at rest),
 //       'oauth'   (Lumen's existing Google sign-in, shared with the Gmail widget),
 //       'google'  (Google Drive, Sheets: one Google sign-in in the user's own browser, each with its own `google.scopes`),
-//       'mcp'     (a preset that adds a known MCP server to Settings → Tools from MCP servers),
-//       'soon'    (shown, not available yet).
+//       'mcp'     (a preset that adds a service's official MCP server to Custom MCP servers on the same page; none ships today).
+// Why GitHub, Notion and Todoist are built in although each has an official MCP server: those servers' tool definitions cost far more of every
+// message than this one tool does (GitHub 24 tools, about 32k characters even limited to the toolsets this covers; Notion 64 tools and Todoist
+// about 45, neither measurable below that), against about 100 characters here. A card says the official server can be added by hand under
+// Custom MCP servers for the full tool set. The rule: replace a built-in only when the official server's definitions are small (about 5k
+// characters) or it does clearly more at a similar cost.
 'use strict';
 
 const CATEGORIES = [
@@ -24,7 +28,6 @@ const CATEGORIES = [
   { id: 'files', label: 'Files and docs' },
   { id: 'work', label: 'Work' },
   { id: 'tasks', label: 'Tasks' },
-  { id: 'music', label: 'Music' },
 ];
 
 // owner/name: each part letters, digits, _ . - only, and never "." or ".." (a segment that climbs out of the path), no / \ ? #.
@@ -149,6 +152,7 @@ const CONNECTORS = [
   {
     id: 'github', name: 'GitHub', category: 'work', kind: 'token', icon: { text: 'G', color: '#24292f' },
     summary: 'List your pull requests and issues, read a pull request, comment and open issues.',
+    sessionNote: 'The service’s own official MCP server (https://api.githubcopilot.com/mcp/, with a personal access token as an Authorization: Bearer header) can be added under Custom MCP servers, below, for its full set of tools: code, files, Actions, discussions and more. It costs far more of every message than this connector, which is why this one is built in.',
     fields: [{ id: 'secret', label: 'Personal access token', placeholder: 'github_pat_…', secret: true, help: 'Create a fine-grained token at github.com/settings/personal-access-tokens. Read-only is enough for reading; to comment or open issues, give it Issues and Pull requests “Read and write”.', pattern: 'github' }],
     reads: ['Pull requests and issues you wrote, are assigned to or are asked to review', 'A pull request’s description and changed files'],
     does: ['Comment on an issue or pull request (asks you first)', 'Open an issue (asks you first)'],
@@ -163,6 +167,7 @@ const CONNECTORS = [
   {
     id: 'notion', name: 'Notion', category: 'work', kind: 'token', icon: { text: 'N', color: '#111111' },
     summary: 'Search your workspace, read a page, add a page or add to one.',
+    sessionNote: 'The service’s own official MCP server (https://mcp.notion.com/mcp, with Sign in with the service) can be added under Custom MCP servers, below, for its full set of tools: databases, comments, files and more. It costs far more of every message than this connector, which is why this one is built in.',
     fields: [{ id: 'secret', label: 'Integration secret', placeholder: 'ntn_…', secret: true, help: 'Create an internal integration at notion.so/profile/integrations, then share the pages you want the AI to see with it. To let it add pages, keep “Insert content” on in the integration’s capabilities.', pattern: 'notion' }],
     reads: ['Pages and databases shared with the integration', 'The text of a page'],
     does: ['Add a page under a page you shared (asks you first)', 'Add text to the end of a page (asks you first)'],
@@ -173,11 +178,10 @@ const CONNECTORS = [
       append: { label: 'Add to a page', write: true, edit: ['body'], args: { page_id: str('page id or address', { required: true, max: 500, pattern: NOTION_ID }), body: text('the text to add; # headings, - bullets', 20000, { required: true }) }, doc: 'Adds text to the end of a page. The user confirms first.' },
     },
   },
-  // Slack: its MCP server on npm (@modelcontextprotocol/server-slack) is deprecated and unmaintained, so there is no preset to point at yet.
-  { id: 'slack', name: 'Slack', category: 'work', kind: 'soon', icon: { text: 'S', color: '#611f69' }, summary: 'Read channels and post.', fields: [], reads: [], does: [], actions: {} },
   {
     id: 'todoist', name: 'Todoist', category: 'tasks', kind: 'token', icon: { text: 'T', color: '#db4035' },
     summary: 'See your tasks and add new ones.',
+    sessionNote: 'The service’s own official MCP server (https://ai.todoist.net/mcp, with Sign in with the service) can be added under Custom MCP servers, below, for its full set of tools: projects, labels, filters, reminders and more. It costs far more of every message than this connector, which is why this one is built in.',
     fields: [{ id: 'secret', label: 'API token', placeholder: 'Todoist API token', secret: true, help: 'Todoist, Settings, Integrations, Developer.', pattern: 'todoist' }],
     reads: ['Your tasks and projects'],
     does: ['Add a task (asks you first)'],
@@ -186,10 +190,6 @@ const CONNECTORS = [
       projects: { label: 'Your projects', args: {}, doc: 'Your projects with their ids.' },
       add_task: { label: 'Add a task', write: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
     },
-  },
-  {
-    id: 'spotify', name: 'Spotify', category: 'music', kind: 'soon', icon: { text: 'S', color: '#1db954' },
-    summary: 'Ask what is playing and what you listened to.', fields: [], reads: [], does: [], actions: {},
   },
 ];
 
