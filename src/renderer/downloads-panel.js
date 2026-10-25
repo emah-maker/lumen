@@ -204,7 +204,7 @@
       selected = e.key === 'ArrowDown' ? Math.min(items.length - 1, selected + 1) : Math.max(0, selected - 1);
       render();
       list.children[selected]?.scrollIntoView({ block: 'nearest' });
-    } else if (e.key === 'Enter' && items[selected] && openable(items[selected])) {
+    } else if (e.key === 'Enter' && !isImeEnter(e) && items[selected] && openable(items[selected])) {
       api.act('open', items[selected].id);
       api.close();
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && items[selected] && items[selected].state !== 'progressing') {

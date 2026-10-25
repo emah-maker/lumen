@@ -1411,7 +1411,7 @@ function editBubble(bubble) {
     prompt.focus();
   };
   box.addEventListener('keydown', (e) => {
-    if (e.isComposing || e.keyCode === 229) return;
+    if (isImeEnter(e)) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.onclick(); }
     else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send.onclick(); }
   });
@@ -3184,7 +3184,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && ru
 prompt.addEventListener('focus', () => { prewarm(); if (running) reconcile(); }); // (a Stop button that belongs to another chat goes as soon as the box is used)
 prompt.addEventListener('input', () => { prewarm(); autosize(); updateSend(); renderScreenBtn(); });
 prompt.addEventListener('keydown', (e) => {
-  if (e.isComposing || e.keyCode === 229) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
+  if (isImeEnter(e)) return; // Japanese, Chinese, Korean input: Enter confirms the text, not the message
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     // While a reply runs, Enter sends what was typed after it (queued); it never stops the reply (the button does).

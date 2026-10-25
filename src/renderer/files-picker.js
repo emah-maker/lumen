@@ -224,7 +224,7 @@ const filesPicker = (() => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       if (rows.length) select((selected + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length);
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' && !isImeEnter(e)) {
       e.preventDefault();
       if (rows[selected]) activate(rows[selected], { show: e.ctrlKey || e.metaKey, attach: e.altKey });
     } else if (e.key === 'Escape') {

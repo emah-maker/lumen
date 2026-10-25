@@ -514,7 +514,7 @@ window.lumenPicker = (select, { label = null, recentKey = null, extra = null, an
     else if (e.key === 'PageDown') setActive(active + page());
     else if (e.key === 'PageUp') setActive(active - page());
     else if ((e.key === 'Home' || e.key === 'End') && (e.target !== search || !search.value)) setActive(e.key === 'Home' ? 0 : rows.length - 1);
-    else if (e.key === 'Enter') { rows[active]?.el.click(); }
+    else if (e.key === 'Enter' && !isImeEnter(e)) { rows[active]?.el.click(); }
     else if (e.key === 'Escape') { if (search.value) { search.value = ''; render(); } else if (onBack) { close(false); onBack(); } else close(); }
     else if (e.key === 'Tab' && !head.querySelector('.picker-back') && !filters.length && !effRow.hidden) {
       // The effort row is one more stop after the search field (Shift+Tab goes back); past it Tab leaves the menu, as it always did.
