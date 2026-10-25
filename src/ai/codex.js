@@ -59,7 +59,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exists, killTree, validModel, fullAccessRejected } = require('./cli-utils');
+const { exists, killTree, validModel, fullAccessRejected, startChild, describeStart } = require('./cli-utils');
 const { removeDir, removeDirSync } = require('./temp-dirs');
 const authSync = require('./auth-sync');
 const { isSignedOutText } = authSync;
@@ -75,7 +75,7 @@ const SIGN_IN_HINT = 'Open a terminal, run `codex login` (or run `codex` and cho
 // Turns a CLI failure into what the user should do about it. `text`: the best failure string run() found.
 function describeFailure(text, code, { fullAccess = false } = {}) {
   const t = String(text || '').trim();
-  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Codex', setting: 'Give Codex full access to this computer' }); if (rejected) return rejected; }
+  if (fullAccess) { const rejected = fullAccessRejected(t, { name: 'Codex', setting: 'Give Codex full access to this computer' }); if (rejected) return rejected; } const started = describeStart(t, { name: 'Codex', exe: 'codex.exe' }); if (started) return started; // [start retry]
   if (isSignedOutText(t, /not (logged|signed) in|please (log|sign) ?in|codex login|log ?in required|unauthori[sz]ed|\b401\b|refresh token (was )?(already )?(used|reused|expired|revoked|invalid)|invalid (api )?key|incorrect api key|missing (bearer|api key)|no credentials/i, /refresh token|authentication (failed|required)/i)) {
     return { text: `Codex is not signed in. ${SIGN_IN_HINT} Lumen never sees your OpenAI login.` };
   }
@@ -307,7 +307,7 @@ class CodexEngine {
   // userData; gate(): Lumen's local HTTP MCP server (mcp-http.js startHttp); locate(): the Codex spec (codex-locate.locateCodex's result, or
   // { found: false }); spawn / kill / exec swappable for tests; onFresh({ sessionId, resume }): a new codex process starts (snapshot's read
   // cache); bridge(): { command, args, env } for the stdio form (LUMEN_CODEX_MCP=stdio) with ensureServer(); userHome(): the user's CODEX_HOME.
-  constructor({ userData, gate, locate: locateSpec = null, bridge = null, ensureServer = null, onFresh = null, userHome = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, kill = killTree, exec = execFile, tmp = os.tmpdir() }) {
+  constructor({ userData, gate, locate: locateSpec = null, bridge = null, ensureServer = null, onFresh = null, userHome = null, watchdogMs = WATCHDOG_MS, spawn: spawnChild = spawn, startWait = undefined, kill = killTree, exec = execFile, tmp = os.tmpdir() }) {
     this.kind = 'codex';
     this.userData = userData;
     this.gate = gate;
@@ -318,6 +318,7 @@ class CodexEngine {
     this.userHome = userHome || (() => codexConfig.codexHome());
     this.watchdogMs = watchdogMs;
     this.spawn = spawnChild;
+    this.startWait = startWait; // pauses between start retries (cli-utils startChild); tests pass one that does not wait
     this.kill = kill;
     this.exec = exec;
     this.tmp = tmp;
@@ -490,7 +491,7 @@ class CodexEngine {
     let inv;
     try { inv = locate.buildInvocation(spec, argv); } catch (err) { emit({ type: 'error', text: err.message }); return { text: '', sessionId, failed: true }; }
     const env = buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
-    const child = this.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
+    const { child } = await startChild({ spawn: this.spawn, file: inv.file, args: inv.args, options: { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) }, signal, wait: this.startWait, onWait: () => emit({ type: 'status', text: 'Codex is updating, waiting a moment…' }), again: async () => { const found = await this.ensureSpec(); return found ? locate.buildInvocation(found, argv) : null; } }); // [start retry] as Claude Code's: an exe being replaced is waited for; the invocation is rebuilt for a moved one
     const active = { tag, emit, signal, child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null };
     const watchdogMs = fullAccess && this.watchdogMs ? Math.max(this.watchdogMs, FULL_WATCHDOG_MS) : this.watchdogMs; // [full access] a silent shell command is not a hang
     this.active = active;

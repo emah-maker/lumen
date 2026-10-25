@@ -74,7 +74,7 @@ async function main() {
   const rig = (respond, extra = {}, failSpawn) => {
     const cli = fakeClaude(respond, failSpawn);
     const make = (more = {}) => {
-      const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'b', args: [], env: {} }), ensureServer: () => {}, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, retryDelayMs: 10, watchdogMs: 40, startupWatchdogMs: 40, slowStartMs: 0, ...extra, ...more });
+      const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'b', args: [], env: {} }), ensureServer: () => {}, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, retryDelayMs: 10, startWait: async () => {}, watchdogMs: 40, startupWatchdogMs: 40, slowStartMs: 0, ...extra, ...more });
       eng.bin = process.execPath;
       return eng;
     };
@@ -230,7 +230,7 @@ async function main() {
     process.env.LUMEN_CLAUDE_BIN = newBin;
     const ev = [];
     const r = await eng.run(opts(ev));
-    check('binary moved: found again at the new path and the message is answered', r.text === 'from the new copy' && !r.failed && cli.spawned.length === 1 && cli.spawned[0].bin === newBin && eng.bin === newBin && !errors(ev).length && ev.some((e) => e.type === 'status' && /moved/.test(e.text)), JSON.stringify({ r, ev, bin: eng.bin }));
+    check('binary moved: found again at the new path and the message is answered', r.text === 'from the new copy' && !r.failed && cli.spawned.length === 1 && cli.spawned[0].bin === newBin && eng.bin === newBin && !errors(ev).length && ev.some((e) => e.type === 'status' && /updating/.test(e.text)), JSON.stringify({ r, ev, bin: eng.bin })); // (a file that was there a moment ago is waited for and looked up again: cli-utils startChild)
     eng.dispose();
 
     // gone for good: one specific error with the install fix, and it is looked for again on the next message
@@ -277,7 +277,7 @@ async function main() {
   // 10) error wording and the notification
   {
     const port = cc.describeFailure('Error: listen EADDRINUSE: address already in use 127.0.0.1:5555', 1);
-    const perm = cc.describeFailure('spawn EPERM', -1);
+    const perm = cc.describeFailure('spawn EPERM [lumen-start:unchanged]', -1); // EPERM that stayed after the retries with the file untouched: a real block
     const lost = cc.describeFailure('No conversation found with session ID: abc', 1);
     check('describeFailure: a port in use, a blocked start and a lost session each say what to do', /port .* already in use/.test(port.text) && /Retry/.test(port.text) && /security software/.test(perm.text) && /fresh session/.test(lost.text) && port.summary && perm.summary && lost.summary, JSON.stringify({ port, perm, lost }));
     check('describeFailure: an unknown failure keeps the CLI words', /stopped \(exit 2\): boom/.test(cc.describeFailure('boom', 2).text), '');

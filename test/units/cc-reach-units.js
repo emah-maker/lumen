@@ -70,7 +70,7 @@ async function main() {
   const rig = (respond, extra = {}, failSpawn) => {
     const cli = fakeClaude(respond, failSpawn);
     const make = (more = {}) => {
-      const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'b', args: [], env: {} }), ensureServer: () => {}, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, retryDelayMs: 10, ...extra, ...more });
+      const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'b', args: [], env: {} }), ensureServer: () => {}, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, retryDelayMs: 10, startWait: async () => {}, ...extra, ...more });
       eng.bin = process.execPath;
       return eng;
     };

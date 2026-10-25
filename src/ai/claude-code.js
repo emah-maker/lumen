@@ -13,7 +13,7 @@
 // system prompt (Lumen's is appended), the home folder as its working directory, and no permission
 // prompts (bypassPermissions). Lumen's browser tools still go through the MCP server and its approval card.
 
-const { spawn, execFile } = require('./cli-utils');
+const { spawn, execFile, startChild, startFailure, describeStart } = require('./cli-utils');
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
@@ -84,9 +84,9 @@ function describeFailure(text, code) {
   if (/EADDRINUSE|address already in use/i.test(t)) {
     return { text: 'A network port Claude Code needs is already in use by another program. Close other Claude Code sessions or restart Lumen, then press Retry.', summary: 'Claude Code could not connect (port in use)' };
   }
-  if (/spawn (EPERM|EACCES|EFTYPE|UNKNOWN)|EACCES/i.test(t)) {
-    return { text: `Windows or your security software would not let Lumen run Claude Code (${t.split('\n')[0].slice(0, 160)}). Allow claude.exe in your security software, or reinstall Claude Code, then press Retry.`, summary: 'Claude Code was blocked from starting' };
-  }
+  // [start retry] A failed start is the CLI updating or briefly locked (startChild already tried again); security software only when it really said so.
+  const started = describeStart(t, { name: 'Claude Code', exe: 'claude.exe' });
+  if (started) return started;
   return { text: `Claude Code stopped${code !== null && code !== undefined ? ` (exit ${code})` : ''}: ${t.split('\n').slice(0, 3).join(' ').slice(0, 300) || 'no output'}` };
 }
 
@@ -348,7 +348,7 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, startWait = undefined, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
     this.prewarmIdleMs = prewarmIdleMs;
     this.warmBackoffMs = warmBackoffMs;
@@ -358,6 +358,7 @@ class ClaudeCodeEngine {
     this.startupWatchdogMs = startupWatchdogMs;
     this.slowStartMs = slowStartMs;
     this.retryDelayMs = retryDelayMs;
+    this.startWait = startWait; // the pauses between start retries (cli-utils startChild); tests pass one that does not wait
     this.finalIdleMs = finalIdleMs;
     this.interruptMs = interruptMs;
     this.onFresh = onFresh;
@@ -412,7 +413,7 @@ class ClaudeCodeEngine {
   }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
-  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '', workDir = '' }) {
+  async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '', workDir = '' }, { emit = null } = {}) {
     const tag = crypto.randomBytes(18).toString('hex');
     let http = null;
     if (this.gate) {
@@ -465,7 +466,9 @@ class ClaudeCodeEngine {
       proc.turn?.exit(code);
     };
     try {
-      proc.child = this.spawn(bin, argv, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: workDir || (fullAccess ? os.homedir() : dir) }); // [work folder] the chosen folder; else an empty folder: no project settings or files ([full access]: the home folder, as in a terminal)
+      // [start retry] startChild: an exe being replaced by an update is waited for and looked up again (the argv never holds its path).
+      const started = await startChild({ spawn: this.spawn, file: bin, args: argv, options: { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env: childEnv, cwd: workDir || (fullAccess ? os.homedir() : dir) }, wait: this.startWait, onWait: () => emit?.({ type: 'status', text: 'Claude Code is updating, waiting a moment…' }), again: async () => { const found = await findClaude(); if (found) this.bin = found; return found ? { file: found } : null; } }); // (this.bin keeps the old path while nothing is found: run() names it)
+      proc.child = started.child; // [work folder] the chosen folder; else an empty folder: no project settings or files ([full access]: the home folder, as in a terminal)
     } catch (err) {
       proc.stderr = err.message;
       finish(err.code === 'ENOENT' ? 'ENOENT' : -1);
@@ -500,7 +503,7 @@ class ClaudeCodeEngine {
       if (!fresh && p && !p.exited && !p.spent && !p.turn && p.key === key) { clearTimeout(p.idle); return p; }
       if (!fresh && p && !p.exited && !p.spent && !p.turn && modelOnlyDiff(p.key, key) && this.switchModel(p, opts.model, key)) { clearTimeout(p.idle); return p; } // [model switch]
       if (p && !p.turn) this.dispose(p);
-      const proc = await this.spawnProc({ bin, key, ...opts });
+      const proc = await this.spawnProc({ bin, key, ...opts }, { emit });
       if (!proc.exited) this.proc = proc;
       return proc;
     });
@@ -979,7 +982,7 @@ class ClaudeCodeEngine {
         return again;
       }
       // A transient failure (see transientFailure) with nothing run and nothing shown: once more on a fresh process after a short pause.
-      if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code)) {
+      if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code) && !startFailure(failure)) { // (a failed start was already tried again, 1 s / 2 s / 3 s, by startChild)
         emit({ type: 'status', text: 'Claude Code is busy, trying again…' });
         await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
         if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir }, { fresh: true, attempt: 1 });

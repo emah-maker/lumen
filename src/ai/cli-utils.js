@@ -139,6 +139,81 @@ function probe(file, args, options = {}, retry = {}) {
 
 const exists = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
 
+// ---- starting a CLI that may be mid-update ----
+// [start retry] An npm / native self-update rewrites claude.exe (codex, grok and agy do the same) for a few seconds: a spawn in that window
+// fails with UNKNOWN (Node throws it; Windows could not open the half-written file), EBUSY, EACCES, EPERM, ETXTBSY or ENOENT, and a minute later
+// the same file runs fine. That is the CLI updating, not security software, so startChild waits and starts it again (1 s, 2 s, 3 s), looking the
+// program up afresh each time (an update can move it, e.g. npm -> native ~/.local/bin). Every CLI engine starts its child through it.
+const START_CODES = new Set(['UNKNOWN', 'EBUSY', 'EACCES', 'EPERM', 'ETXTBSY', 'ENOENT']);
+const START_DELAYS = [1000, 2000, 3000];
+const RECENT_MS = 2 * 60 * 1000; // a program rewritten this recently is "updating"
+const stamp = (f) => { try { const s = fs.statSync(f); return { m: s.mtimeMs, n: s.size }; } catch { return null; } };
+const sameStamp = (a, b) => Boolean(a && b && a.m === b.m && a.n === b.n);
+const START_MARK = /\[lumen-start:(unchanged|changed)\]/;
+
+// One spawn: { child } when it started (or may have: a child object with no error in the next tick), { err, child? } when it did not.
+// Node throws some failures (UNKNOWN) and emits others (EACCES, ENOENT) on the child a tick later.
+function tryStart(spawnFn, file, args, options) {
+  return new Promise((resolve) => {
+    let child;
+    try { child = spawnFn(file, args, options); } catch (err) { resolve({ err }); return; }
+    if (!child || typeof child.once !== 'function' || typeof child.pid === 'number') { resolve({ child }); return; }
+    const onError = (err) => resolve({ err, child });
+    child.once('error', onError);
+    setImmediate(() => { child.removeListener('error', onError); resolve({ child }); });
+  });
+}
+
+// spawnFn(file, args, options) like child_process.spawn. again(): async () => ({ file, args? }) | null, the program looked up afresh before each
+// retry. onWait(attempt, ms): for a "trying again" status line. Resolves { child, file, tries }; on a final failure the error (marked with
+// [lumen-start:unchanged|changed], read by startFailure) is thrown when Node threw it, else emitted on the returned child for the engine's own
+// 'error' handler, exactly as an unretried spawn would have.
+async function startChild({ spawn: spawnFn, file, args, options, again = null, onWait = null, wait = sleep, signal = null, delays = START_DELAYS, now = Date.now }) {
+  const first = stamp(file);
+  let tries = 0;
+  for (;;) {
+    const r = await tryStart(spawnFn, file, args, options);
+    if (!r.err) return { child: r.child, file, tries };
+    const err = r.err;
+    const seen = stamp(file);
+    const recent = Boolean(seen && now() - seen.m < RECENT_MS);
+    const retry = START_CODES.has(err.code) && (err.code !== 'ENOENT' || Boolean(first) || recent) && tries < delays.length && !signal?.aborted;
+    if (!retry) {
+      if (START_CODES.has(err.code) && tries) err.message = `${err.message} [lumen-start:${sameStamp(first, seen) && !recent ? 'unchanged' : 'changed'}]`;
+      if (!r.child) throw err;
+      setImmediate(() => r.child.emit('error', err));
+      return { child: r.child, file, tries };
+    }
+    const ms = delays[tries++];
+    try { onWait?.(tries, ms); } catch { /* optional */ }
+    await wait(ms);
+    let next = null;
+    try { next = await again?.(); } catch { /* keep the last path */ }
+    if (next?.file) { file = next.file; if (next.args) args = next.args; }
+  }
+}
+
+// What a spawn failure's text says. null: not a failed start. { blocked }: Windows / the security software really refused (a virus or Smart App
+// Control / AppLocker verdict, or EPERM / EACCES that stayed after the retries with the file untouched); otherwise the CLI was updating or briefly locked.
+const BLOCK_TEXT = /contains a virus|potentially unwanted software|Smart App Control|SmartScreen|blocked this (app|file)|application control policy|AppLocker|Software Restriction|ERROR_VIRUS_INFECTED|0x800700e1|0x800700e2/i;
+function startFailure(text) {
+  const t = String(text || '');
+  const code = /\bspawn\b[^\n]*?\b(UNKNOWN|EBUSY|EACCES|EPERM|ETXTBSY|EFTYPE)\b/i.exec(t)?.[1]?.toUpperCase();
+  const blockText = BLOCK_TEXT.test(t);
+  if (!code && !blockText) return null;
+  const mark = START_MARK.exec(t)?.[1] || '';
+  return { code: code || '', retried: Boolean(mark), blocked: blockText || ((code === 'EPERM' || code === 'EACCES') && mark === 'unchanged') };
+}
+// The words for a failed start, or null when `text` is not one. name: "Claude Code", exe: "claude.exe".
+function describeStart(text, { name, exe }) {
+  const f = startFailure(text);
+  if (!f) return null;
+  const line = String(text).split('\n').find((l) => /spawn|virus|Smart App Control|blocked|AppLocker|0x8007/i.test(l)) || String(text).split('\n')[0];
+  const first = line.replace(START_MARK, '').trim().slice(0, 160);
+  if (f.blocked) return { text: `Windows or your security software would not let Lumen run ${name} (${first}). Allow ${exe} in your security software, or reinstall ${name}, then press Retry.`, summary: `${name} was blocked from starting` };
+  return { text: `${name} didn’t start (it may have just updated).${f.retried ? ' Lumen tried again.' : ''} Press Retry.`, summary: `${name} didn’t start` };
+}
+
 // Where on PATH a command lives (`where` on Windows, `which` elsewhere). Never a shell.
 function lookup(name) {
   return new Promise((resolve) => {
@@ -236,4 +311,4 @@ function fullAccessRejected(text, { name, setting }) {
   return { text: `${name} didn't accept the options Lumen uses to give it full access to this computer (${String(text).trim().split('\n')[0].slice(0, 160)}). Nothing ran. Update ${name}, or turn off "${setting}" in Settings > AI.` };
 }
 
-module.exports = { installRoot, insideInstall, leaveInstallDir, testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
+module.exports = { installRoot, insideInstall, leaveInstallDir, testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, startChild, startFailure, describeStart, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
