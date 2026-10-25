@@ -1,6 +1,6 @@
 // The tab's right-click menu and the tab keyboard shortcuts, as in Chrome: New Tab to the Right,
 // Reload, Duplicate (with its back/forward list), Pin, Mute Site, Copy Link, Bookmark Tab, Bookmark
-// All Tabs, Close Tab / Other Tabs / Tabs to the Right (pinned tabs stay, "Leave site?" is asked),
+// All Tabs (the last few under More, grouping under Add to group, windows under Move tab), Close Tab / Other Tabs / Tabs to the Right (pinned tabs stay, "Leave site?" is asked),
 // Reopen Closed Tab; Cmd+Option+Arrows, Cmd+Shift+[ ], Ctrl+PageUp/Down, Cmd+1…9, Cmd+Shift+R and
 // Cmd+Shift+D; and the macOS menu bar's Tab menu. The menu is a native one, so the tests build its
 // template (global.__tabMenu) and click its items rather than popping it up.
@@ -53,7 +53,8 @@ const os = require('os');
   const activeId = async () => (await list()).find((t) => t.active)?.id;
   const urlOf = async (id) => (await list()).find((t) => t.id === id)?.url ?? null;
   const menu = (id, label) => app.evaluate((_e, { id, label }) => global.__tabMenu(id, label), { id, label });
-  const labels = async (id) => (await menu(id)).map((i) => i.label);
+  const labels = async (id) => (await menu(id)).map((i) => i.label); // every row, submenus opened
+  const topLabels = async (id) => (await menu(id)).filter((i) => i.depth === 0).map((i) => i.label); // the menu's own rows
   const enabled = async (id, label) => (await menu(id)).find((i) => i.label === label)?.enabled;
   const key = (input) => app.evaluate((_e, input) => global.__pageTools.handleShortcut(input), input);
   const mac = process.platform === 'darwin';
@@ -75,10 +76,15 @@ const os = require('os');
   const c = await open(`${base}/c`);
 
   // ---- 1. the items, in Chrome's order ----
-  const want = ['New tab to the right', 'Add to new group', 'Reload', 'Duplicate', 'Pin tab', 'Mute site', 'Copy link', 'Bookmark tab', 'Bookmark all tabs', 'Close tab', 'Close other tabs', 'Close tabs to the right', 'Reopen closed tab'];
-  const got = await labels(a);
+  const want = ['New tab to the right', 'Reload', 'Duplicate', 'Pin tab', 'Mute site', 'Add to group', 'Move tab', 'AI', 'More', 'Close tab', 'Close other tabs', 'Close tabs to the right', 'Reopen closed tab'];
+  const got = await topLabels(a);
   const positions = want.map((l) => got.indexOf(l));
-  check("the tab menu has Chrome's items, in Chrome's order", positions.every((p, i) => p !== -1 && (i === 0 || p > positions[i - 1])), JSON.stringify(got));
+  check("the tab menu has Chrome's main items, in Chrome's order", positions.every((p, i) => p !== -1 && (i === 0 || p > positions[i - 1])), JSON.stringify(got));
+  check('the tab menu is short: no more than 13 rows of its own', got.length <= 13, JSON.stringify(got));
+  const nested = ['Add to new group', 'Organize tabs', 'Move tab to new window', 'Keep the AI from acting on this tab', 'Close tabs the AI opened', 'Mute tab', 'Copy link', 'Bookmark tab', 'Bookmark all tabs', 'Save for later'];
+  const all = await labels(a);
+  const missingNested = nested.filter((l) => !all.includes(l) || got.includes(l));
+  check('the rest of the actions are all still in the menu, under Add to group / Move tab / AI / More', missingNested.length === 0, JSON.stringify({ missingNested, all }));
   check('Close Tabs to the Right is off on the last tab', (await enabled(c, 'Close tabs to the right')) === false && (await enabled(a, 'Close tabs to the right')) === true, 'enabled states');
   check('Copy Link and Bookmark Tab are off on the new-tab page', (await enabled(first, 'Copy link')) === false && (await enabled(first, 'Bookmark tab')) === false, 'enabled on the new-tab page');
 
