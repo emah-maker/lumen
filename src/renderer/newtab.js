@@ -1,6 +1,7 @@
 // New-tab page. The browser passes everything in the URL hash as JSON:
 //   { favorites: [{ title, url, icon? }], frequent: [{ title, url, icon? }], blocked: number,
 //     look: { background, image (a file: URL in the profile), effect, still, lite, accent: { light, dark }, clock, clockStyle, name, sections },
+//     hidden: { favorites: [url], frequent: [host] } (tiles the user removed; the page leaves them out, see "Removing tiles" below),
 //     widgets: [{ id, type, title, data, error, loading }] (features/widgets.js; newtab-widgets.js draws them) }
 // (an older plain array means favorites only). Icons are favicons the browser cached locally as
 // data: URLs; the page itself never touches the network.
@@ -17,7 +18,7 @@ const label = (b) => (typeof b.title === 'string' && b.title.trim() ? b.title.tr
 function data() {
   try {
     const parsed = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-    if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null, look: lookOf(null) };
+    if (Array.isArray(parsed)) return { favorites: parsed.filter(isWeb), frequent: [], blocked: null, look: lookOf(null), hidden: hiddenOf(null) };
     return {
       search: parsed.search && typeof parsed.search.url === 'string' && /^https:\/\//.test(parsed.search.url) ? parsed.search : null,
       assistant: parsed.assistant && typeof parsed.assistant.name === 'string' ? { ...parsed.assistant, model: typeof parsed.assistant.model === 'string' ? parsed.assistant.model : '', label: typeof parsed.assistant.label === 'string' ? parsed.assistant.label : '' } : null,
@@ -25,10 +26,11 @@ function data() {
       frequent: Array.isArray(parsed.frequent) ? parsed.frequent.filter(isWeb) : [],
       blocked: Number.isFinite(parsed.blocked) ? parsed.blocked : null,
       look: lookOf(parsed.look),
+      hidden: hiddenOf(parsed.hidden),
       widgets: Array.isArray(parsed.widgets) ? parsed.widgets : [],
     };
   } catch {
-    return { favorites: DEFAULTS, frequent: [], blocked: null, look: lookOf(null) };
+    return { favorites: DEFAULTS, frequent: [], blocked: null, look: lookOf(null), hidden: hiddenOf(null) };
   }
 }
 
@@ -231,6 +233,140 @@ const hintLine = (lead) => {
   const kbd = (t) => Object.assign(document.createElement('kbd'), { textContent: t });
   return ['Favorites are your bookmarks. ' + lead, kbd(MAC ? 'Cmd' : 'Ctrl'), '+', kbd('D'), ' on any page to add it here.'];
 };
+// ---- Removing tiles (Chrome-like): a ⋮ button on hover or focus, right-click, or Delete on a focused tile. Removing only hides the tile on
+// this page (a favorite stays a bookmark; a frequently-visited site is remembered by its host, so it does not come back). The list is
+// saved by the browser (settings newTabHiddenTiles, via window.lumenNewtab.setHiddenTiles); an Undo toast and "Restore all" bring tiles back.
+const hiddenOf = (h) => {
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  return { favorites: list(h?.favorites), frequent: list(h?.frequent) };
+};
+const keyOf = (kind, b) => (kind === 'favorites' ? b.url : host(b.url));
+const isHidden = (hid, kind, b) => hid[kind].includes(keyOf(kind, b));
+let hiddenState = null;
+let removedCount = 0;
+const hiddenNow = () => hiddenState || data().hidden;
+function setHidden(next) {
+  hiddenState = next;
+  // The tab's own address carries the page data: keep its list current, so a reload of this tab does not bring a removed tile back.
+  try {
+    const p = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+    if (p && typeof p === 'object' && !Array.isArray(p)) history.replaceState(null, '', location.pathname + location.search + '#' + encodeURIComponent(JSON.stringify({ ...p, hidden: next })));
+  } catch {}
+  window.lumenNewtab?.setHiddenTiles?.(next)?.catch?.(() => {});
+}
+// Where the keyboard goes after a tile is gone: the one that took its place (or the one before it), else the page's search box.
+function refocus(kind, index) {
+  const links = [...document.querySelectorAll(kind === 'favorites' ? 'nav.grid .cell > a' : 'nav.frequent .cell > a')];
+  (links[Math.min(index, links.length - 1)] || document.getElementById('q'))?.focus();
+}
+const indexOfCell = (c) => [...c.parentElement.children].indexOf(c);
+function removeTile(kind, b, index) {
+  const before = hiddenNow();
+  const key = keyOf(kind, b);
+  if (before[kind].includes(key)) return;
+  setHidden({ ...before, [kind]: [...before[kind], key] });
+  render();
+  refocus(kind, index);
+  tilesToast('Removed ' + label(b) + '.', 'Undo', () => {
+    const now = hiddenNow();
+    setHidden({ ...now, [kind]: now[kind].filter((k) => k !== key) });
+    render();
+    [...document.querySelectorAll('.cell > a')].find((a) => a.href === b.url || a.getAttribute('href') === b.url)?.focus();
+  });
+}
+function restoreAll() {
+  const before = hiddenNow();
+  if (!before.favorites.length && !before.frequent.length) return;
+  setHidden({ favorites: [], frequent: [] });
+  render();
+  tilesToast('Removed tiles are back.', 'Undo', () => { setHidden(before); render(); });
+}
+window.newtabTiles = { restoreAll, count: () => removedCount };
+let tilesToastTimer = 0;
+function tilesToast(message, action, run) {
+  document.querySelector('.tiles-toast')?.remove();
+  clearTimeout(tilesToastTimer);
+  const t = Object.assign(document.createElement('div'), { className: 'w-toast w-ui tiles-toast' });
+  t.setAttribute('role', 'status');
+  t.append(Object.assign(document.createElement('span'), { textContent: message }));
+  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'w-tb tiles-toast-undo', textContent: action });
+  b.addEventListener('click', () => { t.remove(); clearTimeout(tilesToastTimer); run(); });
+  t.append(b);
+  document.body.append(t);
+  tilesToastTimer = setTimeout(() => t.remove(), 8000);
+}
+// "n removed. Restore all" under Favorites while anything is removed (the clock panel has the same button).
+function withRestore(content) {
+  if (!removedCount) return content;
+  const box = document.createElement('div');
+  const row = Object.assign(document.createElement('p'), { className: 'section-hint tiles-restore' });
+  const b = Object.assign(document.createElement('button'), { type: 'button', className: 'tiles-restore-btn', textContent: 'Restore all' });
+  b.addEventListener('click', restoreAll);
+  row.append(removedCount + ' removed. ', b);
+  box.append(content, row);
+  return box;
+}
+let tileMenu = null;
+function closeTileMenu(refocusTo) {
+  if (!tileMenu) return;
+  const { el, from } = tileMenu;
+  tileMenu = null;
+  el.remove();
+  if (refocusTo !== false) from?.focus();
+}
+function openTileMenu(c, kind, b, x, y, from) {
+  closeTileMenu(false);
+  const menu = Object.assign(document.createElement('div'), { className: 'w-stack-menu tile-menu' });
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', label(b));
+  const item = (text, run) => {
+    const i = Object.assign(document.createElement('button'), { type: 'button', className: 'w-stack-menu-item', textContent: text });
+    i.setAttribute('role', 'menuitem');
+    i.addEventListener('click', () => { closeTileMenu(false); run(); });
+    menu.append(i);
+  };
+  item(kind === 'favorites' ? 'Remove from this page' : 'Remove', () => removeTile(kind, b, indexOfCell(c)));
+  if (removedCount) item('Restore all removed (' + removedCount + ')', () => { restoreAll(); });
+  document.body.append(menu);
+  const r = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
+  menu.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  tileMenu = { el: menu, from };
+  menu.querySelector('button')?.focus();
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('button')];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); closeTileMenu(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(at + 1) % items.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(at - 1 + items.length) % items.length].focus(); }
+    else if (e.key === 'Tab') closeTileMenu(false);
+  });
+}
+document.addEventListener('pointerdown', (e) => { if (tileMenu && !tileMenu.el.contains(e.target)) closeTileMenu(false); }, true);
+window.addEventListener('blur', () => closeTileMenu(false));
+// A tile and its ⋮ button side by side (a button can't sit inside the link).
+function cell(a, b, kind) {
+  const c = Object.assign(document.createElement('div'), { className: 'cell' });
+  const more = Object.assign(document.createElement('button'), { type: 'button', className: 'tile-more', textContent: '⋮' });
+  more.title = 'More';
+  more.setAttribute('aria-label', 'More for ' + label(b));
+  more.setAttribute('aria-haspopup', 'menu');
+  more.addEventListener('click', (e) => {
+    e.preventDefault();
+    const r = more.getBoundingClientRect();
+    openTileMenu(c, kind, b, r.left, r.bottom + 2, more);
+  });
+  c.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openTileMenu(c, kind, b, e.clientX || c.getBoundingClientRect().left, e.clientY || c.getBoundingClientRect().bottom, a);
+  });
+  c.addEventListener('keydown', (e) => {
+    if ((e.key === 'Delete' || (e.key === 'Backspace' && e.shiftKey)) && (e.target === a || e.target === more) && !e.isComposing) { e.preventDefault(); removeTile(kind, b, indexOfCell(c)); }
+  });
+  c.append(a, more);
+  return c;
+}
+
 function favorites(list) {
   if (!list.length) {
     const p = Object.assign(document.createElement('p'), { className: 'empty' });
@@ -244,7 +380,7 @@ function favorites(list) {
     a.href = b.url;
     a.title = `${label(b)} — ${host(b.url)}`;
     a.append(tile(b, 28), Object.assign(document.createElement('span'), { className: 'name', textContent: label(b) }));
-    nav.append(a);
+    nav.append(cell(a, b, 'favorites'));
   }
   if (list.length >= 4) return nav;
   const box = document.createElement('div');
@@ -267,7 +403,7 @@ function frequent(list) {
       Object.assign(document.createElement('span'), { className: 'host', textContent: host(b.url) }),
     );
     a.append(tile(b, 18), text);
-    nav.append(a);
+    nav.append(cell(a, b, 'frequent'));
   }
   return nav;
 }
@@ -295,7 +431,13 @@ function privacy(blocked) {
 const greeting = (now) => window.ClockStyles.greetingFor(now); // (features/clock-styles.js)
 
 function render() {
-  const { favorites: favs, frequent: freq, blocked, look, widgets } = data();
+  const d = data();
+  const { blocked, look, widgets } = d;
+  const hid = hiddenState || d.hidden; // (what the user just removed or restored here, until the browser sends the page again)
+  const favs = d.favorites.filter((b) => !isHidden(hid, 'favorites', b));
+  const allFreq = d.frequent.filter((b) => !isHidden(hid, 'frequent', b));
+  const freq = allFreq.slice(0, 6);
+  removedCount = d.favorites.length - favs.length + d.frequent.length - allFreq.length;
   applyLook(look);
   tickClock();
   const now = new Date();
@@ -309,7 +451,7 @@ function render() {
     return { title, content, section: section(title, content) };
   };
   window.newtabSystem.fill({
-    favorites: part(look.sections.favorites, 'Favorites', () => favorites(favs)),
+    favorites: part(look.sections.favorites, 'Favorites', () => withRestore(favorites(favs))),
     frequent: part(look.sections.frequent && freq.length, 'Frequently Visited', () => frequent(freq)),
     privacy: part(look.sections.privacy && blocked !== null, 'Privacy', () => privacy(blocked)),
   }, { header: look.sections.header }, widgets);
@@ -327,7 +469,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 render();
-window.addEventListener('hashchange', render);
+window.addEventListener('hashchange', () => { hiddenState = null; render(); }); // (the new page data carries the saved list)
 
 // The field either searches with the engine chosen in settings (the hash carries { label, url
 // with %s }) or asks the assistant. Asking hands the question (and any pictures in the box) to the browser through
@@ -414,7 +556,7 @@ window.addEventListener('hashchange', render);
   input.addEventListener('keydown', (e) => {
     const toggle = (e.ctrlKey && e.key === '/') || (e.altKey && !e.ctrlKey && (e.key === 'a' || e.key === 'A'));
     if (toggle) { e.preventDefault(); apply(mode === 'ask' ? 'search' : 'ask'); return; }
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.isComposing) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !isImeEnter(e)) { e.preventDefault(); openChat(false); } // Ctrl/Cmd+Enter asks the AI whichever mode is picked
   });
 
   form.addEventListener('submit', (e) => {

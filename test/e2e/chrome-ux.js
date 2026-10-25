@@ -41,7 +41,9 @@ const os = require('os');
   const keep = items.findIndex((i) => /Keep the AI from acting|Let the AI act/.test(i.label || ''));
   const site = items.findIndex((i) => /^(Turn off|Turn on) AI on /.test(i.label || ''));
   check('tab menu: "Keep the AI from acting on this tab" and "Turn off AI on <site>" are neighbours', keep !== -1 && site === keep + 1, JSON.stringify(items.map((i) => i.label)));
-  check('tab menu: the AI section is set off by separators from the tab commands above and Close below', items[keep - 1]?.label === '---' && items[site + 1]?.label === '---' && items[site + 2]?.label === 'Close tab', JSON.stringify(items.map((i) => i.label)));
+  // The menu is short now: the two switches live in one AI submenu (their own section), with the Close commands a separator away on the top level.
+  const closeAt = items.findIndex((i) => i.label === 'Close tab');
+  check('tab menu: the AI switches are in their own AI submenu, apart from the tab commands, and Close sits behind a separator', items[keep - 1]?.label === 'AI' && items[keep - 1].depth === 0 && items[keep].depth === 1 && items[site].depth === 1 && items[closeAt]?.depth === 0 && items[closeAt - 1]?.label === '---' && items[closeAt - 1].depth === 0, JSON.stringify(items.map((i) => `${i.depth}:${i.label}`)));
 
   // ---- 2. confirmations in the strip's toast
   await app.evaluate((_e, id) => global.__tabMenu(id, 'Copy link'), b);

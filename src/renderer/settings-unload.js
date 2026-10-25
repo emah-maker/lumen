@@ -63,7 +63,7 @@ function siteListRow({ key, label, desc, empty, addLabel, listId, inputId }) {
     if (grew) input.value = '';
     render();
   };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) add(); });
   const current = h('button', {
     type: 'button', id: `${inputId}-current`, text: un('addCurrent', 'Add current site'),
     onclick: async () => {

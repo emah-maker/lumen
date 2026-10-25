@@ -218,7 +218,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); host.cancel(); return; }
-    if (e.key === 'Enter' && e.target instanceof HTMLInputElement && e.target.type !== 'checkbox') { e.preventDefault(); go(); return; }
+    if (e.key === 'Enter' && !isImeEnter(e) && e.target instanceof HTMLInputElement && e.target.type !== 'checkbox') { e.preventDefault(); go(); return; }
     const mod = state.mac ? e.metaKey : e.ctrlKey;
     if (mod && e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); host.system(); }
   });

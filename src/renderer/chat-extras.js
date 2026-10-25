@@ -501,7 +501,7 @@
   window.chatShortcuts = { open: openSheet };
   const typing = (el) => Boolean(el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable));
   document.addEventListener('keydown', (e) => {
-    if (e.isComposing || e.keyCode === 229) return;
+    if (isImeEnter(e)) return;
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') { // new chat (ChatGPT, Claude.ai)
       e.preventDefault();

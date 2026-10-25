@@ -603,7 +603,7 @@
     numberBox.value = String(current + 1);
   });
   numberBox.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); numberBox.dispatchEvent(new Event('change')); numberBox.blur(); } else if (e.key === 'Escape') { e.preventDefault(); numberBox.value = String(current + 1); numberBox.blur(); }
+    if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); numberBox.dispatchEvent(new Event('change')); numberBox.blur(); } else if (e.key === 'Escape') { e.preventDefault(); numberBox.value = String(current + 1); numberBox.blur(); }
   });
 
   // While the page glides to a slide that was asked for, the scroll position says nothing about which slide is current: trackScroll waits until it arrives (or 3 s pass).

@@ -203,6 +203,6 @@ window.dialogHost.onShow((payload) => {
 
 document.addEventListener('keydown', (e) => {
   if (!current) return;
-  if (e.key === 'Enter' && e.target?.tagName !== 'BUTTON') { e.preventDefault(); respond(current.defaultId, e); }
+  if (e.key === 'Enter' && !isImeEnter(e) && e.target?.tagName !== 'BUTTON') { e.preventDefault(); respond(current.defaultId, e); }
   else if (e.key === 'Escape') { e.preventDefault(); respond(current.cancelId, e); }
 });

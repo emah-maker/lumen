@@ -187,6 +187,7 @@ Settings → Macros (`lumen://settings/macros`): saved step lists you run from t
 | Effect amount, speed, size | `newTabEffectAmount`, `newTabEffectSpeed`, `newTabEffectSize` | `normal` | `few`/`normal`/`many`, `slow`/`normal`/`fast`, `small`/`normal`/`large`. |
 | React to the pointer | `newTabEffectInteract` | on | Particles reach for the pointer, stars light up near it, bubbles and snow move aside. |
 | Music-reactive home screen | `newTabMusicReactive` | off | The new-tab page's background moves with the sound the PC is playing (Windows' output loopback; any program, the Spotify desktop app included): soft dots drift, burst on the beat, swirl and twinkle. Only loudness numbers are read; nothing is recorded or sent. Simpler (40 dots, 15 frames a second) with Visual effects: Light or software drawing; off with Reduce motion and Performance mode. Settings has a Preview. A music card can react on its own too (its own settings: React to music). |
+| Removed shortcut tiles | `newTabHiddenTiles` | none | Tiles taken off the new-tab page with the ⋮ button, a right-click or Delete: `favorites` (bookmark addresses; the bookmark itself stays) and `frequent` (hosts of frequently visited sites, so they do not come back). The page saves it itself (internal); **Restore all** (under Favorites, or in the clock and greeting panel) empties it. |
 | Widget cards | `newTabWidgetGlass` | `solid` | The new-tab widget cards' background: `solid`, `frosted` (see-through, blurred) or `clear` (as transparent as stays readable). |
 
 ## Search engine
