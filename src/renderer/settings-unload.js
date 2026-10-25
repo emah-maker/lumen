@@ -139,7 +139,7 @@ function buildUnloading(slot) {
     locked('unload-keep-calls', un('keepCalls', 'Tabs in a call or sharing their screen'), un('keepCallsDesc', 'A tab using the camera or microphone, or sharing the screen, always stays loaded, so a call or a share is never cut.')),
     locked('unload-keep-agent', un('keepAgent', 'Tabs the AI agent or a background task is using'), un('keepAgentDesc', 'These always stay loaded, so a task is never interrupted.')),
     kw(toggle('tabSleepKeepTransfers', un('keepTransfers', 'Tabs with a download or upload in progress'), un('keepTransfersDesc', 'A tab downloading a file, or with a file chosen to upload, stays loaded.'), undefined, { fallback: true }), 'download upload transfer'),
-    kw(toggle('tabSleepKeepGroups', un('keepGroups', 'Tabs in a tab group'), un('keepGroupsDesc', 'Tabs that belong to a group stay loaded. Off by default.')), 'group'),
+    kw(toggle('tabSleepKeepGroups', un('keepGroups', 'Tabs in a tab group'), un('keepGroupsDesc', 'Tabs that belong to a group stay loaded.')), 'group'),
   ];
   exceptions.forEach((e) => follow(e));
 

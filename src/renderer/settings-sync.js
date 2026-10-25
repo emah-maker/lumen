@@ -168,7 +168,7 @@ async function buildSync(card) {
   function offView() {
     const setup = h('button', { id: 'sync-setup', type: 'button', class: 'primary', text: tr('settings.sync.setup', 'Set up…'), onclick: () => { formOpen = !formOpen; render(); } });
     const head = row(tr('settings.sync.title', 'Sync through a folder'),
-      tr('settings.sync.desc', 'Keep your bookmarks, history, chats, home page widgets and settings the same on your computers. Choose a folder that your own cloud drive (OneDrive, Dropbox, Google Drive, iCloud Drive) already syncs. Lumen has no server and no account: nothing leaves this computer except into that folder, and everything in it is encrypted with a passphrase only you know. Off by default.'),
+      tr('settings.sync.desc', 'Keep your bookmarks, history, chats, home page widgets and settings the same on your computers. Choose a folder that your own cloud drive (OneDrive, Dropbox, Google Drive, iCloud Drive) already syncs. Lumen has no server and no account: nothing leaves this computer except into that folder, and everything in it is encrypted with a passphrase only you know.'),
       setup);
     head.id = 'sync-head';
     withKeywords(head, 'sync syncing account devices phone cloud backup transfer move onedrive dropbox google drive icloud computers share');
