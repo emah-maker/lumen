@@ -35,7 +35,7 @@ const MAX_HOPS = 3; // switches within one turn
 
 // ---------- classification ----------
 
-const NET_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EPIPE', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN', 'ERR_NETWORK', 'ERR_NETWORK_CHANGED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_ABORTED', 'ERR_SOCKET_CONNECTION_TIMEOUT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED']);
+const NET_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ESOCKETTIMEDOUT', 'EPIPE', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'EHOSTDOWN', 'ERR_NETWORK', 'ERR_NETWORK_CHANGED', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_ABORTED', 'ERR_STREAM_PREMATURE_CLOSE', 'ERR_SOCKET_CONNECTION_TIMEOUT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED']);
 const CONTEXT_RE = /prompt is too long|context (length|window)|maximum context|too many tokens|reduce the length|exceeds the (maximum|max) (number of )?(input )?tokens|token limit|tokens? (limit|quota) (for|of|per) (this|the) (request|message|prompt)|exceeded the model limit|input length exceeds/i;
 // Text only (a CLI's sentence, no status): anchored phrases that name a plan, usage or billing limit. A bare "limit",
 // "quota", "rate limit" or "reset" shows up in tool and page messages ("request rate limit of tool calls per page").
@@ -44,7 +44,7 @@ const TEXT_RESET_RE = /\bresets?\s+(at|in|on|today|tomorrow|\d|[a-z]{3,9}\.?\s+\
 const TEXT_LIMIT_WORD_RE = /limit|usage|quota|plan|credits?/i;
 const textLimit = (text) => TEXT_LIMIT_RE.test(text) || (TEXT_RESET_RE.test(text) && TEXT_LIMIT_WORD_RE.test(text));
 const TEXT_AUTH_RE = /not (signed|logged)[ -]?in|sign(ed)?[ -]?in (has )?expired|please (run|sign) ?in|\/login|run `?grok login|add your [\w ]*api key|no api key|invalid (x-)?api[ -]?key|api key (was )?(rejected|invalid|not valid|missing)|no api key|unauthori[sz]ed|authentication[_ ]error|invalid[_ ]authentication|permission[_ ]error|oauth token (has )?expired|(invalid|bad|missing|no|wrong) credentials|credentials (are |is |were )?(invalid|missing|expired|incorrect|rejected)/i;
-const TEXT_NET_RE = /fetch failed|connection (error|failed|refused|reset|closed|lost|timed out|timeout)|(lost|no|failed|dropped) (internet |network )?connection|network (error|is unreachable|request failed|failure|changed|unreachable)|socket hang up|(request|connect|connection|read|gateway|stream) (timed? ?out|timeout)|ETIMEDOUT|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE)|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|server (error|is having trouble)|internal server error|at capacity/i;
+const TEXT_NET_RE = /fetch failed|connection (error|failed|refused|reset|closed|lost|timed out|timeout)|(lost|no|failed|dropped) (internet |network )?connection|network (error|is unreachable|request failed|failure|changed|unreachable)|socket hang up|(request|connect|connection|read|gateway|stream) (timed? ?out|timeout)|ETIMEDOUT|ENOTFOUND|getaddrinfo|ECONN(RESET|REFUSED|ABORTED)|EAI_AGAIN|ENETUNREACH|ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|CONNECTION_\w+|NETWORK_\w+|TIMED_OUT|PROXY_\w+|EMPTY_RESPONSE|HTTP2_\w+|INCOMPLETE_CHUNKED_ENCODING|CONTENT_LENGTH_MISMATCH|QUIC_\w+|SSL_PROTOCOL_ERROR)|other side closed|premature(ly)? (close|end|termination)|(stream|response|body|connection) (ended|closed) (unexpectedly|prematurely|early|before)|unexpected end of (JSON|stream|data)|unterminated string in JSON|overloaded|service unavailable|bad gateway|gateway time-?out|temporarily unavailable|stopped responding|(could not|couldn.t|can.t|cannot|unable to) (reach|connect)|no (internet|network) connection|server (error|is having trouble)|internal server error|at capacity/i;
 const STATUS_NO_FALLBACK = new Set([400, 404, 405, 409, 413, 415, 422]); // a bad request is the request's fault: another model gets the same answer
 
 const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' && v !== true && v !== false ? Number(v) : null);
@@ -141,13 +141,13 @@ function classify(input, { now = Date.now(), model = '' } = {}) {
   const { status, codes, types, text, name } = f;
   const out = (kind, extra = {}) => ({ kind, scope: 'provider', resetsAt: null, status, detail: text.split('\n')[0].slice(0, 200), ...extra });
 
-  if (name === 'AbortError' || name === 'APIUserAbortError' || /request was aborted/i.test(text)) return out('other');
+  if (name === 'AbortError' || name === 'APIUserAbortError' || (typeof input === 'object' && input?.cause?.name === 'AbortError') || /request was aborted/i.test(text)) return out('other');
   if (CONTEXT_RE.test(text)) return out('other');
   // A bad argument (Node's ERR_INVALID_URL, ERR_INVALID_ARG_TYPE, ...) is the request's fault, not the network's.
   if (codes.some((c) => /^ERR_INVALID_/i.test(c))) return out('other');
-  // undici's bare "terminated" (the connection closed mid-stream, no cause). A user Stop is an AbortError, handled above
+  // undici's "terminated" (the connection closed mid-stream), bare or wrapping a cause that has no system code ("other side closed"; a code is judged below). A user Stop is an AbortError, handled above
   // (and agent.js never asks while the turn's signal is aborted).
-  if (status === null && !codes.length && !(typeof input === 'object' && input?.cause) && /^terminated$/i.test(String(typeof input === 'string' ? input : input?.message || '').trim())) return out('unreachable', { resetsAt: now + COOLDOWN.unreachable });
+  if (status === null && !codes.length && /^terminated$/i.test(String(typeof input === 'string' ? input : input?.message || '').trim())) return out('unreachable', { resetsAt: now + COOLDOWN.unreachable });
 
   const reset = () => {
     const header = typeof input === 'object' ? resetFromHeaders(input, now) : null;
