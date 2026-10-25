@@ -16,6 +16,15 @@ const PRICES = {
   'xai:grok-4': { in: 3, out: 15 },
   'gemini:gemini-2.5-pro': { in: 1.25, out: 10 },
   'gemini:gemini-2.5-flash': { in: 0.3, out: 2.5 },
+  // Gemini 3.x, ai.google.dev/gemini-api/docs/pricing, checked 2026-10-24 (paid tier, text). `over`: the rates for a prompt above
+  // that many tokens; `from`: [date, rates] changes Google has scheduled.
+  'gemini:gemini-3.1-pro-preview': { in: 2, out: 12, cacheRead: 0.2, over: { above: 200000, in: 4, out: 18, cacheRead: 0.4 } },
+  'gemini:gemini-3.1-pro-preview-customtools': { in: 2, out: 12, cacheRead: 0.2, over: { above: 200000, in: 4, out: 18, cacheRead: 0.4 } },
+  'gemini:gemini-3.8-flash': { in: 0.75, out: 3.75, cacheRead: 0.075, from: [['2027-01-01', { in: 1.5, out: 7.5, cacheRead: 0.15 }]] },
+  'gemini:gemini-3.6-flash': { in: 0.75, out: 3.75, cacheRead: 0.075, from: [['2027-01-01', { in: 1.5, out: 7.5, cacheRead: 0.15 }]] },
+  'gemini:gemini-3.5-flash-lite': { in: 0.3, out: 2.5, cacheRead: 0.03 },
+  'gemini:gemini-3.1-flash-lite': { in: 0.25, out: 1.5, cacheRead: 0.025 },
+  'gemini:gemini-3-flash-preview': { in: 0.5, out: 3, cacheRead: 0.05 },
 };
 
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, unpriced: 0, turns: 0 });
@@ -49,9 +58,11 @@ function normalize(raw) {
 }
 
 // Estimated $ for one turn on `model` (a picker id: 'claude-opus-5', 'xai:grok-4', …), or null.
-function priceTurn(model, turn) {
-  const p = PRICES[model];
+function priceTurn(model, turn, now = Date.now()) {
+  let p = PRICES[model];
   if (!p) return null;
+  for (const [date, rates] of p.from || []) if (now >= Date.parse(date)) p = { ...p, ...rates };
+  if (p.over && turn.input + turn.cacheRead > p.over.above) p = { ...p, ...p.over };
   const cacheRead = p.cacheRead ?? p.in * 0.1;
   const cacheWrite = p.cacheWrite ?? p.in;
   return (turn.input * p.in + turn.output * p.out + turn.cacheRead * cacheRead + turn.cacheWrite * cacheWrite) / 1e6;
