@@ -30,7 +30,7 @@ const CHROME_VIEWER = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai';
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
 const VENDOR_DIR = path.join(__dirname, '..', 'vendor', 'pdfjs');
 // What the scheme serves: name -> file. Everything else under /vendor/ comes from vendor/pdfjs (cmaps, fonts, wasm, images).
-const APP_FILES = { '/viewer.html': 'pdfviewer.html', '/viewer.js': 'pdfviewer.js', '/viewer.css': 'pdfviewer.css', '/tokens.css': 'tokens.css' };
+const APP_FILES = { '/viewer.html': 'pdfviewer.html', '/viewer.js': 'pdfviewer.js', '/viewer.css': 'pdfviewer.css', '/tokens.css': 'tokens.css', '/ime.js': 'ime.js' };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.wasm': 'application/wasm', '.bcmap': 'application/octet-stream', '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', '.icc': 'application/octet-stream', '.json': 'application/json' };
 
 const CSP = [

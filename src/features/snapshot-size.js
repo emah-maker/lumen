@@ -67,4 +67,4 @@ async function resizeInBands(image, target, { createFromBitmap, tick, mark = (_l
 
 
 
-module.exports = { snapshotSize, MAX_SIDE, JPEG_QUALITY: 75, plan, resizeInBands, MARGIN };
+module.exports = { snapshotSize, MAX_SIDE, JPEG_QUALITY: 90, plan, resizeInBands, MARGIN };

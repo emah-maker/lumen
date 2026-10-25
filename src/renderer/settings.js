@@ -621,7 +621,7 @@ async function buildAi(card) {
           } catch (err) { flash(note, String(err.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'err'); }
         };
         const saveKey = () => { if (input.value.trim()) put(input.value.trim()); else input.focus(); };
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKey(); else if (e.key === 'Escape') view(); });
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) saveKey(); else if (e.key === 'Escape') view(); });
         line.replaceChildren(...[
           h('span', { class: 'key-name', text: info.label }), input,
           h('button', { text: 'Save', onclick: saveKey }),
@@ -1337,7 +1337,7 @@ async function buildWidgets(card) {
           found.replaceChildren(...(out.length ? out.map((r) => h('button', { class: 'plain', text: `+ ${r.name}`, onclick: () => { if (places.length < 6 && !places.some((p) => !p.here && Math.abs(p.lat - r.lat) < 0.01 && Math.abs(p.lon - r.lon) < 0.01)) places.push({ name: r.name, lat: r.lat, lon: r.lon }); found.replaceChildren(); inputs.city.value = ''; drawPlaces(); } })) : [h('span', { class: 'note', text: `No place called “${q}” was found.` })]));
         } catch (err) { found.replaceChildren(h('span', { class: 'note error', text: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })); }
       };
-      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); search(); } });
       const here = h('button', { id: 'widget-here', text: 'Use my location', onclick: () => { if (places.length < 6 && !places.some((p) => p.here)) places.push({ here: true, name: 'My location' }); drawPlaces(); } });
       const consentNote = h('span', { class: 'note', id: 'widget-location-note' });
       const drawConsent = () => {
@@ -1402,7 +1402,7 @@ async function buildWidgets(card) {
           found.replaceChildren(...(out.length ? out.map((r) => h('button', { class: 'plain', text: `+ ${r.name}`, onclick: () => { if (clockPlaces.length < 8 && !clockPlaces.some((p) => Math.abs(p.lat - r.lat) < 0.01 && Math.abs(p.lon - r.lon) < 0.01)) clockPlaces.push({ name: r.name, lat: r.lat, lon: r.lon, ...(r.tz ? { tz: r.tz } : {}) }); found.replaceChildren(); inputs.city.value = ''; drawPlaces(); } })) : [h('span', { class: 'note', text: `No place called “${q}” was found.` })]));
         } catch (err) { found.replaceChildren(h('span', { class: 'note error', text: String(err.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })); }
       };
-      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); search(); } });
+      inputs.city.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); search(); } });
       inputs.clock = segment('widget-clock', 'Time format', [['auto', 'System'], ['12', '12-hour'], ['24', '24-hour']], wc.clock || 'auto');
       const show = wc.show || {};
       inputs.seconds = tog('widget-show-seconds', tr('widgets.worldclock.seconds', 'Seconds'), wc.seconds === true);
@@ -1757,7 +1757,7 @@ async function buildWidgets(card) {
         else if (r.kind === 'approve') flash(status, 'Approve in the Slack window; Lumen finishes by itself.', 'note');
       };
       const connect = h('button', { type: 'button', id: 'slack-connect', text: 'Connect', onclick: connectPasted });
-      pasteAll.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); connectPasted(); } });
+      pasteAll.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); connectPasted(); } });
       steps.append(
         h('li', {}, h('b', { text: 'Create the app. ' }), 'The button above opens Slack with the name, read-only permissions and redirect already filled in. Pick your workspace, press Next, then Create.'),
         h('li', {}, h('b', { text: 'Install it. ' }), 'On the page that follows press Install to Workspace, then Allow.'),
@@ -2329,7 +2329,7 @@ function buildStartup(card) {
     addNote.textContent = '';
     renderPages();
   };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addPage(); } });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPage(); } });
   input.addEventListener('input', () => { addNote.textContent = ''; });
   card.append(stackRow('On startup', 'What Lumen opens when it starts.', ...radios));
   card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,

@@ -555,12 +555,23 @@ function openLook() {
   done.type = 'submit';
   const buttons = el('div', 'ws-buttons');
   buttons.append(reset, status, done);
+  // Shortcuts removed from Favorites / Frequently visited (newtab.js "Removing tiles"): shown only while there are some.
+  const removed = window.newtabTiles?.count?.() || 0;
+  const tiles = el('div', 'ws-field');
+  if (removed) {
+    const back = el('button', 'w-btn', 'Restore all');
+    back.type = 'button';
+    back.id = 'ws-restore-tiles';
+    back.addEventListener('click', () => { window.newtabTiles.restoreAll(); close(); });
+    tiles.append(el('span', 'ws-label', 'Removed shortcuts'), el('span', 'ws-hint', removed === 1 ? '1 tile is hidden from this page.' : removed + ' tiles are hidden from this page.'), back);
+  }
   box.classList.add('ws-look');
   box.append(
     el('h2', null, 'Clock and greeting'),
     field('Name in the greeting', name, 'Leave empty for “Good morning” alone.'),
     showField,
     controls.style.node, controls.hours.node, controls.card.node, controls.greeting.node,
+    ...(removed ? [tiles] : []),
     buttons,
   );
   box.addEventListener('submit', (e) => { e.preventDefault(); close(); });

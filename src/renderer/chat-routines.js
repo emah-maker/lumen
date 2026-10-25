@@ -87,7 +87,7 @@
     when.addEventListener('input', () => { found = null; queuePreview(); });
     for (const el of [name, request]) el.addEventListener('input', () => { els.error.hidden = true; });
     create.onclick = save;
-    for (const el of [name, when]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); } });
+    for (const el of [name, when]) el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); save(); } });
     cancel.onclick = close;
     done.onclick = close;
     sheet.addEventListener('pointerdown', (e) => { if (e.target === sheet) close(); });

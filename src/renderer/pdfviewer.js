@@ -87,7 +87,7 @@ function runFind(type) {
 findInput.addEventListener('input', () => runFind(''));
 $('findCase').addEventListener('change', () => runFind('casesensitivitychange'));
 findInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); runFind.back = e.shiftKey; runFind('again'); } else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); runFind.back = e.shiftKey; runFind('again'); } else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
 });
 $('findNext').addEventListener('click', () => { runFind.back = false; runFind('again'); });
 $('findPrev').addEventListener('click', () => { runFind.back = true; runFind('again'); });

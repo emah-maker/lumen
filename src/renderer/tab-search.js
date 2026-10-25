@@ -120,7 +120,7 @@ const tabSearch = (() => {
       if (!results.length) return;
       selected = (selected + (e.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
       render();
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' && !isImeEnter(e)) {
       e.preventDefault();
       if (results[selected]) activate(results[selected]);
     } else if (e.key === 'Escape') {

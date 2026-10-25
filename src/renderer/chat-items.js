@@ -227,7 +227,7 @@
         await rerender();
       };
       input.onkeydown = (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); finish(true); }
         else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
       };
       input.onblur = () => finish(true);

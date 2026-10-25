@@ -903,7 +903,7 @@ const WIDGET_RENDERERS = {
           input.focus({ preventScroll: true });
         };
         input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); go(); } else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; draft.text = ''; input.blur(); }
+          if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); go(); } else if (e.key === 'Escape') { e.preventDefault(); input.value = ''; draft.text = ''; input.blur(); }
           e.stopPropagation();
         });
         const btn = el('button', 'w-btn', 'Add');
@@ -1343,7 +1343,7 @@ const WIDGET_RENDERERS = {
     input.placeholder = 'Ask Muse…';
     input.setAttribute('aria-label', `Ask Muse a question in ${text(w.title, 60)}`);
     const go = () => { const v = input.value.trim(); if (v) { input.disabled = true; btn.disabled = true; btn.textContent = 'Asking…'; widgetAct(w.id, 'ask', { text: v.slice(0, 500) }); } };
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } e.stopPropagation(); });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); go(); } e.stopPropagation(); });
     const btn = el('button', 'w-btn', 'Ask');
     btn.type = 'button';
     btn.addEventListener('click', go);
@@ -2099,7 +2099,7 @@ function marketCard(w, card) {
     for (const b of trade.querySelectorAll('button')) b.disabled = true;
     widgetAct(w.id, side, { sym: sel.value, qty: q });
   };
-  qty.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go('buy'); } e.stopPropagation(); });
+  qty.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); go('buy'); } e.stopPropagation(); });
   const buy = el('button', 'w-btn primary', 'Buy');
   const sell = el('button', 'w-btn', 'Sell');
   for (const [b, side] of [[buy, 'buy'], [sell, 'sell']]) { b.type = 'button'; b.addEventListener('click', () => go(side)); }

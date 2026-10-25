@@ -4637,6 +4637,10 @@ function pinToFilesItem(url) {
   try { file = require('url').fileURLToPath(address); } catch { return []; }
   return [{ label: t('menu.pinToFiles'), click: () => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); } }];
 }
+// Menu rows in sections: a separator between sections, none at the ends or doubled, and empty sections vanish.
+// Every row of a menu template, submenus opened (each row followed by its children, tagged with its depth): for the tests, which look items up by label wherever they sit.
+const flatMenu = (items, depth = 0) => (items || []).flatMap((i) => [{ item: i, depth }, ...flatMenu(i.submenu, depth + 1)]);
+const sections = (...groups) => groups.map((g) => g.filter(Boolean)).filter((g) => g.length).flatMap((g, i) => (i ? [{ type: 'separator' }, ...g] : g));
 function tabMenuTemplate(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return null;
@@ -4644,10 +4648,11 @@ function tabMenuTemplate(id) {
   const closable = (t) => t.id !== id && !t.pinned && !t.closing;
   const toRight = () => tabs.slice(tabs.indexOf(tab) + 1).filter(closable);
   const marked = isWebUrl(url) && bookmarks().some((b) => b.url === url);
-  const items = [{ label: t('menu.newTabRight'), click: () => newTabRightOf(id) }];
+  const groupAdd = [];
+  const groupTools = [];
   if (!tab.pinned) {
     const others = tabGroups.state().filter((g) => g.id !== tab.groupId);
-    items.push({
+    groupAdd.push({
       label: t('menu.addToNewGroup'),
       click: () => {
         manners.handOver(tab); // [ai manners] a tab the user groups is theirs
@@ -4659,38 +4664,54 @@ function tabMenuTemplate(id) {
         ui()?.send('group:rename-start', group.id);
       },
     });
-    if (others.length) items.push({ label: t('menu.addToGroup'), submenu: others.map((g) => ({ label: menuLabel(g.name, 80), click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } })) });
-    if (tab.groupId) items.push({ label: t('menu.removeFromGroup'), click: () => { manners.handOver(tab); tabGroups.remove(id, { byUser: true }); sendTabs(); } });
-    items.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
+    // The other groups sit right in the submenu (one click each), not a second submenu inside it.
+    for (const g of others) groupAdd.push({ label: menuLabel(g.name, 80), click: () => { manners.handOver(tab); const e = tabGroups.entryFor(id); if (e) organizeLearner.learnPlacement(e, g.name); tabGroups.add(id, g.id); sendTabs(); } });
+    if (tab.groupId) groupAdd.push({ type: 'separator' }, { label: t('menu.removeFromGroup'), click: () => { manners.handOver(tab); tabGroups.remove(id, { byUser: true }); sendTabs(); } });
+    groupTools.push({ label: t('menu.organizeByTopic'), click: organizeFromMenu });
     const dupCount = duplicateTabs().reduce((n, d) => n + d.close.length, 0);
-    if (dupCount) items.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
-    if (tabGroups.state().length > 1) items.push({ label: t('menu.mergeGroups'), click: mergeGroups });
-    if (tabGroups.canUndo()) items.push({ label: t('menu.undoOrganize'), click: undoOrganize });
+    if (dupCount) groupTools.push({ label: t('menu.closeDuplicates', { n: dupCount }), click: closeDuplicateTabs });
+    if (tabGroups.state().length > 1) groupTools.push({ label: t('menu.mergeGroups'), click: mergeGroups });
+    if (tabGroups.canUndo()) groupTools.push({ label: t('menu.undoOrganize'), click: undoOrganize });
   }
-  items.push(
-    { type: 'separator' },
-    { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => reloadTab(tab, { always: true }) },
-    ...(tab.settings ? [] : sleepMenuItems(tab)),
-    { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
-    tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
-    ...audioMenuItems(tab),
-    ...splitMenuItems(tab), // [split view]
-    ...moveWindowItems(id),
-    { type: 'separator' },
-    { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
-    ...pinToFilesItem(url), // [files] a file tab: Pin to Files
-    { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
-    { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
-    { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
-    ...projectMenuItems(tab), // [project workspace] Add to project
-    { type: 'separator' },
-    ...aiMenuSection(tab), // the two AI switches (this tab, this site) side by side
-    { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
-    { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
-    { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
-    { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiClosingNote(rec); aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }, // [ai manners]
-    { type: 'separator' },
-    { label: t('menu.reopenTab'), ...shortcutHint('CmdOrCtrl+Shift+T'), enabled: closedTabs.length > 0, click: reopenLastClosed },
+  const [muteTab, ...muteSite] = audioMenuItems(tab); // Mute site stays on top level (Chrome's); Mute tab goes under More
+  const aiItems = [...offTabMenu(tab), ...aiSiteMenu(tab).filter((i) => i.type !== 'separator'), { label: t('menu.closeAiTabs'), enabled: aiTabSelect({ rec: curRec }).length > 0, click: () => { const rec = curRec; aiClosingNote(rec); aiTabsClose({ rec }).then((r) => aiCloseNote(rec, r)).catch(() => {}); } }]; // [ai manners]
+  const moveItems = moveWindowItems(id);
+  // About a dozen rows: what is used most stays on top, the rest is grouped under Add to group / Move tab / AI / More. Nothing was dropped.
+  const items = sections(
+    [
+      { label: t('menu.newTabRight'), click: () => newTabRightOf(id) },
+      { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => reloadTab(tab, { always: true }) },
+      { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
+      tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
+      ...muteSite,
+    ],
+    [
+      ...(groupAdd.length ? [{ label: t('menu.addToGroup'), submenu: sections(groupAdd, groupTools) }] : []),
+      ...(moveItems.length ? [{ label: t('menu.moveTab'), submenu: moveItems }] : []),
+      ...(aiItems.length ? [{ label: t('menu.tabAi'), submenu: aiItems }] : []),
+      {
+        label: t('menu.tabMore'),
+        submenu: sections(
+          [muteTab],
+          tab.settings ? [] : sleepMenuItems(tab),
+          splitMenuItems(tab), // [split view]
+          [
+            { label: t('menu.copyLink'), enabled: isWebUrl(url), click: () => { clipboard.writeText(url); toast(t('menu.linkCopied')); } },
+            ...pinToFilesItem(url), // [files] a file tab: Pin to Files
+            { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkTab'), ...shortcutHint('CmdOrCtrl+D'), enabled: isWebUrl(url), click: () => toggleBookmarkFor(tab) },
+            { label: t('menu.bookmarkAllTabs'), ...shortcutHint('CmdOrCtrl+Shift+D'), enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
+            { label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), enabled: isWebUrl(url) && !tab.isolated, click: () => saveForLater(tab) },
+            ...projectMenuItems(tab), // [project workspace] Add to project
+          ],
+        ),
+      },
+    ],
+    [
+      { label: t('menu.closeTab'), ...shortcutHint('CmdOrCtrl+W'), click: () => requestCloseTab(id) },
+      { label: t('menu.closeOtherTabs'), enabled: tabs.some(closable), click: () => closeTabs(id, tabs.filter(closable)) },
+      { label: t('menu.closeTabsRight'), enabled: toRight().length > 0, click: () => closeTabs(id, toRight()) },
+    ],
+    [{ label: t('menu.reopenTab'), ...shortcutHint('CmdOrCtrl+Shift+T'), enabled: closedTabs.length > 0, click: reopenLastClosed }],
   );
   return items;
 }
@@ -4828,14 +4849,6 @@ function setKeepOff(tab, on) {
   sendTabs(); // (also schedules the session save)
 }
 const offTabMenu = (tab) => (tab.settings ? [] : [{ label: manners.isKeptOff(tab) ? t('menu.allowAiTab') : t('menu.keepAiOffTab'), click: () => setKeepOff(tab, !manners.isKeptOff(tab)) }]);
-
-// "Keep the AI from acting on this tab" and "Turn off AI on <site>" are one question (what may the AI touch), so they sit
-// together in one section instead of one among the tab's own commands and the other down by Close.
-function aiMenuSection(tab) {
-  const items = [...offTabMenu(tab), ...aiSiteMenu(tab)]; // (aiSiteMenu ends with its own separator)
-  if (items.length && items[items.length - 1].type !== 'separator') items.push({ type: 'separator' });
-  return items;
-}
 
 function aiSiteMenu(tab) {
   const url = alive(tab) ? realUrl(tab.view.webContents) : tab.sleepUrl || '';
@@ -5070,7 +5083,8 @@ function newTabUrl() {
   const withIcon = (b) => { const icon = faviconFile(faviconStore.get(hostOf(b.url))); return icon ? { ...b, icon } : b; };
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
-    frequent: frequentSites().map(withIcon),
+    frequent: frequentSites(12).map(withIcon), // (12: the page drops the ones the user removed, then shows 6)
+    hidden: settingsPage.cleanHiddenTiles(readSettings().newTabHiddenTiles) || { favorites: [], frequent: [] }, // [newtab tiles]
     blocked: adblock.total(), // ads/trackers blocked on open tabs
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
@@ -5293,7 +5307,7 @@ managers.setup();
 // When each site last stored cookies: lets Clear browsing data honour a time range for them.
 const siteActivity = createSiteActivity({ userData: app.getPath('userData') });
 if (TEST) global.__managers = { managers, siteActivity, history: () => history, downloads };
-if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = tabMenuTemplate(id)?.find((i) => i.label === label); if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/e2e/reading-list.js
+if (TEST) global.__readingList = { store: () => readingList(), menu: (id, label, click) => { const item = flatMenu(tabMenuTemplate(id)).find((r) => r.item.label === label)?.item; if (item && click) item.click(); return item ? { enabled: item.enabled !== false } : null; } }; // test/e2e/reading-list.js
 
 // Electron reports only "Chromium" in UA client hints while the user agent says Chrome; sites
 // (Google especially) treat that mismatch as a bot signal. Align both through the DevTools protocol; the
@@ -8043,7 +8057,7 @@ if (TEST) {
     // A new tab in that window, whichever window is current (a late focus event can move "current" under a test).
     open: (windowId, url) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => { const t = global.__agent.browser.openTab(url); return { id: t.id, contentsId: t.webContents.id }; }),
     setSelection: (windowId, ids) => { const rec = [...winRecs].find((r) => rcAlive(r) && r.win.id === windowId); if (rec) rec.selection = ids; },
-    tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => (tabMenuTemplate(tabId) || []).map((i) => ({ label: i.label, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
+    tabMenu: (windowId, tabId) => withWindow([...winRecs].find((r) => rcAlive(r) && r.win.id === windowId), () => flatMenu(tabMenuTemplate(tabId)).filter((r) => r.item.label).map(({ item: i, depth }) => ({ label: i.label, depth, enabled: i.enabled !== false, sub: (i.submenu || []).map((s) => s.label) }))),
   };
 }
 
@@ -9352,11 +9366,11 @@ if (TEST) {
   // The tab strip's right-click menu (test/e2e/tabmenu.js): its items as { label, enabled }, and with
   // `label`, that item clicked.
   global.__tabMenu = (id, label) => {
-    const items = (tabMenuTemplate(id) || []).filter((i) => i.label);
-    if (label) items.find((i) => i.label === label)?.click();
-    return items.map((i) => ({ label: i.label, enabled: i.enabled !== false }));
+    const items = flatMenu(tabMenuTemplate(id)).filter((r) => r.item.label); // submenus opened: { label, enabled, depth }, depth 0 being the menu's own rows
+    if (label) items.find((r) => r.item.label === label)?.item.click();
+    return items.map(({ item: i, depth }) => ({ label: i.label, enabled: i.enabled !== false, depth }));
   };
-  global.__tabMenuFull = (id) => (tabMenuTemplate(id) || []).map((i) => ({ label: i.type === 'separator' ? '---' : i.label, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/e2e/chrome-ux.js: separators and shortcut hints too)
+  global.__tabMenuFull = (id) => flatMenu(tabMenuTemplate(id)).map(({ item: i, depth }) => ({ label: i.type === 'separator' ? '---' : i.label, depth, accelerator: i.accelerator, registerAccelerator: i.registerAccelerator })); // (test/e2e/chrome-ux.js: separators and shortcut hints too)
   global.__macMenuLabels = () => macMenu().items.map((m) => ({ label: m.label, items: m.submenu ? m.submenu.items.map((i) => i.label) : [] }));
   global.__mcpClient = mcpClient;
   global.__connectors = connectorsFacade;
@@ -10309,6 +10323,14 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
     const r = musicReact.start(event.sender);
     if (r.ok) event.sender.executeJavaScript('0', true).catch(() => {}); // (getDisplayMedia needs a touch on the page: this one was asked to listen by its own user, in Settings, so the page counts as touched)
     return r;
+  });
+  // [newtab tiles] The page's Remove / Undo / Restore all: the whole hidden list comes back, is checked, and is saved (a favorite stays a bookmark; it is only left off this page).
+  ipcMain.handle('newtab-tiles:set', (event, hidden) => {
+    if (!newTabTab(event)) return false;
+    const clean = settingsPage.cleanHiddenTiles(hidden);
+    if (!clean) return false;
+    writeSettings({ ...readSettings(), newTabHiddenTiles: clean });
+    return true;
   });
   ipcMain.handle('newtab-ai:pick', async (event) => {
     if (!newTabTab(event)) return null;
