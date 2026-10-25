@@ -71,6 +71,7 @@ const DEFAULTS = {
   newTabFavorites: true,
   newTabFrequent: true,
   newTabPrivacy: true,
+  newTabHiddenTiles: { favorites: [], frequent: [] }, // [newtab tiles] tiles the user removed from the new-tab page: favorite URLs, and frequently-visited hosts (the page's own Remove / Undo / Restore all); internal
   newTabMusicReactive: false, // [look] Music-reactive home screen: the new-tab page's glow, wave and clock follow the sound Lumen's own tabs play (renderer/newtab-music-react.js)
   newTabWidgetsPacked: false, // [widgets] Keep widgets packed: cards slide up into gaps (off: a card stays in the cell it was put in)
   homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
@@ -265,6 +266,12 @@ const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
 
 // Coerce a value for `key` to something valid, or throw.
+// [newtab tiles] { favorites: [url], frequent: [host] }: bounded, deduped, strings only (the page sends these back as the user removes tiles).
+function cleanHiddenTiles(value) {
+  if (!value || typeof value !== 'object') return null;
+  const list = (v, ok, fix = (x) => x) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x.length <= 2048 && ok(x)).map(fix))].slice(0, 500) : []);
+  return { favorites: list(value.favorites, (u) => /^https?:[/][/]/i.test(u)), frequent: list(value.frequent, (h) => /^[a-z0-9.-]{1,253}$/i.test(h), (h) => h.toLowerCase()) };
+}
 function validate(key, value) {
   switch (key) {
     case 'theme': return pick(value, ['system', 'light', 'dark'], null);
@@ -350,6 +357,7 @@ function validate(key, value) {
       return Array.isArray(value) ? [...new Set(value.map(String).filter(langTag))].slice(0, 12) : null;
     case 'homeWidgets': return cleanWidgets(value);
     case 'homeWidgetSizes': return cleanSizes(value);
+    case 'newTabHiddenTiles': return cleanHiddenTiles(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
     case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
     case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
@@ -1367,4 +1375,4 @@ function create(deps) {
   };
 }
 
-module.exports = { graphics, create, validate, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

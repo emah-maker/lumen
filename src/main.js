@@ -5083,7 +5083,8 @@ function newTabUrl() {
   const withIcon = (b) => { const icon = faviconFile(faviconStore.get(hostOf(b.url))); return icon ? { ...b, icon } : b; };
   const data = {
     favorites: bookmarks().filter((b) => !b.folder).slice(0, 12).map(withIcon),
-    frequent: frequentSites().map(withIcon),
+    frequent: frequentSites(12).map(withIcon), // (12: the page drops the ones the user removed, then shows 6)
+    hidden: settingsPage.cleanHiddenTiles(readSettings().newTabHiddenTiles) || { favorites: [], frequent: [] }, // [newtab tiles]
     blocked: adblock.total(), // ads/trackers blocked on open tabs
     search: engineFor(readSettings().searchEngine),
     assistant: homeAssistant(),
@@ -10322,6 +10323,14 @@ app.on('before-quit', () => { try { filesRt?.store.flushSync(); } catch { /* not
     const r = musicReact.start(event.sender);
     if (r.ok) event.sender.executeJavaScript('0', true).catch(() => {}); // (getDisplayMedia needs a touch on the page: this one was asked to listen by its own user, in Settings, so the page counts as touched)
     return r;
+  });
+  // [newtab tiles] The page's Remove / Undo / Restore all: the whole hidden list comes back, is checked, and is saved (a favorite stays a bookmark; it is only left off this page).
+  ipcMain.handle('newtab-tiles:set', (event, hidden) => {
+    if (!newTabTab(event)) return false;
+    const clean = settingsPage.cleanHiddenTiles(hidden);
+    if (!clean) return false;
+    writeSettings({ ...readSettings(), newTabHiddenTiles: clean });
+    return true;
   });
   ipcMain.handle('newtab-ai:pick', async (event) => {
     if (!newTabTab(event)) return null;
