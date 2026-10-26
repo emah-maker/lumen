@@ -82,8 +82,10 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectFilesAdd: (id, files) => ipcRenderer.invoke('chats:project-files-add', id, files), // [{ name, bytes }]
       projectFileRemove: (id, fileId) => ipcRenderer.invoke('chats:project-file-remove', id, fileId),
       projectSearch: (id, query) => ipcRenderer.invoke('chats:project-search', id, query),
-      projectLink: (id, change) => ipcRenderer.invoke('chats:project-link', id, change), // { add: { url, title } } | { remove: url }
-      projectAddTab: (id) => ipcRenderer.invoke('chats:project-add-tab', id), // the tab the chat works with
+      projectLink: (id, change) => ipcRenderer.invoke('chats:project-link', id, change), // { add: { url, title, site? } } | { remove: url } | { rename: { url, title } } | { refresh: url }
+      projectAddTab: (id, tabIds) => ipcRenderer.invoke('chats:project-add-tab', id, tabIds), // the tab the chat works with, or the tabs picked in the page's list
+      projectTabs: (id) => ipcRenderer.invoke('chats:project-tabs', id), // the web pages open in your windows
+      projectFileRename: (id, fileId, name) => ipcRenderer.invoke('chats:project-file-rename', id, fileId, name),
       projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),

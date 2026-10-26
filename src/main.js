@@ -302,7 +302,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -5183,11 +5183,11 @@ function widgetAction(event, url, wc = null) {
 
 // When a favorite or frequently visited site shows its favicon, keep a small copy for the new-tab page.
 // iconUrls: the page's candidates; the first one that downloads as a small image is kept.
-async function cacheFavicon(pageUrl, iconUrls) {
+async function cacheFavicon(pageUrl, iconUrls, force = false) {
   const host = hostOf(pageUrl);
   if (!host || faviconStore.has(host)) return;
-  // Only sites the new-tab page shows (favorites and frequently visited ones) and the sites on the reading list.
-  if (!bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host) && !readingListStore?.list().some((e) => hostOf(e.url) === host)) return;
+  // Only sites the new-tab page shows (favorites and frequently visited ones) and the sites on the reading list; `force`: a page the user pinned in a project (it is shown in the project's list).
+  if (!force && !bookmarks().some((b) => hostOf(b.url) === host) && !frequentSites(12).some((s) => hostOf(s.url) === host) && !readingListStore?.list().some((e) => hostOf(e.url) === host)) return;
   for (const iconUrl of iconUrls.filter((u) => /^https?:/.test(u))) {
     try {
       const res = await net.fetch(iconUrl);
@@ -5903,7 +5903,10 @@ function lookAtProjectFolders() {
     });
   }
 }
+// A project as the project page shows it: its folder state, and each pinned page's icon when Lumen already has one (from a tab or a visit; never fetched here).
+const withLinkIcons = (p) => (p.links?.length ? { ...p, links: p.links.map((l) => { const icon = faviconStore.get(hostOf(l.url)); return icon ? { ...l, icon } : l; }) } : p);
 const withFolderState = (p) => { const st = folderState.get(p.id); return p.folder && st && st.folder === p.folder && !st.ok ? { ...p, folderMissing: true } : p; };
+const projectPage = (p) => withLinkIcons(withFolderState(p));
 // What a project's chats work in: its working folder, else its own folder.
 const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id); const p = pid ? projectById(pid) : chats().projectOf(id); return p ? (p.workFolder || p.folder || '') : ''; } catch { return ''; } };
 // The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
@@ -11582,7 +11585,7 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
   if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
   syncProjectInstructions();
   pushAttention();
-  return withFolderState(out);
+  return projectPage(out);
 });
 // [project workspace] Deleting a project can be undone for a while (the page's toast): the project, its chats' membership, its memory and its
 // files all wait; once the time is over the files go. (A project's folder on disk, and what is in it, is never touched.)
@@ -11701,7 +11704,7 @@ ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
         mirror().forgetFolder(p.folder || '');
         const out = chats().saveProject({ id: p.id, name: p.name, folder: chk.real, folderCreated: false });
         folderState.delete(p.id); syncProjectInstructions(); pushAttention();
-        return { ok: Boolean(out), project: out && withFolderState(out) };
+        return { ok: Boolean(out), project: out && projectPage(out) };
       }
       case 'recreate': {
         if (!p.folder || !path.isAbsolute(p.folder)) return { ok: false, reason: 'none' };
@@ -11723,7 +11726,7 @@ ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
         const rel = p.workFolder ? path.relative(old, p.workFolder) : null;
         const out = chats().saveProject({ id: p.id, name: p.name, folder: target, folderCreated: true, ...(rel !== null && !rel.startsWith('..') && !path.isAbsolute(rel) ? { workFolder: path.join(target, rel) } : {}) });
         folderState.delete(p.id); syncProjectInstructions(); pushAttention();
-        return { ok: Boolean(out), folder: target, project: out && withFolderState(out) };
+        return { ok: Boolean(out), folder: target, project: out && projectPage(out) };
       }
       case 'work': {
         const dir = await pickFolder(event, 'Choose where the AI works in this project', p.workFolder || p.folder || documentsDir());
@@ -11732,12 +11735,12 @@ ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
         if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
         const out = chats().saveProject({ id: p.id, name: p.name, workFolder: chk.real });
         syncProjectInstructions(); pushAttention();
-        return { ok: Boolean(out), project: out && withFolderState(out) };
+        return { ok: Boolean(out), project: out && projectPage(out) };
       }
       case 'work-clear': {
         const out = chats().saveProject({ id: p.id, name: p.name, workFolder: '' });
         syncProjectInstructions(); pushAttention();
-        return { ok: Boolean(out), project: out && withFolderState(out) };
+        return { ok: Boolean(out), project: out && projectPage(out) };
       }
       case 'write-all': {
         if (!p.folder) return { ok: false, reason: 'none' };
@@ -11777,7 +11780,7 @@ ipcMain.handle('chats:project-get', async (_e, id) => {
   const snippets = {};
   const recent = chats().list().filter((c) => !c.missing && !c.archived && c.project === p.id).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 6);
   await Promise.all(recent.map(async (c) => { snippets[c.id] = await chats().lastWords(c.id); }));
-  return { project: withFolderState(p), snippets, files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
 });
 // Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
 // text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.
@@ -11812,39 +11815,108 @@ ipcMain.handle('chats:project-search', async (_e, id, query) => {
   const ctx = require('./ai/project-context');
   return ctx.search(await projectFiles().texts(p.id), q, { max: 12 });
 });
-// A pinned page: { add: { url, title } } or { remove: url }. http and https addresses only. Answers the project, or null.
-ipcMain.handle('chats:project-link', (_e, id, change) => {
+// A project's pinned pages and websites (its sources, with the files): { add: { url, title, site? } }, { remove: url }, { rename: { url, title } } (an empty
+// title gives the page's own back) or { refresh: url } (Re-read: the title and icon, from an open tab, else one request; only when the user asks). `site: true`
+// pins a whole website (a domain or a path prefix; ai/project-context.js says how the AI uses it). http and https addresses only. Answers the project,
+// { error: 'full' | 'invalid' | 'unreachable' | 'gone' }, or null.
+const projectSources = () => require('./features/project-sources');
+const openTabOnPage = (url) => allTabsEverywhere().find((x) => x && !x.closing && !x.isolated && isWebUrl(tabUrl(x)) && projectSources().sameUrl(tabUrl(x), url));
+ipcMain.handle('chats:project-link', async (_e, id, change) => {
   const p = projectById(String(id));
   if (!p || !change || typeof change !== 'object') return null;
   let links = (p.links || []).map((l) => ({ ...l }));
   if (change.remove) links = links.filter((l) => l.url !== String(change.remove));
   else if (change.add) {
     if (links.length >= 25) return { error: 'full' };
-    links.push({ url: String(change.add.url || '').slice(0, 2000), title: String(change.add.title || '').slice(0, 200) });
+    const site = change.add.site === true;
+    const url = site ? projectSources().sitePrefix(change.add.url) : String(change.add.url || '').slice(0, 2000);
+    if (!url) return { error: 'invalid' };
+    let title = String(change.add.title || '').slice(0, 200);
+    const tab = !site && isWebUrl(url) ? openTabOnPage(url) : null;
+    if (tab && !title) { title = tabTitle(tab) || ''; cacheFavicon(url, tab.favicons || [], true).catch(() => {}); } // (a page that is open: its title and icon are already here)
+    links.push({ url, title, ...(site ? { site: true } : {}) });
+  } else if (change.rename) {
+    const link = links.find((l) => l.url === String(change.rename.url));
+    if (!link) return { error: 'gone' };
+    const title = String(change.rename.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    link.title = title;
+    if (title) link.named = true; else delete link.named;
+  } else if (change.refresh) {
+    const link = links.find((l) => l.url === String(change.refresh));
+    if (!link) return { error: 'gone' };
+    const tab = openTabOnPage(link.url);
+    let title = tab ? tabTitle(tab) || '' : '';
+    if (tab) await cacheFavicon(link.url, tab.favicons || [], true).catch(() => {});
+    if (!title) {
+      const r = await projectSources().readTitle(link.url, { fetch: (u, o) => net.fetch(u, o) });
+      if (r.ok) title = r.title; else if (r.reason !== 'notitle') return { error: 'unreachable' };
+      let icon = ''; try { icon = new URL('/favicon.ico', link.url).href; } catch { /* none */ }
+      if (icon) await cacheFavicon(link.url, [icon], true).catch(() => {});
+    }
+    if (title && !link.named) link.title = title.slice(0, 120);
   }
   const out = chats().saveProject({ id: p.id, name: p.name, links });
-  if (out && change.add && !out.links?.some((l) => l.url.startsWith(String(change.add.url).split('#')[0]))) return { error: 'invalid' };
+  if (out && change.add && out.links.length <= (p.links || []).length && !out.links.some((l) => l.url.startsWith(String(change.add.url).split('#')[0]))) return { error: 'invalid' };
   if (out) projectChanged();
-  return out && withFolderState(out);
+  return out && projectPage(out);
 });
-// "Add this tab to the project": from the chat's + menu (the open chat's project, else the one named) and from a tab's menu. The tab is the one the sender
-// looks at (the chat page: the tab it works with). Answers { ok, project, title } or { ok: false, reason }.
+// The pages open in your windows, for "Add open tabs…": [{ id, url, title, icon, added }] (web pages only; an AI research tab's own session is not your browsing).
+ipcMain.handle('chats:project-tabs', (_e, projectId) => {
+  const p = projectById(String(projectId || ''));
+  const have = new Set((p?.links || []).filter((l) => !l.site).map((l) => l.url));
+  const seen = new Set();
+  const out = [];
+  for (const tab of allTabsEverywhere()) {
+    if (!tab || tab.closing || tab.isolated) continue;
+    const url = tabUrl(tab);
+    if (!isWebUrl(url)) continue;
+    let key;
+    try { key = new URL(url).href.replace(/#.*$/, ''); } catch { continue; }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const fav = faviconStore.get(hostOf(url)) || (tab.favicons || []).find((u) => /^https:/i.test(u)) || '';
+    out.push({ id: tab.id, url, title: tabTitle(tab) || '', icon: fav, added: have.has(key) });
+    if (out.length >= 40) break;
+  }
+  return out;
+});
+// "Add this tab to the project": from the chat's + menu (the open chat's project, else the one named), from a tab's menu and from the project page's
+// "Add open tabs…". The tab is the one the sender looks at (the chat page: the tab it works with). Answers { ok, project, title } or { ok: false, reason }.
 function addTabToProject(tab, projectId) {
   const p = projectById(String(projectId || ''));
   if (!p) return { ok: false, reason: 'no-project' };
   const url = tab ? tabUrl(tab) : '';
   if (!isWebUrl(url) || tab.isolated) return { ok: false, reason: 'not-web' };
   const title = (alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle || '') || '';
-  if ((p.links || []).some((l) => l.url === String(new URL(url).href.replace(/#.*$/, '')))) return { ok: true, project: p, title, already: true };
+  if ((p.links || []).some((l) => !l.site && l.url === String(new URL(url).href.replace(/#.*$/, '')))) return { ok: true, project: p, title, already: true };
   if ((p.links || []).length >= 25) return { ok: false, reason: 'full' };
   const out = chats().saveProject({ id: p.id, name: p.name, links: [...(p.links || []), { url, title }] });
   if (!out) return { ok: false, reason: 'failed' };
+  cacheFavicon(url, tab.favicons || [], true).catch(() => {});
   projectChanged();
   return { ok: true, project: out, title };
 }
-ipcMain.handle('chats:project-add-tab', (event, projectId) => {
+ipcMain.handle('chats:project-add-tab', (event, projectId, tabIds) => {
+  const pid = projectId || projectIdOf(chatId);
+  if (Array.isArray(tabIds)) { // the tabs picked in the page's list: each is added; the answer says how many were new
+    let added = 0; let already = 0; let reason = '';
+    for (const id of tabIds.slice(0, 40)) {
+      const r = addTabToProject(allTabsEverywhere().find((x) => x.id === id), pid);
+      if (r.ok && r.already) already++; else if (r.ok) added++; else reason = reason || r.reason;
+    }
+    const p = projectById(String(pid || ''));
+    return { ok: Boolean(p) && (added > 0 || already > 0), added, already, reason, project: p && projectPage(p) };
+  }
   const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
-  return addTabToProject(tab, projectId || projectIdOf(chatId));
+  return addTabToProject(tab, pid);
+});
+// A file's new name (the project page's ⋯ menu): { ok, files } or { ok: false, error }.
+ipcMain.handle('chats:project-file-rename', async (_e, id, fileId, name) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const r = await projectFiles().rename(p.id, String(fileId), String(name ?? '')).catch(() => ({ ok: false, error: 'Could not rename the file.' }));
+  if (r.ok) projectChanged();
+  return { ...r, files: projectFiles().list(p.id) };
 });
 // A project's own memory (Settings → AI and agents → Memory lists everything; this is the project's part).
 ipcMain.handle('chats:project-memory-forget', (_e, id, entryId) => {
@@ -11857,7 +11929,7 @@ ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
   const d = defaults && typeof defaults === 'object' ? defaults : {};
   const out = chats().saveProject({ id: p.id, name: p.name, defaults: { model: String(d.model || '').slice(0, 120), plan: d.plan === true, connectors: d.connectors !== false, mcp: d.mcp !== false } });
   if (out) projectChanged();
-  return out && withFolderState(out);
+  return out && projectPage(out);
 });
 // Tab menu → Add to project: one entry per project (the 20 most recent).
 const projectMenuItems = (tab) => {

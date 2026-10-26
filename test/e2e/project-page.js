@@ -7,6 +7,8 @@
 //    instructions), the latest chats as cards (what was said last, a mark while one is working), all the chats (newest first, pinned first, filter, pin,
 //    delete), the overview cards (instructions read as text and edited on request, files, pinned pages, folder, defaults, memory), empty states,
 //    one column when narrow, and it follows an edit made from the sidebar;
+//  - Sources: files, web pages and whole websites in one list with one Add menu (upload, a page, a website, open tabs), a ⋯ menu on each row (Open,
+//    Re-read, Rename, Remove), links and files dropped on the card, one search for chats and sources, and old pinned pages shown as they were;
 //  - the sidebar: a strip that says which project the open chat is in and picks one (an empty chat starts in it, a chat with messages moves, with
 //    Undo), the chat list with the projects (chevron, +, ⋯, chats under a project), "Move to project" on a row, a project row that opens its page
 //    in lumen://chat (also when that page is already open), and a new topic that stays in the project.
@@ -21,10 +23,14 @@ const os = require('os');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { try { v = await fn(); if (v) return v; } catch { /* not yet */ } await sleep(100); } return v; };
 const SHOTS = process.env.PROJECT_PAGE_SHOTS || '';
+const http = require('http');
 
 (async () => {
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
+  // pages for the sources' titles (Re-read, a link just added, a tab)
+  const fixture = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(`<!doctype html><title>Fixture ${req.url.slice(1)}</title><body><p>fixture ${req.url}</p></body>`); }).listen(0, '127.0.0.1');
+  const fixtureBase = `http://127.0.0.1:${fixture.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-e2e-profile-'));
   const app = await electron.launch({
     args: [path.join(__dirname, '..', '..')],
@@ -137,8 +143,166 @@ const SHOTS = process.env.PROJECT_PAGE_SHOTS || '';
     check('a project opened for instructions has the cursor in an empty editor', (await inPage("document.querySelector('.pjp-text').value")) === '' && /How should the AI work/.test(await inPage("document.querySelector('.pjp-text').placeholder")));
     await inPage("document.querySelector('.pjp-text').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
     check('Escape leaves the editor; the card says there are no instructions and offers Add', await waitFor(async () => (await inPage("Boolean(document.querySelector('.pjp-text'))")) === false && /No instructions yet/.test(await inPage("document.querySelector('.pjp-instructions').innerText")) && (await inPage("document.querySelector('.pjp-instructions .pjp-card-head .btn').textContent")) === 'Add'), await inPage("document.querySelector('.pjp-instructions').innerText"));
-    check('the overview has Instructions, Files, Pinned pages, Folder, Defaults and Memory as short cards', JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")) === JSON.stringify(['Instructions', 'Files', 'Pinned pages', 'Folder', 'Defaults', 'Memory']), JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")));
     check('...with no always-open text box and the fine print behind a tooltip, not a paragraph', (await inPage("document.querySelectorAll('.pjp-side textarea').length")) === 0 && (await inPage("document.querySelectorAll('.pjp-side .pjp-tip[title]').length")) >= 4 && (await inPage("[...document.querySelectorAll('.pjp-side .pjp-note')].every((n) => n.textContent.length < 140)")) === true);
+    // ======== Sources: files, web pages and whole websites in one card ========
+    const sapi = (call, ...args) => inPage(`window.assistant.chats.${call}(...${JSON.stringify(args)})`);
+    const reopen = async () => {
+      await inPage("document.querySelector('.pjp-back').click()");
+      await waitFor(async () => (await inPage("Boolean(document.getElementById('cp-project-page'))")) === false);
+      await inPage(`document.querySelector('${row} .cp-pj').click()`);
+      await waitFor(async () => (await inPage("document.querySelector('.pjp-title')?.value")) === 'Coop/Internships');
+      await inPage('document.activeElement.blur()');
+    };
+    const menuItems = () => waitFor(() => inPage("[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].map((b) => b.textContent)"));
+    const pickItem = (text) => inPage(`[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
+    const names = () => inPage("[...document.querySelectorAll('.pjp-sources .pjp-src .pjp-row-name')].map((n) => n.textContent)");
+    const rowOf = (match) => `[...document.querySelectorAll('.pjp-sources .pjp-src')].find((r) => ${match})`;
+    check('the overview is Instructions, Sources, Folder, Defaults and Memory: files and pages are one card', JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")) === JSON.stringify(['Instructions', 'Sources', 'Folder', 'Defaults', 'Memory']), JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")));
+    check('...empty, Sources says what it takes in one dashed box and has one Add button (no Pin a page, Add this tab or URL box)', /Add files, web pages or websites/.test(await inPage("document.querySelector('.pjp-sources').innerText")) && (await inPage("[...document.querySelectorAll('.pjp-sources button')].map((b) => b.textContent.trim()).filter(Boolean).join('|')")) === 'Add' && (await inPage("document.querySelectorAll('.pjp-sources input[type=url], .pjp-sources input[type=text]').length")) === 0, await inPage("document.querySelector('.pjp-sources').innerText"));
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    check('Add opens one menu: upload files, a web page, a whole website, open tabs', JSON.stringify(await menuItems()) === JSON.stringify(['Upload files…', 'Add a web page…', 'Add a whole website…', 'Add open tabs…']), JSON.stringify(await menuItems()));
+    await shot('07-add-menu-dark');
+    await inPage("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+    check('Escape closes the menu and gives focus back to Add', await waitFor(() => inPage("!document.querySelector('.cp-pj-actions') && document.activeElement === document.querySelector('.pjp-add-source')")));
+    await shot('08-sources-empty-dark');
+    // seed: two files, two pages (one with no title yet: what an older pinned page looks like), one website
+    const seeded = await inPage(`window.assistant.chats.projectFilesAdd(${JSON.stringify(seed.coop)}, [
+      { name: 'Co-op handbook.md', bytes: new TextEncoder().encode('# Co-op handbook\\n\\nHow the co-op cycle works at the university: apply in October, interview in November, start in January.').buffer },
+      { name: 'Resume tips.txt', bytes: new TextEncoder().encode('Keep the resume to one page. Lead with projects, then skills.').buffer },
+    ])`);
+    check('two files go in through the same API as before', seeded?.results?.filter((r) => r.ok).length === 2, JSON.stringify(seeded));
+    const bareUrl = `${fixtureBase}/jobs-board`;
+    await sapi('projectLink', seed.coop, { add: { url: 'https://northeastern.edu/coop/', title: 'Northeastern Co-op: how it works' } });
+    const p2 = await sapi('projectLink', seed.coop, { add: { url: bareUrl, title: '' } });
+    const p3 = await sapi('projectLink', seed.coop, { add: { url: 'docs.python.org', title: 'Python 3 documentation', site: true } });
+    check('a page, a page with no title, and a website are kept as the project\'s links (site: true for the website, its address a prefix)', p3?.links?.length === 3 && p3.links[0].url === 'https://northeastern.edu/coop/' && p2.links[1].title === '' && p3.links[2].site === true && p3.links[2].url === 'https://docs.python.org/', JSON.stringify(p3?.links));
+    const bad = await sapi('projectLink', seed.coop, { add: { url: 'javascript:alert(1)', title: 'x', site: true } });
+    check('a website address that is not http(s) is refused', bad?.error === 'invalid', JSON.stringify(bad));
+    await reopen();
+    check('the sub line counts files, pages and websites', /2 files · 2 pages · 1 website/.test(await inPage("document.querySelector('.pjp-sub').textContent")), await inPage("document.querySelector('.pjp-sub').textContent"));
+    check('the card lists the 5 sources as rows, each with a ⋯ menu that names its row', (await inPage("document.querySelectorAll('.pjp-sources .pjp-src').length")) === 5 && (await inPage("[...document.querySelectorAll('.pjp-sources .pjp-row-more')].every((b) => /Actions for/.test(b.getAttribute('aria-label')) && b.getAttribute('aria-haspopup') === 'menu')")) === true, JSON.stringify(await names()));
+    check('...a count badge, and one muted line instead of paragraphs of fine print', (await inPage("document.querySelector('.pjp-sources .pjp-badge').textContent")) === '5' && (await inPage("document.querySelectorAll('.pjp-sources .pjp-note').length")) === 1 && /only when a chat needs them/.test(await inPage("document.querySelector('.pjp-sources .pjp-note').textContent")) && (await inPage("document.querySelector('.pjp-sources .pjp-tip').title.length")) > 100);
+    const meta = (match) => inPage(`${rowOf(match)}.querySelector('.pjp-row-meta').textContent`);
+    check('a website row says Website and whole site, with the site name', (await meta("r.dataset.kind === 'site'")) === 'docs.python.org · Website · whole site' && (await inPage(`${rowOf("r.dataset.kind === 'site'")}.querySelector('.pjp-row-name').textContent`)) === 'Python 3 documentation', await meta("r.dataset.kind === 'site'"));
+    check('a page with no title shows its site and path, not a bare address', /^127\.0\.0\.1:\d+\/jobs-board$/.test(await meta("r.dataset.url === " + JSON.stringify(bareUrl))) && /^127\.0\.0\.1:\d+$/.test(await inPage(`${rowOf('r.dataset.url === ' + JSON.stringify(bareUrl))}.querySelector('.pjp-row-name').textContent`)), await meta('r.dataset.url === ' + JSON.stringify(bareUrl)));
+    check('a file row has its kind, size and characters', /^Text · \d+ B · \d+ characters$/.test(await meta("r.dataset.kind === 'file' && /handbook/.test(r.textContent)")) || /Text/.test(await meta("r.dataset.kind === 'file' && /handbook/.test(r.textContent)")), await meta("r.dataset.kind === 'file'"));
+    await shot('09-sources-dark');
+    await theme('light');
+    await shot('10-sources-light');
+    await theme('dark');
+    // the ⋯ menu of a page: Open, Re-read, Rename, Remove; of a file: Rename, Remove
+    const bareRow = rowOf('r.dataset.url === ' + JSON.stringify(bareUrl));
+    await inPage(`${bareRow}.querySelector('.pjp-row-more').click()`);
+    check('a page\'s ⋯ menu: Open, Re-read the page, Rename, Remove', JSON.stringify(await menuItems()) === JSON.stringify(['Open', 'Re-read the page', 'Rename', 'Remove']), JSON.stringify(await menuItems()));
+    await shot('11-row-menu-dark');
+    await pickItem('Re-read the page');
+    check('Re-read takes the page\'s own title (one request, only on this click)', await waitFor(async () => (await inPage(`${bareRow}.querySelector('.pjp-row-name').textContent`)) === 'Fixture jobs-board'), await names());
+    check('...and the title is kept in the project', (await sapi('project', seed.coop)).project.links.find((l) => l.url === bareUrl)?.title === 'Fixture jobs-board');
+    await inPage(`${rowOf("r.dataset.kind === 'file' && /Resume tips/.test(r.textContent)")}.querySelector('.pjp-row-more').click()`);
+    check('a file\'s ⋯ menu: Rename, Remove', JSON.stringify(await menuItems()) === JSON.stringify(['Rename', 'Remove']), JSON.stringify(await menuItems()));
+    await pickItem('Rename');
+    await waitFor(() => inPage("document.activeElement?.classList.contains('pjp-rename')"));
+    await inPage("(() => { const f = document.activeElement; f.value = 'Resume advice.txt'; f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()");
+    check('Rename a file: Enter keeps the new name', await waitFor(async () => (await names()).includes('Resume advice.txt')) && (await sapi('project', seed.coop)).files.some((f) => f.name === 'Resume advice.txt'), JSON.stringify(await names()));
+    await inPage(`${rowOf("/Northeastern Co-op/.test(r.textContent)")}.querySelector('.pjp-row-more').click()`);
+    await menuItems();
+    await pickItem('Rename');
+    await waitFor(() => inPage("document.activeElement?.classList.contains('pjp-rename')"));
+    await inPage("(() => { const f = document.activeElement; f.value = 'Co-op office'; f.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()");
+    check('Rename a page: the name is the user\'s own (named), and Re-read leaves it', await waitFor(async () => (await names()).includes('Co-op office')) && (await sapi('project', seed.coop)).project.links.find((l) => l.url === 'https://northeastern.edu/coop/')?.named === true, JSON.stringify(await names()));
+    // Add a web page: the panel, which suggests the whole site for a bare domain or an address ending in /
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    await menuItems();
+    await pickItem('Add a web page…');
+    check('Add a web page… opens a panel with the address box in focus and "Just this page" chosen', await waitFor(() => inPage("document.activeElement?.type === 'text' && document.querySelector('.pjp-panel .pjp-seg-btn.on')?.textContent === 'Just this page'")), await inPage('document.activeElement?.outerHTML'));
+    const typeUrl = (v) => inPage(`(() => { const i = document.querySelector('.pjp-panel input'); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); })()`);
+    await typeUrl('northeastern.edu/');
+    check('a bare domain (or a path ending in /) switches to "The whole site" and says what the AI may do', (await inPage("document.querySelector('.pjp-panel .pjp-seg-btn.on').textContent")) === 'The whole site' && /northeastern\.edu/.test(await inPage("document.querySelector('.pjp-panel .pjp-note').textContent")) && /search and read pages/.test(await inPage("document.querySelector('.pjp-panel .pjp-note').textContent")));
+    await shot('12-add-website-dark');
+    await typeUrl('https://northeastern.edu/coop/jobs.html');
+    check('a page address goes back to "Just this page"', (await inPage("document.querySelector('.pjp-panel .pjp-seg-btn.on').textContent")) === 'Just this page' && (await inPage("document.querySelector('.pjp-panel .pjp-note').hidden")) === true);
+    await inPage("document.querySelectorAll('.pjp-panel .pjp-seg-btn')[1].click()");
+    await typeUrl('https://northeastern.edu/coop/jobs.html');
+    check('a choice made by hand is not changed by the address', (await inPage("document.querySelector('.pjp-panel .pjp-seg-btn.on').textContent")) === 'The whole site');
+    await inPage("document.querySelectorAll('.pjp-panel .pjp-seg-btn')[0].click()");
+    await typeUrl(`${fixtureBase}/added-page`);
+    await inPage("document.querySelector('.pjp-panel input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))");
+    check('Enter adds the page, and its title is read once (no bare address)', await waitFor(async () => (await names()).includes('Fixture added-page')), JSON.stringify(await names()));
+    check('...and the panel closes', (await inPage("document.querySelector('.pjp-panel').hidden")) === true);
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    await menuItems();
+    await pickItem('Add a web page…');
+    await waitFor(() => inPage("Boolean(document.querySelector('.pjp-panel input'))"));
+    await typeUrl('not an address');
+    await inPage("document.querySelector('.pjp-panel .btn.primary').click()");
+    check('a bad address says so and adds nothing', await waitFor(() => inPage("/not a web address/.test(document.querySelector('.pjp-sources .pjp-status').textContent)")) && (await sapi('project', seed.coop)).project.links.length === 4);
+    await inPage("document.querySelector('.pjp-panel input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))");
+    check('Escape closes the panel', await waitFor(() => inPage("document.querySelector('.pjp-panel').hidden")));
+    // Add a whole website from the menu
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    await menuItems();
+    await pickItem('Add a whole website…');
+    await waitFor(() => inPage("document.querySelector('.pjp-panel .pjp-seg-btn.on')?.textContent === 'The whole site'"));
+    await typeUrl(`${fixtureBase}/course/`);
+    await inPage("document.querySelector('.pjp-panel .btn.primary').click()");
+    check('Add a whole website… keeps a site source whose address is the prefix; its title is read', await waitFor(async () => (await sapi('project', seed.coop)).project.links.some((l) => l.site && l.url === `${fixtureBase}/course/`)) && await waitFor(async () => (await sapi('project', seed.coop)).project.links.find((l) => l.site && l.url === `${fixtureBase}/course/`)?.title === 'Fixture course/'), JSON.stringify((await sapi('project', seed.coop)).project.links.map((l) => [l.url, l.title, l.site])));
+    // Add open tabs: pick from a list with titles and icons
+    const tabId = await app.evaluate(async (_e, u) => { const t = global.__agent.browser.openTab(u); await new Promise((r) => { t.webContents.once('did-stop-loading', r); setTimeout(r, 5000); }); return t.id; }, `${fixtureBase}/from-a-tab`);
+    await waitFor(async () => /from-a-tab/.test((await app.evaluate((_e, id) => global.__projectWorkspace?.info(id), tabId))?.url || ''));
+    await sleep(400);
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    await menuItems();
+    await pickItem('Add open tabs…');
+    check('Add open tabs… lists the open web pages with their titles, ticks to choose', await waitFor(() => inPage("[...document.querySelectorAll('.pjp-tabs .pjp-tab')].some((t) => /Fixture from-a-tab/.test(t.textContent))")) && (await inPage("document.querySelector('.pjp-panel .btn.primary').disabled")) === true, await inPage("document.querySelector('.pjp-panel').innerText"));
+    await shot('13-add-tabs-dark');
+    await inPage("[...document.querySelectorAll('.pjp-tabs .pjp-tab')].find((t) => /Fixture from-a-tab/.test(t.textContent)).querySelector('input').click()");
+    check('...Add tab is enabled once one is ticked', (await inPage("document.querySelector('.pjp-panel .btn.primary').disabled")) === false && (await inPage("document.querySelector('.pjp-panel .btn.primary').textContent")) === 'Add tab');
+    await inPage("document.querySelector('.pjp-panel .btn.primary').click()");
+    check('the tab is added with its own title', await waitFor(async () => (await names()).includes('Fixture from-a-tab')), JSON.stringify(await names()));
+    await inPage("document.querySelector('.pjp-add-source').click()");
+    await menuItems();
+    await pickItem('Add open tabs…');
+    check('a tab that is already a source is shown as added and cannot be ticked again', await waitFor(() => inPage("(() => { const t = [...document.querySelectorAll('.pjp-tabs .pjp-tab')].find((x) => /Fixture from-a-tab/.test(x.textContent)); return Boolean(t) && t.querySelector('input').disabled && /already added/.test(t.textContent); })()")));
+    await inPage("document.querySelector('.pjp-panel .btn:not(.primary)').click()");
+    await app.evaluate((_e, id) => global.__agent.browser.closeTab?.(id), tabId).catch(() => {});
+    // a link dropped on the card is added as a page
+    await inPage(`(() => { const dt = new DataTransfer(); dt.setData('text/uri-list', ${JSON.stringify(`${fixtureBase}/dropped`)}); const card = document.querySelector('.pjp-sources'); card.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true })); card.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); })()`);
+    check('a link dropped on the card is added as a page and titled', await waitFor(async () => (await names()).includes('Fixture dropped')), JSON.stringify(await names()));
+    check('more than 6 sources: the rest are behind "Show all"', (await inPage("document.querySelectorAll('.pjp-sources .pjp-src').length")) === 6 && /Show all \d+/.test(await inPage("document.querySelector('.pjp-sources .pjp-foot').textContent")));
+    await inPage("[...document.querySelectorAll('.pjp-sources .pjp-link')].find((b) => /Show all/.test(b.textContent)).click()");
+    check('Show all lists them all', (await inPage("document.querySelectorAll('.pjp-sources .pjp-src').length")) === 9, await inPage("document.querySelectorAll('.pjp-sources .pjp-src').length"));
+    // search covers files and pages
+    await inPage("(() => { const i = document.querySelector('.pjp-search-input'); i.value = 'python'; i.dispatchEvent(new Event('input')); })()");
+    check('the search finds a website by its name or address, under Sources', await waitFor(() => inPage("/Sources/.test(document.querySelector('.pjp-results').textContent) && document.querySelector('.pjp-results .pjp-hit.page[data-url]')?.textContent.includes('Python 3 documentation')")), await inPage("document.querySelector('.pjp-results').innerText"));
+    await inPage("(() => { const i = document.querySelector('.pjp-search-input'); i.value = 'interview in november'; i.dispatchEvent(new Event('input')); })()");
+    check('...and a passage of a file', await waitFor(() => inPage("/Co-op handbook/.test(document.querySelector('.pjp-results .pjp-hit.file')?.textContent || '')")), await inPage("document.querySelector('.pjp-results').innerText"));
+    await inPage("(() => { const i = document.querySelector('.pjp-search-input'); i.value = ''; i.dispatchEvent(new Event('input')); })()");
+    // remove: a page goes at once (Undo is offered); a file asks first
+    const doomed = rowOf("r.dataset.url === " + JSON.stringify(`${fixtureBase}/dropped`));
+    await inPage(`${doomed}.querySelector('.pjp-row-more').click()`);
+    await menuItems();
+    await pickItem('Remove');
+    check('Remove on a page takes it out and offers Undo', await waitFor(async () => !(await names()).includes('Fixture dropped')) && !(await sapi('project', seed.coop)).project.links.some((l) => l.url === `${fixtureBase}/dropped`) && await waitFor(() => inPage("Boolean(document.querySelector('.chat-undo-toast'))")), JSON.stringify(await names()));
+    await inPage("document.querySelector('.chat-undo-toast button')?.click()");
+    check('Undo puts the page back', await waitFor(async () => (await names()).includes('Fixture dropped') || (await sapi('project', seed.coop)).project.links.some((l) => l.url === `${fixtureBase}/dropped`)));
+    const fileRow = rowOf("r.dataset.kind === 'file' && /Resume advice/.test(r.textContent)");
+    await inPage(`${fileRow}.querySelector('.pjp-row-more').click()`);
+    await menuItems();
+    await pickItem('Remove');
+    check('Remove on a file asks first (it cannot be undone), naming the file', await waitFor(() => inPage("(() => { const r = document.querySelector('.pjp-src.confirm'); return Boolean(r) && /Resume advice/.test(r.textContent) && /cannot be undone/.test(r.textContent); })()")) && (await sapi('project', seed.coop)).files.length === 2);
+    await shot('14-remove-confirm-dark');
+    await inPage("document.querySelector('.pjp-src.confirm .btn:not(.danger)').click()");
+    check('Cancel keeps the file', await waitFor(async () => (await inPage("document.querySelectorAll('.pjp-src.confirm').length")) === 0) && (await sapi('project', seed.coop)).files.length === 2);
+    await inPage(`${fileRow}.querySelector('.pjp-row-more').click()`);
+    await menuItems();
+    await pickItem('Remove');
+    await waitFor(() => inPage("Boolean(document.querySelector('.pjp-src.confirm'))"));
+    await inPage("document.querySelector('.pjp-src.confirm .btn.danger').click()");
+    check('Remove then confirms: the file is gone', await waitFor(async () => (await sapi('project', seed.coop)).files.length === 1), JSON.stringify((await sapi('project', seed.coop)).files.map((f) => f.name)));
+    // what the AI is told: the project's context lists the website apart from the pages
+    const blockText = await app.evaluate((_e, id) => global.__projectWorkspace.blockFor(id), seed.ids[0]).catch(() => '');
+    const inCoopChat = typeof blockText === 'string' ? blockText : '';
+    check('the AI\'s index of the project lists websites apart from pinned pages', /Websites:/.test(inCoopChat) && /Pinned pages:/.test(inCoopChat) && /docs\.python\.org\/3/.test(inCoopChat), inCoopChat.slice(0, 600));
     // the header: goal line, quick actions
     check('the header has a goal line, New chat, Add files and a ⋯ menu (no Open folder: the project has no folder)', (await inPage("Boolean(document.querySelector('.pjp-desc'))")) === true && (await inPage("document.querySelector('.pjp-new-chat').textContent")) === 'New chat' && (await inPage("document.querySelector('.pjp-add-files').textContent")) === 'Add files' && (await inPage("document.querySelector('.pjp-open-folder').hidden")) === true && (await inPage("document.querySelector('.pjp-more-btn').getAttribute('aria-label')")) === 'More actions');
     await inPage("(() => { const d = document.querySelector('.pjp-desc'); d.focus(); d.value = 'Land a mechanical engineering co-op in Boston for fall'; d.blur(); })()");
@@ -216,7 +380,7 @@ const SHOTS = process.env.PROJECT_PAGE_SHOTS || '';
     await inPage(`document.querySelector('${rowB} .cp-pj').click()`);
     await waitFor(() => inPage("Boolean(document.getElementById('cp-project-page'))"));
     check('a project with no chats says so, and says what to do', (await inPage("document.querySelector('.pjp-empty-state').hidden")) === false && /No chats yet/.test(await inPage("document.querySelector('.pjp-empty-state').textContent")) && (await inPage("document.querySelector('.pjp-chat-list').hidden")) === true && (await inPage("document.querySelector('.pjp-recent').hidden")) === true);
-    check('...and the files and pages cards have their own empty text', /Drop files here/.test(await inPage("document.querySelector('.pjp-side').textContent")) && /No pages yet/.test(await inPage("document.querySelector('.pjp-side').textContent")));
+    check('...and the Sources card has its own empty text', /Add files, web pages or websites/.test(await inPage("document.querySelector('.pjp-side').textContent")));
     await inPage('document.activeElement.blur()');
     await shot('05-page-empty-dark');
 
@@ -325,6 +489,7 @@ const SHOTS = process.env.PROJECT_PAGE_SHOTS || '';
     check('no page errors', errors.length === 0, errors.join(' | '));
   } finally {
     await app.close().catch(() => {});
+    fixture.close();
     fs.rmSync(profile, { recursive: true, force: true });
   }
   console.log(failures ? `\n${failures} failed` : '\nall passed');
