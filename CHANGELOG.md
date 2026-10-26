@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI button shows the chat that is running in the tab you are on.** With a chat working in the tab in front (its own, or one whose run drives the tab; the latest one if several), the AI button and Ctrl+J open the sidebar on that chat, live, instead of a new one, even with "Sidebar button starts a new chat" on. If the sidebar already shows it, the button closes it as before. A tab with no running chat, or a reply that finished unread, behaves as before.
+
 ## 0.5.70 (2026-10-25)
 
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.

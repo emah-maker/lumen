@@ -2910,7 +2910,7 @@
   "settings.ai.handsOff": "Let the AI act on my pages",
   "settings.ai.handsOffDesc": "On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.",
   "settings.ai.sidebarNewChat": "Sidebar button starts a new chat",
-  "settings.ai.sidebarNewChatDesc": "Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.",
+  "settings.ai.sidebarNewChatDesc": "Opening the sidebar starts an empty chat, unless a chat is running in this tab. Earlier chats are in History.",
   "settings.ai.autocomplete": "Tab to finish what I’m typing",
   "settings.ai.autocompleteDesc": "As you type in the chat box, a faster, cheaper model guesses how your message goes on and shows it in grey. Press Tab to take it, or Ctrl+Right (Option+Right on a Mac) for one word; keep typing to ignore it. While you type, your draft, the last few messages of the chat and the tab title go to the AI company of this chat, and only to it. Needs an API key: a chat on Claude Code or another command-line AI gets no suggestion unless a key from the same company is saved. Turn this off and nothing is sent while you type. Its tokens show under Usage.",
   "settings.ai.oneChatPerTab": "One chat per tab",

@@ -11353,6 +11353,7 @@ function applyStill(visible, { fade = false } = {}) {
 
 
 
+
 let toggleSeq = 0;
 async function toggleSidebarByHand() {
 
@@ -11362,7 +11363,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch {  }
+    try { target = await window.assistant.sidebarTarget?.({ liveOnly: true }); } catch {  }
     if (mine !== toggleSeq || sidebarWanted !== opening) return;
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({

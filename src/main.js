@@ -6398,13 +6398,13 @@ ipcMain.handle('chat:sidebar-target', (event, opts) => {
   const reasonOf = (id) => {
     const run = chatRuns.get(id);
     if (run && !run.deleted && run.pending.size) return 'approval';
-    if (opts?.approvalOnly === true) return null; // [ask ai new chat] the AI button starts a new chat even over a running one; only a question waiting for an OK keeps its chat
     if (chatBusy(id)) return 'running';
+    if (opts?.liveOnly === true) return null; // [sidebar shows the running chat] the AI button keeps a chat that works or waits for an OK; one that finished unread stays in History (a new chat opens)
     return unreadChats.has(id) ? 'unread' : null;
   };
   const ownsFront = [...chatRuns.values()].filter((r) => runIsLive(r) && !r.queued && agent.runTabIdFor(r.messages) === front).map((r) => r.chatId);
-  const hits = [chatBind.chatOf(front), ...ownsFront].filter(Boolean).map((id) => ({ id, reason: reasonOf(id) })).filter((h) => h.reason);
-  const hit = hits.find((h) => h.reason === 'approval') || hits.find((h) => h.reason === 'running') || hits[0];
+  const hits = [...new Set([chatBind.chatOf(front), ...ownsFront].filter(Boolean))].map((id) => ({ id, reason: reasonOf(id), startedAt: chatRuns.get(id)?.startedAt || 0 })).filter((h) => h.reason);
+  const hit = chatRunsLib.sidebarPick(hits); // (several runs touch this tab: the one waiting for an OK, else the latest started)
   if (!hit) return null;
   if (hit.id !== chatId && !switchChat(hit.id, { ensure: true, quiet: true })) return null;
   if (chatBind.chatOf(front) == null) chatBind.bind(front, hit.id);
