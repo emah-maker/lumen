@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sign in with Google works out of the box.** Release builds now include Lumen's own Google client, so Gmail, Google Drive and Google Sheets connect with one click and no Google Cloud setup. A client you pasted under Gmail → Advanced still wins over the built-in one. Google shows an "unverified app" notice on the consent page until the app is verified.
 - **The AI can now edit any file in your Google Drive, not just files it made.** The Drive connector asks Google for the full `drive` scope (it was `drive.readonly` plus `drive.file`) and gains **Replace file contents** (swap an existing file's content for a local file or chat attachment, keeping its id, name, link, sharing and version history; one file, or up to 25 matched by exact name in a folder, on ONE card that lists every pair and anything with no match), **Rename**, **Move**, **Copy** and **Move to Trash** (never a permanent delete). Each asks on a card first and is refused to background tasks and outside agents. If you connected Drive before, reading keeps working, the Drive card says **Reconnect to let the AI change all your files**, and an edit says so before any card; press Connect once to add the new permission. `drive` is a restricted Google scope like `gmail.readonly` (the same unverified-app warning); the consent screen of a Lumen-built Google client must list it. Tests: `test/units/google-connectors-units.js`.
 
 ## 0.5.71 (2026-10-25)
