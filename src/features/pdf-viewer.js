@@ -25,6 +25,9 @@ const VIEWER_PATH = '/viewer.html';
 const PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true, stream: true };
 const SETTING_VALUES = ['lumen', 'chrome'];
 const MAX_FILE = 1024 * 1024 * 1024; // a local PDF larger than this is refused
+const KEEP_MS = 30 * 1000; // a kept PDF is answered from for this long after it finished downloading
+const KEEP_COUNT = 4;
+const MAX_KEPT = 256 * 1024 * 1024; // a web PDF larger than this is streamed and not kept
 const CHROME_VIEWER = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai';
 
 const RENDERER_DIR = path.join(__dirname, '..', 'renderer');
@@ -92,6 +95,19 @@ function parseRange(header, size) {
   return start > end || start >= size ? null : { start, end };
 }
 
+// A PDF's bytes are kept, per session and address, from the first full answer (for KEEP_MS after it ends). pdf.js may drop the full
+// answer and ask again in ranges, a retry or Save asks again: a link that works once (a signed storage address behind a course site's
+// file link) answers the second ask with an error page. So the first full answer is served as one stream (no ranges offered) while
+// it is kept, and every later ask (a range, Save) is answered from the copy. Try again (fresh=1) always asks the site.
+const kept = new WeakMap(); // session -> Map(address -> { bytes, pending, at })
+const keptOf = (ses) => { let m = kept.get(ses); if (!m) { m = new Map(); kept.set(ses, m); } return m; };
+const tidy = (map) => {
+  const now = Date.now();
+  for (const [k, v] of map) if (!v.pending && now - v.at > KEEP_MS) map.delete(k);
+  while (map.size > KEEP_COUNT) { const oldest = [...map.keys()].find((k) => !map.get(k).pending); if (oldest === undefined) break; map.delete(oldest); }
+};
+const isPdfHead = (chunks) => Buffer.concat(chunks).subarray(0, 1024).includes('%PDF-');
+
 function createHandler({ netFetchFor }) {
   const { Readable } = require('stream');
   const plain = (status, text) => new Response(text, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } });
@@ -106,18 +122,7 @@ function createHandler({ netFetchFor }) {
       if (!isWebOrFile(target)) return plain(400, 'Not a PDF address');
       const attachment = url.searchParams.get('dl') === '1';
       if (target.startsWith('file:')) return serveFile(target, req, attachment);
-      const headers = {};
-      for (const h of ['range', 'if-range']) if (req.headers.get(h)) headers[h] = req.headers.get(h);
-      let res;
-      try { res = await netFetchFor(ses)(target, { headers, credentials: 'include', redirect: 'follow' }); } catch { return plain(502, 'The PDF could not be fetched.'); }
-      const out = new Headers({ 'content-type': 'application/pdf', 'cache-control': 'no-store', 'accept-ranges': res.headers.get('accept-ranges') || 'none' });
-      if (attachment) out.set('content-disposition', disposition(target));
-      // (net.fetch hands back a gzip/br body already decoded: the upstream length and range describe the encoded bytes, so they are dropped)
-      const encoding = res.headers.get('content-encoding');
-      const decoded = Boolean(encoding) && !/^identity$/i.test(encoding);
-      if (decoded) out.set('accept-ranges', 'none');
-      for (const h of decoded ? ['etag', 'last-modified'] : ['content-length', 'content-range', 'etag', 'last-modified']) if (res.headers.get(h)) out.set(h, res.headers.get(h));
-      return new Response(res.status === 204 || res.status === 304 ? null : res.body, { status: res.status, headers: out });
+      return serveWeb(target, req, ses, attachment, url.searchParams.get('fresh') === '1');
     }
     const file = resolveAsset(url.pathname);
     if (!file) return plain(404, 'Not found');
@@ -127,6 +132,88 @@ function createHandler({ netFetchFor }) {
     if (url.pathname === VIEWER_PATH) headers['content-security-policy'] = CSP;
     return new Response(data, { status: 200, headers });
   };
+
+  // What the site answered, passed on as it is (an error page, a file that is not a PDF, a byte range).
+  function relay(res, attachment, target) {
+    const out = new Headers({ 'content-type': 'application/pdf', 'cache-control': 'no-store', 'accept-ranges': res.headers.get('accept-ranges') || 'none' });
+    if (attachment) out.set('content-disposition', disposition(target));
+    // (net.fetch hands back a gzip/br body already decoded: the upstream length and range describe the encoded bytes, so they are dropped)
+    const encoding = res.headers.get('content-encoding');
+    const decoded = Boolean(encoding) && !/^identity$/i.test(encoding);
+    if (decoded) out.set('accept-ranges', 'none');
+    for (const h of decoded ? ['etag', 'last-modified'] : ['content-length', 'content-range', 'etag', 'last-modified']) if (res.headers.get(h)) out.set(h, res.headers.get(h));
+    return new Response(res.status === 204 || res.status === 304 ? null : res.body, { status: res.status, headers: out });
+  }
+  function fromBytes(bytes, req, attachment, target) {
+    const base = { 'content-type': 'application/pdf', 'accept-ranges': 'bytes', 'cache-control': 'no-store', ...(attachment ? { 'content-disposition': disposition(target) } : {}) };
+    const range = parseRange(req.headers.get('range'), bytes.length);
+    if (range === null) return new Response(null, { status: 416, headers: { ...base, 'content-range': `bytes */${bytes.length}` } });
+    const { start, end } = range || { start: 0, end: bytes.length - 1 };
+    const part = bytes.subarray(start, end + 1);
+    return new Response(part.length ? part : new Uint8Array(0), { status: range ? 206 : 200, headers: { ...base, 'content-length': String(part.length), ...(range ? { 'content-range': `bytes ${start}-${end}/${bytes.length}` } : {}) } });
+  }
+  async function serveWeb(target, req, ses, attachment, fresh) {
+    const key = target.split('#')[0];
+    const map = keptOf(ses);
+    if (fresh) map.delete(key);
+    tidy(map);
+    const have = map.get(key);
+    if (have) {
+      const bytes = have.bytes || (await have.pending);
+      if (bytes) return fromBytes(bytes, req, attachment, target);
+    }
+    const ranged = Boolean(req.headers.get('range'));
+    const headers = {};
+    if (ranged) for (const h of ['range', 'if-range']) if (req.headers.get(h)) headers[h] = req.headers.get(h);
+    let res;
+    try { res = await netFetchFor(ses)(target, { headers, credentials: 'include', redirect: 'follow' }); } catch { return plain(502, 'The PDF could not be fetched.'); }
+    if (ranged || res.status !== 200 || !res.body) return relay(res, attachment, target);
+    // The first full answer: read its head to see that it is a PDF, then stream it on while keeping a copy.
+    const reader = res.body.getReader();
+    const chunks = [];
+    let size = 0;
+    let finished = false;
+    try {
+      while (!finished && size < 1024) { const r = await reader.read(); if (r.done) finished = true; else { chunks.push(r.value); size += r.value.length; } }
+    } catch { return plain(502, 'The PDF could not be fetched.'); }
+    const declared = Number(res.headers.get('content-length')) || 0;
+    const encoding = res.headers.get('content-encoding');
+    const decoded = Boolean(encoding) && !/^identity$/i.test(encoding);
+    const keep = isPdfHead(chunks) && (!declared || declared <= MAX_KEPT);
+    let settle;
+    const entry = keep ? { bytes: null, pending: new Promise((r) => { settle = r; }), at: Date.now() } : null;
+    if (entry) map.set(key, entry);
+    let gone = false;
+    let sink;
+    const drop = () => { if (!entry) return; if (map.get(key) === entry) map.delete(key); entry.pending = null; settle(null); };
+    const run = async () => {
+      try {
+        for (const c of chunks) sink.enqueue(c);
+        while (!finished) {
+          const r = await reader.read();
+          if (r.done) break;
+          size += r.value.length;
+          if (entry && size <= MAX_KEPT) chunks.push(r.value);
+          if (!gone) { try { sink.enqueue(r.value); } catch { gone = true; } }
+          if (gone && !entry) break;
+        }
+        if (!gone) { try { sink.close(); } catch { /* the reader left */ } }
+        if (entry) {
+          if (size > MAX_KEPT || (declared && !decoded && declared !== size)) { drop(); return; }
+          entry.bytes = Buffer.concat(chunks);
+          entry.at = Date.now();
+          entry.pending = null;
+          settle(entry.bytes);
+        }
+      } catch (err) { try { sink.error(err); } catch { /* closed */ } drop(); }
+    };
+    const body = new ReadableStream({ start(c) { sink = c; run(); }, cancel() { gone = true; if (!entry) reader.cancel().catch(() => {}); } });
+    const out = new Headers({ 'content-type': 'application/pdf', 'cache-control': 'no-store', 'accept-ranges': entry ? 'none' : res.headers.get('accept-ranges') || 'none' });
+    if (attachment) out.set('content-disposition', disposition(target));
+    if (decoded) out.set('accept-ranges', 'none');
+    for (const h of decoded ? ['etag', 'last-modified'] : ['content-length', 'etag', 'last-modified']) if (res.headers.get(h)) out.set(h, res.headers.get(h));
+    return new Response(body, { status: 200, headers: out });
+  }
 
   async function serveFile(target, req, attachment) {
     let file;
@@ -186,17 +273,39 @@ function create({ getSetting = () => 'lumen' } = {}) {
   }
   // The viewer could not open its PDF (pdf.js refused a file Chromium's own viewer can show, or a second fetch of a one-time
   // link got a page instead): the same address again in Chrome's viewer, in place of the viewer's entry. Returns the address, or null.
-  function fallback(wc) {
-    if (!wc || wc.isDestroyed()) return null;
+  // Answers { ok: true, address } once Chrome's viewer (or the page) has replaced the viewer, else { ok: false, why, detail }:
+  // 'address' (nothing to load), 'download' (the site answered with a download, so the tab never leaves the viewer: Chromium reports
+  // that load as ERR_ABORTED or ERR_FAILED, so the download itself is what is watched for),
+  // 'moved' (the tab went elsewhere meanwhile), 'load' (the load failed: detail is Chromium's error). The viewer says so, with its actions.
+  async function fallback(wc) {
+    if (!wc || wc.isDestroyed()) return { ok: false, why: 'address' };
     const viewer = wc.getURL();
     const pdf = pdfUrlOf(viewer);
-    if (!pdf) return null;
+    if (!pdf) return { ok: false, why: 'address' };
+    const key = pdf.split('#')[0];
     if (!chromeOnly.has(wc)) chromeOnly.set(wc, new Set());
-    chromeOnly.get(wc).add(pdf.split('#')[0]);
+    chromeOnly.get(wc).add(key);
     const history = wc.navigationHistory;
     const index = history.getActiveIndex();
-    wc.loadURL(pdf).then(() => { try { if (index >= 0 && history.getEntryAtIndex(index)?.url === viewer) history.removeEntryAtIndex(index); } catch { /* history changed */ } }).catch(() => {});
-    return pdf;
+    let downloaded = false;
+    const ses = wc.session;
+    const onDownload = (_event, _item, contents) => { if (contents === wc) downloaded = true; };
+    try { ses.on('will-download', onDownload); } catch { /* no session to watch */ }
+    try {
+      await wc.loadURL(pdf);
+      try { if (index >= 0 && history.getEntryAtIndex(index)?.url === viewer) history.removeEntryAtIndex(index); } catch { /* history changed */ }
+      return { ok: true, address: pdf };
+    } catch (err) {
+      chromeOnly.get(wc)?.delete(key); // (shown by the viewer again if the address is opened afresh)
+      // (the load fails before the download is announced: give it a moment to say so)
+      for (let waited = 0; !downloaded && waited < 800; waited += 40) await new Promise((r) => setTimeout(r, 40));
+      const aborted = Boolean(err) && (err.code === 'ERR_ABORTED' || err.errno === -3);
+      const result = { ok: false, why: downloaded ? 'download' : aborted ? 'moved' : 'load', detail: String((err && (err.code || err.message)) || 'unknown').slice(0, 200) };
+      console.warn(`[pdf] the fallback load of ${pdf.slice(0, 200)} failed: ${result.why} (${result.detail})`);
+      return result;
+    } finally {
+      try { ses.removeListener('will-download', onDownload); } catch { /* gone */ }
+    }
   }
   return { attach, command, fallback, keptInChrome };
 }
