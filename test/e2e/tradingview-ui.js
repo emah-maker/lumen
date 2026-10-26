@@ -33,12 +33,11 @@ const CRYPTO = { id: 12, name: 'Crypto', symbols: ['BINANCE:BTCUSDT'] };
     const out = await W('tradingviewLists');
     check('signed out, the account has no lists of the user’s', out.signedIn === false && out.lists.length === 0, JSON.stringify(out));
 
-    const settingsId = await app.evaluate(() => global.__settings.open('appearance'));
+    const settingsId = await app.evaluate(() => global.__settings.open('widgets'));
     const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [settingsId, code]);
     const waitFor = async (code, tries = 40) => { for (let i = 0; i < tries; i++) { if (await sp(code).catch(() => false)) return true; await sleep(150); } return false; };
-    await waitFor("Boolean(document.body.dataset.ready && document.getElementById('widget-add'))");
-    await sp("document.getElementById('widget-add').click()");
-    await sp("document.querySelector('.type-list [data-type=tradingview]').click()");
+    await waitFor("Boolean(document.body.dataset.ready && document.getElementById('widget-add-tradingview'))");
+    await sp("document.getElementById('widget-add-tradingview').click()");
     await sp("{ const v = document.getElementById('widget-tv-view'); v.value = 'watchlist'; v.dispatchEvent(new Event('change', { bubbles: true })); }");
     const shown = await sp("(() => { const rowHidden = (id) => document.getElementById(id).closest('.row').hidden; return { symbol: rowHidden('widget-tv-symbol'), symbols: !rowHidden('widget-tv-symbols'), sync: !rowHidden('widget-tv-sync') }; })()");
     check('Settings: Watchlist swaps the one-symbol box for the symbols list and its switches', shown.symbol && shown.symbols && shown.sync, JSON.stringify(shown));
