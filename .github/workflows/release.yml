@@ -277,6 +277,9 @@ jobs:
           LUMEN_GOOGLE_CLIENT_ID: ${{ secrets.LUMEN_GOOGLE_CLIENT_ID }}
           LUMEN_GOOGLE_CLIENT_SECRET: ${{ secrets.LUMEN_GOOGLE_CLIENT_SECRET }}
           LUMEN_GOOGLE_VERIFIED: ${{ vars.LUMEN_GOOGLE_VERIFIED }} # '1' once Google has approved the built-in client's Gmail access
+          # Outlook, OneDrive and Outlook Calendar connectors' one-click "Sign in with Microsoft": Lumen's own Microsoft Entra app, a public client
+          # (src/features/microsoft-client.js), so only its Application (client) ID, which is not a secret. Optional; without it the cards ask for the user's own.
+          LUMEN_MS_CLIENT_ID: ${{ secrets.LUMEN_MS_CLIENT_ID }}
         run: node scripts/build/build.js --${{ matrix.platform }} ${{ matrix.targets }}
 
       - name: List the zip in latest.yml
