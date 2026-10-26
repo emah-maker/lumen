@@ -9,15 +9,15 @@
 .cp-pj-head { display: flex; align-items: center; justify-content: space-between; padding: var(--cp-1) var(--cp-1) 0 10px; }
 .cp-pj-title { font-size: 12px; font-weight: 500; color: var(--muted); }
 .cp-pj-head-tools { display: inline-flex; align-items: center; gap: 2px; }
-.cp-pj-add { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
-.cp-pj-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.cp-pj-headbtn { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
+.cp-pj-headbtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .cp-pj { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; box-sizing: border-box; border: none; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
 .cp-pj:hover, .cp-pj.on { background: var(--cp-row); }
 .cp-pj-icon { flex: none; display: inline-flex; color: var(--muted); }
 .cp-pj-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
 .cp-pj-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .cp-pj-count { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cp-pj:focus-visible, .cp-pj-add:focus-visible, .cp-pj-tools .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cp-pj:focus-visible, .cp-pj-headbtn:focus-visible, .cp-pj-tools .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* the editor */
 .cp-pj-dialog { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.32); animation: cp-fade var(--t-base) ease-out; }

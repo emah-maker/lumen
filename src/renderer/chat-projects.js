@@ -25,13 +25,13 @@
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const head = el('div', { className: 'cp-pj-head' });
-    const add = el('button', { type: 'button', className: 'icon-btn cp-pj-add', title: tr('chatpage.project.new', 'New project') });
+    const add = el('button', { type: 'button', className: 'icon-btn cp-pj-headbtn cp-pj-add', title: tr('chatpage.project.new', 'New project') });
     add.setAttribute('aria-label', tr('chatpage.project.new', 'New project'));
     add.innerHTML = PLUS;
     add.onclick = onAdd;
     const tools = el('span', { className: 'cp-pj-head-tools' });
     if (onImport) {
-      const imp = el('button', { type: 'button', className: 'icon-btn cp-pj-add cp-pj-import', title: tr('projectws.import', 'Open folder as project…') });
+      const imp = el('button', { type: 'button', className: 'icon-btn cp-pj-headbtn cp-pj-import', title: tr('projectws.import', 'Open folder as project…') });
       imp.setAttribute('aria-label', tr('projectws.import', 'Open folder as project…'));
       imp.innerHTML = FOLDER;
       imp.onclick = onImport;
