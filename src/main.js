@@ -8191,7 +8191,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: agentOf ? agentWindowTitle(agentOf.label) : 'Lumen',
-    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode, ~50 ms of the main process; the taskbar shows the app's own)
+    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode here, ~50 ms of the main process; it gets Lumen's icon once its UI is loading, below)
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
@@ -8298,8 +8298,10 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
-    // [agent window] The user's last window closed: an agent's window does not keep Lumen running on its own.
-    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r)) r.win.close();
+    // [agent window] The user's last window closed: an agent's window whose session has ended (or is in its grace period) goes with it, but one an agent
+    // is still working in stays open, and Lumen with it, until that session ends (agentWindows.release then closes it, and Lumen quits as the last
+    // window goes). Closing their own window used to take the agent's work down mid-task.
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r) && !agentWindows.inUse(r)) r.win.close();
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
@@ -8375,7 +8377,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', hideSuggestions);
   // [agent window] Making the window (~5 ms), showing it (~2-5 ms) and starting its UI's load (~3 ms) are each a turn of their own: in one they
   // were a 12 ms stall of the main process, which other sessions' calls were then waiting behind (test/mcp-perf.js).
-  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); }, w); }, w);
+  // (its icon comes in a turn of its own after the UI: made without one, Windows showed Lumen.exe's own, Electron's, on its taskbar button and preview)
+  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); agentStep(() => { try { if (!w.isDestroyed()) w.setIcon(WINDOW_ICON); } catch { /* the app's own icon stays */ } }, w); }, w); }, w);
   else w.loadFile(UI_HTML);
   // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
   // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
@@ -8854,6 +8857,16 @@ const connectorsGoogleReal = {
 };
 const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
 let connectorsLive = null;
+// [connectors] The Google and Microsoft sign-ins' own requests (the code traded for a token, a refresh): Chromium's network first (the profile's
+// proxy), then Node's own when that one could not send the request at all. Something in the default session (an ad-block list, an extension, a
+// proxy setting) left "Sign in with Google" at "Couldn't reach Google" right after the user signed in, with the network fine. Only the sign-in
+// addresses take this path; a connector's own calls never go twice (a write must not be repeated).
+async function signInFetch(url, options = {}) {
+  try { return await net.fetch(url, { ...options, credentials: 'omit' }); } catch (err) {
+    if (options.signal?.aborted) throw err;
+    try { return await globalThis.fetch(url, options); } catch (again) { again.firstTry = err; throw again; }
+  }
+}
 const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
   userData: app.getPath('userData'),
   secrets: {
@@ -8877,6 +8890,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Google Drive and Sheets: one Google sign-in in the user's own browser (features/connectors/google-auth.js). Lumen's built-in Google
   // client, unless the user typed their own for the Gmail widget (that one wins, as it does there). Tests point it at 127.0.0.1.
   workspace: {
+    fetch: signInFetch,
     builtin: () => require('./features/google-client').builtinClient(),
     own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
     openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
@@ -8886,6 +8900,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Outlook, OneDrive and Outlook Calendar: one Microsoft sign-in in the user's own browser (features/connectors/microsoft-auth.js), Lumen's built-in
   // Microsoft app unless the user typed their own client ID on a card. Tests point it at 127.0.0.1.
   microsoft: {
+    fetch: signInFetch,
     builtin: () => require('./features/microsoft-client').builtinClient(),
     openExternal: (url) => { if (!/^https:\/\/login\.microsoftonline\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
     canKeepSecrets: () => safeStorage.isEncryptionAvailable(),

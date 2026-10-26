@@ -105,12 +105,12 @@ body { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
 .ic-downloads { background: #30b0c7; } .ic-updates { background: #ff6b3d; } .ic-advanced { background: #636366; }
 .ic-accessibility { background: #0a7aff; } .ic-apps { background: #ff2d55; }
 
-main { padding: 28px 40px 96px; width: 100%; margin: 0 auto; }
+main { padding: 20px 40px 64px; width: 100%; margin: 0 auto; }
 .pane-title { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.022em; }
-.group { margin-bottom: 28px; }
+.group { margin-bottom: 18px; }
 .topic-head { display: none; }
 .nav-gap { height: 12px; }
-.group-title { margin: 0 16px 8px; font-size: 13px; line-height: 1.3; font-weight: 600; letter-spacing: 0.01em; color: var(--muted); }
+.group-title { margin: 0 16px 6px; font-size: 13px; line-height: 1.3; font-weight: 600; letter-spacing: 0.01em; color: var(--muted); }
 .subhead { margin: -6px 0 6px -10px; }
 .back { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 6px; background: none; color: var(--accent-text); font-weight: 500; }
 .back:hover:not(:disabled) { background: var(--accent-soft); box-shadow: none; }
@@ -120,7 +120,7 @@ main { padding: 28px 40px 96px; width: 100%; margin: 0 auto; }
 .searching .subhead { display: none; }
 
 .card { background: var(--surface); border-radius: var(--r-xl); box-shadow: 0 0 0 1px var(--hairline), 0 1px 2px rgba(0, 0, 0, 0.04); overflow: hidden; }
-.row { display: flex; align-items: center; gap: 16px; padding: 11px 16px; min-height: 48px; }
+.row { display: flex; align-items: center; gap: 16px; padding: 7px 16px; min-height: 40px; }
 .row + .row { border-top: 1px solid var(--hairline); }
 .row.filtered { display: none; }
 .group.lazy { content-visibility: auto; contain-intrinsic-size: auto 240px; }
@@ -536,7 +536,7 @@ main, .pane, .slot, .group, .card { min-width: 0; }
 .searching .card { display: flex; flex-direction: column; }
 .searching .card > .row + .row { border-top: 1px solid var(--hairline); }
 
-details.adv-rows > summary { cursor: default; list-style: none; display: flex; align-items: center; gap: 8px; padding: 10px 16px; min-height: 46px; font-weight: 500; color: var(--muted); }
+details.adv-rows > summary { cursor: default; list-style: none; display: flex; align-items: center; gap: 8px; padding: 7px 16px; min-height: 40px; font-weight: 500; color: var(--muted); }
 details.adv-rows > summary::-webkit-details-marker { display: none; }
 details.adv-rows > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.6px solid var(--faint); border-top: 1.6px solid var(--faint); transform: rotate(45deg); transition: transform var(--t-fast) ease-out; }
 details.adv-rows[open] > summary::before { transform: rotate(135deg); }
@@ -632,7 +632,7 @@ mark.hit { background: var(--accent-soft); color: inherit; border-radius: var(--
 
 .row.flush { padding: 0; }
 details.disclosure, details.adv-rows { width: 100%; }
-details.disclosure > summary, details.adv-rows > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; padding: 11px 16px; font-weight: 450; color: var(--text); cursor: default; list-style: none; transition: background-color var(--t-fast) ease-out; }
+details.disclosure > summary, details.adv-rows > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 40px; padding: 7px 16px; font-weight: 450; color: var(--text); cursor: default; list-style: none; transition: background-color var(--t-fast) ease-out; }
 details.disclosure > summary:hover, details.adv-rows > summary:hover { background: var(--hover); }
 details.disclosure > summary::before, details.adv-rows > summary::before { content: none; }
 details.disclosure > summary::after, details.adv-rows > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin: 0 4px 0 2px; border-right: 1.6px solid var(--faint); border-top: 1.6px solid var(--faint); transform: rotate(45deg); transition: transform var(--t-fast) ease-out; }
