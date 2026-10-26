@@ -121,6 +121,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
     const showBehind = fnBody('showBehind');
     check('showBehind uses showInactive, no focus(), never always-on-top', /showInactive\(\)/.test(showBehind) && !bad.test(showBehind));
     check('the agent window is created with show:false and shown behind', /\|\| hidden \|\| agentOf \? \{ show: false \}/.test(main) && /else if \(agentOf\) showBehind\(w\)/.test(main));
+    check('the agent window gets Lumen\'s icon once its UI is loading (made without one, its taskbar button showed Electron\'s)', /if \(agentOf\) agentStep\([^\n]*w\.setIcon\(WINDOW_ICON\)/.test(main));
     check('an outside agent\'s call whose window is gone throws instead of running in the user\'s', /scope\?\.mcp && !\(scope\.rec && winRecs\.has\(scope\.rec\)/.test(main));
     check('keyboard focus helpers skip agent windows the user is not in', (main.match(/handsOff\.mayFocus\(/g) || []).length >= 2);
     check('downloads from an agent window are cancelled', /blocked: \(contents\) => Boolean\(contents && agentContents\.has\(contents\)\)/.test(main) && /deps\.blocked\?\.\(contents\)/.test(src('src/features/downloads.js')));

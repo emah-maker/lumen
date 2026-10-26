@@ -8191,7 +8191,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: agentOf ? agentWindowTitle(agentOf.label) : 'Lumen',
-    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode, ~50 ms of the main process; the taskbar shows the app's own)
+    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode here, ~50 ms of the main process; it gets Lumen's icon once its UI is loading, below)
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
@@ -8375,7 +8375,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', hideSuggestions);
   // [agent window] Making the window (~5 ms), showing it (~2-5 ms) and starting its UI's load (~3 ms) are each a turn of their own: in one they
   // were a 12 ms stall of the main process, which other sessions' calls were then waiting behind (test/mcp-perf.js).
-  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); }, w); }, w);
+  // (its icon comes in a turn of its own after the UI: made without one, Windows showed Lumen.exe's own, Electron's, on its taskbar button and preview)
+  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); agentStep(() => { try { if (!w.isDestroyed()) w.setIcon(WINDOW_ICON); } catch { /* the app's own icon stays */ } }, w); }, w); }, w);
   else w.loadFile(UI_HTML);
   // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
   // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
