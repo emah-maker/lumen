@@ -23,23 +23,25 @@ check('a file without it is left alone (nothing to write)', backend.dropMeetingH
 
 // groups: which rows are in which group
 const groupBody = (key) => { const i = settings.indexOf(key); return settings.slice(i, i + 4000); };
-const approvals = groupBody("tr('settings.ai.groupApprovals'");
-check('Approvals holds the mode, the background option, hands-off and agents\' own-window approvals', ['permissionRow', 'bypassRow', "toggle('aiHandsOff'", "toggle('agentsNoAsk'"].every((k) => approvals.slice(0, approvals.indexOf("tr('settings.ai.groupBrowser'")).includes(k)));
+// (AI is a short page of rows that open pages: each page is one slot of CATEGORIES, and the rows are appended to it by name)
+const pageBody = (id) => { const i = settings.indexOf(`slots.get('${id}')`); return settings.slice(i, i + 3500); };
+const approvals = pageBody('ai-approvals');
+check('Asking before it acts holds the mode, the background option, hands-off and agents\' own-window approvals', ['permissionRow', 'bypassRow', "toggle('aiHandsOff'", "toggle('agentsNoAsk'"].every((k) => approvals.includes(k)));
 check('the bypass-in-background row shows only while Bypass is the chosen mode', /bypassRow\.hidden = st\.prefs\.aiPermissionMode !== 'bypass'/.test(settings));
-const computer = groupBody("tr('settings.ai.groupComputer'");
-check('Computer access holds files, other apps, terminals, files in apps and Word, and points at the Privacy lists', ['aiDeviceAccess', 'aiDesktopControl', 'aiDesktopTerminals', 'aiFilesInApps', 'aiWordControl', 'ai-computer-lists'].every((k) => computer.includes(k)));
+const computer = pageBody('ai-computer');
+check('Computer access holds files, other apps, terminals, files in apps and Word, and points at the lists of what the AI can see', ['aiDeviceAccess', 'aiDesktopControl', 'aiDesktopTerminals', 'aiFilesInApps', 'aiWordControl', 'ai-computer-lists'].every((k) => computer.includes(k)));
 const agents = settings.slice(settings.indexOf("agents.group(tr('settings.ai.groupLetAgents'"));
-const iLet = 0; const iCon = agents.indexOf("agents.group(tr('settings.ai.groupConnectors'");
-check('Let agents use Lumen holds the connect switch, Connect an AI agent and Let other apps use Lumen; Connectors is its own group after it', iCon > 0 && ['mcpToggle', "subpage('connect-agents'", "subpage('external-apps'"].every((k) => { const at = agents.indexOf(k); return at > iLet && at < iCon; }) && agents.indexOf("subpage('connectors'") > iCon);
-check('the automation tools (CDP) row sits in an Advanced "Let agents use Lumen" group and says how it differs', /groupAutomation', 'Let agents use Lumen \(advanced\)'/.test(settings) && /separate, lower-level way in/i.test(settings));
+const iEnd = agents.indexOf("agents.group(tr('settings.ai.groupOtherTools'");
+check('Let agents use Lumen holds the connect switch, Connect an AI agent and Let other apps use Lumen; Connectors left for Apps and connections', iEnd > 0 && ['mcpToggle', "subpage('connect-agents'", "subpage('external-apps'"].every((k) => { const at = agents.indexOf(k); return at >= 0 && at < iEnd; }) && !/subpage\('connectors'/.test(settings) && /\['apps', 'Services'\]/.test(settings));
+check('the automation tools (CDP) row sits in its own Advanced page and says how it differs', /\['automation', 'Remote control for developers', \{ page: 'advanced-links'/.test(settings) && /separate, lower-level way in/i.test(settings));
 const system = settings.slice(settings.indexOf('function buildSystem'));
-check('Advanced has one Graphics and effects group: acceleration, Performance mode, Visual effects and the music-reactive switch', (() => { const end = system.indexOf("buildUnloading"); const body = system.slice(0, end); return body.indexOf('groupGraphics') > 0 && ['hardwareAcceleration', 'performanceMode', 'graphicsMode', 'musicReactiveRow()'].every((k) => body.includes(k)); })());
+check('Advanced has one Performance and graphics page: acceleration, Performance mode, Visual effects and the music-reactive switch', (() => { const end = system.indexOf("buildUnloading"); const body = system.slice(0, end); return body.indexOf('groupGraphics') > 0 && ['hardwareAcceleration', 'performanceMode', 'graphicsMode', 'musicReactiveRow()'].every((k) => body.includes(k)); })());
 check('Reduce motion stays in Appearance (Accessibility)', /function buildAccessibility[\s\S]*?toggle\('reduceMotion'/.test(settings));
 
 // #33 rows with a description (and a control) or gone
 check('Saved memory and Choose per program say what is inside before they open', /settings\.ai\.memoryEntriesSummary/.test(settings) && /settings\.ai\.perProgramDesc/.test(settings) && /function collapsible\(title, rows, desc\)/.test(settings));
 check('Printing no longer claims there are no print settings, and still names Ctrl+P', !/no print settings/i.test(en['settings.print.desc']) && /Ctrl\+P/.test(en['settings.print.desc']));
-check('Recent files says what it covers and its button says where it goes', /General > Files/.test(en['settings.files.privacyRefDesc']) && en['settings.files.privacyRefGo'] === 'Open Files settings');
+check('Recent files says what it covers and its button says where it goes', /Downloads and files > Files/.test(en['settings.files.privacyRefDesc']) && en['settings.files.privacyRefGo'] === 'Open Files settings');
 
 // #35 side tabs
 check('"Side tabs: icons only" is hidden unless the layout is Side', /collapsedRow\.hidden = st\.prefs\.tabLayout !== 'side'/.test(settings) && !/Only used when Tab layout is Side/.test(settings));

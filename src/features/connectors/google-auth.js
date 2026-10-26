@@ -53,14 +53,14 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
     const mine = own();
     const b = builtin();
     const r = GC.resolveClient({ clientId: mine?.clientId && mine.clientId !== b?.clientId ? mine.clientId : '', stored: mine, builtin: b });
-    if (r.error) throw new Error('Lumen has no Google sign-in set up in this build. Add your own Google Cloud client in Settings → Home → Widgets → Gmail → Advanced (Desktop app type, with the Drive and Sheets APIs turned on), then connect again.');
+    if (r.error) throw new Error('Lumen has no Google sign-in set up in this build. Add your own Google Cloud client in Settings → Apps and connections → Gmail → Advanced (Desktop app type, with the Drive and Sheets APIs turned on), then connect again.');
     return r;
   }
 
   const session = OA.createSession({
     tokenUrl: () => ep('googleToken'), post: formPost, now,
     load: creds, save,
-    messages: () => ({ reconnect: 'Google ended the sign-in. Connect again in Settings → AI and agents → Connectors.', client: 'Google stopped accepting Lumen’s sign-in. Connect again in Settings; if that fails, add your own Google Cloud client (Settings → Home → Widgets → Gmail → Advanced).' }),
+    messages: () => ({ reconnect: 'Google ended the sign-in. Connect again in Settings → Apps and connections.', client: 'Google stopped accepting Lumen’s sign-in. Connect again in Settings; if that fails, add your own Google Cloud client (Settings → Apps and connections → Gmail → Advanced).' }),
   });
 
   let flow = null;
@@ -86,7 +86,7 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
       let t;
       try { t = await mine.done; } catch (err) {
         if (err?.kind === 'timeout') { mine.userCancelled = true; throw new Error('Sign-in timed out. Try again.'); }
-        if (err?.kind === 'client') throw new Error('Google doesn’t accept Lumen’s sign-in client. Update Lumen, or use your own Google Cloud client (Settings → Home → Widgets → Gmail → Advanced).');
+        if (err?.kind === 'client') throw new Error('Google doesn’t accept Lumen’s sign-in client. Update Lumen, or use your own Google Cloud client (Settings → Apps and connections → Gmail → Advanced).');
         throw err;
       }
       let email = '';

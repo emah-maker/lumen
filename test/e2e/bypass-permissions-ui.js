@@ -1,5 +1,5 @@
 // The sidebar's permission menu (the bolt in the sidebar head: Ask / Auto-allow actions / Bypass permissions) and the badge above the
-// message box, in a real window, and the same choice in Settings → AI and agents. Turning a level up takes a second click, turning it down one;
+// message box, in a real window, and the same choice in Settings → AI. Turning a level up takes a second click, turning it down one;
 // the saved settings and the agent's switches follow; Settings and the sidebar stay in step. Run with LUMEN_TEST_BACKGROUND=1.
 // BYPASS_SHOTS=<dir> also saves screenshots of the menu, the armed line and the indicator there.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -105,7 +105,7 @@ const waitFor = async (fn, ms = 6000) => { const end = Date.now() + ms; let v; w
     const id = await app.evaluate((_e) => global.__settings.open('ask-before-acting'));
     const inSettings = (code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return `ERROR ${err?.message || err}`; } }, [id, code]);
     await waitFor(() => inSettings('document.body?.dataset.ready === "1" && Boolean(document.getElementById("pref-aiPermissionMode"))'));
-    check('Settings → AI and agents shows the same choice, on Bypass, with the warning under it', (await inSettings('document.getElementById("pref-aiPermissionMode").value')) === 'bypass' && /won’t ask before acting/.test(await inSettings('document.getElementById("perm-warn").textContent')), await inSettings('document.getElementById("pref-aiPermissionMode").value'));
+    check('Settings → AI shows the same choice, on Bypass, with the warning under it', (await inSettings('document.getElementById("pref-aiPermissionMode").value')) === 'bypass' && /won’t ask before acting/.test(await inSettings('document.getElementById("perm-warn").textContent')), await inSettings('document.getElementById("pref-aiPermissionMode").value'));
     check('Settings explains it at length (what is still in force, and the Choose file… card)', /Choose file/.test(await inSettings('document.getElementById("pref-aiPermissionMode").closest(".row").textContent')) && /Hands-off mode/.test(await inSettings('document.getElementById("pref-aiPermissionMode").closest(".row").textContent')), '');
     if (shots) {
       await app.evaluate(async (_e, i) => { const wc = global.__settings.contents(i); wc.executeJavaScript('document.getElementById("pref-aiPermissionMode").scrollIntoView({block:"center"})'); }, id);

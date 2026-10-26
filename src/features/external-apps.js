@@ -1,4 +1,4 @@
-// Other apps (Claude Desktop, Cursor, VS Code, Claude Code, outside Lumen) using Lumen: Settings → AI and agents → "Let other apps use Lumen".
+// Other apps (Claude Desktop, Cursor, VS Code, Claude Code, outside Lumen) using Lumen: Settings → AI → "Let other apps use Lumen".
 // The pure registry behind it. ai-agents.js wires it to the MCP server through three small hooks (automation/mcp.js): `identify` (who
 // is this connection), `onInitialize` (may it start) and the call wrapper in mcpCallTool (may this call run, and can it be stopped).
 //

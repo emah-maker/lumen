@@ -84,7 +84,7 @@ const src = (...p) => fs.readFileSync(path.join(__dirname, '..', '..', 'src', ..
   check('main: Ctrl+F, Ctrl+= / - / 0 and Print reach the viewer', /pdfRt\.command\(wc, 'find'\)/.test(main) && /pdfRt\.command\(wc, step > 0 \? 'zoomIn'/.test(main) && /ipcMain\.on\('pdf:print'/.test(main) && /senderFrame === e\.sender\.mainFrame/.test(main));
   check('preload: only the viewer\'s own origin gets the print bridge, and nothing else', /location\.origin === 'lumen-pdf:\/\/app'/.test(src('preload', 'permissions-preload.js')) && /exposeInMainWorld\('lumenPdfHost'/.test(src('preload', 'permissions-preload.js')));
   const settings = src('settings', 'settings-backend.js');
-  check('setting: pdfViewer is lumen | chrome, default lumen, with a Settings > Downloads choice', /pdfViewer: 'lumen'/.test(settings) && /case 'pdfViewer': return pick\(value, \['lumen', 'chrome'\], null\)/.test(settings) && /select\('pdfViewer', 'Open PDFs with'/.test(src('renderer', 'settings.js')));
+  check('setting: pdfViewer is lumen | chrome, default lumen, with a Settings → Downloads and files choice', /pdfViewer: 'lumen'/.test(settings) && /case 'pdfViewer': return pick\(value, \['lumen', 'chrome'\], null\)/.test(settings) && /select\('pdfViewer', 'Open PDFs with'/.test(src('renderer', 'settings.js')));
 
   // ---- the AI: scroll, read_pdf, list_tabs
   const scroller = { scrollTop: 100, scrollHeight: 5000, clientHeight: 800, scrollTo(o) { this.scrollTop = o.top; } };

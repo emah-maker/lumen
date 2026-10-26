@@ -2,7 +2,7 @@
 // With the chip on, a message only lets the AI read, and it answers with propose_plan: main sends a 'plan' event, chat-core.js asks
 // card() for the card and puts it in the reply. Run plan sends the plan as the user left it (edits included) as the next message,
 // with plan mode off for that chat, and main allows exactly the plan's sites for the chat (main.js agent:ask approvedPlan).
-// The chip is per chat: a new chat starts as Settings → AI and agents → "Start new chats in plan mode" says (planModeDefault, ui-prefs.js).
+// The chip is per chat: a new chat starts as Settings → AI → "Start new chats in plan mode" says (planModeDefault, ui-prefs.js).
 // Claude Code, Codex, Grok Build and Antigravity bring tools of their own that Lumen can't hold back: on them the chip is off and
 // says why (agent.js answers a plan-mode message there with a note too).
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows

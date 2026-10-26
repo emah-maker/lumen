@@ -1,4 +1,4 @@
-// The page an unloaded tab shows when Settings > Tabs > Page unloading says "Show a Reload button" (main.js wakeTab, placeholder):
+// The page an unloaded tab shows when Settings → Tabs and browsing > Page unloading says "Show a Reload button" (main.js wakeTab, placeholder):
 // ?url=<the page it stands for>&title=<its title>&mb=<about how much memory unloading freed>. Reload asks for that address; main
 // catches the request (will-navigate) and wakes the tab the usual way, so the page's own history, scroll and form state come back.
 (() => {

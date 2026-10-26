@@ -63,21 +63,25 @@ check('no key has two rows in docs/settings.md', !twice.length, twice.map(([k, r
 // Settings paths in strings, comments and docs name the page as it is now. The categories come from the settings page itself, so a
 // rename there fails this test until the docs follow.
 const categoryTitles = [...read('src/renderer/settings.js').match(/const CATEGORIES = \[[\s\S]*?\n\];/)[0].matchAll(/\{ id: '[\w-]+', title: '([^']+)'/g)].map((m) => m[1]);
-check('the settings page has the categories the docs name', ['General', 'Appearance', 'Home', 'Tabs', 'Privacy and security', 'AI and agents', 'Updates', 'Advanced'].every((t) => categoryTitles.includes(t)), categoryTitles.join(', '));
+check('the settings page has the categories the docs name', ['General', 'Appearance', 'Accessibility', 'AI', 'Apps and connections', 'New tab page', 'Tabs and browsing', 'Privacy and security', 'Downloads and files', 'Updates and about', 'Advanced'].every((t) => categoryTitles.includes(t)), categoryTitles.join(', '));
 const ARROW = '\\s*(?:→|>)\\s*';
 const OWN = '(?<!System |Windows |macOS )'; // the operating system's own Settings app is another thing
 const RETIRED = [
-  [new RegExp(`Settings${ARROW}You and AI`), 'Settings → AI and agents'],
-  [/(?<![\w ])You and AI\s*→/, 'AI and agents → …'],
-  [new RegExp(`About Lumen${ARROW}Updates`), 'Settings → Updates'],
-  [new RegExp(`${OWN}Settings${ARROW}About\\b`), 'Settings → Updates'],
+  [new RegExp(`Settings${ARROW}You and AI`), 'Settings → AI'],
+  [/(?<![\w ])You and AI\s*→/, 'AI → …'],
+  [new RegExp(`Settings${ARROW}AI and agents`), 'Settings → AI'],
+  [new RegExp(`About Lumen${ARROW}Updates`), 'Settings → Updates and about'],
+  [new RegExp(`${OWN}Settings${ARROW}About\\b`), 'Settings → Updates and about'],
+  [new RegExp(`${OWN}Settings${ARROW}Updates(?! and about)`), 'Settings → Updates and about'],
   [new RegExp(`${OWN}Settings${ARROW}Privacy(?! and security| &)`), 'Settings → Privacy and security'],
-  [new RegExp(`${OWN}Settings${ARROW}Downloads`), 'Settings → General → Downloads'],
-  [new RegExp(`${OWN}Settings${ARROW}AI(?! and agents)\\b`), 'Settings → AI and agents'],
+  [new RegExp(`${OWN}Settings${ARROW}Downloads(?! and files)`), 'Settings → Downloads and files'],
   [new RegExp(`${OWN}Settings${ARROW}System\\b`), 'Settings → Advanced'],
-  [new RegExp(`${OWN}Settings${ARROW}Languages\\b`), 'Settings → General → Language'],
-  [new RegExp(`${OWN}Settings${ARROW}Translation\\b`), 'Settings → General → Translation'],
-  [new RegExp(`${OWN}Settings${ARROW}Accessibility\\b`), 'Settings → Appearance → Accessibility'],
+  [new RegExp(`${OWN}Settings${ARROW}Languages\\b`), 'Settings → General → Language and spelling'],
+  [new RegExp(`${OWN}Settings${ARROW}Translation\\b`), 'Settings → General → Language and spelling'],
+  [new RegExp(`${OWN}Settings${ARROW}Appearance${ARROW}Accessibility\\b`), 'Settings → Accessibility'],
+  [new RegExp(`${OWN}Settings${ARROW}Home\\b`), 'Settings → New tab page'],
+  [new RegExp(`${OWN}Settings${ARROW}Tabs(?! and browsing)\\b`), 'Settings → Tabs and browsing'],
+  [new RegExp(`${OWN}Settings${ARROW}(?:Connectors|Widgets)\\b`), 'Settings → Apps and connections'],
 ];
 // (docs/ux-audit is a dated record of what the pages said then)
 const scanned = [

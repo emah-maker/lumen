@@ -1,4 +1,4 @@
-// Settings > Home > Widgets: the words. A name and one plain line for each kind of widget (for the Add
+// Settings → Apps and connections: the words. A name and one plain line for each kind of widget (for the Add
 // widget picker), and a one-line summary of a widget's current settings (for the list), e.g.
 // "Boston · °F · 7 days". Pure functions, no DOM: renderer/settings.js draws them and test/units/units.js runs them.
 //

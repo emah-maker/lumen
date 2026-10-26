@@ -1,7 +1,7 @@
 // The give-up detector end to end (ai/handoff.js, agent.js runTaskOnce), in a hidden window with a fake Claude client that
 // answers from a script: a first final reply that hands the work back gets exactly one automatic follow-up turn, shown as a
 // quiet "Trying another way…" step, and the second reply is the final one. A reply that stops for a CAPTCHA does not trigger it.
-// A model that hands back twice is not asked a third time, and the capability-gap note (Settings → AI and agents) gets one entry
+// A model that hands back twice is not asked a third time, and the capability-gap note (Settings → AI) gets one entry
 // with no words from the reply. No network, no key. Run alone: node test/e2e/handoff.js
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');

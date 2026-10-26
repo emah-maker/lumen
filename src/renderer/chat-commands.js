@@ -10,8 +10,8 @@
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
 //   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
-//   /fractions on|off  [prefer fractions] the Settings → AI and agents switch: exact fractions, stacked, instead of decimals (new chats).
-//   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI and agents → Memory.
+//   /fractions on|off  [prefer fractions] the Settings → AI switch: exact fractions, stacked, instead of decimals (new chats).
+//   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI → Instructions and memory.
 //   /help      lists every command.
 /* global shownChatId */ // renderer/chat-core.js: the chat the view shows
 (() => {
@@ -131,7 +131,7 @@
     card.el.removeAttribute('aria-busy');
     if (!r || !r.ok) {
       const code = r?.error;
-      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI and agents: Claude Code and the other engines can’t answer a side question mid-task.')
+      const reason = code === 'no-provider' ? tr('btw.noProvider', 'No API model is connected for /btw. Add an API key in Settings → AI: Claude Code and the other engines can’t answer a side question mid-task.')
         : code === 'timeout' ? tr('btw.timeout', 'That took too long. Try again.')
           : code === 'busy' ? tr('btw.busy', 'Too many side questions are open. Dismiss one first.')
             : tr('btw.failed', 'That side question failed: {error}', { error: String(code || '').slice(0, 200) });
@@ -254,7 +254,7 @@
     description: tr('slash.memory.description', 'What the AI has saved about you between chats.'),
     takesInput: false,
     async run() {
-      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI and agents.') };
+      if (!window.assistant?.memory) return { ok: false, message: tr('slash.memory.none', 'Memory is in Settings → AI.') };
       const view = await window.assistant.memory.list().catch(() => null);
       const box = Object.assign(document.createElement('div'), { className: 'notice slash-help memory-list' });
       const entries = view?.entries || [];
@@ -283,7 +283,7 @@
     takesInput: true,
     async run({ input }) {
       const api = window.assistant?.preferFractions;
-      if (!api) return { ok: false, message: tr('slash.fractions.none', 'Prefer fractions is in Settings → AI and agents.') };
+      if (!api) return { ok: false, message: tr('slash.fractions.none', 'Prefer fractions is in Settings → AI.') };
       const word = String(input || '').trim().toLowerCase();
       if (word !== 'on' && word !== 'off') return { ok: false, message: tr('slash.fractions.usage', 'Type /fractions on or /fractions off.') };
       const now = await api(word === 'on');

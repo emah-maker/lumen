@@ -16,18 +16,18 @@ function keepReason(f) {
   if (f.agentUsing || f.aiLock) return 'ai';
   if (!f.webPage) return 'internal';
   if (f.loading) return 'loading';
-  if (f.audible && f.keepAudio !== false) return 'audio'; // Settings > Tabs > Page unloading: tabs playing sound or video (on by default)
+  if (f.audible && f.keepAudio !== false) return 'audio'; // Settings → Tabs and browsing > Page unloading: tabs playing sound or video (on by default)
   if (f.downloading && f.keepTransfers !== false) return 'transfer'; // a download still coming in (a chosen upload is the page's own check, below)
   if (f.fullscreen) return 'fullscreen';
   if (f.devTools) return 'devtools';
   if (f.capturing) return 'capturing'; // screen share / camera / recording
-  if (f.pinned && f.keepPinned) return 'pinned'; // Settings > Tabs > Memory: pinned tabs never sleep (off by default: they always could)
+  if (f.pinned && f.keepPinned) return 'pinned'; // Settings → Tabs and browsing > Memory: pinned tabs never sleep (off by default: they always could)
   if (f.neverSite) return 'site'; // the "Never unload these sites" list
   if (f.grouped && f.keepGroups) return 'group'; // off by default
   return null;
 }
 
-// ---- the settings (Settings > Tabs > Memory) and the decision that uses them -------------------------------
+// ---- the settings (Settings → Tabs and browsing > Memory) and the decision that uses them -------------------------------
 // Defaults: unload a tab untouched for 20 minutes (frozen first for 10 of them, so coming back is instant), and any tab
 // idle 2 minutes while the computer is short of memory (under 10% free); pinned tabs and the 3 most recently used background
 // tabs are kept awake whatever the timer says.
@@ -234,7 +234,7 @@ function decideSleep({ tabs = [], settings = {}, now = Date.now(), memory = null
   return out;
 }
 
-// What the status panel counts (Settings > Tabs > Page unloading): the tabs of one window as facts (sleepFacts, plus `asleep`:
+// What the status panel counts (Settings → Tabs and browsing > Page unloading): the tabs of one window as facts (sleepFacts, plus `asleep`:
 // the page is closed, `frozen`: paused in memory). -> { loaded, unloaded, frozen, exempt, reasons: { audio: 2, ... } }.
 // `exempt`: loaded background tabs that would not unload right now (the one in front is not counted), whatever the reason.
 function tally(tabs, settings = {}) {

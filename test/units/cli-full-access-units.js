@@ -1,4 +1,4 @@
-// [full access] Settings → AI and agents → "Give <CLI> full access to this computer" for every command-line AI (Claude Code, Grok Build,
+// [full access] Settings → AI → "Give <CLI> full access to this computer" for every command-line AI (Claude Code, Grok Build,
 // Antigravity) and the master switch that sets them together. Plain Node: no Electron, no real CLI, no network (fake child
 // processes; Lumen's gate on a real localhost port). Covers:
 //  - the settings: three booleans, off by default, validated, unknown keys refused;

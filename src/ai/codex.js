@@ -42,7 +42,7 @@
 // search or another server's tool is reported anyway (offItemOf), the same last line of defence grok-build.js and antigravity.js have.
 // Never --dangerously-bypass-approvals-and-sandbox, --full-auto or a writable sandbox.
 //
-// KEPT PROCESS (features/codex-warm.js, Settings → AI and agents → Keep Codex connected, on by default): the same engine as `codex app-server`
+// KEPT PROCESS (features/codex-warm.js, Settings → AI → Keep Codex connected, on by default): the same engine as `codex app-server`
 // (JSON-RPC on stdio: thread/start | thread/resume, turn/start, turn/interrupt, streamed items) stays up per chat between messages, in the
 // same Codex home, with the same config.toml, read-only sandbox, environment and offItemOf check. run() offers each message to it first
 // (this.keepWarm) and does the headless run below when it returns null (no app-server, a thread it can't resume, the setting off).
@@ -66,7 +66,7 @@ const { isSignedOutText } = authSync;
 const locate = require('./codex-locate');
 const codexUsage = require('./codex-usage');
 const codexConfig = require('./codex-config');
-const effortLib = require('./effort'); // Settings → AI and agents → AI providers: reasoning effort per AI
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 
 const INSTALL_HINT = `Install it with: ${process.platform === 'win32' ? 'winget install OpenAI.Codex  (or: npm install -g @openai/codex)' : process.platform === 'darwin' ? 'brew install --cask codex  (or: npm install -g @openai/codex)' : 'npm install -g @openai/codex'}, then run codex once and sign in.`;
@@ -172,7 +172,7 @@ const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').repla
 // The environment variable that carries a run's MCP token to Codex (config.toml's bearer_token_env_var).
 const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 
-// FULL ACCESS (Settings → AI and agents → "Give Codex full access to this computer", codexFullAccess, off by default) keeps the three tools a terminal
+// FULL ACCESS (Settings → AI → "Give Codex full access to this computer", codexFullAccess, off by default) keeps the three tools a terminal
 // user expects (FULL_ON: shell, unified exec, view_image) and turns web search live; everything else above stays off. Sandbox
 // danger-full-access in config.toml and argv, approval never, the user's whole environment, a longer watchdog (FULL_WATCHDOG_MS), and
 // offItemOf lets Codex's own tools through (another MCP server's tool is still refused). The working folder is still the empty Lumen
@@ -225,7 +225,7 @@ function buildArgs({ model = 'default', conversation = null, imageFiles = [], ef
     '--sandbox', fullAccess ? 'danger-full-access' : workDir ? 'workspace-write' : 'read-only', // never --full-auto or --dangerously-bypass-approvals-and-sandbox; workspace-write only for a chosen work folder
     ...(workDir && !fullAccess ? ['--add-dir', workDir] : []),
     ...(model !== 'default' && validModel(model) ? ['-m', model] : []),
-    ...effortLib.cliArgs('codex', effort), // Settings → AI and agents → AI providers: -c model_reasoning_effort=<level> (none: Codex's own default)
+    ...effortLib.cliArgs('codex', effort), // Settings → AI → AI providers: -c model_reasoning_effort=<level> (none: Codex's own default)
     ...imageFiles.map((f) => `--image=${f}`),
     ...(conversation && SAFE_SESSION.test(conversation) ? ['resume', conversation] : []),
     '-',
@@ -404,7 +404,7 @@ class CodexEngine {
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
   async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false, workDir = '' }) {
-    fullAccess = fullAccess === true; // [full access] Settings → AI and agents (codexFullAccess)
+    fullAccess = fullAccess === true; // [full access] Settings → AI (codexFullAccess)
     // [work folder] a folder that is there: the run happens in it (the kept app-server below has no such folder, so it does not take the message)
     if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
     // [keep connected] The chat's kept `codex app-server` (features/codex-warm.js) takes the message when it can: null means it did not

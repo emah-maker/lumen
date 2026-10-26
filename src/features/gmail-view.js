@@ -144,7 +144,7 @@ function apiError(status, text) {
 const AUTH_EXTRA = { access_type: 'offline', prompt: 'consent select_account' };
 
 // [connectors] Gmail drafts. gmail.compose lets an app make drafts, and also send mail: Lumen asks for it only when the user
-// presses "Allow drafts" (Settings → AI and agents → Connectors → Gmail), never at the first sign-in, and never calls send
+// presses "Allow drafts" (Settings → Apps and connections → Gmail), never at the first sign-in, and never calls send
 // (features/gmail-drafts.js). That sign-in is incremental (include_granted_scopes): Google adds compose to the read access
 // the account already gave, and its token answer's `scope` says what the token really has, which is what Lumen keeps.
 const COMPOSE_SCOPE = 'https://www.googleapis.com/auth/gmail.compose';

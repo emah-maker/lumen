@@ -1,4 +1,4 @@
-// [desktop apps] The AI operating other programs on this computer (Windows UI Automation, or System Events on macOS: platforms.js). Settings → AI and agents → "Let the AI use other apps on
+// [desktop apps] The AI operating other programs on this computer (Windows UI Automation, or System Events on macOS: platforms.js). Settings → AI → "Let the AI use other apps on
 // this computer". One tool, desktop(action, args), whose actions are in policy.stepLabel: list_apps, focus_app, read_app, click, type,
 // press_keys, screenshot_app, open_app. docs/desktop-apps.md has the whole model; in short:
 //   - the master switch (aiDesktopControl, off by default) and a card per app (Once = this chat, Always = Settings list, No);
@@ -125,7 +125,7 @@ function createDesktop(deps = {}) {
     }
     const answer = await ctx.ask({
       title: `Allow the AI to use ${d.name}?`,
-      detail: `${file ? `It will start with the file ${file}. ` : ''}It can read what is in the app (and take a picture of its window, which can show things a password mask does not hide), and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings → AI and agents → Apps the AI can use. It never reads or fills password fields. ${d.warn || ''}`.trim(),
+      detail: `${file ? `It will start with the file ${file}. ` : ''}It can read what is in the app (and take a picture of its window, which can show things a password mask does not hide), and click and type in it, while a banner shows and Stop works. Once allows it for this chat; Always adds it to Settings → AI → Apps the AI can use. It never reads or fills password fields. ${d.warn || ''}`.trim(),
       args: where,
     });
     if (!answer) throw new Error(`The user did not let the AI use ${d.name}. Ask them what to do instead.`);
@@ -137,7 +137,7 @@ function createDesktop(deps = {}) {
     if (S.master()) return;
     const answer = await ctx.ask({
       title: 'Let the AI use other apps on this computer?',
-      detail: `This turns on Settings → AI and agents → "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, ${backend.examples}. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.`,
+      detail: `This turns on Settings → AI → "Let the AI use other apps on this computer". The AI can then read and operate apps you allow one by one, ${backend.examples}. You are asked about each app first, a banner shows while it works with a Stop button, and holding Esc stops it. Passwords, banking, security prompts, terminals and Lumen itself are never available.`,
       args: backend.switchNote,
       noAlways: true, allowLabel: 'Turn on',
     });

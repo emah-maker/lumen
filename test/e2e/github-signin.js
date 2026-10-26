@@ -2,7 +2,7 @@
 // https certificate; nothing leaves the machine):
 //  - the new-tab GitHub card, signed out, offers Sign in with GitHub; pressing it shows the one-time code and the address to open, the
 //    sign-in page is "opened" (recorded, not opened), and the card fills in by itself once the stand-in approves;
-//  - Settings → Widgets → GitHub has the same sign-in (code, who you are, Sign out) and no token field in sight except under Advanced;
+//  - Settings → Apps and connections → GitHub has the same sign-in (code, who you are, Sign out) and no token field in sight except under Advanced;
 //  - the same sign-in set up the GitHub connector; the token appears in neither page nor in connectors.json;
 //  - a revoked token turns the card into "Sign in again"; Sign out in Settings takes the connector down with it.
 // Run hidden and under the lock: node scripts/test/e2e-lock.js run --owner <name> -- timeout 600 node test/e2e/github-signin.js

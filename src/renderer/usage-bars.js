@@ -1,5 +1,5 @@
 // Small usage bars: one shared formatter and one bar element for every place that helps you choose an AI by how
-// much of its plan is left (the model pickers, the AI status card, Settings → AI and agents). It reads the numbers Lumen
+// much of its plan is left (the model pickers, the AI status card, Settings → AI). It reads the numbers Lumen
 // already holds (features/usage.js summary(): the plan windows, Grok's budget and limit message, and the
 // cooldowns of models that hit a limit) and never asks a network: the data is main's cached summary
 // (usage:get with `cached`), re-read after a reply finishes and when a menu opens, at most every few seconds.

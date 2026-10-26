@@ -9,12 +9,12 @@
 // renderer keeps its foreground priority, its timers are not throttled and its last frame is not evicted. So that a tab is not kept like that
 // for nothing, only these tabs are kept ready, and only while the window is in use:
 //   - the tab under the pointer (a 60 ms rest, or the moment the button goes down), released 1.5 s after the pointer leaves;
-//   - the most recently used background tabs (Settings > Tabs > Page unloading > "Keep recent tabs ready", 3 by default, 0 turns this part off).
+//   - the most recently used background tabs (Settings → Tabs and browsing > Page unloading > "Keep recent tabs ready", 3 by default, 0 turns this part off).
 // Fewer on battery (one), none under memory pressure, in Performance mode, or while the window is hidden or minimised.
 // Pure logic (test/units/tab-ready-units.js); main.js does the Electron parts.
 'use strict';
 
-const RECENT_CHOICES = [0, 1, 2, 3, 5]; // Settings > Tabs > Page unloading: "Keep recent tabs ready"
+const RECENT_CHOICES = [0, 1, 2, 3, 5]; // Settings → Tabs and browsing > Page unloading: "Keep recent tabs ready"
 const RECENT_DEFAULT = 3;
 const HOVER_MS = 60; // a pointer resting on a tab this long means to go there (main hands this to the hover intent)
 const LEAVE_GRACE_MS = 1500; // a hover boost is released this long after the pointer leaves (a move to the next tab, a click, keeps it)

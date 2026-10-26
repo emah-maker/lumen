@@ -1,4 +1,4 @@
-// [cc settings] Settings → AI and agents → "Use my Claude Code settings in Lumen chats" (ccUserSettings, off by default).
+// [cc settings] Settings → AI → "Use my Claude Code settings in Lumen chats" (ccUserSettings, off by default).
 // Plain Node, no Electron and no real CLI: a fake `claude` (a Node child speaking stream-json) records its argv.
 //  - argv: --setting-sources project when the setting is off; none when on; none in full access (it loads them anyway)
 //  - one-shot runs (cli-json.js) follow the same rule

@@ -224,7 +224,7 @@ async function connector() {
   const draft = { app: 'gmail', action: 'create_draft', args: { to: 'lee@school.edu', subject: 'Re: Grades', body: 'Thank you!\nAda', reply_to_message_id: '18c0ffee01' } };
   check('create_draft input is valid; a bad address or a reply id that isn’t one is refused', registry.validate(draft) === null && /expected form/.test(registry.validate({ app: 'gmail', action: 'create_draft', args: { to: 'nobody', subject: 's', body: 'b' } }) || '') && /expected form/.test(registry.validate({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b', reply_to_message_id: '../x' } }) || ''), registry.validate(draft));
   const before = await fails(() => svc.describeWrite(draft));
-  check('without Allow drafts, no card: the AI is told to have the user press Allow drafts', /Allow drafts first/.test(before) && /Settings → AI and agents → Connectors/.test(before), before);
+  check('without Allow drafts, no card: the AI is told to have the user press Allow drafts', /Allow drafts first/.test(before) && /Settings → Apps and connections/.test(before), before);
   check('…and the action itself refuses too, sending nothing', /Allow drafts first/.test(await fails(() => svc.call(draft))) && g.made.length === 0, '');
   check('the AI can’t start Allow drafts: it isn’t an action', !registry.get('gmail').actions.allow_drafts && g.allowCalls === 0, '');
   await svc.allowDrafts('gmail');

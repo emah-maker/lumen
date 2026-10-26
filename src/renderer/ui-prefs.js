@@ -21,7 +21,7 @@
     root.classList.toggle('pref-gfx-light', Boolean(p.lightGfx)); // Settings → Advanced → Visual effects: Light (or Automatic on an integrated GPU): no backdrop blur (settings-backend.js [igpu])
     root.classList.toggle('pref-gfx-soft', Boolean(p.softwareGfx)); // software drawing (no GPU): Light plus no blur anywhere, short transitions, no page snapshot (settings-backend.js [igpu], prefs.css)
     if ('softwareGfx' in p) window.lumenSoftwareGfx = Boolean(p.softwareGfx); // app.js: the sidebar moves without a snapshot
-    root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings > Tabs > Page unloading: no dimmed icon on unloaded tabs
+    root.classList.toggle('pref-no-sleep-dim', p.sleepDim === false); // [tabs] Settings → Tabs and browsing > Page unloading: no dimmed icon on unloaded tabs
     root.classList.toggle('pref-focus-rings', Boolean(p.focusRings));
     const badge = document.getElementById('hands-off'); // [ai manners] the composer says the AI is not allowed to act on the user's tabs
     if (badge) badge.hidden = !p.handsOff;
@@ -29,8 +29,8 @@
     if (stripCue) { stripCue.hidden = !p.handsOff; cueTitle(); }
     const hide = p.hideAiTabs === true; // [ai manners] the strip leaves out the tabs the AI opened (app.js renderTabsNow)
     if (Boolean(window.lumenHideAiTabs) !== hide) { window.lumenHideAiTabs = hide; document.dispatchEvent(new Event('lumen:hide-ai-tabs')); }
-    if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI and agents
-    if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers })); // [subagents] the sidebar's Helpers button follows Settings → AI and agents
+    if (p.permissionMode) window.dispatchEvent(new CustomEvent('lumen:permission-mode', { detail: p.permissionMode })); // [bypass permissions] the sidebar's bolt menu and badge follow Settings → AI
+    if ('helpers' in p) window.dispatchEvent(new CustomEvent('lumen:helpers', { detail: p.helpers })); // [subagents] the sidebar's Helpers button follows Settings → AI
     if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); } // [plan mode] the composer's Plan chip in a new chat
     if ('preferFractions' in p) window.lumenPreferFractions = p.preferFractions === true; // [prefer fractions] markdown.js stacks a plain 3/4 in answers
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false; // [sidebar new chat] app.js: the AI button opens on a new chat

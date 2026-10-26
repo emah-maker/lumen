@@ -73,7 +73,7 @@ const providers = require('./ai/providers');
 const aiFrames = require('./ai/frames'); // the AI reads and acts in embedded frames through this debugger session
 if (TEST) global.__providers = providers;
 const cliJson = require('./ai/cli-json');
-cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings → AI and agents too
+cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings → AI too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
@@ -203,7 +203,7 @@ const translate = require('./features/translate').createTranslate({
 });
 const isInternal = (url) => isNewTab(url) || url.startsWith(HISTORY_URL) || settingsPage.isSettingsUrl(url) || pageTools.isInternal(url) || slidesViewer.isViewerUrl(url) || emlViewer.isViewerUrl(url) || fileTabs.isOfficeViewerUrl(url) || pdfViewer.isViewerUrl(url) || Boolean(managerPageOf(url));
 const ERROR_URL = pathToFileURL(path.join(__dirname, 'renderer', 'error.html')).href;
-const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings > Tabs > Page unloading: When you return to one)
+const UNLOADED_URL = pathToFileURL(path.join(__dirname, 'renderer', 'unloaded.html')).href; // [tabs] "Reload" page of an unloaded tab (Settings → Tabs and browsing > Page unloading: When you return to one)
 const CERT_URL = pathToFileURL(path.join(__dirname, 'renderer', 'cert-error.html')).href; // certificate warning (features/site-security.js)
 const SAFE_BROWSING_URL = pathToFileURL(path.join(__dirname, 'renderer', 'safe-browsing.html')).href; // features/safe-browsing.js
 const FOCUS_URL = pathToFileURL(path.join(__dirname, 'renderer', 'focus-block.html')).href; // the page a blocked site shows (features/focus.js)
@@ -600,7 +600,7 @@ let cliLoginValid = null;
 const modelNames = require('./features/model-names');
 // [model fallback] ai/fallback.js: a model out of usage or unreachable is left alone for a while and another connected one answers.
 const aiFallback = require('./ai/fallback');
-const fallbackOn = () => readSettings().autoFallback !== false; // Settings → AI and agents: Switch models automatically when one is unavailable
+const fallbackOn = () => readSettings().autoFallback !== false; // Settings → AI: Switch models automatically when one is unavailable
 // [auto model] The picker's "Auto" (ai/auto-model.js, docs/auto-model.md): which connected model answers a request. The router
 // is pure; this is its settings: the models turned off for Auto (autoExclude), the provider the user was on before choosing Auto
 // (autoHome), the models this account was refused (in memory) and the cooldowns fallback.js keeps. Nothing leaves this computer.
@@ -662,7 +662,7 @@ function modelOptions() {
   return options;
 }
 
-// Settings → AI and agents → "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
+// Settings → AI → "Auto may use": one row per connected provider or CLI engine, on unless the user turned it off for Auto.
 function autoProviderList(options = modelOptions()) {
   const seen = new Map();
   for (const o of options) {
@@ -834,7 +834,7 @@ function closeCurrentWindow() {
   if (target && rcAlive(target)) target.win.close();
 }
 
-// Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → General → Downloads says (features/link-menu.js).
+// Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → Downloads and files says (features/link-menu.js).
 const linkMenu = require('./features/link-menu');
 const saveAsMarks = linkMenu.createSaveAsMarks();
 function saveUrlAs(wc, url) {
@@ -3046,7 +3046,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
 const tabSleep = require('./features/tab-sleep'); // the pure decisions: may it sleep, how it wakes
 const sleepShowFreed = () => readSettings().tabSleepShowFreed !== false; // [tabs] the hover card says about how much memory an unloaded tab freed
 const SLEEP_CHECK_MS = 30 * 1000;
-// Settings > Tabs > Memory (the sleep settings, with their defaults = what this always did): features/tab-sleep.js decides
+// Settings → Tabs and browsing > Memory (the sleep settings, with their defaults = what this always did): features/tab-sleep.js decides
 // which tabs sleep (decideSleep); this file reads the facts, runs the page's own busy check, and does the sleeping.
 
 // The numbers decideSleep's memory test reads. macOS: the kernel's own pressure level (1 normal, 2 warning, 4
@@ -3130,7 +3130,7 @@ function thawTab(tab, { quiet = false } = {}) {
   return wc.debugger.isAttached() ? wc.debugger.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}).then(() => { if (wasFrozen && !quiet) sendTabs(); }) : Promise.resolve();
 }
 
-// `placeholder`: wake into the Reload page instead of the page itself (Settings > Tabs > Page unloading); the page loads when its button is pressed (leavePlaceholder).
+// `placeholder`: wake into the Reload page instead of the page itself (Settings → Tabs and browsing > Page unloading); the page loads when its button is pressed (leavePlaceholder).
 function wakeTab(tab, { placeholder = false } = {}) {
   if (tab.placeholder) { leavePlaceholder(tab); return; }
   if (tab.frozen) { thawTab(tab); return; }
@@ -3309,7 +3309,7 @@ async function sweepSleep() {
       // The page check (inside canSleep) is an async round trip (over a second): re-check the fast,
       // synchronous conditions in case the user switched to (or closed) this exact tab, or it started playing, meanwhile.
       if (!alive(tab) || tab.sleeping || tab.frozen || tab.id === activeId || tab.view.webContents.isCurrentlyAudible() || tab.view.webContents.isLoading()) continue;
-      // Freeze first (Settings > Tabs > Memory, off by default): an idle tab that would unload is frozen instead for a while, so
+      // Freeze first (Settings → Tabs and browsing > Memory, off by default): an idle tab that would unload is frozen instead for a while, so
       // coming back to it is instant; it unloads once that time has passed (below) or memory runs low.
       const how = sleepFacts(tab).newTab ? 'unload' : tabWake.sleepHow({ how: s.how, why, freezeFirstMin: s.freezeFirst, low }); // (a new-tab page is cheap to build again: always unloaded)
       if (how === 'freeze-first') {
@@ -3350,7 +3350,7 @@ function sleepMenuItems(tab) {
     }] : []),
   ];
 }
-// "Unload all background tabs now" (Settings > Tabs > Page unloading) and "Unload other tabs" (a tab's menu): every background tab in every
+// "Unload all background tabs now" (Settings → Tabs and browsing > Page unloading) and "Unload other tabs" (a tab's menu): every background tab in every
 // window that the exceptions allow (the tab in front, audio, pinned, typed text, calls, the AI, downloads ... stay), put to sleep the chosen way at once.
 // Resolves to how many were unloaded.
 async function unloadBackgroundTabs(exceptId = null) {
@@ -3368,7 +3368,7 @@ async function unloadBackgroundTabs(exceptId = null) {
   }
   return n;
 }
-// The status panel (Settings > Tabs > Page unloading): what is loaded, unloaded and exempt, in every window, and about how much memory that is.
+// The status panel (Settings → Tabs and browsing > Page unloading): what is loaded, unloaded and exempt, in every window, and about how much memory that is.
 // One getAppMetrics call; the page asks only while the section is on screen.
 function sleepStatus() {
   const settings = readSettings();
@@ -3409,7 +3409,7 @@ function currentSleepSite() {
   }
   return best ? tabSleep.cleanHost(hostOf(best.url)) : '';
 }
-// A sleep setting changed (Settings > Tabs > Page unloading): applies at once. Switched off, frozen tabs wake; otherwise a sweep runs now
+// A sleep setting changed (Settings → Tabs and browsing > Page unloading): applies at once. Switched off, frozen tabs wake; otherwise a sweep runs now
 // (and the strip and hover cards are sent again: the dimmed icon and the freed-memory line are settings too).
 let sleepSweepSoon = null;
 function tabSleepSettingChanged() {
@@ -3428,7 +3428,7 @@ if (TEST) global.__tabSleep = { sleep: (id) => { const t = tabs.find((x) => x.id
 // ---------- waking tabs faster: wake ahead, background preload (features/tab-wake.js) ----------
 // A placeholder (restored, lazy) or unloaded tab has no page until it is woken. A tab is woken when the pointer rests on it
 // (100 ms), on mousedown, or is the next one a keyboard switch would reach; once the front tab has loaded and the machine is
-// idle, a few likely next tabs are woken one at a time (Settings > Tabs > Memory). There is no picture of the page while it
+// idle, a few likely next tabs are woken one at a time (Settings → Tabs and browsing > Memory). There is no picture of the page while it
 // loads: the view shows the theme's background (wakeTab) until the page paints.
 const tabWake = require('./features/tab-wake');
 let wakeForTest = false; // tests leave all of this off (it changes what a switch shows) unless one turns it on
@@ -3942,7 +3942,7 @@ function userTookOver(tab) {
   const rec = tab.rec;
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
 }
-// [ai tabs] Settings → AI and agents → AI tabs → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
+// [ai tabs] Settings → AI → Tabs the AI opens → "Group tabs the AI opens" (groupAiTabs, on): every tab the AI opens in a window joins one
 // gray "AI tabs" group there, folded when it is made, so a run that opens dozens of tabs adds one label to the strip. The
 // tab in front shows even in a folded group (app.js), and the user's own unfolding is kept. The group holds no other tabs
 // (one the user takes over leaves it), so when the AI's tabs close it goes too. Runs in the tab's window (tabGroups is that window's).
@@ -6216,7 +6216,7 @@ const runSlots = tabChatsLib.createRunSlots({
   onStale: (id) => chatRuns.get(id)?.fail?.(new Error(t('agent.engineStopped'))),
 });
 scheduler.every('run-slots', 5000, () => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, { whenHidden: 15000 });
-const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI and agents → AI providers): the menu is rebuilt when one moves
+const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
 const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
 onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
@@ -8698,7 +8698,7 @@ const agentActiveTab = () => {
 // ({ show: true }) and the user is looking at the run's own tab. Opening one never moves the omnibox caret or a field's focus.
 // `ai`: the AI is opening it for its work (marked openedBy the run, so it can be closed again and, in hands-off mode,
 // worked in); Undo reopening a tab it closed is not that.
-// [ai manners] Settings → AI and agents → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
+// [ai manners] Settings → AI → "Never switch away from my tab": open_tab / switch_tab with show:true still work, behind the user's tab.
 const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
 // [ai manners] the run's latest user message asked to see or go to a tab (manners.showsTab): only then may its open_tab / switch_tab come to the front
 const userAskedToSee = () => { try { const m = agent.currentScope()?.chat; for (let i = (m?.length || 0) - 1; i >= 0; i--) { const x = m[i]; if (x?.role !== 'user') continue; const text = typeof x.content === 'string' ? x.content : Array.isArray(x.content) ? x.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : ''; if (!text.trim()) continue; return manners.userAskedToSee(text); } } catch { /* no run */ } return false; };
@@ -8802,7 +8802,7 @@ const mcpClient = require('./features/mcp-client').create({
 });
 require('./features/mcp-client').registerIpc(ipcMain, mcpClient);
 app.on('will-quit', () => mcpClient.stopAll());
-// [connectors] Services the user connected for the AI (Settings → AI and agents → Connectors; features/connectors/). Nothing of it loads at
+// [connectors] Services the user connected for the AI (Settings → Apps and connections; features/connectors/). Nothing of it loads at
 // startup: the first thing that needs it (a chat turn while something is connected, the Connectors page, a connect) makes the service.
 // Until then "is anything connected" is answered from the small file itself. A request goes only to that service, and tests point each
 // at 127.0.0.1 (global.__connectorEndpoints), with plain http allowed for that address in test mode only.
@@ -8870,6 +8870,11 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
   // card's encrypted secret each time, never copied into connectors.json. Disconnecting the connector signs the card out too.
   shared: {
+    // Todoist: the new-tab card's token is the connector's too (one token, saved from Apps and connections or the card's editor). Disconnecting here forgets it for both.
+    todoist: {
+      info: () => { const token = widgetSecret('todoist'); return token ? { token, account: '' } : null; },
+      signOut: () => { try { setWidgetSecret('todoist', null); } catch { /* it stays until the card is signed out */ } },
+    },
     github: {
       info: () => { const a = require('./features/github-auth').unpack(widgetSecret('github')); return a ? { token: a.token, account: a.login } : null; },
       signOut: () => widgets.githubSignOut(),
@@ -8899,6 +8904,8 @@ ipcMain.handle('connectors:disconnect', (_e, id) => connectorsSvc().disconnect(S
 ipcMain.handle('connectors:allow-drafts', (_e, id) => connectorsSvc().allowDrafts(String(id))); // Gmail: ask Google for gmail.compose (an explicit click in Settings)
 ipcMain.handle('connectors:set-sending', (_e, id, on) => connectorsSvc().setSending(String(id), on === true)); // Gmail: the Allow sending switch (Settings only; the AI can't turn it on)
 ipcMain.handle('connectors:send-log', () => connectorsSvc().sendLog()); // Settings' list of what the AI sent: time, to, subject
+ipcMain.handle('connectors:sync', (_e, id) => connectorsSvc().syncShared(String(id))); // a card's sign-in or token that the connector shares: make the connector match it
+ipcMain.handle('connectors:set-paused', (_e, id, on) => connectorsSvc().setPaused(String(id), on === true)); // Apps and connections: "Let the AI use it" off keeps the sign-in (the new-tab card still works) and takes the connector away from the AI
 ipcMain.handle('connectors:sign-in', (_e, id) => {
   const url = connectorsSvc().signInUrl(String(id));
   if (url) connectorsOpen(url);
@@ -8950,7 +8957,7 @@ ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
 ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
-// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI and agents → "Let the AI use Microsoft Word" (aiWordControl, on by default).
+// [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI → "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
 const wordLazy = () => (wordCtl ||= require('./word').createWord({
   settings: { enabled: () => readSettings().aiWordControl !== false, filesInApps: () => readSettings().aiFilesInApps }, // (aiFilesInApps: app | auto | file)
@@ -9096,13 +9103,13 @@ const agent = new Agent({
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
-  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI and agents → helpers: the delegate tool is offered; which model they use (agent.js delegate)
-  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI and agents → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
+  subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
-  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings → AI and agents: compact long API chats (agent.js autoCompact)
-  effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI and agents → AI providers: reasoning effort per AI (ai/effort.js)
+  autoCompact: () => readSettings().autoCompact !== false, // [context] Settings → AI: compact long API chats (agent.js autoCompact)
+  effort: (key) => readSettings().aiEffort?.[key] || '', // Settings → AI → AI providers: reasoning effort per AI (ai/effort.js)
   claudeCodeFullAccess: () => readSettings().claudeCodeFullAccess === true, // [full access] ai/claude-code.js ARGS_FULL
   word: () => wordLazy(), desktopAccess: () => readSettings().aiDesktopControl === true, filesInApps: () => readSettings().aiFilesInApps, desktop: () => desktopLazy().controller, // [desktop apps] src/desktop/: the AI operating other programs on this computer (loaded on first use)
   deviceAccess: () => readSettings().aiDeviceAccess === true, profileDir: () => app.getPath('userData'), // [device access] features/device-access.js: upload_file paths, list_files, clipboard read
@@ -9110,15 +9117,15 @@ const agent = new Agent({
   homeDir: () => (TEST ? global.__homeDir : undefined), // tests: a throwaway home folder for the AI's file lookups (test/e2e/files-ai.js)
   findFile: (query, opts) => filesApi().findFile(query, opts), noteFile: (file, source) => { filesApi().note(file, { source }).catch(() => {}); }, // [files] list_files find: (pinned and recent files first, then a bounded search) and the AI's reads and files made on the Recent list (features/files.js)
   ccUserSettings: () => readSettings().ccUserSettings === true, // [cc settings] ai/claude-code.js buildArgs
-  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings → AI and agents → Image generation, and the providers turned off for Auto
+  imageGen: () => readSettings().imageGen, autoExcluded: () => autoExcluded(), // [image routing] ai/image-router.js: Settings → AI → Image generation, and the providers turned off for Auto
   grokBuildFullAccess: () => readSettings().grokBuildFullAccess === true, // [full access] ai/grok-build.js ARGS_FULL
   antigravityFullAccess: () => readSettings().antigravityFullAccess === true, // [full access] ai/antigravity.js FULL_FLAGS
   codexFullAccess: () => readSettings().codexFullAccess === true, // [full access] ai/codex.js FULL_ON
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
-  chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI and agents → Tab to finish what I'm typing (agent.js autocomplete)
+  chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI → Tab to finish what I'm typing (agent.js autocomplete)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
-  memory: { // [memory] Settings → AI and agents → Memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
+  memory: { // [memory] Settings → AI → Instructions and memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
@@ -9195,7 +9202,7 @@ chatPageRt = chatPage.create({
 });
 chatPageRt.register();
 if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), back: () => chatPageRt.back(), home: (id) => chatPageRt.home(id), fromHome: (id, o) => chatPageRt.fromHome(id, o), pick: () => chatPageRt.pick(), tabs: () => tabs.filter(alive).map((t) => ({ id: t.id, chat: t.managerPage === 'chat', url: t.view.webContents.getURL(), viewedAt: t.viewedAt || 0 })), contents: (id) => tabs.find((t) => t.id === id)?.view?.webContents, ui: () => ui(), activeId: () => activeId, switchTab: (id) => switchTab(id) };
-// [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → AI and agents → Usage,
+// [usage] Plan limits and Lumen's share of them (features/usage.js): Settings → AI → Usage,
 // and the sidebar's meter.
 // Tests don't look at the real ~/.claude for other Claude Code sessions (features/usage.js otherClaudeActivity): whoever runs them may be using Claude Code at that moment.
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/e2e/usage.js).
@@ -9771,6 +9778,8 @@ const widgets = createWidgets({
   githubPollScale: () => (TEST && global.__githubPollScale) || 1, // (a test shrinks the device flow's waits)
   onGithubChange: () => { try { connectorsSvc().syncShared('github'); } catch { setTimeout(() => { try { connectorsSvc().syncShared('github'); } catch { /* the connector looks again at the next sign-in change */ } }, 1500).unref?.(); } }, // (once more if the file was busy)
   githubInUse: () => { try { return connectorsSvc().usesShared('github'); } catch { return false; } },
+  onTodoistChange: () => { try { connectorsSvc().syncShared('todoist'); } catch { setTimeout(() => { try { connectorsSvc().syncShared('todoist'); } catch { /* the connector looks again at the next change */ } }, 1500).unref?.(); } },
+  todoistInUse: () => { try { return connectorsSvc().usesShared('todoist'); } catch { return false; } },
   spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
   // The Gmail widget's default mode: read the inbox's Atom feed with the Google sign-in already in Lumen's normal session.
   googleMail: {
@@ -9800,7 +9809,7 @@ const widgets = createWidgets({
   },
   t: (key) => t(key),
   focusApp: () => { const w = BrowserWindow.getFocusedWindow() || winRecs.values().next().value?.win; if (w && !w.isDestroyed()) { if (w.isMinimized()) w.restore(); w.show(); w.focus(); app.focus?.({ steal: true }); } },
-  // A card's gear (edit mode on the new-tab page): Settings > Home > Widgets opens that widget's editor. An open Settings tab
+  // A card's gear (edit mode on the new-tab page): Settings → Apps and connections opens that widget's editor. An open Settings tab
   // is reused (not reloaded, not duplicated) and told to read the request; a new or still-loading one reads it as it builds.
   onConfigure: () => {
     const tab = tabs.find((t) => t.id === openSettingsPage('widgets'));
@@ -10070,11 +10079,11 @@ function relaunchLumen(safe) {
 const settingsBackend = settingsPage.create({
   refreshAccent: () => accentCss?.refreshAll(), // [look] the accent changed: every page of Lumen's own swaps its sheet
   passkeys, // [passkeys] Settings → Privacy and security
-  usage, // [usage] AI and agents → Usage
-  cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI and agents → AI providers: each CLI's version, path and sign-in
+  usage, // [usage] AI → Usage
+  cliInfo: () => aiAgents.cliInfo(), // [ai] Settings → AI → AI providers: each CLI's version, path and sign-in
   refreshNewTabs,
-  widgets, // [widgets] Settings → Appearance → Widgets
-  showWhatsNew: () => whatsNew.open(), // Settings → Updates → What's new
+  widgets, // [widgets] Settings → Apps and connections
+  showWhatsNew: () => whatsNew.open(), // Settings → Updates and about → What's new
   peekSettings: () => settingsCache || readSettings(), // (the per-request header hook: no copy, no re-validation)
   chromeHintHeaders: UA_HINT_HEADERS, // [identity] Sec-CH-UA on every secure request, as Chrome sends
   chromeHighEntropy: uaHighEntropyHeaders, // [identity] Sec-CH-UA-Arch… for an origin that asked (Accept-CH)
@@ -10109,7 +10118,7 @@ const settingsBackend = settingsPage.create({
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
-  tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings > Tabs > Page unloading
+  tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings → Tabs and browsing > Page unloading
   onTabPreloadChange: () => schedulePreload(1500),
   onTabReadyChange: () => { for (const rec of [...winRecs]) scheduleReadySync(rec); },
   onSwitchTimingChange: () => syncSwitchTiming(),
@@ -10338,7 +10347,7 @@ const filesApi = () => (filesRt ||= require('./features/files').create({
   encrypt: (text) => safeStorage.encryptString(text).toString('base64'), // encrypted like the chats (the OS keychain)
   decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
   available: () => safeStorage.isEncryptionAvailable(),
-  remember: () => readSettings().filesRemember !== false, // Settings > General > Files > Remember files I open
+  remember: () => readSettings().filesRemember !== false, // Settings > Downloads and files > Files > Remember files I open
   ignore: (p) => insidePath(app.getPath('userData'), p) || insidePath(__dirname, p), // Lumen's own profile and pages are never "files the user opened"
   openFile: (p) => { openTab(fileTabUrl(p)); focusWindow(); },
   openPath: (p) => filesShell('open', p),
@@ -10367,7 +10376,7 @@ const filesApi = () => (filesRt ||= require('./features/files').create({
   },
 }));
 if (TEST) Object.defineProperty(global, '__files', { get: filesApi, configurable: true });
-// A file tab, viewer or download opened a local file: remembered (Settings > General > Files > Remember files I open turns this off). Loads the
+// A file tab, viewer or download opened a local file: remembered (Settings > Downloads and files > Files > Remember files I open turns this off). Loads the
 // feature only for a file: address, so ordinary browsing never touches it.
 function noteFileTab(tab, url) {
   if (typeof url !== 'string' || !(url.startsWith('file:') || url.startsWith('lumen-pdf:'))) return;
@@ -11270,7 +11279,7 @@ ipcMain.handle('agent:btw', async (event, id, text) => {
 });
 ipcMain.on('agent:btw-cancel', (event, id) => { btwRuns.get(`${event.sender.id}:${id}`)?.abort(); });
 // [autocomplete] Tab to finish the message being typed: a guess at the rest of `prefix` from the open chat (agent.js autocomplete). One guess per
-// view at a time: a newer one (or agent:autocomplete-cancel) stops the one before. Off in Settings → AI and agents, with the AI off, or on a site the AI is kept off.
+// view at a time: a newer one (or agent:autocomplete-cancel) stops the one before. Off in Settings → AI, with the AI off, or on a site the AI is kept off.
 const autocompleteRuns = new Map(); // sender id -> AbortController
 ipcMain.handle('agent:autocomplete', async (event, prefix) => {
   if (typeof prefix !== 'string' || readSettings().chatAutocomplete === false) return { ok: false, error: 'off', text: '' };
@@ -11838,7 +11847,7 @@ ipcMain.handle('chats:project-add-tab', (event, projectId) => {
   const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
   return addTabToProject(tab, projectId || projectIdOf(chatId));
 });
-// A project's own memory (Settings → AI and agents → Memory lists everything; this is the project's part).
+// A project's own memory (Settings → AI → Instructions and memory lists everything; this is the project's part).
 ipcMain.handle('chats:project-memory-forget', (_e, id, entryId) => {
   try { const e = memory().list().find((x) => x.id === String(entryId) && x.project === String(id)); if (!e) return false; memory().forget(e.id); memoryEdited(); return true; } catch { return false; }
 });
@@ -11969,7 +11978,7 @@ ipcMain.handle('chats:archive', (_e, id, on) => { const ok = chats().setArchived
 ipcMain.handle('chats:search', (_e, query) => chats().search(String(query ?? '').slice(0, 200)));
 
 // ---- [memory] Saved memory across chats (ai/memory.js; docs/memory.md). Off by default (aiMemory). One encrypted file in the profile;
-// with no keychain nothing is kept. The chat's "Remembered: …" row (Undo / Forget), the /memory command and Settings → AI and agents → Memory.
+// with no keychain nothing is kept. The chat's "Remembered: …" row (Undo / Forget), the /memory command and Settings → AI → Instructions and memory.
 let memoryStore = null;
 function memory() {
   return (memoryStore ||= require('./ai/memory').createMemoryStore({
@@ -12002,7 +12011,7 @@ const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user cha
 ipcMain.handle('memory:list', () => memoryView());
 ipcMain.handle('memory:undo', (_e, token) => { const ok = memory().undo(String(token ?? '').slice(0, 20)); if (ok) memoryEdited(); return ok; });
 ipcMain.handle('memory:forget', (_e, id) => { try { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return true; } catch { return false; } });
-// Settings → AI and agents → Memory.
+// Settings → AI → Instructions and memory.
 ipcMain.handle('settings:memory-list', () => memoryView());
 ipcMain.handle('settings:memory-update', (_e, id, text) => { memory().update(String(id ?? '').slice(0, 20), { text: String(text ?? '') }); memoryEdited(); return memoryView(); });
 ipcMain.handle('settings:memory-delete', (_e, id) => { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return memoryView(); });
@@ -12339,7 +12348,7 @@ ipcMain.handle('agent:auto-allow', (_e, on) => {
   }
   return readSettings().askBeforeActing === false;
 });
-// [bypass permissions] The bolt menu in the sidebar head (and Settings → AI and agents): 'ask' | 'auto' | 'bypass'. No argument: just read it.
+// [bypass permissions] The bolt menu in the sidebar head (and Settings → AI): 'ask' | 'auto' | 'bypass'. No argument: just read it.
 // Both views follow through prefs:ui. Bypass answers every approval card allow (agent.js askApproval); see features/permission-mode.js.
 ipcMain.handle('agent:permission-mode', (_e, mode) => {
   const patch = permissionModes.patchOf(mode);
@@ -12350,7 +12359,7 @@ ipcMain.handle('agent:permission-mode', (_e, mode) => {
   return permissionModes.modeOf(readSettings());
 });
 
-// [subagents] The sidebar's Helpers row (and Settings → AI and agents): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
+// [subagents] The sidebar's Helpers row (and Settings → AI): 'off' | 'auto' | 'on' (true / false still mean on / off). No argument: just read it. Same setting as Settings (aiSubagents); takes effect on the next message (agent.js helpersOffered).
 ipcMain.handle('agent:helpers', (_e, mode) => {
   const next = mode === true ? 'on' : mode === false ? 'off' : ['off', 'auto', 'on'].includes(mode) ? mode : null;
   if (next) {
@@ -12362,7 +12371,7 @@ ipcMain.handle('agent:helpers', (_e, mode) => {
   return v === true || v === 'on' ? 'on' : v === false || v === 'off' ? 'off' : 'auto';
 });
 
-// [prefer fractions] /fractions on|off in the chat: the Settings → AI and agents switch (aiPreferFractions). No argument: just read it. New chats pick it up.
+// [prefer fractions] /fractions on|off in the chat: the Settings → AI switch (aiPreferFractions). No argument: just read it. New chats pick it up.
 ipcMain.handle('agent:prefer-fractions', (_e, on) => {
   if (typeof on === 'boolean') {
     writeSettings({ ...readSettings(), aiPreferFractions: on });
@@ -12456,7 +12465,7 @@ ipcMain.handle('settings:get', () => {
     fallback: standIn.from ? { from: aiFallback.nameOf(standIn.from, options), to: aiFallback.nameOf(standIn.model, options), until: standIn.until } : null,
     autoFallback: fallbackOn(),
     models: pickerOptions(options),
-    autoProviders: autoProviderList(options), // Settings → AI and agents: which providers Auto may use
+    autoProviders: autoProviderList(options), // Settings → AI: which providers Auto may use
     // For the empty sidebar's "get started" card: nothing to answer with unless some model is connected.
     ready: Boolean(model),
     claudeCode: options.some((o) => o.id === 'claudecode:default'),
@@ -12488,7 +12497,7 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   await safeBrowsing.refresh().catch(() => {});
   return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
 });
-// ---- [local AI] Settings → AI and agents → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
+// ---- [local AI] Settings → AI → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
 const localState = () => {
   const lm = require('./ai/local-models');
   const c = lm.clean(readSettings().localAI);

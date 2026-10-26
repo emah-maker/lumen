@@ -1,4 +1,4 @@
-// [usage] Settings → AI and agents → Usage and → AI providers must agree on whether Claude Code is installed (audit #40: Usage said
+// [usage] Settings → AI → Usage and → AI providers must agree on whether Claude Code is installed (audit #40: Usage said
 // "Claude Code is not installed" while AI providers had found it). Both now ask ai/claude-code.js resolveClaude(). Plain Node, no CLI.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');

@@ -1,4 +1,4 @@
-// Tab layout: Side (Settings → Tabs). The tabs listed down the left of the window instead of across the top.
+// Tab layout: Side (Settings → Tabs and browsing). The tabs listed down the left of the window instead of across the top.
 // It is the same list: #tabs, drawn by app.js (favicon, title, ✕, speaker, pins, groups, menus, keyboard), is moved into the column
 // and laid out as rows (side-tabs.css). The page area is the rest of the row, so where the page goes follows by itself (app.js reports it).
 // What is new here: moving the list in and out, the width (dragging the edge), icons-only with a peek on hover, the right-click menu,

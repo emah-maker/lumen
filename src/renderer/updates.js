@@ -10,7 +10,7 @@
 //                                        one click installs the update into Applications and relaunches
 //   "Lumen vX is available · Download"   automatic downloads off, or a copy that can't swap itself
 //                                        (the button fetches the zip, dmg, Setup exe or opens the releases page)
-// Closing it hides it for this version until Lumen restarts; Settings → Updates keeps the details.
+// Closing it hides it for this version until Lumen restarts; Settings → Updates and about keeps the details.
 (() => {
   const api = window.lumenUpdates;
   const end = document.querySelector('.toolbar-end');

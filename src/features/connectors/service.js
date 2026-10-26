@@ -82,7 +82,7 @@ function create({
   const sendLog = () => (sendLogStore ||= require('../gmail-send').createLog({ file: path.join(userData, 'gmail-send-log.json'), now, secrets })); // (loaded on the first send)
   function changed() {
     registry.setUnlocked(sendingOn() ? ['gmail.send'] : []);
-    registry.setConnected(Object.keys(connected).filter((id) => registry.get(id).kind !== 'mcp'));
+    registry.setConnected(Object.keys(connected).filter((id) => registry.get(id).kind !== 'mcp' && !connected[id].config?.paused)); // (paused: signed in, but the AI is not offered it)
     try { onChange(); } catch { /* the page looks again next time */ }
   }
   const seal = (value) => {
@@ -117,10 +117,10 @@ function create({
       const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google';
       state(signIn ? 'needs-signin' : 'bad-token');
       return new ConnectorError(def.kind === 'google'
-        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → AI and agents → Connectors.`
+        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → Apps and connections.`
         : signIn
-        ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → AI and agents → Connectors has a button), then try again.`
-        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → AI and agents → Connectors.`
+        ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → Apps and connections has a button), then try again.`
+        : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → Apps and connections.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
@@ -218,7 +218,7 @@ function create({
     const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
+      status, paused: Boolean(e?.config?.paused), statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
@@ -293,7 +293,7 @@ function create({
     else if (st.session) mode = 'session';
     else {
       try { openSignIn(GOOGLE_SIGN_IN); } catch { /* the message says what to do */ }
-      throw new Error('Sign in to Google in the tab that just opened, then press Connect again. (Or add a Google client in Settings → Home → Widgets for the full sign-in.)');
+      throw new Error('Sign in to Google in the tab that just opened, then press Connect again. (Or add a Google client in Settings → Apps and connections for the full sign-in.)');
     }
     connected[def.id] = { at: now(), account: flat(st.email, 80), config: { mode, owned } };
     runtime.set(def.id, 'ok');
@@ -379,6 +379,18 @@ function create({
     entry.config = { ...entry.config, sending: Boolean(on) };
     persist();
     cache.clear();
+    changed();
+    return list();
+  }
+
+  // Settings' "Let the AI use it" switch: off keeps the sign-in (a new-tab card that shares it keeps working) and takes the connector away from the AI.
+  function setPaused(id, paused) {
+    const entry = connected[id];
+    if (!entry) throw new Error('Connect it first.');
+    entry.config = { ...entry.config, paused: Boolean(paused) };
+    if (!paused) delete entry.config.paused;
+    cache.clear();
+    persist();
     changed();
     return list();
   }
@@ -478,6 +490,7 @@ function create({
     if (input.action === 'help') return wrap(`connector:${def.id}/help`, registry.help(def.id));
     const entry = connected[def.id];
     if (!entry) throw new Error(`${def.name} isn’t connected.`);
+    if (entry.config?.paused) throw new Error(`${def.name} is switched off for the AI (Settings → Apps and connections). Nothing was done.`);
     const args = input.args || {};
     const key = `${def.id}:${input.action}:${JSON.stringify(args)}`;
     const write = def.actions[input.action].write === true;
@@ -485,7 +498,7 @@ function create({
     const sending = def.id === 'gmail' && input.action === 'send';
     if (sending) { // allowed by a card click or the user's typed permission (agent.js passes how), the switch is on, under 10 an hour
       if (!sendVia) throw new Error('A send needs the user’s approval first. Nothing was sent.');
-      if (!sendingOn()) throw new Error('Sending is off (Settings → AI and agents → Connectors → Gmail → Allow sending). Nothing was sent.');
+      if (!sendingOn()) throw new Error('Sending is off (Settings → Apps and connections → Gmail → Let the AI send email). Nothing was sent.');
       try { sendLog().room(); } catch (err) { throw new Error(err.message); }
     }
     const hit = !write && cache.get(key);
@@ -518,7 +531,7 @@ function create({
   }
 
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
-  return { setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

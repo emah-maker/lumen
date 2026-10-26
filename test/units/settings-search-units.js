@@ -58,7 +58,7 @@ check('the no-results state has a suggestions block', settingsSrc.includes('no-r
 
 // ---- The ranking table: query -> the rows that are found (best first), over rows shaped like the real ones. ----
 {
-  const AI = 'AI and agents';
+  const AI = 'AI';
   const R = (label, group, cat, desc = '', keywords = '', sub = '') => ({ label, group, cat, sub, search: `${label} ${desc}`.toLowerCase(), keywords });
   const rows = [
     R('Model', 'Assistant', AI, 'Which AI answers in the sidebar'),

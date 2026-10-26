@@ -2365,7 +2365,6 @@ function buildMcpServers() {
 
   M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
   const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
-    h('h2', { text: 'Custom MCP servers' }),
     h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
   el.refresh = () => M.list().then(render).catch(() => {});
@@ -2681,170 +2680,469 @@ async function buildFocus(card) {
 
 
 
+const connClean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 
-function buildConnectors() {
-  const C = window.lumenSettings.ai.connectors;
-  const root = h('div', { class: 'conn', id: 'connectors' });
-  const note = h('p', { class: 'note', id: 'connectors-status', 'aria-live': 'polite' });
-  const M = window.lumenSettings.ai.mcpServers;
-  let custom = null;
-  let open = null;
 
-  const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-
-  function badge(c) {
-    return h('span', { class: 'conn-badge', 'aria-hidden': 'true', style: `background:${c.icon.color}`, text: c.icon.text });
+function connAbout(c) {
+  const parts = [];
+  if (c.reads.length) parts.push(`The AI can read: ${c.reads.join('; ')}.`);
+  if (c.does.length) parts.push(`The AI can do: ${c.does.join('; ')}.`);
+  if (!c.does.length && c.kind !== 'mcp') parts.push('It can’t change anything: read only.');
+  if (c.kind === 'mcp') {
+    parts.push(`The tools come from ${c.name}’s own MCP server${c.source ? ` (${c.source.replace(/^https:\/\//, '')})` : ''}, so what exactly the AI can do is whatever that server offers. Each call still asks you first and shows what it would send, unless you tick Always allow for a tool once it is connected.`);
+    parts.push(c.oauth ? 'You sign in on the service’s own page in your browser. Lumen never sees your password; the sign-in is kept encrypted on this computer, and Disconnect deletes it.' : 'Lumen sends nothing anywhere except this service. The token is kept encrypted on this computer, and Disconnect deletes it.');
+  } else {
+    parts.push(c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.');
   }
+  parts.push('What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.');
+  if (c.note) parts.push(c.note);
+  return parts.join(' ');
+}
 
-  function permissions(c) {
-    const lines = [];
-    if (c.reads.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can read: ' }), c.reads.join('; '), '.'));
-    if (c.does.length) lines.push(h('p', { class: 'note' }, h('strong', { text: 'The AI can do: ' }), c.does.join('; '), '.'));
-    if (!c.does.length && c.kind !== 'mcp') lines.push(h('p', { class: 'note', text: 'It can’t change anything: read only.' }));
-    if (c.kind === 'mcp') {
-      lines.push(h('p', { class: 'note', text: `The tools come from ${c.name}’s own MCP server${c.source ? ` (${c.source.replace(/^https:\/\//, '')})` : ''}, so what exactly the AI can do is whatever that server offers. Each call still asks you first and shows what it would send, unless you tick Always allow for a tool once it is connected.` }));
-      lines.push(h('p', { class: 'note', text: c.oauth ? 'You sign in on the service’s own page in your browser. Lumen never sees your password; the sign-in is kept encrypted on this computer, and Disconnect deletes it.' : 'Lumen sends nothing anywhere except this service. The token is kept encrypted on this computer, and Disconnect deletes it.' }));
-    } else lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
-    lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
-    if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
-    return lines;
+
+
+function connToolsView(c, { M, C, say, after }) {
+  const items = c.mcp.tools.map((t) => {
+    const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: t.always, onchange: async (e) => { try { await M.setAlwaysAllow(`${c.mcp.name}__${t.name}`, e.target.checked); after(await C.list()); } catch (err) { e.target.checked = !e.target.checked; say(connClean(err), 'error'); } } });
+    return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: t.auto ? ' · read only, runs without asking' : t.always ? ' · always allowed' : '' }));
+  });
+  return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Tools the service marks read only run without asking. Ticked tools run without asking, until the AI has read a page in that chat. Everything else asks first.' }), h('ul', { class: 'mcp-tools' }, items));
+}
+
+
+function connSendLogView(c, C) {
+  const body = h('div', { class: 'conn-send-log' });
+  const d = h('details', { class: 'conn-details', id: `conn-${c.id}-sendlog` }, h('summary', { text: 'Sent by the AI' }), body);
+  d.addEventListener('toggle', async () => {
+    if (!d.open) return;
+    try {
+      const rows = await C.sendLog();
+      body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
+    } catch (err) { body.replaceChildren(h('p', { class: 'note', text: connClean(err) })); }
+  });
+  return d;
+}
+
+
+function connDetectChips(c, input, C) {
+  const chips = h('div', { class: 'conn-chips' });
+  if (c.id !== 'canvas') return chips;
+  C.detect(c.id).then((hosts) => {
+    if (!hosts.length) return;
+    if (!input.value && hosts.length === 1) input.value = hosts[0];
+    chips.replaceChildren(h('span', { class: 'note', text: 'Found in your browsing: ' }), ...hosts.map((host) => h('button', { type: 'button', class: 'chip', text: host, onclick: () => { input.value = host; } })));
+  }).catch(() => {});
+  return chips;
+}
+;
+// ---- settings-apps.js
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+const APP_WIDGET_OF = { gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' };
+const APP_CARD_ONLY = [
+  { id: 'spotify', name: 'Spotify', category: 'music', icon: { text: 'S', color: '#1db954' }, type: 'spotify', summary: 'Music that plays in Lumen, with what is playing on the new tab page.' },
+  { id: 'applemusic', name: 'Apple Music', category: 'music', icon: { text: 'A', color: '#fa233b' }, type: 'applemusic', summary: 'What is playing in Apple Music, on the new tab page.' },
+  { id: 'slack', name: 'Slack', category: 'work', icon: { text: 'S', color: '#611f69' }, type: 'slack', summary: 'Unread messages, mentions and channels on the new tab page.' },
+  { id: 'muse', name: 'Meta Muse', category: 'other', icon: { text: 'M', color: '#0866ff' }, type: 'muse', summary: 'A saved question for Meta’s Muse model, on the new tab page.' },
+];
+const APP_CATEGORIES_EXTRA = [{ id: 'music', label: 'Music' }, { id: 'other', label: 'Other' }];
+const SERVICE_TYPES = new Set([...Object.values(APP_WIDGET_OF), ...APP_CARD_ONLY.map((s) => s.type)]);
+const APP_OF_TYPE = Object.fromEntries([...Object.entries(APP_WIDGET_OF).map(([id, type]) => [type, id]), ...APP_CARD_ONLY.map((s) => [s.type, s.id])]);
+const appBadge = (icon, cls = '') => { const b = h('span', { class: `app-icon ${cls}`, 'aria-hidden': 'true', text: icon.text }); b.style.background = icon.color; return b; };
+
+async function buildApps(card) {
+  const C = S.ai.connectors;
+  const W = S.widgets;
+  let data = await C.list();
+  let ws = await W.state();
+
+  for (const id of ['todoist', 'github']) {
+    const c = data.connectors.find((x) => x.id === id);
+    if (c && c.status === 'off' && ws.secrets?.[id]) data = await C.sync(id).catch(() => data);
   }
+  const cats = [...data.categories, ...APP_CATEGORIES_EXTRA];
+  const services = [
+    ...data.connectors.map((c) => ({ id: c.id, name: c.name, category: c.category, icon: c.icon, summary: c.summary, type: APP_WIDGET_OF[c.id] || null, connector: true })),
+    ...APP_CARD_ONLY.map((s) => ({ ...s, connector: false })),
+  ];
+  const connOf = (svc) => data.connectors.find((x) => x.id === svc.id) || null;
+  const cardsOf = (svc) => (svc.type ? ws.widgets.filter((w) => w.type === svc.type) : []);
+  const pages = new Map();
+  const syncAll = () => { for (const p of pages.values()) p.sync(); refreshValues(); };
+  const refresh = async () => { [data, ws] = await Promise.all([C.list(), W.state()]); syncAll(); };
 
-  function form(c, render) {
-    const msg = h('span', { class: 'note', 'aria-live': 'polite' });
-    const inputs = c.fields.map((f) => h('input', {
-      type: f.secret ? 'password' : 'text', id: `conn-${c.id}-${f.id}`, 'data-field': f.id, placeholder: f.placeholder, autocomplete: 'off', spellcheck: false,
-      'aria-label': `${c.name}: ${f.label}`, value: f.id === 'domain' ? c.config.domain || '' : '',
-    }));
-    const labelled = c.fields.map((f, i) => h('label', { class: 'conn-field', for: inputs[i].id }, h('span', { text: f.label }), inputs[i], f.help ? h('span', { class: 'note', text: f.help }) : null));
-    const chips = h('div', { class: 'conn-chips' });
-    if (c.id === 'canvas') {
-      C.detect(c.id).then((hosts) => {
-        if (!hosts.length) return;
-        if (!inputs[0].value && hosts.length === 1) inputs[0].value = hosts[0];
-        chips.replaceChildren(h('span', { class: 'note', text: 'Found in your browsing: ' }), ...hosts.map((host) => h('button', { type: 'button', class: 'chip', text: host, onclick: () => { inputs[0].value = host; } })));
-      }).catch(() => {});
+
+  function standing(svc) {
+    const c = connOf(svc);
+    if (c) {
+      const on = c.status !== 'off';
+      return { text: c.paused ? `${c.statusText} · AI off` : c.statusText, on, again: c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error', cls: c.status === 'connected' ? 'ok' : on ? 'err' : '' };
     }
-    const go = h('button', {
-      class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
-      onclick: async () => {
-        go.disabled = true;
-        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : c.oauth ? 'Waiting for your browser…' : 'Connecting…';
-        if (c.oauth) flash(note, `Finish signing in to ${c.name}, in the tab that opened in your browser.`, 'ok');
-        flash(msg, '');
-        try {
-          const input = Object.fromEntries(c.fields.map((f, i) => [f.id, inputs[i].value]));
-          open = null;
-          render(await C.connect(c.id, input));
-          if (c.oauth) flash(note, `${c.name} connected.`, 'ok');
-          custom?.refresh();
-        } catch (err) {
-          go.disabled = false;
-          go.textContent = 'Connect';
-          flash(msg, clean(err), 'error');
+    if (svc.id === 'spotify') {
+      const on = Boolean(ws.secrets?.spotify);
+      return { text: on ? (ws.spotify?.name ? `Logged in as ${ws.spotify.name}` : 'Logged in') : 'Not logged in', on, again: false, cls: on ? 'ok' : '' };
+    }
+    if (svc.id === 'slack') {
+      const s = ws.slack || {};
+      return { text: s.connected && s.reconnect ? 'Needs to be connected again' : s.connected ? `Connected${s.team ? ` to ${s.team}` : ''}` : 'Not connected', on: Boolean(s.connected), again: Boolean(s.connected && s.reconnect), cls: s.connected && !s.reconnect ? 'ok' : s.connected ? 'err' : '' };
+    }
+    if (svc.id === 'muse') {
+      const on = Boolean(ws.secrets?.muse);
+      return { text: on ? 'Key saved' : 'No key yet', on, again: false, cls: on ? 'ok' : '' };
+    }
+    return { text: 'No account needed', on: true, again: false, cls: '', noAccount: true };
+  }
+
+  for (const cat of cats) {
+    const list = services.filter((s) => s.category === cat.id);
+    if (!list.length) continue;
+    card.group(cat.label);
+    for (const svc of list) buildServicePage(svc);
+  }
+  card.foot(tr('settings.apps.foot', 'Nothing is connected until you press Connect. Disconnect forgets it.'));
+
+  function buildServicePage(svc) {
+    const page = card.subpage(`app-${svc.id}`, svc.name, null, `${svc.summary} ${svc.id} ${svc.name} connect sign in account card widget new tab ai connector`, { icon: appBadge(svc.icon), value: () => standing(svc).text });
+    page.pane.querySelector('.pane-title').after(h('p', { class: 'pane-desc app-desc', text: svc.summary }));
+    const id = (part) => `app-${svc.id}-${part}`;
+    const c0 = () => connOf(svc);
+    const st0 = () => standing(svc);
+    const say = (text, cls = 'ok') => flash(msg, text, cls);
+    const clean = connClean;
+
+
+    const statusNote = h('span', { class: 'note', id: id('status'), role: 'status', 'aria-live': 'polite' });
+    const msg = h('span', { class: 'note', id: id('message'), role: 'status', 'aria-live': 'polite' });
+    const connectBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-connect` });
+    const disconnectBtn = armedButton('Disconnect', 'Disconnect? Click again', () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
+    const accountRow = row(tr('settings.apps.account', 'Account'), null, connectBtn, disconnectBtn);
+    accountRow.querySelector('.text').append(statusNote, msg);
+
+
+    const fields = svc.id === 'muse' ? [{ id: 'key', label: 'Meta API key', placeholder: 'Paste your Meta API key', secret: true, help: 'Create a key in Meta’s developer console (dev.meta.ai).' }]
+      : svc.id === 'github' ? []
+        : (c0()?.fields || []);
+    const inputs = fields.map((f) => h('input', { type: f.secret ? 'password' : 'text', id: `conn-${svc.id}-${f.id}`, 'data-field': f.id, placeholder: f.placeholder, autocomplete: 'off', spellcheck: false, 'aria-label': `${svc.name}: ${f.label}`, value: f.id === 'domain' ? c0()?.config?.domain || '' : '' }));
+    if (svc.id === 'gcal') { const first = cardsOf(svc)[0]?.cals?.find((x) => x.url)?.url; if (first && inputs[0]) inputs[0].value = first; }
+    const fieldRows = fields.map((f, i) => {
+      const r = row(f.label, f.help || null, inputs[i]);
+      r.classList.add('sub-row');
+      if (svc.id === 'canvas') r.querySelector('.text').append(connDetectChips(c0(), inputs[i], C));
+      inputs[i].addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); connectBtn.click(); } });
+      return r;
+    });
+    let lastLink = '';
+
+
+    let ghRows = [];
+    let ghSync = () => {};
+    if (svc.id === 'github') {
+      const priv = h('input', { type: 'checkbox', class: 'switch', id: id('private'), role: 'switch', 'aria-label': tr('settings.widgets.github.private', 'Include private repositories'), checked: Boolean(ws.github?.wantPrivate) });
+      const privRow = row(tr('settings.widgets.github.private', 'Include private repositories'), tr('settings.widgets.github.privateHelp', 'Without this, Lumen asks GitHub only to read who you are and your notifications, so the card shows public repositories. Turning it on also asks for GitHub’s “repo” permission, which GitHub offers only as read and write. The card only reads; with it the AI’s GitHub connector can also comment and open issues, each only after you allow it.'), priv);
+      privRow.classList.add('sub-row');
+      const code = h('div', { class: 'row stack', id: 'github-code-row', hidden: '' });
+      const codeText = h('strong', { id: 'github-code', class: 'gh-user-code' });
+      const openDevice = h('button', { type: 'button', id: 'github-open', text: tr('settings.widgets.github.openDevice', 'Open github.com/login/device'), onclick: () => { const u = ws.github?.pending?.url; if (u) S.openUrl(u); } });
+      const cancel = h('button', { type: 'button', id: 'github-cancel', text: tr('settings.widgets.github.cancel', 'Cancel'), onclick: async () => { const r = await W.githubCancel(); ws = r?.github ? r : await W.state(); await refresh(); } });
+      code.append(codeText, h('span', { class: 'note', text: tr('settings.widgets.github.codeNote', 'Enter this code on github.com/login/device, in the tab Lumen opened, then approve. This fills in when you do.') }), h('div', { class: 'sp-actions' }, openDevice, cancel));
+      const cli = h('button', { type: 'button', id: 'github-cli', text: tr('settings.widgets.github.cli', 'Use GitHub CLI sign-in'), onclick: async () => { try { ws = await W.githubCli(); await refresh(); } catch (err) { say(clean(err), 'err'); } } });
+      const cliRow = row(tr('settings.widgets.github.cliLabel', 'GitHub CLI'), null, cli);
+      cliRow.classList.add('sub-row');
+      ghRows = [privRow, code, cliRow];
+      ghSync = (on) => {
+        const pending = ws.github?.pending;
+        code.hidden = !pending;
+        codeText.textContent = pending?.code || '';
+        privRow.hidden = on || !ws.github?.device || Boolean(pending);
+        cliRow.hidden = on || !ws.github?.cli || Boolean(pending);
+        priv.checked = priv.checked || Boolean(ws.github?.wantPrivate);
+        githubPriv = () => priv.checked;
+      };
+    }
+    let githubPriv = () => false;
+    if (svc.id === 'github') fields.push({ id: 'secret', label: 'Access token', secret: true });
+
+
+    async function doConnect() {
+      const vals = Object.fromEntries(fields.map((f, i) => [f.id, inputs[i]?.value || '']));
+      switch (svc.id) {
+        case 'todoist': {
+          const token = vals.secret.trim();
+          if (!token) throw new Error('Paste your Todoist API token first.');
+          await W.projects(token);
+          await W.setSecret('todoist', token);
+          data = await C.sync('todoist');
+          if (data.connectors.find((x) => x.id === 'todoist')?.status === 'off') data = await C.connect('todoist', { secret: token });
+          break;
         }
-      },
+        case 'github': {
+          const typed = (vals.secret || '').trim();
+          if (typed) { data = await C.connect('github', { secret: typed }); break; }
+          const r = await W.githubStart({ privateRepos: githubPriv() });
+          if (r?.state) ws = r.state;
+          say(tr('settings.widgets.github.waiting', 'Waiting for you to approve it on GitHub…'), '');
+          break;
+        }
+        case 'gcal': {
+          lastLink = vals.secret.trim();
+          data = await C.connect('gcal', vals);
+          break;
+        }
+        case 'spotify': {
+          const r = await W.spotifySignIn(vals.clientId || '');
+          say(r.message || (r.ok ? 'Spotify is connected.' : 'Spotify sign-in did not finish.'), r.ok ? 'ok' : 'warn');
+          break;
+        }
+        case 'muse': {
+          if (!vals.key.trim()) throw new Error('Paste your Meta API key first.');
+          await W.setSecret('muse', vals.key.trim());
+          break;
+        }
+        case 'slack': { openCardEditor(); return; }
+        default:
+          if (c0()) data = await C.connect(svc.id, vals);
+      }
+      for (const el of inputs) el.value = '';
+      if (c0()?.kind === 'mcp') mcpEl?.refresh?.();
+    }
+    connectBtn.addEventListener('click', async () => {
+      connectBtn.disabled = true;
+      say(svc.id === 'gmail' || c0()?.kind === 'google' ? 'Finish signing in with Google, in your browser…' : svc.id === 'github' ? '' : 'Connecting…', 'ok');
+      try { await doConnect(); say(st0().on && !st0().again ? `${svc.name} connected.` : '', 'ok'); } catch (err) { say(clean(err), 'err'); }
+      connectBtn.disabled = false;
+      await refresh();
+      if (st0().on && !st0().again) say(`${svc.name} connected.`, 'ok');
     });
-    const cancel = h('button', { type: 'button', text: 'Cancel', onclick: () => { open = null; refresh(); } });
-    return h('div', { class: 'conn-form' }, ...permissions(c), chips, ...labelled, h('div', { class: 'item' }, go, cancel, msg));
-  }
-
-  function cardFor(c, render) {
-    const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error';
-    const mcp = c.kind === 'mcp';
-    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google' || mcp));
-    const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
-    const buttons = [];
-    if (!connected || again) {
-      buttons.push(h('button', { class: 'primary', id: `conn-${c.id}-connect`, text: again ? 'Connect again' : 'Connect', 'aria-label': `${again ? 'Connect again' : 'Connect'} ${c.name}`, onclick: () => { open = c.id; refresh(); } }));
-    }
-    if (mcp && c.mcp) {
-      const rf = h('button', { text: 'Refresh tools', 'aria-label': `Refresh the tools of ${c.name}`, onclick: async () => { rf.disabled = true; rf.textContent = 'Starting…'; try { await M.refresh(c.mcp.id); render(await C.list()); } catch (err) { rf.disabled = false; rf.textContent = 'Refresh tools'; flash(note, clean(err), 'error'); } } });
-      buttons.push(rf);
-    }
-    if (c.status === 'needs-signin' && c.kind !== 'google' && !mcp) {
-      buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
-    }
-
-    if (c.drafts === 'off') {
-      const allow = h('button', { class: 'primary', id: `conn-${c.id}-drafts`, text: 'Allow drafts', 'aria-label': `Allow ${c.name} drafts`, onclick: async () => {
-        allow.disabled = true;
-        allow.textContent = 'Waiting for Google…';
-        flash(note, 'Google asks in your browser for permission to make drafts. Lumen only makes drafts; it never sends email.', 'ok');
-        try { render(await C.allowDrafts(c.id)); flash(note, 'Drafts allowed. The AI can now put emails in your Gmail Drafts, after you allow each one. It never sends.', 'ok'); } catch (err) { allow.disabled = false; allow.textContent = 'Allow drafts'; flash(note, clean(err), 'error'); }
-      } });
-      buttons.push(allow);
-    }
-
-    if (c.sending) {
-      const on = c.sending === 'on';
-      const sw = h('button', { id: `conn-${c.id}-sending`, class: on ? '' : 'primary', text: on ? 'Turn off sending' : 'Allow sending', 'aria-pressed': on ? 'true' : 'false', 'aria-label': on ? `Turn off ${c.name} sending` : `Allow ${c.name} sending`, onclick: async () => {
-        if (!on && !confirm('Let the AI send email from your Gmail? It still shows you each email and waits for you to press Send, unless you tell it in a chat that it may send without asking. It sends at most 10 an hour, never from background tasks or routines, and every send is listed here.')) return;
-        sw.disabled = true;
-        try { render(await C.setSending(c.id, !on)); flash(note, on ? 'Sending turned off.' : 'Sending allowed. The AI asks you before each send.', 'ok'); } catch (err) { sw.disabled = false; flash(note, clean(err), 'error'); }
-      } });
-      buttons.push(sw);
-    }
-    if (connected) {
-      buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
-        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
-        try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); custom?.refresh(); } catch (err) { flash(note, clean(err), 'error'); }
-      } }));
-    }
-    const showing = open === c.id;
-    return h('div', { class: `conn-card ${c.status}`, 'data-connector': c.id, 'data-status': c.status },
-      h('div', { class: 'conn-head' }, badge(c), h('div', { class: 'conn-title' }, h('strong', { text: c.name }), status)),
-      h('p', { class: 'conn-summary', text: c.summary }),
-      c.drafts === 'on' ? h('p', { class: 'note conn-drafts', text: 'Drafts allowed: the AI can put emails in your Drafts after you allow each one. It never sends.' }) : null,
-      c.sending === 'on' ? h('p', { class: 'note conn-sending', text: 'Sending allowed: each email shows on a card and goes only when you press Send. If you say in a chat that it may send without asking, that chat sends to the addresses you typed, after a 10 second Undo. Bypass permissions never skips the card.' }) : null,
-      c.sending === 'on' ? sendLogView(c) : null,
-      showing ? form(c, render) : h('details', { class: 'conn-details' }, h('summary', { text: 'What it can do' }), ...permissions(c)),
-      !showing && c.mcp?.tools.length ? toolsView(c) : null,
-      showing ? null : h('div', { class: 'conn-actions' }, ...buttons));
-  }
-
-
-  function toolsView(c) {
-    const items = c.mcp.tools.map((t) => {
-      const box = h('input', { type: 'checkbox', 'aria-label': `Always allow ${t.name}`, checked: t.always, onchange: async (e) => { try { await M.setAlwaysAllow(`${c.mcp.name}__${t.name}`, e.target.checked); render(await C.list()); } catch (err) { e.target.checked = !e.target.checked; flash(note, clean(err), 'error'); } } });
-      return h('li', { title: t.description }, h('label', {}, box, ` ${t.name}`), h('span', { class: 'note', text: t.auto ? ' · read only, runs without asking' : t.always ? ' · always allowed' : '' }));
-    });
-    return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Tools the service marks read only run without asking. Ticked tools run without asking, until the AI has read a page in that chat. Everything else asks first.' }), h('ul', { class: 'mcp-tools' }, items));
-  }
-
-
-  function sendLogView(c) {
-    const body = h('div', { class: 'conn-send-log' });
-    const d = h('details', { class: 'conn-details', id: `conn-${c.id}-sendlog` }, h('summary', { text: 'Sent by the AI' }), body);
-    d.addEventListener('toggle', async () => {
-      if (!d.open) return;
+    async function doDisconnect() {
+      disconnectBtn.button.disabled = true;
       try {
-        const rows = await C.sendLog();
-        body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
-      } catch (err) { body.replaceChildren(h('p', { class: 'note', text: clean(err) })); }
-    });
-    return d;
+        if (c0()) data = await C.disconnect(svc.id);
+        if (svc.id === 'todoist' && ws.secrets?.todoist) await W.setSecret('todoist', '');
+        if (svc.id === 'github' && ws.secrets?.github) await W.githubSignOut();
+        if (svc.id === 'gmail' && ws.connections?.gmail) await W.gmailDisconnect();
+        if (svc.id === 'spotify') await W.spotifyDisconnect();
+        if (svc.id === 'slack') await W.slackDisconnect();
+        if (svc.id === 'muse') await W.setSecret('muse', '');
+        say(`${svc.name} disconnected.`, 'ok');
+        if (c0()?.kind === 'mcp') mcpEl?.refresh?.();
+      } catch (err) { say(clean(err), 'err'); }
+      disconnectBtn.button.disabled = false;
+      await refresh();
+    }
+
+
+    const sw = (key, label, desc, onChange) => {
+      const input = h('input', { type: 'checkbox', class: 'switch', id: id(key), role: 'switch', 'aria-label': label });
+      const r = row(label, desc, input);
+      r.querySelector('.label').addEventListener('click', () => { if (!input.disabled) input.click(); });
+      input.addEventListener('change', async () => {
+        input.disabled = true;
+        try { await onChange(input.checked); } catch (err) { input.checked = !input.checked; say(clean(err), 'err'); }
+        input.disabled = false;
+        await refresh();
+      });
+      return { row: r, input };
+    };
+    const showSw = svc.type ? sw('show', tr('settings.apps.show', 'Show on new tab page'), tr('settings.apps.showDesc', 'Adds a card to the new tab page.'), async (on) => {
+      if (on) {
+        const extra = { gmail: { mode: ws.connections?.gmail ? 'oauth' : 'google' }, spotify: { mode: 'status' }, applemusic: { mode: 'status' }, calendar: { cals: [{ name: '', url: lastLink, color: '', enabled: true }] } }[svc.type] || {};
+        if (svc.type === 'calendar' && !lastLink) { openCardEditor(null); return; }
+        const r = await W.save({ type: svc.type, title: '', colors: 'calendar', ...extra });
+        ws = r.state;
+        say(r.message && !/^Saved/i.test(r.message) ? r.message : 'Added to the new tab page.', 'ok');
+      } else {
+        const mine = cardsOf(svc);
+        if (mine.length > 1 && !confirm(`Take all ${mine.length} ${svc.name} cards off the new tab page? You stay signed in.`)) throw new Error('Kept.');
+        for (const w of mine) ws = await W.remove(w.id, { keepSecret: true });
+        say('Taken off the new tab page. You stay signed in.', 'ok');
+      }
+    }) : null;
+    const aiSw = svc.connector ? sw('ai', tr('settings.apps.ai', 'Let the AI use it'), tr('settings.apps.aiDesc', 'Lets the AI work with it when you ask.'), async (on) => {
+      data = await C.setPaused(svc.id, !on);
+      say(on ? `The AI can use ${svc.name}.` : `The AI can’t use ${svc.name} now. You stay signed in.`, 'ok');
+    }) : null;
+    const needNote = h('span', { class: 'note', text: tr('settings.apps.connectFirst', 'Connect it first.') });
+    for (const s of [showSw, aiSw]) if (s) s.row.querySelector('.text').append(needNote.cloneNode(true));
+
+
+    const options = [];
+    const cardLink = svc.type ? linkRow(tr('settings.apps.cardOptions', 'New tab card'), { onOpen: () => openCardEditor(cardsOf(svc)[0]), more: 'card options title width colors places units' }) : null;
+    if (cardLink) { cardLink.id = id('card'); options.push(cardLink); }
+    if (svc.connector && c0()) options.push(row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())));
+    let gmailRows = [];
+    if (svc.id === 'gmail') {
+      const draftsSw = sw('drafts', tr('settings.apps.drafts', 'Let the AI write drafts'), 'Asks Google for permission to save drafts in your Gmail. The AI never sends them.', async () => {
+        data = await C.allowDrafts('gmail');
+        say('Drafts allowed. The AI can put emails in your Gmail Drafts, after you allow each one. It never sends.', 'ok');
+      });
+      draftsSw.input.id = 'conn-gmail-drafts';
+      const sendSw = sw('sending', tr('settings.apps.sending', 'Let the AI send email'), 'Each email shows on a card first and goes only when you press Send. At most 10 an hour, never from background tasks, and every send is listed below.', async (on) => {
+        if (on && !confirm('Let the AI send email from your Gmail? It still shows you each email and waits for you to press Send, unless you tell it in a chat that it may send without asking. It sends at most 10 an hour, never from background tasks or routines, and every send is listed here.')) throw new Error('Kept off.');
+        data = await C.setSending('gmail', on);
+        say(on ? 'Sending allowed. The AI asks you before each send.' : 'Sending turned off.', 'ok');
+      });
+      sendSw.input.id = 'conn-gmail-sending';
+      const log = connSendLogView({ id: 'gmail' }, C);
+      const logRow = h('div', { class: 'row stack' }, log);
+      logRow.id = id('sendlog');
+      gmailRows = [draftsSw, sendSw, logRow];
+      options.push(draftsSw.row, sendSw.row, logRow);
+    }
+    let toolsHost = null;
+    if (svc.connector && c0()?.kind === 'mcp') { toolsHost = h('div', { class: 'row stack' }); options.push(toolsHost); }
+
+
+    const advanced = [];
+    if (svc.id === 'github') {
+      const tok = h('input', { type: 'password', id: 'conn-github-secret', autocomplete: 'off', spellcheck: false, placeholder: 'Paste a GitHub token', 'aria-label': 'GitHub access token' });
+      inputs.push(tok);
+      advanced.push(row(tr('settings.apps.githubToken', 'Use an access token instead'), 'Only if you can’t sign in above: paste a read-only token and press Connect. It is for the AI’s GitHub connector; the new tab card keeps its own sign-in (Card options → Advanced).', tok));
+    }
+    let ownRows = [];
+    if (svc.id === 'gmail' || c0()?.kind === 'google') ownRows = googleClientRows();
+    if (ownRows.length) advanced.push(...ownRows);
+
+
+    page.append(accountRow, ...fieldRows, ...ghRows);
+    if (showSw) page.append(showSw.row);
+    if (aiSw) page.append(aiSw.row);
+    if (options.length) page.group(tr('settings.apps.options', 'Options')).append(...options);
+    if (advanced.length) page.append(collapsible(tr('settings.apps.advanced', 'Advanced'), advanced));
+
+
+    function googleClientRows() {
+      const idIn = h('input', { type: 'text', id: 'app-google-clientid', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID') });
+      const secretIn = h('input', { type: 'password', id: 'app-google-clientsecret', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
+      const drop = h('textarea', { id: 'app-google-json', rows: 3, spellcheck: false, autocomplete: 'off', placeholder: tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text'), 'aria-label': tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text') });
+      const found = h('span', { class: 'note', role: 'status', id: 'app-google-found' });
+      const readClient = async (text) => {
+        const r = await W.gmailParseClient(text);
+        if (r?.error) { flash(found, r.error, 'warn'); return; }
+        idIn.value = r.clientId; secretIn.value = r.clientSecret; drop.value = '';
+        flash(found, tr('settings.gmail.clientFound', 'Got the client {id}. Now press Connect with this client.', { id: `${r.clientId.slice(0, 12)}…` }), 'ok');
+      };
+      drop.addEventListener('paste', (e) => { const t = e.clipboardData?.getData('text'); if (t) { e.preventDefault(); readClient(t); } });
+      drop.addEventListener('change', () => { if (drop.value.trim()) readClient(drop.value); });
+      drop.addEventListener('dragover', (e) => e.preventDefault());
+      drop.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer?.files?.[0];
+        if (f) { if (f.size > 20000) flash(found, tr('settings.gmail.notClientFile', 'That is too big to be a Google client file.'), 'warn'); else readClient(await f.text()); return; }
+        const t = e.dataTransfer?.getData('text');
+        if (t) readClient(t);
+      });
+      const go = h('button', { type: 'button', class: 'primary', id: 'app-google-connect', text: tr('settings.apps.ownConnect', 'Connect with this client'), onclick: async () => {
+        if (!idIn.value.trim() || !(secretIn.value.trim() || ws.secrets?.gmail)) { flash(found, tr('settings.gmail.needClient', 'First drop the client JSON file above, or type your Client ID and secret.'), 'warn'); drop.focus(); return; }
+        go.disabled = true;
+        flash(found, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
+        try {
+          const r = await W.gmailConnect({ clientId: idIn.value, clientSecret: secretIn.value });
+          ws = r.state;
+          secretIn.value = '';
+          if (svc.id === 'gmail' || !data.connectors.find((x) => x.id === 'gmail')?.status || data.connectors.find((x) => x.id === 'gmail').status === 'off') { try { data = await C.connect('gmail'); } catch {  } }
+          flash(found, r.message, 'ok');
+        } catch (err) { flash(found, clean(err), /cancel/i.test(clean(err)) ? '' : 'err'); }
+        go.disabled = false;
+        await refresh();
+      } });
+      const back = h('button', { type: 'button', id: 'app-google-reset', text: tr('settings.apps.ownReset', 'Use Lumen’s sign-in again'), onclick: async () => { try { ws = await W.gmailDisconnect(); flash(found, tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok'); } catch (err) { flash(found, clean(err), 'err'); } await refresh(); } });
+      return [
+        row(tr('settings.apps.ownClient', 'Use my own Google client'), tr('settings.apps.ownClientDesc', 'Lumen signs in to Google with its own client. If Google blocks it (“Access blocked”), or you want the 7-day-free setup of your own Google Cloud project, make a client there (Desktop app, with the Gmail, Drive and Sheets APIs on) and give it here. The same client is used for Gmail, Drive and Sheets. Google’s limits for unverified apps then apply: while your project is in Testing, only test users you add can connect, and the connection ends every 7 days.')),
+        h('div', { class: 'row stack' }, drop, found),
+        row(tr('settings.gmail.clientId', 'Google OAuth Client ID'), tr('settings.gmail.filledByJson', 'Filled in for you when you drop the JSON file; or type it.'), idIn),
+        row(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), tr('settings.gmail.secretHelp', 'From the same client. Stored encrypted by your system.'), secretIn),
+        row('', null, go, back),
+      ];
+    }
+
+
+    function openCardEditor(w = null) {
+      if (w) window.__cards?.edit(w, `#app-${svc.id}`);
+      else window.__cards?.create(svc.type, `#app-${svc.id}`);
+    }
+
+
+    const sync = () => {
+      const st = st0();
+      const cc = c0();
+      const accountless = Boolean(st.noAccount);
+      accountRow.hidden = accountless;
+      statusNote.textContent = st.text;
+      statusNote.className = `note ${st.cls}`;
+      const needsFields = fieldRows.length > 0 && (!st.on || st.again);
+      const label = svc.id === 'github' ? tr('settings.widgets.github.signIn', 'Sign in with GitHub') : svc.id === 'spotify' ? tr('settings.apps.spotifyLogin', 'Log in with Spotify') : svc.id === 'slack' ? tr('settings.apps.slackSetup', 'Set up Slack') : cc?.kind === 'google' || svc.id === 'gmail' ? tr('settings.apps.googleSignIn', 'Sign in with Google') : tr('settings.apps.connect', 'Connect');
+      connectBtn.textContent = st.again ? tr('settings.apps.connectAgain', 'Connect again') : label;
+      connectBtn.setAttribute('aria-label', `${connectBtn.textContent}: ${svc.name}`);
+      connectBtn.hidden = st.on && !st.again;
+      disconnectBtn.button.hidden = !st.on || accountless;
+      for (const r of fieldRows) r.hidden = !needsFields;
+      ghSync(st.on && !st.again);
+      const pending = svc.id === 'github' && ws.github?.pending;
+      connectBtn.hidden = connectBtn.hidden || Boolean(pending);
+      if (showSw) {
+        const ready = st.on || svc.id === 'spotify' || svc.id === 'applemusic' || (svc.id === 'gmail' && ws.gmailGoogle?.signedIn);
+        showSw.input.checked = cardsOf(svc).length > 0;
+        showSw.input.disabled = !ready && !showSw.input.checked;
+        const open = ready || showSw.input.checked;
+        showSw.row.querySelector('.text > .note').hidden = open;
+        showSw.row.querySelector('.text > .desc').hidden = !open;
+      }
+      if (aiSw) {
+        aiSw.input.checked = Boolean(cc) && cc.status !== 'off' && !cc.paused;
+        aiSw.input.disabled = !cc || cc.status === 'off';
+        const open = Boolean(cc) && cc.status !== 'off';
+        aiSw.row.querySelector('.text > .note').hidden = open;
+        aiSw.row.querySelector('.text > .desc').hidden = !open;
+      }
+      if (cardLink) {
+        const mine = cardsOf(svc);
+        cardLink.hidden = !mine.length;
+        cardLink.setValue(mine.length ? window.WidgetSummary?.widgetSummary(mine[0], ws) || '' : '');
+      }
+      if (gmailRows.length) {
+        const [draftsSw, sendSw, logRow] = gmailRows;
+        const on = cc?.status === 'connected' || cc?.status === 'needs-signin';
+        draftsSw.row.hidden = !(on && cc.drafts);
+        draftsSw.input.checked = cc?.drafts === 'on';
+        draftsSw.input.disabled = cc?.drafts === 'on';
+        sendSw.row.hidden = !(on && cc.sending);
+        sendSw.input.checked = cc?.sending === 'on';
+        logRow.hidden = cc?.sending !== 'on';
+      }
+      if (toolsHost) toolsHost.replaceChildren(...(cc?.mcp?.tools?.length ? [connToolsView(cc, { M: S.ai.mcpServers, C, say, after: (d) => { data = d; sync(); } })] : []));
+      const link = page.link;
+      if (link) { link.dataset.state = st.cls || ''; link.dataset.on = st.on ? '1' : ''; }
+    };
+    pages.set(svc.id, { sync });
+    sync();
   }
 
-  let last = null;
-  function render(data) {
-    last = data;
-    const sections = data.categories.map((cat) => {
-      const cards = data.connectors.filter((c) => c.category === cat.id);
-      if (!cards.length) return null;
-      return h('section', { class: 'conn-cat', 'data-n': String(Math.min(cards.length, 3)), 'aria-label': cat.label }, h('h2', { text: cat.label }), h('div', { class: 'conn-grid' }, cards.map((c) => cardFor(c, render))));
-    });
-    root.replaceChildren(...sections.filter(Boolean));
-  }
-  function refresh() { if (last) render(last); }
 
-  C.list().then(render).catch((err) => flash(note, clean(err), 'error'));
-  custom = buildMcpServers();
-  const el = stackRow('Connectors',
-    'Connect a service and the AI in the sidebar and the full-page chat can use it: “what’s due on Canvas this week”, “summarize my unread email”. Anything that changes something, like adding a task, asks you first. Nothing is connected until you press Connect.',
-    root, note, custom);
-  el.id = 'ai-connectors';
-  return el;
+  W.onChanged?.(() => { if (card.el.isConnected) refresh().catch(() => {}); });
+  window.addEventListener('focus', () => { if (!document.hidden && document.querySelector('#cat-apps:not([hidden]), [id^="sub-app-"]:not([hidden])')) refresh().catch(() => {}); });
+
+
+  const mcpEl = buildMcpServers();
+  slots.get('mcp-servers').append(mcpEl);
+
+
+  try { await buildWidgets(slots.get('widgets')); } catch (err) { slots.get('widgets').append(row('Cards', String(err?.message || err))); }
+  syncAll();
 }
 ;
 // ---- settings-skills.js
@@ -4208,12 +4506,57 @@ function highlight(words) {
   }
 }
 
+
+
+
+
+const INLINE_DESC = 64;
+let infoPop = null;
+let infoBtn = null;
+function closeInfo(restoreFocus) {
+  if (!infoPop || infoPop.hidden) return;
+  infoPop.hidden = true;
+  infoBtn?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) infoBtn?.focus();
+  infoBtn = null;
+}
+function openInfo(btn, label, text) {
+  if (!infoPop) {
+    infoPop = h('div', { id: 'info-pop', class: 'info-pop', role: 'dialog', hidden: true, tabindex: '-1' });
+    document.body.append(infoPop);
+    document.addEventListener('pointerdown', (e) => { if (!infoPop.hidden && !infoPop.contains(e.target) && !e.target.closest?.('.info')) closeInfo(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !infoPop.hidden) { e.stopPropagation(); closeInfo(true); } }, true);
+    window.addEventListener('hashchange', () => closeInfo(false));
+    window.addEventListener('resize', () => closeInfo(false));
+  }
+  if (infoBtn === btn && !infoPop.hidden) { closeInfo(true); return; }
+  closeInfo(false);
+  infoBtn = btn;
+  btn.setAttribute('aria-expanded', 'true');
+  infoPop.setAttribute('aria-label', label);
+  infoPop.replaceChildren(h('strong', { class: 'info-title', text: label }), h('p', { text }));
+  infoPop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = infoPop.offsetWidth;
+  const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+  const below = r.bottom + 8 + infoPop.offsetHeight <= window.innerHeight || r.top < infoPop.offsetHeight + 16;
+  infoPop.style.left = `${left + window.scrollX}px`;
+  infoPop.style.top = `${(below ? r.bottom + 8 : r.top - infoPop.offsetHeight - 8) + window.scrollY}px`;
+}
+function infoButton(label, text) {
+  const b = h('button', { type: 'button', class: 'info plain', 'aria-label': tr('settings.moreAbout', 'About {label}', { label }), 'aria-expanded': 'false', 'aria-controls': 'info-pop' }, h('span', { 'aria-hidden': 'true', text: 'i' }));
+  b.addEventListener('click', (e) => { e.stopPropagation(); openInfo(b, label, text); });
+  return b;
+}
 function row(label, desc, ...controls) {
+  const long = typeof desc === 'string' && desc.length > INLINE_DESC && !KEEP_WHOLE.test(desc);
   const el = h('div', { class: 'row' },
-    h('div', { class: 'text' }, h('span', { class: 'label', text: label }), desc ? h('span', { class: 'desc', text: desc }) : null),
+    h('div', { class: 'text' },
+      h('div', { class: 'head' }, h('span', { class: 'label', text: label }), long ? infoButton(label, desc) : null),
+      desc ? h('span', { class: `desc${long ? ' sr-only info-text' : ''}`, text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
-  if (typeof desc === 'string' && desc.length > CLAMP_FROM && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
+  if (typeof desc === 'string' && desc.length > CLAMP_FROM && desc.length <= INLINE_DESC && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
   describeControl(el);
   return el;
 }
@@ -4343,28 +4686,73 @@ const bytes = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `$
 
 
 
+
+
 const CATEGORIES = [
-  { id: 'general', title: 'General', slots: [['default-browser', 'Default browser'], ['startup', 'On startup'], ['search', 'Search engine'], ['languages', 'Language'], ['downloads', 'Downloads'], ['files', 'Files'], ['focus', 'Focus mode'], ['import', 'Import'], ['sync', 'Sync'], ['behavior', 'Behavior']] },
-  { id: 'appearance', title: 'Appearance', slots: [['appearance', 'Theme'], ['accessibility', 'Accessibility']] },
-  { id: 'home', title: 'Home', slots: [['home', 'Background'], ['home-page', 'New tab page'], ['widgets', 'Widgets']] },
-  { id: 'tabs', title: 'Tabs', slots: [['tabs-strip', 'Tab strip'], ['tabs-groups', 'Groups'], ['tabs-sleep', 'Page unloading']] },
-  { id: 'privacy', title: 'Privacy and security', slots: [['privacy', 'Browsing data'], ['extensions', 'Add-ons']] },
-  { id: 'ai', title: 'AI and agents', slots: [['ai-model', 'Assistant'], ['ai-accounts', 'Accounts and keys'], ['ai-privacy', 'Privacy'], ['ai-agents', 'Agents and tools'], ['ai-access', 'Full access (advanced)'], ['ai-more', 'More']] },
-  { id: 'updates', title: 'Updates', slots: [['about', 'Software update']] },
-  { id: 'advanced', title: 'Advanced', slots: [['system', 'Performance'], ['experimental', 'Experimental'], ['automation', 'Automation'], ['advanced-more', 'Diagnostics'], ['reset', 'Reset']] },
+  { id: 'general', title: 'General', slots: [['quick', ''], ['default-browser', ''], ['browser-links', ''], ['behavior', ''],
+    ['languages', 'Language and spelling', { page: 'browser-links', more: 'language languages spelling spell check translate translation accept-language' }],
+    ['sync', 'Sync', { page: 'browser-links', more: 'sync folder cloud passphrase backup devices' }],
+    ['focus', 'Focus mode', { page: 'browser-links', more: 'focus block sites schedule distraction study' }]] },
+  { id: 'appearance', title: 'Appearance', slots: [['appearance', '']] },
+  { id: 'accessibility', title: 'Accessibility', slots: [['accessibility', '']] },
+  { id: 'ai', title: 'AI', slots: [['ai-model', ''], ['ai-links', 'Settings for the AI'], ['ai-tools', 'Tools and agents'],
+    ['ai-answers', 'Models and answers', { page: 'ai-links', more: 'answers fractions auto model image generation fallback limits steps compact grok codex claude code' }],
+    ['ai-keys-page', 'API keys and sign-ins', { page: 'ai-links', more: 'api key anthropic claude openai grok xai gemini google openrouter sign in console cli account' }],
+    ['ai-providers', 'AI providers', { page: 'ai-links', more: 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer' }],
+    ['ai-memory', 'Instructions and memory', { page: 'ai-links', more: 'custom instructions memory remember projects folder about me' }],
+    ['ai-approvals', 'Asking before it acts', { page: 'ai-links', more: 'approvals permission ask bypass auto-allow hands off act pages' }],
+    ['ai-tabs', 'Tabs the AI opens', { page: 'ai-links', more: 'ai tabs group hide close finish front' }],
+    ['ai-helpers', 'Helpers and research', { page: 'ai-links', more: 'helpers subagents parallel research tabs acting' }],
+    ['ai-chat', 'Chat box and voice', { page: 'ai-links', more: 'chat box voice input dictation microphone plan mode autocomplete one chat per tab sidebar' }],
+    ['ai-computer', 'Computer access', { page: 'ai-links', more: 'files computer apps terminals word full access command line cli desktop' }],
+    ['ai-privacy', 'What the AI can see', { page: 'ai-links', more: 'sites ai off signed-in files apps couldn’t do list revoke' }],
+    ['ai-agents', 'Let agents use Lumen', { page: 'ai-tools', more: 'agents mcp connect claude code codex grok antigravity telegram phone incoming' }],
+    ['routines', 'Routines', { page: 'ai-tools', more: 'routine routines schedule scheduled repeat quiet hours templates run history' }],
+    ['skills', 'Skills', { page: 'ai-tools', more: 'prompts commands' }],
+    ['macros', 'Macros', { page: 'ai-tools', more: 'automation record replay steps shortcut script' }],
+    ['usage', 'Usage', { page: 'ai-tools', more: 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate' }]] },
+  { id: 'apps', title: 'Apps and connections', slots: [['apps', 'Services'], ['apps-links', ''],
+    ['widgets', 'Cards without an account', { page: 'apps-links', more: 'widgets cards new tab weather clock world feed headlines notes countdown timer pomodoro stocks crypto tradingview custom web page files routines ai status' }],
+    ['mcp-servers', 'Custom MCP servers', { page: 'apps-links', more: 'mcp tools servers custom model context protocol add' }]] },
+  { id: 'home', title: 'New tab page', slots: [['home-links', ''], ['home-page', 'On the page'], ['home',  ''],
+    ['home-background', 'Background', { page: 'home-links', more: 'background wallpaper picture gradient shuffle daily' }],
+    ['home-effect', 'Animated effect', { page: 'home-links', more: 'animated effect particles stars snow bubbles music reactive' }]] },
+  { id: 'tabs', title: 'Tabs and browsing', slots: [['tabs-strip', ''], ['tabs-links', ''],
+    ['tabs-groups', 'Group tabs automatically', { page: 'tabs-links', more: 'group tabs organize site topic idle' }],
+    ['tabs-sleep', 'Sleeping tabs', { page: 'tabs-links', more: 'sleep unload memory freeze performance discard' }]] },
+  { id: 'privacy', title: 'Privacy and security', slots: [['privacy-links', ''], ['privacy', ''],
+    ['privacy-clear', 'Clear browsing data', { page: 'privacy-links', more: 'clear history cookies cache downloads delete' }],
+    ['privacy-tracking', 'Tracking protection', { page: 'privacy-links', more: 'tracking cookies do not track gpc fingerprint webrtc https utm pings' }],
+    ['privacy-adblock', 'Ad blocker', { page: 'privacy-links', more: 'ads adblock trackers allow sites' }],
+    ['privacy-passwords', 'Passwords and passkeys', { page: 'privacy-links', more: 'passwords passkeys windows hello security keys logins import' }],
+    ['privacy-safe', 'Safe Browsing', { page: 'privacy-links', more: 'safe browsing phishing malware google api key' }],
+    ['site-permissions', 'Site permissions', { page: 'privacy-links', more: 'camera microphone location notifications popups clipboard devices block allow' }],
+    ['site-data', 'Site data', { page: 'privacy-links', more: 'cookies storage website data remove manage' }],
+    ['extensions-page', 'Extensions', { page: 'privacy-links', more: 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle' }]] },
+  { id: 'downloads', title: 'Downloads and files', slots: [['downloads', ''], ['downloads-links', ''], ['files', 'Files'],
+    ['downloads-recent', 'Recent downloads', { page: 'downloads-links', more: 'recent downloads list clear show in folder' }]] },
+  { id: 'updates', title: 'Updates and about', slots: [['about', ''], ['about-links', ''],
+    ['about-lumen', 'About Lumen', { page: 'about-links', more: 'version build report problem copy details' }]] },
+  { id: 'advanced', title: 'Advanced', slots: [['advanced-links', ''], ['experimental', 'Experimental'], ['reset', ''],
+    ['system', 'Performance and graphics', { page: 'advanced-links', more: 'performance graphics acceleration visual effects memory energy lag slow gpu' }],
+    ['adv-network', 'Network and proxy', { page: 'advanced-links', more: 'proxy vpn network pac' }],
+    ['automation', 'Remote control for developers', { page: 'advanced-links', more: 'automation cdp devtools playwright puppeteer remote debugging port developer' }],
+    ['adv-diagnostics', 'Diagnostics', { page: 'advanced-links', more: 'diagnostics timing record switch export tab' }],
+    ['task-manager', 'Task manager', { page: 'adv-diagnostics', more: 'processes memory cpu restart tab developer energy power' }],
+    ['internals', 'Internals', { page: 'adv-diagnostics', more: 'gpu graphics session cache cookies user agent developer debug' }]] },
 ];
 
+const NAV_GAPS = new Set(['ai', 'tabs', 'updates']);
 
-const NAV_GROUPS = { general: 'Browser', ai: 'Assistant', updates: 'System' };
 const CATEGORY_ICONS = {
   general: '<path d="M3 5h10M3 11h10"/><circle cx="6" cy="5" r="1.7"/><circle cx="10.5" cy="11" r="1.7"/>',
   appearance: '<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8a5.2 5.2 0 0 0 0 10.4z" fill="currentColor"/>',
+  accessibility: '<circle cx="8" cy="3.6" r="1.4"/><path d="M3 6.2c3.4 1 6.6 1 10 0M8 6.6V10M8 10l-2.2 4M8 10l2.2 4"/>',
   home: '<path d="M2.5 7.6 8 3l5.5 4.6M4 6.8V13h8V6.8"/>',
   tabs: '<rect x="2" y="4.5" width="12" height="8.5" rx="2"/><path d="M2 7.6h12M5 4.5V3"/>',
   privacy: '<path d="M8 2 3.4 4v3.8c0 2.8 2 4.8 4.6 5.8 2.6-1 4.6-3 4.6-5.8V4z"/><path d="m6 8 1.6 1.6L10.2 6.8"/>',
-  search: '<circle cx="7" cy="7" r="4.3"/><path d="m10.2 10.2 3.3 3.3"/>',
   ai: '<path d="M8 1.8l1.4 3.7 3.8 1.5-3.8 1.5L8 12.2 6.6 8.5 2.8 7l3.8-1.5z"/><path d="M12.5 11.5l.5 1.3 1.3.5-1.3.5-.5 1.3-.5-1.3-1.3-.5 1.3-.5z"/>',
-  extensions: '<path d="M6 3h4v2.2a1.4 1.4 0 1 1 0 2.8V13H3V8.5h2.2a1.4 1.4 0 1 0 0-2.8H3V3z" transform="translate(1 0)"/>',
+  apps: '<rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1.2"/><rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1.2"/><rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1.2"/><rect x="8.9" y="8.9" width="4.6" height="4.6" rx="1.2"/>',
   downloads: '<path d="M8 2.8v7.4M5 7.6l3 3 3-3M3.4 13h9.2"/>',
   updates: '<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.6v2.7h-2.7"/>',
   advanced: '<circle cx="8" cy="8" r="2"/><path d="M8 2v1.8M8 12.2V14M2 8h1.8M12.2 8H14M3.8 3.8l1.3 1.3M10.9 10.9l1.3 1.3M12.2 3.8l-1.3 1.3M5.1 10.9l-1.3 1.3"/>',
@@ -4372,14 +4760,16 @@ const CATEGORY_ICONS = {
 
 
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, 'mcp-servers': { cat: 'ai', sub: 'connectors' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', focus: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
-  'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'startup' }, languages: { cat: 'general', focus: 'languages' },
-  accessibility: { cat: 'appearance', focus: 'accessibility' }, 'visual-effects': { cat: 'advanced', focus: 'system', focusEl: '#pref-graphicsMode' }, system: { cat: 'advanced', focus: 'system' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', sub: 'ai-memory', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', sub: 'ai-chat', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', sub: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'quick', focusEl: '#startup-select' }, languages: { cat: 'general', sub: 'languages' },
+  'visual-effects': { cat: 'advanced', sub: 'system', focusEl: '#pref-graphicsMode' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
 
-  permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', group: 'Network' }, performance: { cat: 'advanced', focus: 'system' }, diagnostics: { cat: 'advanced' }, language: { cat: 'general', focus: 'languages' },
-  cookies: { cat: 'privacy', group: 'Tracking and connections' }, passwords: { cat: 'privacy' }, security: { cat: 'privacy', group: 'Safe Browsing' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
-  engine: { cat: 'general', focus: 'search' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'search' }, downloads: { cat: 'general', focus: 'downloads' }, files: { cat: 'general', focus: 'files' }, focus: { cat: 'general', focus: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+  permissions: { cat: 'privacy', sub: 'site-permissions' }, proxy: { cat: 'advanced', sub: 'adv-network' }, performance: { cat: 'advanced', sub: 'system' }, diagnostics: { cat: 'advanced', sub: 'adv-diagnostics' }, language: { cat: 'general', sub: 'languages' },
+  cookies: { cat: 'privacy', sub: 'privacy-tracking' }, security: { cat: 'privacy', sub: 'privacy-safe' }, theme: { cat: 'appearance' }, newtab: { cat: 'home' }, 'new-tab': { cat: 'home' },
+  engine: { cat: 'general', focus: 'quick', focusEl: '#pref-searchEngine' }, extensions: { cat: 'privacy', sub: 'extensions-page' }, search: { cat: 'general', focus: 'quick', focusEl: '#pref-searchEngine' }, files: { cat: 'downloads', focus: 'files' }, focus: { cat: 'general', sub: 'focus' }, keys: { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' }, update: { cat: 'updates' }, updates: { cat: 'updates' },
+
+  connectors: { cat: 'apps' },
 };
 const DEFAULT_CATEGORY = 'general';
 const categories = new Map();
@@ -4404,48 +4794,83 @@ let forceRoute = null;
 
 
 
+const valueRows = new Set();
+function linkRow(label, { href, desc, value, more = '', icon, onOpen } = {}) {
+  const val = h('span', { class: 'value' });
+  const link = row(label, desc, val, h('span', { class: 'chev', 'aria-hidden': 'true' }));
+  link.classList.add('link');
+  link.dataset.search += ` ${more}`.toLowerCase();
+  link.tabIndex = 0;
+  link.setAttribute('role', 'link');
+  if (icon) link.querySelector('.text').before(icon);
+  const open = () => { if (onOpen) onOpen(); else if (href) location.hash = href; };
+  link.addEventListener('click', open);
+  link.addEventListener('keydown', (e) => { if (e.target === link && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } });
+  link.setValue = (v) => { link.valueSource = v; paintValue(link); };
+  link.valueEl = val;
+  if (value !== undefined) link.setValue(value);
+  return link;
+}
+function paintValue(link) {
+  const v = typeof link.valueSource === 'function' ? link.valueSource() : link.valueSource;
+  link.valueEl.textContent = v || '';
+  link.classList.toggle('has-value', Boolean(v));
+  if (v) valueRows.add(link);
+}
+function refreshValues() { for (const link of valueRows) if (link.isConnected && typeof link.valueSource === 'function') paintValue(link); }
+window.addEventListener('lumen-pref', () => refreshValues());
+
+
+
 class Slot {
   constructor(id, title, cat) {
-    this.id = id; this.title = title; this.cat = cat; this.pending = title; this.card = null; this.groups = [];
+    this.id = id; this.title = title; this.cat = cat; this.pending = title; this.card = null; this.groups = []; this.parent = null;
     this.el = h('div', { class: 'slot', id: `sec-${id}` });
   }
   group(title) { this.pending = title || ''; this.card = null; return this; }
   append(...nodes) {
     if (!this.card) {
       this.card = h('div', { class: 'card' });
-      const shown = this.pending && this.pending.toLowerCase() !== categories.get(this.cat).title.toLowerCase();
+      const shown = this.pending && this.pending.toLowerCase() !== categories.get(this.cat).title.toLowerCase() && !(this.isSub && this.pending === this.title);
       const g = h('div', { class: 'group', 'data-title': this.pending || '' }, shown ? h('h2', { class: 'group-title', text: this.pending }) : null, this.card);
       this.el.append(g);
       this.groups.push(g);
     }
     this.card.append(...nodes);
   }
+
+  foot(text) {
+    const g = this.groups[this.groups.length - 1];
+    if (g && text) g.append(h('p', { class: 'group-foot', text }));
+    return this;
+  }
   querySelector(sel) { return this.el.querySelector(sel); }
   at(id) { return slots.get(id); }
 
-  subpage(id, label, desc, more = '') {
-    const sub = new Slot(id, label, this.cat);
+  attachPage(sub, label, desc, more = '', value, icon) {
     sub.pending = ''; sub.isSub = true;
-    if (slots.has(id) && !slots.get(id).isSub) { slots.get(id).el.id = `sec-${id}-parent`; slots.set(`${id}~parent`, slots.get(id)); }
-    slots.set(id, sub);
+    sub.parent = this.isSub ? this : null;
+    if (slots.has(sub.id) && !slots.get(sub.id).isSub) { slots.get(sub.id).el.id = `sec-${sub.id}-parent`; slots.set(`${sub.id}~parent`, slots.get(sub.id)); }
+    slots.set(sub.id, sub);
     const catTitle = categories.get(this.cat).title;
-    const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${catTitle}`, onclick: () => { location.hash = `#${this.cat}`; } },
-      h('span', { class: 'chev', 'aria-hidden': 'true' }), catTitle);
-    sub.pane = h('div', { class: 'pane subpane', id: `sub-${id}`, hidden: true }, h('div', { class: 'subhead' }, back), h('h1', { class: 'pane-title', text: label }), sub.el);
+    const backTo = this.isSub ? this.title : catTitle;
+    const back = h('button', { class: 'back', type: 'button', 'aria-label': `${tr('settings.back', 'Back')}: ${backTo}`, onclick: () => { location.hash = `#${this.isSub ? this.id : this.cat}`; } },
+      h('span', { class: 'chev', 'aria-hidden': 'true' }), backTo);
+    const crumb = this.isSub ? `${catTitle} › ${this.title}` : catTitle;
+    sub.pane = h('div', { class: 'pane subpane', id: `sub-${sub.id}`, hidden: true }, h('div', { class: 'subhead' }, back), h('h1', { class: 'pane-title', 'data-crumb': crumb, text: label }), sub.el);
     $('sections').append(sub.pane);
-    const link = row(label, desc, h('span', { class: 'chev', 'aria-hidden': 'true' }));
-    link.classList.add('link');
-    link.dataset.sub = id;
-    link.dataset.search += ` ${more}`.toLowerCase();
-    link.tabIndex = 0;
-    link.setAttribute('role', 'link');
-    const open = () => { returnTo = { cat: this.cat, sub: id, y: window.scrollY }; location.hash = `#${id}`; };
-    link.addEventListener('click', open);
-    link.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    const short = desc && desc.length <= INLINE_DESC ? desc : '';
+    const link = linkRow(label, { desc: short, more: `${desc && !short ? desc : ''} ${more}`, value, icon, onOpen: () => { returnTo = { cat: this.cat, sub: sub.id, y: window.scrollY }; location.hash = `#${sub.id}`; } });
+    link.dataset.sub = sub.id;
     sub.link = link;
+    sub.setValue = (v) => link.setValue(v);
     this.append(link);
     return sub;
   }
+
+  subpage(id, label, desc, more = '', { value, icon } = {}) { return this.attachPage(new Slot(id, label, this.cat), label, desc, more, value, icon); }
+
+  clear() { this.el.replaceChildren(); this.groups = []; this.card = null; this.pending = ''; return this; }
 }
 let returnTo = null;
 let lastSub = null;
@@ -4536,8 +4961,9 @@ async function buildAi(card) {
   autoUseRender = renderAutoUse;
   const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
   const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
-  card.append(
-    row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd),
+  card.append(row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd));
+  const answers = slots.get('ai-answers');
+  answers.append(
     toggle('aiPreferFractions', tr('settings.ai.preferFractions', 'Prefer fractions'), tr('settings.ai.preferFractionsDesc', 'Write exact values as fractions (4/3, not 1.333) and keep √ and π, unless you ask for decimals. Fractions show stacked. Applies to new chats.')),
     stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Auto picks by task: quick chat and page questions go to a small, fast model, browsing to a reliable mid-size one, hard code and deep research to the strongest. Models out of usage are skipped. A model you pick is always used.'), autoUseBox),
     toggle('ccUserSettings', tr('settings.ai.ccUserSettings', 'Use my Claude Code settings in Lumen chats'), tr('settings.ai.ccUserSettingsDesc', 'Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.')),
@@ -4566,13 +4992,14 @@ async function buildAi(card) {
     box.addEventListener('change', () => save(key, box.value));
     return stackRow(label, '', box);
   };
-  card.group(tr('settings.ai.groupInstructions', 'Custom instructions')).append(
+  const memoryPage = slots.get('ai-memory');
+  memoryPage.group(tr('settings.ai.groupInstructions', 'Custom instructions')).append(
     toggle('aiInstructionsOn', tr('settings.ai.instructionsOn', 'Use custom instructions'), tr('settings.ai.instructionsOnDesc', 'Sent to the AI at the start of every new chat, as your preferences. Off keeps what you wrote but does not send it.'), undefined, { fallback: true }),
     instructionBox('aiInstructionsAbout', 'ai-instructions-about', tr('settings.ai.instructionsAbout', 'What should Lumen know about you?'), tr('settings.ai.instructionsAboutHint', 'For example: I am a nursing student; I use Windows; I live in Boston.')),
     instructionBox('aiInstructionsStyle', 'ai-instructions-style', tr('settings.ai.instructionsStyle', 'How should Lumen respond?'), tr('settings.ai.instructionsStyleHint', 'For example: plain language, no bullet lists, show code in Python.')),
   );
 
-  if (S.memory) buildMemory(card.group(tr('settings.ai.groupMemory', 'Memory')));
+  if (S.memory) buildMemory(memoryPage.group(tr('settings.ai.groupMemory', 'Memory')));
 
   const projectsWhere = h('span', { class: 'mono desc', id: 'projects-dir' });
   const showProjectsDir = () => { projectsWhere.textContent = st.prefs.projectsDir || tr('settings.ai.projectsDirDefault', 'Documents/Lumen Projects'); };
@@ -4581,9 +5008,9 @@ async function buildAi(card) {
     h('button', { id: 'projects-dir-change', text: tr('settings.ai.projectsDirChange', 'Change…'), onclick: async () => { st = await S.pickProjectsDir(); showProjectsDir(); } }),
     h('button', { id: 'projects-dir-reset', text: tr('settings.ai.projectsDirReset', 'Use Documents'), onclick: async () => { await save('projectsDir', ''); showProjectsDir(); } }));
   projectsRow.querySelector('.text').append(projectsWhere);
-  card.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
+  memoryPage.group(tr('settings.ai.groupProjects', 'Projects')).append(projectsRow);
 
-  card.group(tr('settings.ai.groupAiTabs', 'AI tabs')).append(
+  slots.get('ai-tabs').append(
     toggle('groupAiTabs', tr('settings.ai.foldAiTabs', 'Group tabs the AI opens'), tr('settings.ai.foldAiTabsDesc', 'Puts every tab the AI opens in a window into one folded "AI tabs" group, so the tab strip gets one label instead of a row of tabs. Click the label to unfold it. A tab you start using leaves the group. Research tabs keep their own "AI: …" groups.'), undefined, { fallback: true }),
     toggle('hideAiTabs', tr('settings.ai.hideAiTabs', 'Hide AI tabs'), tr('settings.ai.hideAiTabsDesc', 'Leaves the tabs the AI opened out of the tab strip, in every window. They stay open; the one you are on and one playing sound stay shown. A tab that needs you (an approval, a dialog, an error) shows as "needs you" so it is never lost.')),
     toggle('aiStayOnMyTab', tr('settings.ai.stayOnMyTab', 'Bring tabs the AI opened to the front'), tr('settings.ai.stayOnMyTabDesc', 'On: the AI can bring a tab to the front when you ask to see it (“go to”, “show me”, “switch to”) while you are on its chat’s tab. Off: it keeps working in background tabs and never brings one to the front; the tab you are on stays in view.'), undefined, { invert: true }),
@@ -4591,32 +5018,34 @@ async function buildAi(card) {
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
     toggle('keepViewedAiTabs', tr('settings.ai.keepViewedAiTabs', 'Keep AI tabs I click on'), tr('settings.ai.keepViewedAiTabsDesc', 'A tab the AI opened stays open after it finishes if you clicked it to look at it.')),
   );
-  card.group(tr('settings.ai.groupVoice', 'Voice input')).append(
-    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
-      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
-    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
-  );
 
-  card.group(tr('settings.ai.groupApprovals', 'Approvals')).append(
+  slots.get('ai-approvals').append(
     permissionRow,
     bypassRow,
     toggle('aiHandsOff', tr('settings.ai.handsOff', 'Let the AI act on my pages'), tr('settings.ai.handsOffDesc', 'On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.'), undefined, { invert: true }),
     toggle('agentsNoAsk', tr('settings.ai.agentsNoAsk', 'Ask before agents act in their own window'), tr('settings.ai.agentsNoAskDesc', 'On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.'), null, { fallback: true, invert: true }),
   );
-  card.group(tr('settings.ai.groupBrowser', 'Working in your browser')).append(
+  slots.get('ai-chat').group(tr('settings.ai.groupBrowser', 'Chat box')).append(
     toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')),
+    toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
+    toggle('chatAutocomplete', tr('settings.ai.autocomplete', 'Tab to finish what I’m typing'), tr('settings.ai.autocompleteDesc', ''), undefined, { fallback: true }),
+    toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
+  );
+  slots.get('ai-chat').group(tr('settings.ai.groupVoice', 'Voice input')).append(
+    select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
+      ['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+    toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
+  );
+  slots.get('ai-helpers').append(
     select('aiSubagents', tr('settings.ai.subagents', 'Helpers that work in parallel'), tr('settings.ai.subagentsDesc', 'For jobs with several independent parts (reading many sites, comparing items), the AI can hand each part to a helper that runs at the same time and report back. Auto offers helpers only when your request looks like that, so short questions stay cheap and quick. Helpers only read pages and search the web, never click or type, and ask before visiting new sites just as the AI does. Also a row in the sidebar.'),
       ['auto', 'on', 'off'].map((v) => [v, tr(`settings.ai.subagents.${v}`, { auto: 'Auto', on: 'On', off: 'Off' }[v])])),
     select('aiSubagentModel', tr('settings.ai.subagentModel', 'Model for helpers'), tr('settings.ai.subagentModelDesc', 'Faster and cheaper is the default (for example Claude Haiku, GPT mini or Gemini Flash where your provider has one). Helpers’ tokens count in the chat’s usage.'),
       ['auto', 'same'].map((v) => [v, tr(`settings.ai.subagentModel.${v}`, { auto: 'Faster, cheaper model', same: 'Same as the chat' }[v])])),
     toggle('actingHelpers', tr('settings.ai.actingHelpers', 'Let helpers act in tabs'), tr('settings.ai.actingHelpersDesc', 'For browser jobs with independent parts (filling in the same form on three sites, checking three accounts), the AI can hand each part to a helper that clicks and types in a background tab of its own, up to 3 at a time. Helpers ask before acting on a new site just as the AI does, and never buy, send or submit. Each one shows in the chat with a Stop button. Only with an API key model; Claude Code, Grok Build, Antigravity and Codex have helpers of their own.')),
     toggle('researchTabs', tr('settings.ai.researchTabs', 'Show AI research in tabs'), tr('settings.ai.researchTabsDesc', 'When the assistant searches the web or reads pages, open them as background tabs in one group so you can watch and keep the sources. Sites where you turned AI off are never opened. Your current tab is left alone.')),
-    toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
-    toggle('chatAutocomplete', tr('settings.ai.autocomplete', 'Tab to finish what I’m typing'), tr('settings.ai.autocompleteDesc', ''), undefined, { fallback: true }),
-    toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
   );
 
-  card.group(tr('settings.ai.groupComputer', 'Computer access')).append(
+  slots.get('ai-computer').append(
     toggle('aiDeviceAccess', tr('settings.ai.deviceAccess', 'Let the AI use files on this computer'), tr('settings.ai.deviceAccessDesc', 'The AI (and agents connected through the Automation server) can look in your folders, such as Desktop and Downloads, upload a file from them to a site you asked it to, and read the clipboard. The first upload to a site in a chat still asks unless you chose Auto-allow or Bypass. Lumen’s own profile, ssh, cloud and keychain folders and .env files stay out of reach.')),
     toggle('aiDesktopControl', tr('settings.ai.desktopControl', 'Let the AI use other apps on this computer'), tr('settings.ai.desktopControlDesc', 'Windows and macOS. The AI can read and operate programs such as Word, File Explorer, Finder or MATLAB, one app at a time.')),
     toggle('aiDesktopTerminals', tr('settings.ai.desktopTerminals', 'Also allow terminals'), tr('settings.ai.desktopTerminalsDesc', 'Warning: a terminal can run anything on this computer.')),
@@ -4624,7 +5053,7 @@ async function buildAi(card) {
       ['app', 'auto', 'file'].map((v) => [v, tr(`settings.ai.filesInApps.${v}`, { app: 'In the app', auto: 'Automatic', file: 'From the file' }[v])])),
     toggle('aiWordControl', tr('settings.ai.wordControl', 'Let the AI use Microsoft Word'), tr('settings.ai.wordControlDesc', 'The AI can read and write Word documents directly (Windows, with Word installed; a .docx file can be read and added to without Word). It asks before it changes a document and shows the file before it saves. Nothing starts until you ask it to work with a document.')),
     row(tr('settings.ai.computerLists', 'Apps and files you allowed'), tr('settings.ai.computerListsDesc', 'Apps and files you chose Always for are listed under Privacy, further down this page, where you can revoke them.'),
-      h('button', { type: 'button', id: 'ai-computer-lists', text: tr('settings.ai.computerListsGo', 'Show lists'), onclick: () => { const t = $('ai-desktop-apps'); t?.scrollIntoView({ block: 'center' }); t?.closest('.row')?.querySelector('button')?.focus({ preventScroll: true }); } })),
+      h('button', { type: 'button', id: 'ai-computer-lists', text: tr('settings.ai.computerListsGo', 'Show lists'), onclick: () => { location.hash = '#ai-privacy'; setTimeout(() => { const t = $('ai-desktop-apps'); t?.scrollIntoView({ block: 'center' }); t?.closest('.row')?.querySelector('button')?.focus({ preventScroll: true }); }, 60); } })),
   );
 
   const advancedRows = [
@@ -4641,9 +5070,9 @@ async function buildAi(card) {
     select('grokKeepIdleMinutes', tr('settings.ai.grokKeepIdle', 'Stop an idle Grok Build, Codex or Claude Code after'), tr('settings.ai.grokKeepIdleDesc', 'A kept Grok Build or Codex, or the Claude Code a chat keeps running between messages, that hasn’t been used this long is stopped; the chat’s next message starts it again. It also stops when its chat’s tab closes or the chat is deleted.'),
       [[5, tr('settings.ai.grokKeepIdle.5', '5 minutes')], [15, tr('settings.ai.grokKeepIdle.15', '15 minutes')], [30, tr('settings.ai.grokKeepIdle.30', '30 minutes')], [60, tr('settings.ai.grokKeepIdle.60', '1 hour')], [0, tr('settings.ai.grokKeepIdle.never', 'Never')]], { number: true }),
   ];
-  card.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows, tr('settings.ai.moreDesc', 'Step and chat limits, and how long Grok Build, Codex and Claude Code stay running between messages.')));
+  answers.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows, tr('settings.ai.moreDesc', 'Step and chat limits, and how long Grok Build, Codex and Claude Code stay running between messages.')));
 
-  card.at('ai-access').append(...cliAccessRows());
+  slots.get('ai-computer').group(tr('settings.ai.groupFullAccess', 'Full access (advanced)')).append(...cliAccessRows());
   card.at('tabs-groups').append(
     row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, once 4 or more are loose. Tabs you group by hand stay put.', grouping),
     topicRow,
@@ -4797,7 +5226,7 @@ async function buildAi(card) {
     }));
   };
   renderKeys();
-  const accounts = card.at('ai-accounts').subpage('ai-keys-page', tr('settings.ai.keysPage', 'API keys and sign-ins'), tr('settings.ai.keysPageDesc', 'Connect Claude, OpenAI, Grok, Gemini or OpenRouter with a key or a sign-in.'), 'api key anthropic claude openai grok xai gemini google openrouter sign in console cli account');
+  const accounts = slots.get('ai-keys-page');
   accounts.group('API keys').append(stackRow('API keys', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider.', keys));
 
 
@@ -4908,9 +5337,6 @@ async function buildAi(card) {
   agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps());
 
 
-  agents.group(tr('settings.ai.groupConnectors', 'Connectors'));
-  agents.subpage('connectors', tr('settings.connectors', 'Connectors'), 'Connect Canvas, Gmail, GitHub and more, or add any MCP server, so the AI can use them.', 'connectors canvas gmail calendar github todoist notion school mail tasks apps mcp tools servers custom').append(buildConnectors());
-
   agents.group(tr('settings.ai.groupOtherTools', 'Other tools'));
 
   buildAntigravity(agents, refreshModels);
@@ -4953,7 +5379,7 @@ async function buildAi(card) {
   portRow.hidden = !auto.enabled;
   portRow.classList.add('sub-row');
   describe(auto.enabled, auto.port);
-  card.at('automation').group(tr('settings.advanced.groupAutomation', 'Let agents use Lumen (advanced)')).append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `A separate, lower-level way in than “Allow AI agents to connect” (Settings → AI and agents): for Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
+  card.at('automation').append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `A separate, lower-level way in than “Allow AI agents to connect” (Settings → AI): for Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
 
 }
 
@@ -4961,7 +5387,7 @@ async function buildAi(card) {
 function buildImport(card) {
 
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  card.at('import').append(row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow));
+  const importEl = row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow);
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
     note.setAttribute('role', 'status');
@@ -4998,7 +5424,7 @@ function buildImport(card) {
   window.addEventListener('focus', renderDefault);
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
-  card.at('default-browser').append(defaultRow);
+  card.append(defaultRow, importEl);
   renderDefault(true);
 }
 
@@ -5306,21 +5732,21 @@ async function buildHome(card) {
     const list = [...fxTiles.querySelectorAll('button')]; const at = list.indexOf(document.activeElement);
     list[(at + step + list.length) % list.length].click(); list[(at + step + list.length) % list.length].focus();
   });
-  card.group('Background').append(
+  slots.get('home-background').append(
     toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
     stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
   );
-  card.append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
+  slots.get('home-page').append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
     [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
-  card.append(stackRow('Animated effect', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.', fxTiles), effectOptions);
+  slots.get('home-effect').append(stackRow('Animated effect', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.', fxTiles), effectOptions);
   effectOptions.hidden = st.prefs.newTabEffect === 'none';
   const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
   name.value = st.prefs.newTabName || '';
   name.addEventListener('change', () => save('newTabName', name.value));
   const clockStyle = buildClockStyle();
 
-  const page = card.at('home-page');
-  const clockPage = page.subpage('clock-greeting', 'Clock and greeting', 'The clock, the date and the “Good evening” line at the top of the new-tab page.', 'clock time date seconds hours 12-hour 24-hour greeting name font header');
+  const page = slots.get('home-page');
+  const clockPage = slots.get('home-links').subpage('clock-greeting', 'Clock and greeting', 'The clock, the date and the “Good evening” line at the top of the new-tab page.', 'clock time date seconds hours 12-hour 24-hour greeting name font header');
   const dependents = [];
   const syncHeader = (on) => { for (const r of dependents) { r.classList.toggle('off', !on); for (const el of r.querySelectorAll('input, select, button')) el.disabled = !on; } };
   const dep = (...rows) => { dependents.push(...rows); return rows; };
@@ -5345,9 +5771,6 @@ async function buildHome(card) {
     toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
   );
   renderTiles();
-  const widgets = card.at('widgets');
-  const sub = widgets.subpage('widgets', 'Widgets', 'Weather, calendar, tasks, headlines, music, mail and more, as cards on the new-tab page.', 'weather calendar todoist clock rss spotify apple music gmail slack github stocks crypto tradingview chart notes countdown timer pomodoro ai status claude grok gemini custom recipe embed');
-  try { await buildWidgets(sub); } catch (err) { sub.append(row('Widgets', String(err?.message || err))); }
 }
 
 
@@ -5396,14 +5819,16 @@ async function buildWidgets(card) {
   const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+  let formReturn = null;
 
   const renderList = () => {
     const open = Boolean(formHost.firstChild);
     home.hidden = open;
+    const mine = ws.widgets.filter((w) => !SERVICE_TYPES.has(w.type));
     add.disabled = ws.widgets.length >= ws.max;
     add.title = add.disabled ? `The page holds up to ${ws.max} widgets. Remove one to add another.` : '';
-    if (!ws.widgets.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No widgets yet' }), h('span', { class: 'desc', text: 'Add the weather, your tasks, a calendar, headlines and more. They appear as cards on the new-tab page.' })))); return; }
-    list.replaceChildren(...ws.widgets.map((w, i) => {
+    if (!mine.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No cards yet' }), h('span', { class: 'desc', text: 'Add the weather, a clock, headlines, notes and more. They appear as cards on the new tab page.' })))); return; }
+    list.replaceChildren(...mine.map((w, i) => {
       const acct = WS.accountStatus(w, ws);
       const move = (dir) => (e) => { e.stopPropagation(); S.widgets.move(w.id, dir).then((next) => { ws = next; renderList(); }); };
       const item = h('div', { class: 'row link widget-item', 'data-id': w.id, 'data-type': w.type, tabindex: '0', role: 'link', 'aria-label': `${w.title}. ${WS.widgetSummary(w, ws)}. Open its settings` },
@@ -5411,14 +5836,19 @@ async function buildWidgets(card) {
         h('div', { class: 'text widget-text' }, h('span', { class: 'label widget-title', text: w.title }), h('span', { class: `desc${acct && !acct.connected ? ' needs' : ''}`, text: WS.widgetSummary(w, ws) })),
         h('div', { class: 'widget-actions' },
           h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: move(-1) }),
-          h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === ws.widgets.length - 1, onclick: move(1) }),
+          h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === mine.length - 1, onclick: move(1) }),
           h('span', { class: 'chev', 'aria-hidden': 'true' })));
       item.addEventListener('click', () => openForm(w));
       item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openForm(w); } });
       return item;
     }));
   };
-  const closeForm = () => { formGuard = null; formHost.replaceChildren(); renderList(); window.scrollTo?.({ top: 0 }); };
+  const closeForm = () => {
+    formGuard = null; formHost.replaceChildren(); renderList();
+    const back = formReturn; formReturn = null;
+    if (back) { location.hash = back; return; }
+    window.scrollTo?.({ top: 0 });
+  };
 
   let formGuard = null;
   window.addEventListener('beforeunload', (e) => { if (formGuard?.()) { e.preventDefault(); e.returnValue = ''; } });
@@ -5467,7 +5897,7 @@ async function buildWidgets(card) {
 
     const setting = (label, control, hint, ...more) => row(label, hint, control, ...more);
     const block = (label, hint, ...content) => stackRow(label, hint, ...content);
-    const section = (title, rows, foot) => h('div', { class: 'group wf-section' }, title ? h('h2', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
+    const section = (title, rows, foot) => h('div', { class: `group wf-section${/^account$/i.test(title || '') ? ' wf-account' : ''}` }, title ? h('h2', { class: 'group-title', text: title }) : null, h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
     const advanced = (rows, foot, open = false) => h('details', { class: 'group wf-advanced', ...(open ? { open: '' } : {}) }, h('summary', { text: 'Advanced' }), h('div', { class: 'card' }, rows.filter(Boolean)), foot ? h('p', { class: 'wf-foot', text: foot }) : null);
 
     const helpLink = (r, key, text) => { r.querySelector('.text').append(h('button', { type: 'button', class: 'linkish', text, onclick: () => S.widgets.help(key) })); return r; };
@@ -6351,7 +6781,7 @@ async function buildWidgets(card) {
     } });
 
     const types = h('div', { class: 'seg type-list', role: 'radiogroup', 'aria-label': 'Kind of widget' },
-      [...ws.types].sort((a, b) => WS.ORDER.indexOf(a.type) - WS.ORDER.indexOf(b.type)).map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } },
+      [...ws.types].filter((t) => !SERVICE_TYPES.has(t.type) || t.type === initialType).sort((a, b) => WS.ORDER.indexOf(a.type) - WS.ORDER.indexOf(b.type)).map((t) => h('button', { type: 'button', role: 'radio', 'data-type': t.type, onclick: () => { type = t.type; renderFields(); syncWidth(); } },
         widgetIcon(t.type), h('span', { class: 'type-text' }, h('span', { class: 'type-name', text: WS.kindName(t.type) }), h('span', { class: 'type-hint', text: WS.kindHint(t.type) })))));
     let removeArmed = null;
     const removeBtn = existing ? h('button', { class: 'danger', id: 'widget-remove', text: 'Remove widget', onclick: async () => {
@@ -6361,13 +6791,15 @@ async function buildWidgets(card) {
       closeForm();
       flash(listNote, `${existing.title} removed.`, 'ok');
     } }) : null;
-    const back = h('button', { class: 'back', type: 'button', 'aria-label': 'Back to Widgets', onclick: () => requestClose() }, h('span', { class: 'chev', 'aria-hidden': 'true' }), 'Widgets');
+    const fromService = Boolean(formReturn) && type !== 'slack';
+    const backName = formReturn ? WS.kindName(type) : 'Cards';
+    const back = h('button', { class: 'back', type: 'button', 'aria-label': `Back to ${backName}`, onclick: () => requestClose() }, h('span', { class: 'chev', 'aria-hidden': 'true' }), backName);
     const leave = h('div', { class: 'leave-bar', role: 'alertdialog', 'aria-label': 'Unsaved changes', hidden: '' },
       h('span', { class: 'grow', text: existing ? 'These changes couldn’t be saved yet.' : 'This widget isn’t on your page yet.' }),
       h('button', { class: 'primary', text: existing ? 'Try saving again' : 'Add to page', onclick: () => { leave.hidden = true; save.click(); } }),
       h('button', { class: 'danger', text: 'Discard', onclick: () => closeForm() }),
       h('button', { text: 'Keep editing', onclick: () => { leave.hidden = true; } }));
-    const form = h('div', { class: 'widget-form', id: 'widget-form' },
+    const form = h('div', { class: `widget-form${fromService ? ' service' : ''}`, id: 'widget-form' },
       h('div', { class: 'subhead' }, back),
       h('div', { class: 'widget-head' }, existing ? widgetIcon(existing.type) : null, h('div', { class: 'grow' },
         h('h2', { class: 'sub-label', text: existing ? `Edit ${existing.title}` : 'New widget' }),
@@ -6375,6 +6807,7 @@ async function buildWidgets(card) {
 
       !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
       existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
+      fromService ? h('p', { class: 'note wf-service-note', text: 'Signing in and out is on this service’s page in Apps and connections. This is how the card looks and what it shows.' }) : null,
       fields,
       section('Card', [
         setting('Title', title, 'Shown at the top of the card. Leave empty to use the widget’s name.'),
@@ -6431,10 +6864,10 @@ async function buildWidgets(card) {
   }
 
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the center', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  const addRow = row('Add a widget', 'Weather, tasks, calendar, headlines, music, mail, stocks and more.', add);
+  const addRow = row('Add a card', 'Weather, a clock, headlines, notes, timers, stocks and more. Cards for Gmail, Calendar, Todoist, GitHub, Spotify and Slack are under Services.', add);
   addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new-tab page' }), list),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list),
     h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
     h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
@@ -6443,11 +6876,20 @@ async function buildWidgets(card) {
 
   const applyEdit = (state) => {
     const target = state.edit && state.widgets.find((w) => w.id === state.edit);
-    if (target) openForm(target);
-    else if (state.create && state.types.some((t) => t.type === state.create)) openForm(null, state.create);
-    else return false;
-    forceRoute = 'widgets';
+    let goto = 'widgets';
+    if (target) { formReturn = SERVICE_TYPES.has(target.type) ? `#app-${APP_OF_TYPE[target.type]}` : null; openForm(target); }
+    else if (state.create && state.types.some((t) => t.type === state.create)) {
+      if (SERVICE_TYPES.has(state.create)) goto = `app-${APP_OF_TYPE[state.create]}`;
+      else openForm(null, state.create);
+    } else return false;
+    forceRoute = goto;
+    applyEdit.goto = goto;
     return true;
+  };
+
+  window.__cards = {
+    edit: (w, returnHash) => { formReturn = returnHash || null; openForm(w); location.hash = '#widgets'; },
+    create: (type, returnHash) => { formReturn = returnHash || null; openForm(null, type); location.hash = '#widgets'; },
   };
   applyEdit(ws);
 
@@ -6457,8 +6899,8 @@ async function buildWidgets(card) {
     ws = fresh;
     renderList();
     if (!applyEdit(fresh)) return;
-    if (location.hash === '#widgets') route(); else location.hash = '#widgets';
-    const form = formHost.firstElementChild;
+    if (location.hash === `#${applyEdit.goto}`) route(); else location.hash = `#${applyEdit.goto}`;
+    const form = applyEdit.goto === 'widgets' && formHost.firstElementChild;
     if (form) { form.classList.remove('flash-target'); void form.offsetWidth; form.classList.add('flash-target'); setTimeout(() => form.classList.remove('flash-target'), 1800); }
   });
   window.__widgetEditRoute = { applyEdit };
@@ -6468,23 +6910,22 @@ function alertLine(host, text) {
   host.append(h('span', { class: 'note error', role: 'alert', text }));
 }
 
-async function buildSearch(card) {
-  const ai = await S.ai.searchEngines();
-  const el = h('select', { id: 'pref-searchEngine', 'aria-label': 'Search engine', onchange: (e) => S.ai.setSearchEngine(e.target.value) },
-    ai.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === ai.searchEngine })));
-  card.append(withKeywords(row(tr('settings.search.label', 'Search engine used in the address bar'), tr('settings.search.desc', 'Also used by the new-tab page and “Search for…” in the context menu.'), el), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox'));
-}
 
-function buildStartup(card) {
+
+async function buildQuick(card) {
+  const engines = await S.ai.searchEngines();
+  const theme = select('theme', tr('settings.quick.theme', 'Theme'), null, [['system', tr('settings.theme.system', 'System')], ['light', tr('settings.theme.light', 'Light')], ['dark', tr('settings.theme.dark', 'Dark')]], { id: 'pref-theme-quick' });
+  theme.dataset.nosearch = '1';
+  const engine = h('select', { id: 'pref-searchEngine', 'aria-label': tr('settings.search.label', 'Search engine'), onchange: (e) => S.ai.setSearchEngine(e.target.value) },
+    engines.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === engines.searchEngine })));
+  const engineRow = withKeywords(row(tr('settings.search.label', 'Search engine'), tr('settings.search.desc', 'What the address bar and the new tab page search with. Also used by “Search for…” in the right-click menu.'), engine), 'default search engine google bing duckduckgo brave ecosia yahoo address bar omnibox');
+
+
   const list = h('div', { class: 'list', id: 'startup-pages' });
   const input = h('input', { type: 'text', inputmode: 'url', class: 'grow', id: 'startup-add', placeholder: 'example.com', 'aria-label': tr('settings.startup.addPage', 'Page to open on startup') });
   const renderPages = () => list.replaceChildren(...st.prefs.startupPages.map((url, i) => h('div', { class: 'item' },
     h('span', { class: 'grow mono', text: url }),
-    h('button', { text: 'Remove', onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
-  const radios = [['restore', 'Continue where you left off'], ['newtab', 'Open the New Tab page'], ['pages', 'Open a specific page or set of pages']].map(([value, text]) => {
-    const r = h('input', { type: 'radio', name: 'startup', value, id: `startup-opt-${value}`, checked: st.prefs.startup === value, onchange: () => save('startup', value) });
-    return h('label', { class: 'check' }, r, text);
-  });
+    h('button', { text: tr('settings.remove', 'Remove'), 'aria-label': `${tr('settings.remove', 'Remove')} ${url}`, onclick: async () => { await save('startupPages', st.prefs.startupPages.filter((_, j) => j !== i)); renderPages(); } }))));
   renderPages();
   const addNote = h('span', { class: 'note', id: 'startup-add-status', role: 'status' });
 
@@ -6503,9 +6944,28 @@ function buildStartup(card) {
   };
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); addPage(); } });
   input.addEventListener('input', () => { addNote.textContent = ''; });
-  card.append(stackRow('On startup', 'What Lumen opens when it starts.', h('div', { class: 'radios', role: 'radiogroup', 'aria-label': tr('settings.startup.label', 'On startup') }, ...radios)));
-  card.append(stackRow('Pages to open', 'Used with “Open a specific page or set of pages”.', list,
-    h('div', { class: 'controls' }, input, h('button', { text: 'Add page', onclick: addPage }), addNote)));
+  const pagesRow = stackRow(tr('settings.startup.pages', 'Pages to open'), null, list, h('div', { class: 'controls' }, input, h('button', { text: tr('settings.startup.add', 'Add page'), onclick: addPage }), addNote));
+  pagesRow.classList.add('sub-row');
+  const startup = select('startup', tr('settings.startup.label', 'On startup'), tr('settings.startup.desc', 'What Lumen opens when it starts.'),
+    [['restore', tr('settings.startup.restore', 'Continue where you left off')], ['newtab', tr('settings.startup.newtab', 'Open the New Tab page')], ['pages', tr('settings.startup.pages.choice', 'Open specific pages')]],
+    { id: 'startup-select', after: (v) => { pagesRow.hidden = v !== 'pages'; } });
+  pagesRow.hidden = st.prefs.startup !== 'pages';
+
+
+  const aiLink = linkRow(tr('settings.quick.ai', 'Default AI'), { href: '#ai', more: 'model assistant default ai claude openai grok gemini choose' });
+  aiLink.dataset.nosearch = '1';
+  const appsLink = linkRow(tr('settings.quick.apps', 'Apps and connections'), { href: '#apps', more: 'connect sign in gmail calendar github todoist services widgets' });
+  appsLink.dataset.nosearch = '1';
+  card.append(theme, engineRow, startup, pagesRow, aiLink, appsLink);
+  later(() => S.ai.get()).then((ai) => {
+    const name = (id) => ai.models.find((m) => m.id === id)?.label || '';
+    aiLink.setValue(ai.models.length ? name(ai.model) || tr('settings.quick.aiAuto', 'Auto') : tr('settings.quick.aiNone', 'Not connected'));
+  }).catch(() => {});
+  S.ai.onModelsUpdated?.(() => S.ai.get().then((ai) => { aiLink.setValue(ai.models.find((m) => m.id === ai.model)?.label || ''); }).catch(() => {}));
+  later(() => S.ai.connectors.list()).then((data) => {
+    const on = data.connectors.filter((c) => c.status !== 'off').length;
+    appsLink.setValue(on ? tr(on === 1 ? 'settings.quick.apps.one' : 'settings.quick.apps.other', on === 1 ? '{n} connected' : '{n} connected', { n: on }) : tr('settings.quick.apps.none', 'None connected'));
+  }).catch(() => {});
 }
 
 async function buildPrivacy(card) {
@@ -6516,7 +6976,7 @@ async function buildPrivacy(card) {
     [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
   const box = (id, text, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked }), text);
   const result = status('clear-status');
-  card.append(stackRow('Clear browsing data', 'Removes cookies and site data for sites used in the range. Cached files are always cleared completely.',
+  slots.get('privacy-clear').append(stackRow('Clear browsing data', 'Removes cookies and site data for sites used in the range. Cached files are always cleared completely.',
     h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
     box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
     box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
@@ -6532,7 +6992,7 @@ async function buildPrivacy(card) {
       }, 'primary', 'clear-go'))));
 
   card.group(tr('settings.private.group', 'Private windows')).append(withKeywords(row(tr('settings.private.label', 'Private windows (incognito)'), tr('settings.private.desc', 'Press Ctrl+Shift+N, or use New Private Window in the menu. A private window doesn’t save history, cookies, passwords or its tabs, and forgets everything when you close it. Downloads stay in your Downloads folder, and sites and your network can still see you.')), 'incognito inprivate private browsing window shortcut ctrl+shift+n'));
-  card.group('Tracking and connections').append(
+  slots.get('privacy-tracking').append(
     toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
     toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
     toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
@@ -6547,13 +7007,13 @@ async function buildPrivacy(card) {
 
 
   card.group(tr('settings.files.group', 'Files')).append(
-    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Files you open are listed on the new-tab page and in the Ctrl+Shift+F picker, on this computer only. Turn that off or clear the list in General > Files.'),
+    withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Files you open are listed on the new-tab page and in the Ctrl+Shift+F picker, on this computer only. Turn that off or clear the list in Downloads and files > Files.'),
       h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
   );
 
 
-  await buildPasswords(card, passwordsAsked);
-  buildPasskeys(card);
+  await buildPasswords(slots.get('privacy-passwords'), passwordsAsked);
+  buildPasskeys(slots.get('privacy-passwords'));
 
 
   const sbNote = status('safe-browsing-status');
@@ -6576,7 +7036,7 @@ async function buildPrivacy(card) {
       s.keyStored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put('') }) : null,
       keyNote].filter(Boolean));
   };
-  card.group('Safe Browsing').append(
+  slots.get('privacy-safe').append(
     toggle('safeBrowsing', 'Warn about dangerous sites (Google Safe Browsing)',
       'Pages are checked on your computer against Google’s lists of phishing and malware sites. Only a partial hash of a matching address is sent, never the address or your cookies. Needs your own Google API key (free for non-commercial use). No list is perfect.',
       async () => renderSb(await S.ai.safeBrowsing())),
@@ -6593,7 +7053,7 @@ async function buildPrivacy(card) {
     h('button', { text: 'Remove', onclick: async () => { await save('adblockAllow', st.prefs.adblockAllow.filter((x) => x !== host)); renderAllow(); } })))
     : [h('span', { class: 'note', text: 'No sites. Ads are blocked everywhere.' })]));
   renderAllow();
-  card.group('Ads and trackers').append(
+  slots.get('privacy-adblock').append(
     toggle('adblock', 'Block ads and trackers', 'Built-in blocker using uBlock Origin-compatible filter lists.'),
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
       h('div', { class: 'controls' }, allowInput, h('button', {
@@ -6619,7 +7079,8 @@ async function buildPrivacy(card) {
       h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.revokePermission(p.origin, p.permission); renderGranted(); } })))
       : [h('span', { class: 'note', text: 'No sites have asked yet.' })]));
   };
-  const permissions = card.group('Site settings').subpage('site-permissions', 'Site permissions', 'What sites may ask for, and which you allowed or blocked.', 'camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission');
+  const permissions = slots.get('site-permissions');
+  permissions.link.dataset.search += ' camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission';
   withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
   permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
   permissions.append(withKeywords(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted), 'camera microphone location notifications alerts popups clipboard permission revoke'));
@@ -6652,7 +7113,7 @@ async function buildPrivacy(card) {
   };
   filter.addEventListener('input', renderSites);
   const loadSites = async () => { siteList = await S.siteData(); renderSites(); };
-  const data = card.subpage('site-data', 'Site data', 'The sites that keep cookies on this computer, and removing one of them.', 'cookies storage website data remove manage');
+  const data = slots.get('site-data');
   data.append(stackRow('Sites with cookies', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.', filter, sites));
   loadSites();
 }
@@ -6966,7 +7427,7 @@ async function buildDownloads(card) {
       d.state === 'completed' ? h('button', { text: 'Show in folder', onclick: () => S.showDownload(d.id) }) : null))
       : [h('span', { class: 'note', text: 'No downloads yet.' })]));
   };
-  card.append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
+  slots.get('downloads-recent').append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
     armedButton(tr('settings.downloads.clear', 'Clear list'), tr('settings.downloads.clearSure', 'Clear the list? Click again'), async () => { await S.clearDownloads(); render(); }, '', 'downloads-clear'))));
   render();
 }
@@ -7303,13 +7764,12 @@ function buildSystem(card) {
   gfxRow.querySelector('.text').append(gfxNote, gfxRestart, gfxHint);
   card.append(gfxRow, musicReactiveRow());
   buildUnloading(card.at('tabs-sleep'));
-  buildSwitchTiming(card.at('advanced-more'));
+  buildSwitchTiming(card.at('adv-diagnostics'));
   if (st.platform === 'darwin') {
     card.at('behavior').append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
   }
 
 
-  card.group('Network');
   const p = st.prefs.proxy;
   const mode = h('select', { id: 'proxy-mode', 'aria-label': 'Proxy' },
     [['system', 'Use system settings'], ['direct', 'No proxy'], ['auto_detect', 'Detect automatically'], ['fixed_servers', 'Manual'], ['pac_script', 'Configuration script (PAC)']].map(([v, t]) => h('option', { value: v, text: t })));
@@ -7332,7 +7792,7 @@ function buildSystem(card) {
   };
   sync();
   for (const el of [mode, rules, bypass, pac]) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
-  card.append(stackRow('Proxy', 'Applies to every tab as soon as you press Apply.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
+  slots.get('adv-network').append(stackRow('Proxy', 'Applies to every tab as soon as you press Apply.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
     h('div', { class: 'controls' }, note, Object.assign(apply, {
       onclick: async () => {
         if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
@@ -7419,13 +7879,13 @@ function buildReset(card) {
 
 async function buildAbout(card) {
   await buildUpdates(card);
-  card.group('About Lumen');
+  const aboutPage = slots.get('about-lumen');
   const a = await S.about();
   const versions = h('table', { id: 'about-versions' },
     h('tr', {}, h('th', { text: 'Component' }), h('th', { text: 'Version' })),
     [['Lumen', a.version], ['Electron', a.versions.electron], ['Chromium', a.versions.chrome], ['Node.js', a.versions.node], ['V8', a.versions.v8], ['Anthropic CLI (pinned)', a.cliPinned], ['OS', a.os]]
       .map(([k, v]) => h('tr', { 'data-component': k }, h('td', { text: k }), h('td', { class: 'mono', text: v }))));
-  card.append(stackRow('Lumen', 'Every AI, one browser. Free software under the GPL-3.0 license.', versions));
+  aboutPage.append(stackRow('Lumen', 'Every AI, one browser. Free software under the GPL-3.0 license.', versions));
 
   const details = () => [...versions.querySelectorAll('tr[data-component]')].map((r) => `${r.cells[0].textContent}: ${r.cells[1].textContent}`).join('\n');
   const copyDetails = h('button', { id: 'about-copy', type: 'button', text: 'Copy version details', onclick: async () => {
@@ -7434,8 +7894,8 @@ async function buildAbout(card) {
   } });
   const issues = 'https://github.com/emah-maker/lumen/issues';
   const report = h('a', { id: 'about-report', href: issues, text: 'Report a problem', onclick: (e) => { e.preventDefault(); S.openUrl(issues); } });
-  card.append(row('Found a problem?', 'Copy the version details and include them in your report.', report, copyDetails));
-  card.append(stackRow('Build', null, h('table', {},
+  aboutPage.append(row('Found a problem?', 'Copy the version details and include them in your report.', report, copyDetails));
+  aboutPage.append(stackRow('Build', null, h('table', {},
     [['App', a.appPath], ['Executable', a.exePath], ['Profile', a.userData], ['Packaged', a.packaged ? 'Yes' : 'No (development)']]
       .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: v }))))));
 
@@ -7495,7 +7955,9 @@ function applyPageClasses() {
 
 
 
-let view = { cat: DEFAULT_CATEGORY, sub: null };
+let view = { cat: DEFAULT_CATEGORY, sub: null, root: false };
+const narrowQuery = window.matchMedia('(max-width: 700px)');
+const isNarrow = () => narrowQuery.matches;
 const query = () => $('search').value.trim().toLowerCase();
 const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
@@ -7518,7 +7980,7 @@ function show() {
   let floor = 1;
   if (searching) {
     const items = [];
-    for (const slot of slots.values()) for (const g of slot.groups) { const titles = titlesOf(g, slot); for (const r of g.querySelectorAll('.row')) items.push({ label: r.querySelector('.label')?.textContent || '', titles }); }
+    for (const slot of slots.values()) for (const g of slot.groups) { const titles = titlesOf(g, slot); for (const r of g.querySelectorAll('.row')) if (r.dataset.nosearch !== '1') items.push({ label: r.querySelector('.label')?.textContent || '', titles }); }
     floor = SS.floorFor(words, items);
   }
   for (const slot of slots.values()) {
@@ -7538,7 +8000,7 @@ function show() {
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
+        const s = r.dataset.nosearch === '1' ? 0 : SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
         r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s);
         if (s >= floor) { n++; best = Math.max(best, s); }
@@ -7561,10 +8023,10 @@ function show() {
   }
   let any = false;
   for (const [id, c] of categories) {
-    const own = c.slots.reduce((sum, [sid]) => sum + (hitsBySlot.get(slots.get(sid)) || 0) + (hitsBySlot.get(slots.get(`${sid}~parent`)) || 0), 0);
+    const own = c.slots.reduce((sum, [sid, , o]) => sum + (o?.page ? 0 : (hitsBySlot.get(slots.get(sid)) || 0)) + (hitsBySlot.get(slots.get(`${sid}~parent`)) || 0), 0);
     const subs = [...slots.values()].filter((s) => s.isSub && s.cat === id).reduce((sum, s) => sum + (hitsBySlot.get(s) || 0), 0);
     const hits = own + subs;
-    c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub);
+    c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub) || view.root;
     c.pane.style.order = searching ? String(-Math.max(0, ...c.slots.map(([sid]) => slots.get(sid)?.best || 0), ...[...slots.values()].filter((s) => s.isSub && s.cat === id).map((s) => s.best || 0))) : '';
     any ||= hits > 0;
     const dim = searching && hits === 0;
@@ -7575,8 +8037,9 @@ function show() {
       if (!badge) { badge = h('span', { class: 'hits', 'aria-hidden': 'true' }); c.link.append(badge); }
       badge.textContent = String(hits);
     } else badge?.remove();
-    if (!searching && id === view.cat) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
+    if (!searching && id === view.cat && !view.root) c.link.setAttribute('aria-current', 'page'); else c.link.removeAttribute('aria-current');
   }
+  document.body.classList.toggle('root', Boolean(view.root) && !searching);
   for (const slot of slots.values()) if (slot.isSub) { slot.pane.hidden = searching ? !hitsBySlot.get(slot) : view.sub !== slot.id; slot.pane.style.order = searching ? String(-(slot.best || 0)) : ''; }
   performance.mark('show:loops');
   syncNavStop();
@@ -7635,11 +8098,12 @@ function initNavKeys() {
 
 function guessView() {
   const id = location.hash.slice(1);
+  if (!id && isNarrow()) return { cat: remembered() || DEFAULT_CATEGORY, sub: null, root: true };
   const sub = slots.get(id);
-  if (sub?.isSub) return { cat: sub.cat, sub: id };
-  if (categories.has(id)) return { cat: id, sub: null };
-  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus };
-  return { cat: remembered() || DEFAULT_CATEGORY, sub: null };
+  if (sub?.isSub) return { cat: sub.cat, sub: id, root: false };
+  if (categories.has(id)) return { cat: id, sub: null, root: false };
+  if (ALIASES[id]) return { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, focus: ALIASES[id].focus, root: false };
+  return { cat: remembered() || DEFAULT_CATEGORY, sub: null, root: false };
 }
 let routeSeq = 0;
 function route() {
@@ -7656,10 +8120,11 @@ function resolveRoute() {
   if (forceRoute && (!id || id === 'appearance' || id === 'home')) id = forceRoute;
   forceRoute = null;
   const sub = slots.get(id);
-  if (sub?.isSub) view = { cat: sub.cat, sub: id };
-  else if (categories.has(id)) view = { cat: id, sub: null };
-  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
-  else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null };
+  if (!id && isNarrow()) { view = { cat: remembered() || DEFAULT_CATEGORY, sub: null, root: true }; return { id, focus, focusEl }; }
+  if (sub?.isSub) view = { cat: sub.cat, sub: id, root: false };
+  else if (categories.has(id)) view = { cat: id, sub: null, root: false };
+  else if (ALIASES[id]) { view = { cat: ALIASES[id].cat, sub: ALIASES[id].sub || null, root: false }; focus = ALIASES[id].focus; focusEl = ALIASES[id].focusEl; }
+  else view = { cat: remembered() || DEFAULT_CATEGORY, sub: null, root: false };
   remember(view.cat);
   return { id, focus, focusEl };
 }
@@ -7697,13 +8162,13 @@ function finishRoute({ id, focus, focusEl }) {
   show();
   performance.mark('settings:shown');
   window.__settingsPerf.visibleDone = true;
-  const title = view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
+  const title = view.root ? tr('settings.title', 'Settings') : view.sub ? slots.get(view.sub).title : categories.get(view.cat).title;
   document.title = tr('settings.docTitle', 'Settings · {section}', { section: title });
   const groupTitle = ALIASES[id]?.group;
   const target = groupTitle ? [...document.querySelectorAll(`#cat-${view.cat} .group`)].find((g) => g.dataset.title === groupTitle) : focus && $(`sec-${focus}`);
 
-  const from = !view.sub && lastSub && slots.get(lastSub);
-  const back = !target && from && from.cat === view.cat && from.link;
+  const from = lastSub && slots.get(lastSub);
+  const back = !target && from && from.cat === view.cat && (view.sub ? from.parent?.id === view.sub : !from.parent) && from.link;
   if (target) { target.scrollIntoView({ block: 'start' }); target.classList.remove('flash-target'); void target.offsetWidth; target.classList.add('flash-target'); setTimeout(() => target.classList.remove('flash-target'), 1800); }
   else if (back && returnTo?.sub === lastSub && returnTo.cat === view.cat) window.scrollTo(0, returnTo.y);
   else if (back && visibleNow(back)) back.scrollIntoView({ block: 'center' });
@@ -7735,62 +8200,54 @@ async function init() {
   window.setI18n?.(strings);
   applyPageClasses();
 
+  const topicBack = () => h('div', { class: 'subhead topic-head' }, h('button', { class: 'back', type: 'button', 'aria-label': tr('settings.backToSettings', 'Back to Settings'), onclick: () => { location.hash = ''; } }, h('span', { class: 'chev', 'aria-hidden': 'true' }), tr('settings.title', 'Settings')));
   for (const def of CATEGORIES) {
     def.title = tr(`settings.section.${def.id}`, def.title);
     const icon = h('span', { class: `ic ic-${def.id}`, 'aria-hidden': 'true' });
     icon.innerHTML = `<svg viewBox="0 0 16 16">${CATEGORY_ICONS[def.id]}</svg>`;
     const link = h('a', { href: `#${def.id}`, 'data-section': def.id, tabindex: '-1' }, icon, h('span', { class: 'nav-label', text: def.title }));
-    if (NAV_GROUPS[def.id]) $('nav').append(h('div', { class: 'nav-heading', 'aria-hidden': 'true', text: tr(`settings.navgroup.${def.id}`, NAV_GROUPS[def.id]) }));
+    if (NAV_GAPS.has(def.id)) $('nav').append(h('div', { class: 'nav-gap', 'aria-hidden': 'true' }));
     $('nav').append(link);
     const blurb = tr(`settings.blurb.${def.id}`, '');
-    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, h('h1', { class: 'pane-title', text: def.title }), blurb ? h('p', { class: 'pane-desc', text: blurb }) : null);
+    const pane = h('div', { class: 'pane', id: `cat-${def.id}`, hidden: true }, topicBack(), h('h1', { class: 'pane-title', text: def.title }), blurb ? h('p', { class: 'pane-desc', text: blurb }) : null);
     categories.set(def.id, { ...def, pane, link });
     $('sections').append(pane);
   }
+
+  const pages = [];
   for (const def of CATEGORIES) {
     const c = categories.get(def.id);
-    for (const [sid, stitle] of def.slots) {
-      const slot = new Slot(sid, stitle, def.id);
+    for (const [sid, stitle, opts] of def.slots) {
+      const slot = new Slot(sid, stitle ? tr(opts?.page ? `settings.section.${sid}` : `settings.slot.${sid}`, stitle) : '', def.id);
       slots.set(sid, slot);
-      c.pane.append(slot.el);
+      if (opts?.page) pages.push([slot, opts]); else c.pane.append(slot.el);
     }
   }
-
-  const mount = (parent, id, label, desc, more) => slots.get(parent).subpage(id, label, desc, more);
-  mount('ai-agents', 'routines', tr('settings.routines.title', 'Routines'), tr('settings.routines.desc', 'Requests the AI repeats on a schedule.'), 'routine routines schedule scheduled repeat quiet hours templates run history');
-  mount('ai-more', 'skills', tr('settings.section.skills', 'Skills'), 'Saved prompts you run from the chat with /.', 'prompts commands');
-  mount('ai-more', 'macros', tr('settings.section.macros', 'Macros'), 'Saved step lists you run from the menu, a shortcut or the chat.', 'automation record replay steps shortcut script');
-  mount('ai-more', 'usage', 'Usage', 'Plan limits, rate limits and what Lumen counted, for every AI.', 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate');
-  mount('ai-accounts', 'ai-providers', tr('settings.ai.providersPage', 'AI providers'), tr('settings.ai.providersPageDesc', 'For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.'), 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer');
-  mount('extensions', 'extensions-page', tr('settings.section.extensions', 'Extensions'), 'Chrome Web Store extensions you installed.', 'extensions chrome web store add-ons remove options toolbar pin unpin hide show puzzle');
-  mount('advanced-more', 'task-manager', 'Task manager', 'Every Lumen process, with memory and CPU.', 'processes memory cpu restart tab developer energy power');
-  mount('advanced-more', 'internals', tr('settings.section.internals', 'Internals'), 'Graphics status, devices and browser sessions.', 'gpu graphics session cache cookies user agent developer debug');
+  for (const [slot, opts] of pages) slots.get(opts.page).attachPage(slot, slot.title, opts.desc, opts.more);
   const BUILDS = [
-    ['ai-model', buildAi], ['import', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome],
-    ['search', buildSearch], ['startup', buildStartup], ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
+    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps],
+    ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
   ];
 
 
   const FOOT = {
-    'ai-model': ['tabs', 'ai', 'advanced'], import: ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'],
-    search: ['general'], startup: ['general'], privacy: ['privacy'], downloads: ['general'], files: ['general'], languages: ['general'], accessibility: ['appearance'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'],
-    'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates'], internals: ['advanced'],
+    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'],
+    privacy: ['privacy'], downloads: ['downloads'], files: ['downloads'], languages: ['general'], accessibility: ['accessibility'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'],
+    'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates', 'advanced'], internals: ['advanced'],
   };
-  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals']);
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus']);
   const SUB_BUILDER = { 'task-manager': 'about' };
   const started = new Map();
   const finished = new Set();
   const buildFn = new Map(BUILDS);
   isBuilt = (sid) => finished.has(sid);
-
-
-  const LATE = new Set(['focus', 'sync']);
-  neededBuilds = (v, want) => {
+  neededBuilds = (v) => {
     const own = v.sub && (SUB_BUILDER[v.sub] || v.sub);
+    if (v.root) return [];
     if (own && (SUBS.has(own) || SUB_BUILDER[v.sub])) return [own];
-    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat) && (!LATE.has(sid) || want === sid));
+    return BUILDS.map(([sid]) => sid).filter((sid) => !SUBS.has(sid) && FOOT[sid].includes(v.cat));
   };
 
 
@@ -7813,8 +8270,8 @@ async function init() {
   const tidyReady = () => {
     for (const [sid, slot] of slots) {
       if (slot.tidied) continue;
-      const owner = slot.isSub ? (SUB_BUILDER[sid] || sid) : null;
-      const done = owner ? finished.has(owner) || !buildFn.has(owner) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
+      const own = SUB_BUILDER[sid] || sid;
+      const done = SUBS.has(own) || SUB_BUILDER[sid] ? finished.has(own) : BUILDS.every(([b]) => SUBS.has(b) || !FOOT[b].includes(slot.cat) || finished.has(b));
       if (done) { slot.tidied = true; tidy(slot); }
     }
   };
@@ -7873,6 +8330,7 @@ async function init() {
   });
   initNavKeys();
   window.addEventListener('hashchange', route);
+  narrowQuery.addEventListener('change', route);
   route();
 
   requestAnimationFrame(() => requestAnimationFrame(() => {

@@ -1,8 +1,8 @@
-// "Show what the AI couldn't do" (Settings → AI and agents): a private, local list of the times the sidebar AI still handed work back after its
+// "Show what the AI couldn't do" (Settings → AI): a private, local list of the times the sidebar AI still handed work back after its
 // one automatic second try (ai/handoff.js). Each entry is the date, the site (a host name only), what was missing (a category,
 // never the reply's words) and the tool error that went with it. No page content, no text the user wrote, nothing leaves the
 // computer unless the user copies the list and sends it. Stored as <profile>/diagnostics/ai-gaps.jsonl, newest last, capped.
-// Off with Settings → AI and agents → "Keep a list of what the AI couldn't do" (aiGapLog).
+// Off with Settings → AI → "Keep a list of what the AI couldn't do" (aiGapLog).
 const fs = require('fs');
 const path = require('path');
 

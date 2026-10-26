@@ -1,4 +1,4 @@
-// Pure unit test for Settings > Tabs > Page unloading (features/tab-sleep.js): the settings and their defaults, the migration of the
+// Pure unit test for Settings → Tabs and browsing > Page unloading (features/tab-sleep.js): the settings and their defaults, the migration of the
 // old single choice, which tabs unload and in what order (idle time, Never, site lists, memory pressure levels, the cap, Performance
 // mode), every exception, the status tally, and that every string the page uses is in locales/en.json.
 const fs = require('fs');

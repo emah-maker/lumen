@@ -3,7 +3,7 @@
 // The items Chrome, Safari and Edge put on a link and an image, beyond Open in New Tab and Copy:
 //   link:  Open Link in New Window, Open Link in Private Window, Save Link As…
 //   image: Save Image As…, Copy Image Address
-// "Save … As" always asks where to save, whatever Settings → General → Downloads says: the download is marked
+// "Save … As" always asks where to save, whatever Settings → Downloads and files says: the download is marked
 // here (by its address, for 30 seconds) and features/downloads.js asks for that one download.
 // main.js's showContextMenu adds these next to its own items; nothing here touches a window.
 

@@ -2,7 +2,7 @@
 // most likely goes on (ai/autocomplete.js, agent:autocomplete); the guess shows as grey text after the caret. Tab takes all of it,
 // Ctrl+Right (Alt+Right on a Mac) its next word; typing the same letters keeps the rest of it; any other key, Esc, a caret move, a click
 // or sending drops it. With no guess shown Tab does what it always did. No guess while the "/" menu or the "@" tab picker is open (they
-// own Tab then, and run first), for a "/" command, or with the caret anywhere but the end. Off in Settings → AI and agents (main then answers 'off' at
+// own Tab then, and run first), for a "/" command, or with the caret anywhere but the end. Off in Settings → AI (main then answers 'off' at
 // once, without a model call).
 // Loaded after chat-core.js, tabs-ask.js and slash.js. The core (createCore) is DOM-free: test/units/autocomplete-units.js runs it in Node.
 (function (root) {

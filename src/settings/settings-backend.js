@@ -25,25 +25,22 @@ const SETTINGS_PRELOAD = path.join(__dirname, '..', 'preload', 'settings-preload
 // The sidebar's categories (renderer/settings.js CATEGORIES), and every id lumen://settings/<id> also opens: the old
 // section ids and natural names (renderer/settings.js ALIASES, each mapped to a category) and every sub-page id.
 // test/units/settings-links-units.js reads renderer/settings.js and fails when this list and the page disagree.
-const SECTIONS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'search', 'ai', 'extensions', 'downloads', 'updates', 'advanced'];
-const SECTION_ALIASES = ['you-and-ai', 'mcp-servers', 'providers', 'hands-off', 'memory', 'voice-input', 'ask-before-acting', 'antigravity', 'ai-keys',
-  'default-browser', 'startup', 'languages', 'accessibility', 'visual-effects', 'system', 'reset', 'about',
-  'permissions', 'proxy', 'performance', 'diagnostics', 'language', 'cookies', 'passwords', 'security', 'theme', 'newtab', 'new-tab',
-  'engine', 'files', 'focus', 'keys', 'update'];
-const SECTION_SUBPAGES = ['ai-keys-page', 'connect-agents', 'connectors', 'external-apps', 'routines', 'skills', 'macros', 'usage', 'ai-providers', 'extensions-page',
-  'task-manager', 'internals', 'clock-greeting', 'widgets', 'site-permissions', 'site-data', 'telegram'];
+const SECTIONS = ['general', 'appearance', 'accessibility', 'ai', 'apps', 'home', 'tabs', 'privacy', 'downloads', 'updates', 'advanced'];
+const SECTION_ALIASES = ['you-and-ai', 'providers', 'hands-off', 'memory', 'voice-input', 'ask-before-acting', 'antigravity', 'ai-keys', 'default-browser', 'startup', 'languages', 'visual-effects', 'reset', 'about', 'permissions', 'proxy', 'performance', 'diagnostics', 'language', 'cookies', 'security', 'theme', 'newtab', 'new-tab', 'engine', 'extensions', 'search', 'files', 'focus', 'keys', 'update', 'connectors'];
+const SECTION_SUBPAGES = ['languages', 'sync', 'focus', 'ai-answers', 'ai-keys-page', 'ai-providers', 'ai-memory', 'ai-approvals', 'ai-tabs', 'ai-helpers', 'ai-chat', 'ai-computer', 'ai-privacy', 'ai-agents', 'routines', 'skills', 'macros', 'usage', 'widgets', 'mcp-servers', 'home-background', 'home-effect', 'tabs-groups', 'tabs-sleep', 'privacy-clear', 'privacy-tracking', 'privacy-adblock', 'privacy-passwords', 'privacy-safe', 'site-permissions', 'site-data', 'extensions-page', 'downloads-recent', 'about-lumen', 'system', 'adv-network', 'automation', 'adv-diagnostics', 'task-manager', 'internals', 'connect-agents', 'external-apps', 'telegram', 'clock-greeting', 'passwords'];
 const SECTION_LINKS = [...new Set([...SECTIONS, ...SECTION_ALIASES, ...SECTION_SUBPAGES])];
 const UPDATES_URL = 'https://github.com/emah-maker/lumen/releases';
 
 const isSettingsUrl = (url) => typeof url === 'string' && (url === SETTINGS_URL || url.startsWith(`${SETTINGS_URL}#`));
-const urlFor = (section) => (SECTION_LINKS.includes(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
+// (a service's page in Apps and connections, app-<id>, is made from the connector registry, so any id there is a link)
+const urlFor = (section) => (SECTION_LINKS.includes(section) || /^app-[a-z0-9-]{1,40}$/.test(section) ? `${SETTINGS_URL}#${section}` : SETTINGS_URL);
 const displayUrl = (url) => {
   const section = url.split('#')[1] || '';
   return `lumen://settings${section ? `/${section}` : ''}`;
 };
 // lumen://settings[/section] (chrome://settings works too) -> the section, or null.
 function parseSettingsInput(text) {
-  const m = /^(?:lumen|chrome):\/\/settings\/?([a-z-]*)\/?$/i.exec(String(text || '').trim());
+  const m = /^(?:lumen|chrome):\/\/settings\/?([a-z0-9-]*)\/?$/i.exec(String(text || '').trim());
   return m ? { section: m[1].toLowerCase() } : null;
 }
 
@@ -157,8 +154,8 @@ const DEFAULTS = {
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
   maxSteps: 0, // [ai] most steps the sidebar AI takes per task; 0: unlimited (agent.js stepLimit, loop-guard.js STEP_CHOICES)
-  aiSubagents: 'auto', // [ai] off | auto | on: the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). Auto offers the tool only for a request with several independent parts (ai/helpers-auto.js); an older true / false is on / off. The sidebar's Helpers row and Settings → AI and agents are this one setting
-  actingHelpers: false, // [ai] Settings → AI and agents → "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
+  aiSubagents: 'auto', // [ai] off | auto | on: the sidebar AI may hand independent read-only jobs to helpers working side by side (the delegate tool; ai/subagents.js). Auto offers the tool only for a request with several independent parts (ai/helpers-auto.js); an older true / false is on / off. The sidebar's Helpers row and Settings → AI are this one setting
+  actingHelpers: false, // [ai] Settings → AI → "Let helpers act in tabs": the sidebar AI may hand up to 3 browser jobs to helpers that click and type side by side, each in a background tab (parallel_tasks; ai/acting-helpers.js). API engines only
   aiSubagentModel: 'auto', // [ai] auto: helpers use a cheaper model of the chat's provider (subagents.js helperModel); same: the chat's own model
   maxChatRuns: 0, // [ai] sidebar chats that may work at once (one per tab); 0 = no limit; past a limit they wait their turn (features/tab-chats.js)
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
@@ -167,18 +164,18 @@ const DEFAULTS = {
   imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
-  aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings → AI and agents: Show what the AI couldn't do)
+  aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings → AI: Show what the AI couldn't do)
   autoFallback: true, // [ai] a model out of usage or unreachable: the same turn goes on another connected model, and back when it recovers (ai/fallback.js)
   aiSignedInSites: [], // [ai] hosts the sidebar's AI may always read with the user's signed-in session: [{ host, added }] (features/signed-in-sites.js); added only from its approval card
   aiSharedFiles: [], // [ai] local files the user let the sidebar's AI see with "Allow always for this file": their file:// addresses (features/shared-files.js); added only from its card
   claudeCodeSidebar: true, // [ai] Claude Code is offered in the sidebar's model menu once found (features/ai-agents.js modelOptions); off hides it without uninstalling
-  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI and agents → AI providers)
-  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI and agents → AI providers)
+  grokSidebar: false, // [ai] Grok Build is offered in the model menu (set by "Use your own Grok Build" and by connecting it; Settings → AI → AI providers)
+  antigravitySidebar: false, // [ai] Antigravity is offered in the model menu (set by "Use in the sidebar"; Settings → AI → AI providers)
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureCardNever: false, // [offers] "Don't show again" on the New in Lumen card (features/feature-offers.js); Lumen records it itself
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
-  telegramChannel: false, // [telegram] Settings → AI and agents → Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
+  telegramChannel: false, // [telegram] Settings → AI → Let agents use Lumen → Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
   telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
   telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
@@ -190,11 +187,11 @@ const DEFAULTS = {
   routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
   routineWebhookPort: 47821, // [routines] the port it listens on (1024-65535)
   aiDeviceAccess: false, // [ai] the AI may use files on this computer: upload_file paths, list_files, clipboard (features/device-access.js); credentials folders and Lumen's own profile stay out of reach
-  filesRemember: true, // [files] Settings > General > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
+  filesRemember: true, // [files] Settings > Downloads and files > Files > Remember files I open: local files opened in Lumen go on the new-tab page's Files list and the Ctrl+Shift+F picker (features/files.js); off: pins only
   claudeCodeFullAccess: false, // [ai] Claude Code in the sidebar runs as in a terminal: its own tools (shell, files), the user's MCP servers and slash commands, no prompts (ai/claude-code.js ARGS_FULL)
   ccUserSettings: false, // [ai] Claude Code chats also load the user's own ~/.claude setup (CLAUDE.md, rules, memory, hooks, settings); off: --setting-sources project (ai/claude-code.js buildArgs)
   grokBuildFullAccess: false, // [ai] Grok Build in the sidebar runs with --always-approve and its own tools (shell, files), no Lumen tool allow-list (ai/grok-build.js ARGS_FULL)
-  codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings → AI and agents)
+  codexSidebar: true, // [ai] the Codex CLI is offered in the sidebar's model menu once found (ai/codex.js; Settings → AI)
   codexFullAccess: false, // [ai] Codex in the sidebar runs with --sandbox danger-full-access and its own shell, patch and web tools on (ai/codex.js FULL_ON)
   antigravityFullAccess: false, // [ai] Antigravity in the sidebar runs with --dangerously-skip-permissions and no sandbox (ai/antigravity.js FULL_FLAGS)
   grokTerminal: true, // [ai] Grok Build in the sidebar may ask to run terminal commands (approval card each time); off: every call is denied without asking (automation/mcp-http.js terminalDecision)
@@ -208,15 +205,15 @@ const DEFAULTS = {
   agentsNoAsk: true, // [mcp] INVERTED in Settings (switch "Ask before agents act in their own window" is on when this is false): true = an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
-  aiPreferFractions: false, // [ai] Settings → AI and agents → Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
-  aiInstructionsOn: true, // [ai] Settings → AI and agents → Custom instructions: the two notes below go into the system prompt (ai/custom-instructions.js)
+  aiPreferFractions: false, // [ai] Settings → AI → Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
+  aiInstructionsOn: true, // [ai] Settings → AI → Instructions and memory: the two notes below go into the system prompt (ai/custom-instructions.js)
   aiInstructionsAbout: '', // [ai] "What should Lumen know about you"
   aiInstructionsStyle: '', // [ai] "How should Lumen respond"
   planModeDefault: false, // [ai] [plan mode] new sidebar chats start with the composer's Plan chip on (ai/plan-mode.js, renderer/plan-mode.js)
   skillsAutoUse: true, // [skills] skills marked "AI can use this on its own" are listed in the system prompt and loaded with use_skill (features/skills.js)
   skillsFromClaudeCode: false, // [skills] also list ~/.claude/skills/*/SKILL.md, read-only (features/skill-md.js)
   skillsSuggest: false, // [skills] offer "Save how I did this as a skill?" after a long run and "Update the skill?" after corrections; never saves by itself
-  aiMemory: false, // [ai] Settings → AI and agents → Memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
+  aiMemory: false, // [ai] Settings → AI → Instructions and memory: the sidebar AI keeps short notes between chats and gets them in its system prompt (ai/memory.js); never in temporary chats
   aiMemoryChatSearch: true, // [ai] ...and, while Memory is on, may search the titles and text of your saved chats (the memory tool's search_chats)
   aiHandsOff: false, // [ai] INVERTED in Settings (switch "Let the AI act on my pages" is on when this is false): true = hands-off mode: the AI reads the user's tabs but only clicks, types and navigates in tabs it opened itself (features/ai-manners.js)
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
@@ -946,7 +943,7 @@ function create(deps) {
   }
 
   async function set(key, value) {
-    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI and agents's Ask / Auto-allow / Bypass choice: both settings change together
+    if (key === 'aiPermissionMode') { // [bypass permissions] Settings → AI's Ask / Auto-allow / Bypass choice: both settings change together
       const patch = permissionMode.patchOf(value);
       if (!patch) throw new Error(`Invalid value for ${key}`);
       writeSettings({ ...readSettings(), ...patch });
@@ -985,9 +982,9 @@ function create(deps) {
       restartNeeded: RESTART_KEYS.filter((k) => p[k] !== launched[k]),
       platform: process.platform,
       zooms: ZOOMS,
-      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES, readyRecent: require('../features/tab-ready').RECENT_CHOICES }, // [tabs] Settings > Tabs > Memory's pickers
+      tabSleepChoices: { minutes: TS.MINUTE_CHOICES, freePercent: TS.FREE_PERCENT_CHOICES, lumenGb: TS.LUMEN_GB_CHOICES, maxAwake: TS.MAX_AWAKE_CHOICES, maxAwakeLimit: TS.MAX_AWAKE_LIMIT, soonMinutes: TS.SOON_MINUTE_CHOICES, keys: TS.KEYS, pressures: TS.PRESSURES, maxMinutes: TS.MAX_MINUTES, keepRecent: TS.KEEP_RECENT_CHOICES, freezeFirst: require('../features/tab-wake').FREEZE_FIRST_CHOICES, preload: require('../features/tab-wake').PRELOAD_CHOICES, readyRecent: require('../features/tab-ready').RECENT_CHOICES }, // [tabs] Settings → Tabs and browsing > Memory's pickers
       fontSizes: FONT_SIZES,
-      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, clockPx: WS.CLOCK_PX, // [look] Settings → Home's pickers
+      clockStyles: CS.CLOCK_STYLES, greetingFonts: CS.GREETING_FONTS, clockPx: WS.CLOCK_PX, // [look] Settings → New tab page's pickers
       permissions: PERMISSIONS,
       defaultDownloadDir: app.getPath('downloads'),
       spellcheckAvailable: process.platform === 'darwin' ? [] : ses().availableSpellCheckerLanguages,
@@ -1233,7 +1230,7 @@ function create(deps) {
       const d = deps.downloads.find((x) => x.id === id);
       if (d?.state === 'completed') shell.showItemInFolder(d.path);
     });
-    // [tabs] Settings > Tabs > Page unloading: the status panel, the "unload everything now" button, "Add current site", and its own reset
+    // [tabs] Settings → Tabs and browsing > Page unloading: the status panel, the "unload everything now" button, "Add current site", and its own reset
     handle('prefs:sleep-status', () => deps.tabSleep?.status() ?? null);
     handle('prefs:sleep-unload-all', () => deps.tabSleep?.unloadAll() ?? 0);
     handle('prefs:sleep-site', () => deps.tabSleep?.currentSite() ?? '');
@@ -1248,7 +1245,8 @@ function create(deps) {
     handle('prefs:widgets', () => deps.widgets.state());
     handle('prefs:widget-test', (input) => deps.widgets.test(input));
     handle('prefs:widget-save', async (input, id) => { const out = await deps.widgets.save(input, typeof id === 'string' ? id : null); return { message: out.message, state: deps.widgets.state() }; });
-    handle('prefs:widget-remove', (id) => { deps.widgets.remove(String(id)); return deps.widgets.state(); });
+    handle('prefs:widget-remove', (id, opts) => { deps.widgets.remove(String(id), { keepSecret: opts?.keepSecret === true }); return deps.widgets.state(); });
+    handle('prefs:widget-secret', (type, value) => { deps.widgets.setServiceSecret(String(type), typeof value === 'string' ? value : ''); return deps.widgets.state(); }); // Apps and connections: a service's key or token, saved or forgotten without a card
     handle('prefs:widget-gmail-connect', async (input) => { const out = await deps.widgets.gmailConnect(input); return { message: out.message, state: deps.widgets.state() }; });
     handle('prefs:widget-gmail-cancel', () => deps.widgets.gmailCancel());
     handle('prefs:widget-gmail-disconnect', async () => { await deps.widgets.gmailDisconnect(); return deps.widgets.state(); });

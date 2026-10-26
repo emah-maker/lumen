@@ -1,4 +1,4 @@
-// The guided Slack setup in Settings (Appearance → Widgets → Slack): the steps are shown, the one paste box
+// The guided Slack setup in Settings (Apps and connections → Slack): the steps are shown, the one paste box
 // connects with a token (against a stand-in Slack over a throwaway https server: no real Slack, no network),
 // refuses nonsense, remembers a half-pasted Client ID, shows "Connected to <workspace> as <user>" with a
 // Disconnect button, and never puts the token on the page. Run: node test/e2e/slack-setup-ui.js

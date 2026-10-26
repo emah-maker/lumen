@@ -157,7 +157,7 @@
 //   MCP `toMcpContent()`, not Anthropic's nested `source` shape) -- a tiny 1x1 PNG round-tripped
 //   through a real `grok --prompt-json` call and the model engaged with the image question.
 // ---------------------------------------------------------------------------------------------
-// FULL ACCESS (Settings → AI and agents → "Give Grok Build full access to this computer", grokBuildFullAccess, off by default)
+// FULL ACCESS (Settings → AI → "Give Grok Build full access to this computer", grokBuildFullAccess, off by default)
 // ---------------------------------------------------------------------------------------------
 // The user's own opt-in to run Grok Build in the sidebar the way it runs in a terminal. Everything above describes the
 // default (off); with it on a sidebar run differs in exactly these ways, and nothing else of the default changes:
@@ -190,7 +190,7 @@ const { exists, lookup, killTree, validModel, usageOf, fullAccessRejected, start
 const { turnLimitHit } = require('./loop-guard');
 const authSync = require('./auth-sync');
 const { isSignedOutText } = authSync;
-const effortLib = require('./effort'); // Settings → AI and agents → AI providers: reasoning effort per AI
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { isLimitText, limitOf } = require('../features/grok-limit');
 const { toolImagePaths } = require('../features/gen-images');
 
@@ -414,7 +414,7 @@ function buildArgs({ promptFile, sessionId, resume, systemPrompt, cwd, model = '
     ...(background ? argsBase(true) : fullAccess ? ARGS_FULL : ARGS_BASE),
     '--max-turns', String(maxTurns > 0 ? maxTurns : DEFAULT_MAX_TURNS), // hitting it ends in a "continue" notice (turnLimitHit), not an error
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    ...effortLib.cliArgs('grokbuild', effort), // Settings → AI and agents → AI providers: --reasoning-effort (none: Grok's own default)
+    ...effortLib.cliArgs('grokbuild', effort), // Settings → AI → AI providers: --reasoning-effort (none: Grok's own default)
     '--cwd', cwd,
     '--system-prompt-override', systemPrompt, // full replace: Grok Build has no --append-system-prompt
     resume ? '--resume' : '--session-id', sessionId,
@@ -615,7 +615,7 @@ function spawnJobs(input) {
 // The error for a run stopped on a tool that isn't Lumen's. A spawn_subagent gets its own words: Grok's subagents run outside
 // Lumen's approvals (their tool use isn't covered by Lumen's gate), so Lumen never lets them start; it can run the job with its own helpers.
 function offToolText(offTool) {
-  if (offTool === 'spawn_subagent') return 'Lumen stopped Grok Build: it tried to start one of its own helper agents. Those would work outside Lumen\'s approval checks, so Lumen doesn\'t allow them. In a sidebar chat Lumen runs such jobs as helpers of its own (keep helpers on in Settings → AI and agents); or turn on "Give Grok Build full access to this computer" there if you want Grok\'s own helpers.';
+  if (offTool === 'spawn_subagent') return 'Lumen stopped Grok Build: it tried to start one of its own helper agents. Those would work outside Lumen\'s approval checks, so Lumen doesn\'t allow them. In a sidebar chat Lumen runs such jobs as helpers of its own (keep helpers on in Settings → AI); or turn on "Give Grok Build full access to this computer" there if you want Grok\'s own helpers.';
   return `Lumen stopped Grok Build: it called a tool that isn't one of Lumen's (${offTool}). Grok reports a tool call as it starts running it, so that tool may already have run. Grok Build should only use Lumen's tools; if this keeps happening, pick another AI in the model picker.`;
 }
 
@@ -925,7 +925,7 @@ class GrokBuildEngine {
     fullAccess = fullAccess === true && !this.background;
     routeSubagents = routeSubagents === true && !this.background;
     // (routeSubagents: agent.js runs a spawn_subagent job with Lumen's helpers and sends the answer back; never for a background task) // [full access] never for a background task
-    // [keep connected] Settings → AI and agents → Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
+    // [keep connected] Settings → AI → Keep Grok Build connected (features/grok-warm.js, off by default): the chat's own
     // long-lived `grok agent stdio` process answers (full access and a chosen effort get a process of their own kind, see
     // grok-warm.js). It returns null when it can't take this message (setting off, images, a start that failed before
     // anything was sent): then the one-process-per-message run below does.

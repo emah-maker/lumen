@@ -1,4 +1,4 @@
-// Connectors in Lumen (features/connectors/, agent.js `connector` tool, Settings → AI and agents → Connectors), with no real network:
+// Connectors in Lumen (features/connectors/, agent.js `connector` tool, Settings → Apps and connections), with no real network:
 // stand-in Canvas, GitHub and Todoist on 127.0.0.1 (test/fixtures/fake-connectors.js), a fake model in place of Claude.
 //  - the settings page is one page: the gallery, with a "Custom MCP servers" section under it (no second MCP page, no coming-soon cards);
 //  - the settings page shows the gallery; connecting Canvas (the signed-in session), GitHub and Todoist (a pasted token) works from it;

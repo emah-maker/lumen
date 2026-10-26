@@ -1,4 +1,4 @@
-// Lumen as an MCP client: MCP servers the user adds in Settings → AI and agents → "Tools from MCP
+// Lumen as an MCP client: MCP servers the user adds in Settings → AI → "Tools from MCP
 // servers" give their tools to the sidebar's AI (the API engines; Claude Code and Grok Build keep
 // their locked-down config with only Lumen's own server).
 //
@@ -707,7 +707,7 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
   return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, isReadOnlyPreset, tools, call, stopAll };
 }
 
-// Settings → AI and agents. The mcp: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only
+// Settings → AI. The mcp: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only
 // Lumen's own UI and its settings page may call them.
 function registerIpc(ipcMain, client) {
   ipcMain.handle('mcp:servers', () => client.list());

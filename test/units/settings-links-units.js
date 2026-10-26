@@ -17,9 +17,10 @@ const en = JSON.parse(read('src', 'locales', 'en.json'));
 const cats = [...(/const CATEGORIES = \[([\s\S]*?)\n\];/.exec(settings)[1]).matchAll(/\{ id: '([a-z-]+)', title/g)].map((m) => m[1]);
 const aliasBlock = /const ALIASES = \{([\s\S]*?)\n\};/.exec(settings)[1];
 const aliases = [...aliasBlock.replace(/\/\/[^\n]*/g, '').matchAll(/(?:^|[{,])\s*(?:'([a-z-]+)'|([a-z]+)):\s*\{/g)].map((m) => m[1] || m[2]);
-const subs = [...new Set([...settings.matchAll(/\.subpage\('([a-z-]+)'/g), ...settings.matchAll(/\bmount\('[a-z-]+', '([a-z-]+)'/g)].map((m) => m[1]))];
+// (a page is a slot of CATEGORIES with { page }, or a subpage() made by a builder; a service's own page, app-<id>, is made from the connector registry)
+const subs = [...new Set([...settings.matchAll(/\.subpage\('([a-z-]+)'/g), ...(/const CATEGORIES = \[([\s\S]*?)\n\];/.exec(settings)[1]).matchAll(/\['([a-z-]+)', '[^']+', \{ page:/g)].map((m) => m[1]))];
 
-check('parsed the page: 8 categories, 30+ aliases, 15+ sub-pages', cats.length === 8 && aliases.length > 30 && subs.length > 15, `${cats.length} ${aliases.length} ${subs.length}`);
+check('parsed the page: 11 topics, 30+ aliases, 40+ pages', cats.length === 11 && aliases.length > 30 && subs.length > 40, `${cats.length} ${aliases.length} ${subs.length}`);
 const links = (ids) => ids.filter((id) => SB.urlFor(id) !== `${SB.SETTINGS_URL}#${id}`);
 check('every category opens through lumen://settings/<id>', links(cats).length === 0, links(cats).join());
 check('every alias opens through lumen://settings/<id>', links(aliases).length === 0, links(aliases).join());
@@ -31,7 +32,8 @@ check('lumen://settings/connectors and /focus parse to those ids', SB.parseSetti
 // The command bar.
 const ids = CB.SECTION_IDS;
 check('command bar: every category is listed', cats.every((id) => ids.includes(id)), cats.filter((id) => !ids.includes(id)).join());
-check('command bar: every sub-page is listed', subs.filter((id) => id !== 'extensions-page').every((id) => ids.includes(id)) && ids.includes('extensions'), subs.filter((id) => !ids.includes(id)).join());
+check('command bar: every page is listed', subs.every((id) => ids.includes(id)), subs.filter((id) => !ids.includes(id)).join());
+check('a service page (app-<id>) is a link the backend accepts, an unknown one is not a page', SB.urlFor('app-gmail') === `${SB.SETTINGS_URL}#app-gmail` && SB.urlFor('app-') === SB.SETTINGS_URL && SB.parseSettingsInput('lumen://settings/app-gmail').section === 'app-gmail', '');
 check('command bar: nothing it lists is a retired name', !['about', 'you-and-ai'].some((id) => ids.includes(id)), '');
 check('command bar: every entry opens a page the backend accepts', ids.every((id) => SB.SECTION_LINKS.includes(id)), ids.filter((id) => !SB.SECTION_LINKS.includes(id)).join());
 check('command bar: no duplicate entries', new Set(ids).size === ids.length, '');

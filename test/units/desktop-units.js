@@ -28,7 +28,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const base = { master: true, terminals: false, allowed: [], once: new Set(), lumenPid: 4242, lumenExe: 'C:\\Lumen\\Lumen.exe' };
     const word = { proc: 'WINWORD', title: 'Report.docx - Word', pid: 10, exe: OFFICE };
     const wordKey = 'c:\\office\\winword.exe';
-    check('master switch off: an ordinary app is "off", with the way to turn it on', policy.decide(word, { ...base, master: false }).status === 'off' && /Settings → AI and agents/.test(policy.OFF_TEXT));
+    check('master switch off: an ordinary app is "off", with the way to turn it on', policy.decide(word, { ...base, master: false }).status === 'off' && /Settings → AI/.test(policy.OFF_TEXT));
     check('master on, app unknown: ask (friendly name; the app is its full path)', policy.decide(word, base).status === 'ask' && policy.decide(word, base).app === wordKey && policy.decide(word, base).name === 'Microsoft Word', J(policy.decide(word, base)));
     check('Once: allowed for this chat only (the once set, by path), not "always"', policy.decide(word, { ...base, once: new Set([wordKey]) }).status === 'allow' && policy.decide(word, { ...base, once: new Set([wordKey]) }).always === false);
     check('Always: allowed from the Settings list, by path in any case', policy.decide({ ...word, exe: OFFICE.toUpperCase() }, { ...base, allowed: [{ app: wordKey, name: 'Microsoft Word' }] }).status === 'allow');

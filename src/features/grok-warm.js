@@ -1,4 +1,4 @@
-// "Keep Grok Build connected" (Settings -> AI and agents, key grokKeepConnected, off by default): each sidebar chat that
+// "Keep Grok Build connected" (Settings -> AI, key grokKeepConnected, off by default): each sidebar chat that
 // talks to Grok Build gets its own long-lived `grok agent stdio` process, which stays up between the chat's messages, so a
 // later message skips everything a new grok process does before the model is asked.
 //

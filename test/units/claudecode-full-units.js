@@ -1,4 +1,4 @@
-// [full access] Settings → AI and agents → "Give Claude Code full access to this computer" (claudeCodeFullAccess):
+// [full access] Settings → AI → "Give Claude Code full access to this computer" (claudeCodeFullAccess):
 // the sidebar's Claude Code engine runs the CLI as a terminal does. Plain Node, no Electron and no
 // real CLI: a fake `claude` (a Node child speaking stream-json) records the argv and working folder,
 // runs one silent built-in tool longer than the watchdog, and answers.

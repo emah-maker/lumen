@@ -1,4 +1,4 @@
-// Settings > Home > Widgets: the one-line summaries and the picker's words (renderer/widget-summary.js), pure, no window.
+// Settings → Apps and connections: the one-line summaries and the picker's words (renderer/widget-summary.js), pure, no window.
 const WS = require('../../src/renderer/widget-summary');
 
 module.exports = async function widgetSummaryUnits(check) {

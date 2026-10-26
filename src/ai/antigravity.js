@@ -66,7 +66,7 @@
 //      documents conversationId on every payload; a subagent is a conversation with a parent_conversation_id, and its stream step has
 //      subagent_info { conversation_id, log_uri }; the stream's step_update has no parent field). If it does not, helperRows (agy-tools.js) shows nothing.
 //
-// FULL ACCESS (Settings → AI and agents → "Give Antigravity full access to this computer", antigravityFullAccess, off by default).
+// FULL ACCESS (Settings → AI → "Give Antigravity full access to this computer", antigravityFullAccess, off by default).
 // The user's own opt-in to run agy in the sidebar the way it runs in a terminal. With it on, and only then:
 //  - argv: --dangerously-skip-permissions replaces --sandbox (FULL_FLAGS). Both are listed by `agy --help` (1.2.14:
 //    "--dangerously-skip-permissions  Auto-approve all tool permission requests without prompting"; "--sandbox  Run in a
@@ -93,7 +93,7 @@ const { agyAllowed, helperRows } = require('./agy-tools'); // the allowlist the 
 const { gateScript } = require('./grok-build'); // the curl script that posts a hook's stdin to Lumen and prints the answer
 const { isLimitText } = require('../features/grok-limit');
 const { antigravityLimit } = require('../features/provider-usage'); // the quota message and its reset time ("Resets in 110h")
-const effortLib = require('./effort'); // Settings → AI and agents → AI providers: reasoning effort per AI
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 
 const INSTALL_URL_SH = 'https://antigravity.google/cli/install.sh';
 const INSTALL_URL_PS = 'https://antigravity.google/cli/install.ps1';
@@ -334,7 +334,7 @@ function buildArgs({ prompt, conversation = null, model = 'default', fullAccess 
     '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
     ...(conversation ? ['--conversation', conversation] : []),
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    ...effortLib.cliArgs('antigravity', effort), // Settings → AI and agents → AI providers: --effort (agy 1.2.16 --help; none: agy's own default)
+    ...effortLib.cliArgs('antigravity', effort), // Settings → AI → AI providers: --effort (agy 1.2.16 --help; none: agy's own default)
     ...(fullAccess ? FULL_FLAGS : ['--sandbox']), // --sandbox: "Run in a sandbox with terminal restrictions enabled" (agy --help)
     ...(workDir ? ['--add-dir', workDir] : []), // [work folder] the folder picked for the chat or its project joins the workspace (agy --help: --add-dir)
   ];

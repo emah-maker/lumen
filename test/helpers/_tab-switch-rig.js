@@ -203,7 +203,7 @@ function summarize(rows) {
   return out;
 }
 
-// Puts some tabs to sleep (unloaded) and freezes others, as Settings > Tabs > Page unloading does after its timers, then returns what it did.
+// Puts some tabs to sleep (unloaded) and freezes others, as Settings → Tabs and browsing > Page unloading does after its timers, then returns what it did.
 async function sleepSome(rig, { sleep: nSleep = 12, freeze: nFreeze = 6, from = 5 } = {}) {
   const { app, ids } = rig;
   const pool = ids.slice(from);

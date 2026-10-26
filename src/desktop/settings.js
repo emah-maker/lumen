@@ -1,5 +1,5 @@
 // [desktop apps] The settings side: the master switch, the terminals switch and the list of apps the AI may always use. Added to the list only
-// from the approval card ("Always"); removed here from Settings → AI and agents → "Apps the AI can use". The settings:* channels answer the Settings page
+// from the approval card ("Always"); removed here from Settings → AI → "Apps the AI can use". The settings:* channels answer the Settings page
 // only (main.js PRIVILEGED_IPC); nothing a page or the AI's tools can reach.
 'use strict';
 

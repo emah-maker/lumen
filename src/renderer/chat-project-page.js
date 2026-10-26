@@ -297,7 +297,7 @@
     const root = card(tr('projectws.memory', 'Memory'), { tip: tr('projectws.memory.note', 'Saved in this project’s chats, so only its chats see it, next to your general memory.'), className: 'pjp-memory' });
     const count = el('span', { className: 'pjp-badge' });
     root.head.querySelector('h2').after(count);
-    const empty = note(data.memoryOn ? tr('projectws.empty.memory', 'Nothing saved for this project yet. What the AI saves in a chat of this project is kept here.') : tr('projectws.memory.off', 'Memory is off. Turn it on in Settings → AI and agents → Memory, and what the AI saves in this project’s chats is kept here.'));
+    const empty = note(data.memoryOn ? tr('projectws.empty.memory', 'Nothing saved for this project yet. What the AI saves in a chat of this project is kept here.') : tr('projectws.memory.off', 'Memory is off. Turn it on in Settings → AI → Instructions and memory, and what the AI saves in this project’s chats is kept here.'));
     const draw = (entries) => {
       count.textContent = entries.length ? String(entries.length) : '';
       count.hidden = !entries.length;

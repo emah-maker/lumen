@@ -3,7 +3,7 @@
 //   - every link lumen://settings#<section> that settings-backend accepts (SECTION_LINKS: the sections, their old names and the sub-pages) opens
 //     the page it names, with its rows built and no empty list on screen, on a Settings page opened fresh (the first route is the lazy one)
 //   - search finds a row of a page that is not built yet, and Ctrl+F / "/" focuses the search box and has everything built
-//   - the open widget form's unsaved-changes guard is in place when Home > Widgets opens from a link
+//   - the open widget form's unsaved-changes guard is in place when Apps and connections opens from a link
 //   - no frame shows an empty list (a list is only on screen once it has a row), while the page opens and while it fills in
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -105,7 +105,7 @@ const SAMPLER = `(() => {
       await closeSettings(id);
     }
 
-    // ---- the widget form's unsaved-changes guard, from a link into Home > Widgets
+    // ---- the widget form's unsaved-changes guard, from a link into Apps and connections
     {
       const id = await app.evaluate((_e, s) => global.__settings.open(s), 'widgets');
       await waitIn(id, 'document.body?.dataset.shown === "1"');
@@ -122,7 +122,7 @@ const SAMPLER = `(() => {
         const after = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(after);
         return JSON.stringify({ clean: before.defaultPrevented, dirty: after.defaultPrevented });
       })()`);
-      check('Home > Widgets from a link is built, and its open form asks before the tab closes with unsaved changes (and not when unchanged)', state === JSON.stringify({ clean: false, dirty: true }), state);
+      check('Apps and connections from a link is built, and its open form asks before the tab closes with unsaved changes (and not when unchanged)', state === JSON.stringify({ clean: false, dirty: true }), state);
       await closeSettings(id);
     }
   } finally { await app.close().catch(() => {}); }

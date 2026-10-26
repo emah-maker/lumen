@@ -140,7 +140,7 @@ function clientFor(provider, apiKey) {
   const OpenAI = OpenAISDK();
   if (provider === 'local') {
     const cfg = localConfig();
-    if (!localModels().allowed(cfg)) throw new Error('The local AI address isn’t on this computer. Check Settings → AI and agents → Local.');
+    if (!localModels().allowed(cfg)) throw new Error('The local AI address isn’t on this computer. Check Settings → AI → Local.');
     return new OpenAI({ apiKey: 'local', baseURL: localModels().baseURL(cfg), maxRetries: 0, fetch: netFetch() });
   }
   return new OpenAI({ apiKey, baseURL: PROVIDERS[provider].baseURL, defaultHeaders: PROVIDERS[provider].headers, maxRetries: 2, fetch: netFetch() });
@@ -460,8 +460,8 @@ function describeProviderError(err, provider, model = '') {
   if (!OpenAIModule || !(err instanceof OpenAIModule.APIError)) return null;
   const label = PROVIDERS[provider]?.label || provider;
   if (provider === 'local') { // a server on this computer: not the internet, and no key
-    if (err instanceof OpenAIModule.APIConnectionError) return { text: 'Couldn’t reach your local AI server. Start Ollama or LM Studio (with its local server on) and check the address in Settings → AI and agents → Local.' };
-    if (err.status === 404) return { text: 'The local server doesn’t have this model. Press Detect in Settings → AI and agents → Local to refresh the list, or pull or load the model first.' };
+    if (err instanceof OpenAIModule.APIConnectionError) return { text: 'Couldn’t reach your local AI server. Start Ollama or LM Studio (with its local server on) and check the address in Settings → AI → Local.' };
+    if (err.status === 404) return { text: 'The local server doesn’t have this model. Press Detect in Settings → AI → Local to refresh the list, or pull or load the model first.' };
   }
   // Offline, DNS, a timeout: there is no HTTP status to report.
   if (err instanceof OpenAIModule.APIConnectionError) {
