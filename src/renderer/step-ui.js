@@ -199,8 +199,12 @@
   }
   function stateOf(turn, card) {
     // A card is working until the assistant's narration ends it (or the turn ends), however briefly no step runs between two steps.
+    // [background helpers] The reply is over but a helper it started still works (main: a 'helper' event, steps the helper does): the card says so,
+    // and is Done when the helper is.
+    if (card.ended && !card.stopped && turn?.helpers?.size && card === turn.cards?.[turn.cards.length - 1]) return turn.approvalsWaiting?.() ? 'approval' : 'helper';
     if (card.running > 0 || !card.ended) return (turn?.approvalsWaiting?.() && card === turn.card) ? 'approval' : 'working';
-    return card.stopped ? 'stopped' : 'completed';
+    if (card.stopped) return 'stopped';
+    return 'completed';
   }
   function refreshCard(turn, card) {
     const state = stateOf(turn, card);
@@ -212,6 +216,7 @@
     }
     const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.surface === 'tool' ? 'tool' : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
+    card.helperLabel = state === 'helper' ? helperLabelOf(turn) : '';
     const task = card.task || card.first;
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
     if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
@@ -312,6 +317,8 @@
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
     if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
     if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
+    if (state === 'helper') { const own = step && step !== card.stepAtHelper ? step.replace(/^Helper · /, '') : ''; // (the step that started the helper says nothing about what it does now)
+      const what = own || card.helperLabel; return what ? tr('card.status.helper', { step: what }) : tr('card.status.helperIdle'); }
     if (!step) return tr('card.status.starting');
     const site = card.surface === 'browser' && card.siteMode ? '' : siteOf(card);
     return site && !step.toLowerCase().includes(site.toLowerCase()) ? tr('card.status.workingOn', { step, site }) : tr('card.status.working', { step });
@@ -328,6 +335,25 @@
     const wait = card.liveAt + 1500 - Date.now();
     if (state !== 'working' || wait <= 0) write(); else card.liveTimer = setTimeout(() => { statusBar(card, card.el.dataset.state); }, wait);
   }
+  // [background helpers] What the helpers working in the background are doing, for the card's status line: the first one's own words.
+  const helperLabelOf = (turn) => { const h = turn?.helpers ? [...turn.helpers.values()][0] : null; return h ? String(h.latest || h.label || '').slice(0, 120) : ''; };
+  // main's 'helper' event ({ id, state: 'working' | 'progress' | 'done' | 'failed' | 'stopped', label }): a helper Claude Code runs in the background starts,
+  // makes progress or ends. The turn that started it keeps them (turn.helpers); the card of its last step shows "Helper working" after its reply is
+  // over, and Done when the last helper is. Returns true when it was taken.
+  function helper(turn, event) {
+    if (!turn || typeof event?.id !== 'string') return false;
+    const map = (turn.helpers ||= new Map());
+    if (event.state === 'working') {
+      map.set(event.id, { label: String(event.label || ''), latest: '' });
+      const card = turn.cards?.[turn.cards.length - 1];
+      if (card && card.stepAtHelper == null) card.stepAtHelper = trimStep(card.latest);
+    }
+    else if (event.state === 'progress') { const h = map.get(event.id); if (h) h.latest = String(event.label || ''); }
+    else map.delete(event.id);
+    refreshAll(turn);
+    return true;
+  }
+
   // ---- the files the AI made: each one opens from the card (its name, and "Show in folder"); a script or program is only ever shown in its folder.
   // The card's files come from main as cards of the file registry (id, name, path, canTab, canSystem): the chat names a file by that id, never by a path.
   const FILE_MAX = 5;
@@ -451,7 +477,7 @@
       card.toggle.removeAttribute('aria-pressed'); // (the label already says what a click does: Show / Hide; "pressed" on top of it read twice)
       card.toggle.title = label;
     }
-    card.closeAll.hidden = !(n > 0 && card.runId != null && state !== 'working' && state !== 'approval' && !card.closed); // (after the run: "Close them")
+    card.closeAll.hidden = !(n > 0 && card.runId != null && state !== 'working' && state !== 'approval' && state !== 'helper' && !card.closed); // (after the run: "Close them")
     if (!card.closeAll.hidden && !card.closeAll.textContent) { card.closeAll.textContent = tr('card.aiTabs.close'); card.closeAll.setAttribute('aria-label', tr('card.aiTabs.closeLabel')); }
   }
   async function toggleAiTabs(card) {
@@ -688,7 +714,7 @@
         turn.noteRows = null;
         adoptPlain(turn, card); // (steps of this turn that came before the card: they belong in it)
       }
-      if (card.ended) { card.ended = false; card.stopped = false; } // (a step after the card said Done: it works again, and says Done at the turn's real end)
+      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; } // (a late step, a helper's, does not undo the Done of the reply that started it) // (a step after the card said Done: it works again, and says Done at the turn's real end)
       setSurface(card, surface, event.name);
       if (surface === 'browser' && !card.browserInit) { card.browserInit = true; card.task = SL().taskName(opts.task || ''); if (turn.lastThumb && !card.tab) { card.tab = turn.lastThumb.tab; setTabRow(card, turn.lastThumb.tab); } }
       markRow(row, surface, event.name);
@@ -704,7 +730,7 @@
     } else if (turn.card?.el.isConnected) {
       // A step that is on no surface of its own (a web search, a tool): in the turn's card, in order, not in a row of its own under it.
       const card = turn.card;
-      if (card.ended) { card.ended = false; card.stopped = false; }
+      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; } // (a late step, a helper's, does not undo the Done of the reply that started it)
       card.count++;
       if (running) card.running++;
       card.latest = label;
@@ -917,5 +943,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor };
 })();

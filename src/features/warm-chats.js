@@ -38,11 +38,13 @@ function createWarmChats({ make, maxIdle = () => 4, idleMs = () => 10 * 60 * 100
   }
 
   const warm = (e) => { try { return Boolean(e.engine.isWarm?.()); } catch { return false; } };
+  // [background helpers] An engine whose process is kept for helpers still working is busy, not idle: no timer or cap ends it.
+  const helping = (e) => { try { return Boolean(e.engine.helping?.()); } catch { return false; } };
 
   // Past the cap, the least recently used idle warm chats lose their process.
   function trim() {
     const cap = Math.max(0, Number(maxIdle()) || 0);
-    const idle = [...chats.values()].filter((e) => e.holds === 0 && warm(e)).sort((a, b) => a.last - b.last);
+    const idle = [...chats.values()].filter((e) => e.holds === 0 && warm(e) && !helping(e)).sort((a, b) => a.last - b.last);
     for (const e of idle.slice(0, Math.max(0, idle.length - cap))) forget(e);
   }
 
@@ -54,7 +56,7 @@ function createWarmChats({ make, maxIdle = () => 4, idleMs = () => 10 * 60 * 100
     const ms = Number(idleMs());
     e.timer = null;
     if (ms !== Infinity) { // Infinity: never (until its chat goes, the idle cap, or quit)
-      e.timer = setTimer(() => { if (e.holds === 0) forget(e); }, Math.max(1000, ms || 0));
+      e.timer = setTimer(() => { if (e.holds !== 0) return; if (helping(e)) settle(e); else forget(e); }, Math.max(1000, ms || 0));
       e.timer?.unref?.();
     }
     trim();

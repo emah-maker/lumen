@@ -1836,7 +1836,9 @@ class Agent {
     return taskScope.run(scope, fn).finally(() => {
       letGo();
       try { signal?.removeEventListener?.('abort', letGo); } catch {}
-      this.scopes.delete(scope);
+      // [background helpers] A helper this run started in the background still works in its tab: the scope stays registered (the tab is in use,
+      // another chat does not take it) until the helper is over (claudeCodeTurn sets keep).
+      if (scope.keep) { scope.keep.finally(() => this.scopes.delete(scope)); scope.keep = null; } else this.scopes.delete(scope);
       if (this.runScope === scope) this.runScope = null;
       try { this.browser.research?.finish(scope); } catch {} // research tabs stay open; only the "reading" marker goes
       this.closeSignedInTabs(scope); // [signed-in sites]
@@ -3184,8 +3186,21 @@ class Agent {
     const engine = this.engineFor('claudecode');
     const rec = this.runs.get(messages);
     const sidebarEmit = emit;
-    emit = (event) => { if (event.type === 'reply_complete' && rec) rec.settling = true; sidebarEmit(event); }; // (run(): a settling run is waited for)
+    // [background helpers] A helper Claude Code started keeps this message's tab and approvals in use until it is over (inTask holds the scope).
+    const scope0 = taskScope.getStore();
+    let keepOver = null;
+    emit = (event) => {
+      if (event.type === 'reply_complete' && rec) rec.settling = true; // (run(): a settling run is waited for)
+      if (event.type === 'helper' && scope0) {
+        if (event.state === 'working' && !scope0.keep) scope0.keep = new Promise((resolve) => { keepOver = resolve; });
+        else if (event.count === 0 && event.state !== 'working' && event.state !== 'progress') keepOver?.();
+      }
+      sidebarEmit(event);
+    };
+    // The CLI began a turn of its own (a helper ended): a follow-up in this chat (claudeFollowUp).
+    const onFollowUp = ({ proc }) => this.claudeFollowUp(messages, { engine, proc, spawn, routed, emit: sidebarEmit, onFollowUp, onLateUsage, hosts: rec?.hosts, scope: scope0 });
     let out = await engine.run({
+      onFollowUp,
       scope: taskScope.getStore(), // [parallel CLI chats] this message's tab, approvals and signal, for its MCP tool calls
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
       prompt: first.text,
@@ -3204,8 +3219,15 @@ class Agent {
       delete settings.ccSession;
       snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
       const again = handoff();
-      out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore() });
+      out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore(), onFollowUp });
     }
+    await this.finishClaudeCodeTurn(messages, out, { routed, spawn, emit, engine, startedAt });
+  }
+
+  // What a Claude Code message leaves in the chat once its turn is over: its usage, the session it continues, notices, pictures and files it made,
+  // and the reply itself in the history. (A follow-up turn, claudeFollowUp, ends the same way.)
+  async finishClaudeCodeTurn(messages, out, { routed, spawn, emit, engine, startedAt }) {
+    const settings = messages.settings;
     recordUsage(messages, { model: settings.model, cost: out.cost }, emit);
     { const logged = this.reportUsage('claudecode', { usage: out.usage, rateLimit: out.rateLimit, model: routed.model }); if (logged?.notice) emit({ type: 'notice', text: logged.notice }); }
     this.noteCliContext(messages, out, routed.model, emit); // [context]
@@ -3222,6 +3244,43 @@ class Agent {
       messages.push(turn);
     }
     if (caughtUp) settings.ccSeen = messages.length; // [chat history] the session knows the chat up to here
+  }
+
+  // [background helpers] The turn Claude Code starts by itself when a helper it ran in the background ends (it goes on from the helper's result):
+  // a run of this chat like any other (Stop, the working line, the saved reply), with no message of the user's before it. The engine hands
+  // over the process (ClaudeCodeEngine.watchLine); main.js sees 'followup_start' and takes the run as the chat's running one again, and the
+  // chat draws a new reply under the earlier one.
+  async claudeFollowUp(messages, ctx) {
+    const { engine, proc, spawn, routed, emit, onFollowUp, onLateUsage, hosts, scope } = ctx;
+    const settings = messages.settings;
+    const previous = this.runs.get(messages);
+    if (previous) await previous.promise.catch(() => {}); // (the user wrote meanwhile: that reply first)
+    if (proc.exited) return;
+    const controller = new AbortController();
+    const rec = { controller, promise: null, hosts: hosts || this.approvedHosts, settling: false };
+    const run = (async () => {
+      const startedAt = Date.now() - 2000;
+      try {
+        emit({ type: 'followup_start' });
+        await this.inTask(scope?.tabId ?? null, controller.signal, async () => {
+          const out = await engine.run({
+            scope: taskScope.getStore(), ...spawn, prompt: '', images: [], adopt: proc, quietExpired: false, signal: controller.signal, prestart: false, lateUsage: onLateUsage, onFollowUp,
+            emit: (event) => { if (event.type === 'reply_complete') rec.settling = true; emit(event); },
+          });
+          await this.finishClaudeCodeTurn(messages, out, { routed, spawn, emit, engine, startedAt });
+        }, messages, this.newActionLog(), { hosts: rec.hosts, aboutPage: false });
+      } catch (err) {
+        if (controller.signal.aborted) emit({ type: 'notice', text: 'Stopped.', stopped: true });
+        else emit({ type: 'error', ...describeError(err, this.browser.anthropicAuth?.()) });
+      } finally {
+        emit({ type: 'done', model: settings?.model });
+      }
+    })();
+    rec.promise = run;
+    this.runs.set(messages, rec);
+    const clear = () => { if (this.runs.get(messages) === rec) this.runs.delete(messages); };
+    run.then(clear, clear);
+    return run;
   }
   // ---- [/claude code engine]
 

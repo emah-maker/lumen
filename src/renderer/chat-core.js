@@ -1788,6 +1788,8 @@ function endStream() {
 }
 
 let finishedRun = null; // { runId, turn }: the run that just ended, so a thumbnail that lands after its 'done' still reaches its Browser card
+const finishedRuns = new Map(); // [background helpers] run id -> the turn that ended last under it (a few): the card a helper's steps still go to
+const finishedTurn = (id) => (id != null && finishedRun && finishedRun.runId === id ? finishedRun.turn : finishedRuns.get(id) || null);
 let earlyEnded = null; // { runId, bubble }: the run whose reply ended on reply_complete, until its 'done' (lateDone)
 let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
 window.assistant.onEvent((event) => {
@@ -1803,9 +1805,19 @@ window.assistant.onEvent((event) => {
   // text): drawn under that reply, not dropped with the finished turn.
   if (event.type === 'image' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) latePicture(event); return; }
   if (event.type === 'file' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateFile(event); return; } // [ai files]
+  // [background helpers] Claude Code began a turn of its own (a helper it ran in the background ended): a reply under the earlier one, in this chat.
+  if (event.type === 'followup_start') {
+    if (running || forOtherChat(event.chatId)) return;
+    if (event.chatId && !shownChatId) nameChat(event.chatId);
+    beginTurn();
+    runId = event.runId;
+    return;
+  }
   // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.
-  if (event.type === 'card_files' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.filesMade(finishedRun.turn, event.files); return; } // (the files a run wrote, after its reply was whole)
-  if (event.type === 'thumb' && finishedRun && event.runId === finishedRun.runId && (!turn || event.runId !== runId)) { if (!forOtherChat(event.chatId)) window.stepUI?.thumb(finishedRun.turn, event); return; }
+  // [background helpers] So do a helper's steps and its state, long after: a helper Claude Code ran in the background reports on the card of the reply
+  // that started it ("Helper working" until it ends). Its own steps are flagged; a Lumen call it makes carries only the run's id.
+  const late = finishedTurn(event.runId);
+  if (late && /^(card_files|thumb|helper|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1882,6 +1894,7 @@ window.assistant.onEvent((event) => {
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       turn.seg = null; // (thinking after this step is a row of its own, after it)
       if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
+      if (event.helper) step.dataset.helper = '1'; // [background helpers] a helper's step: the reply ending does not stop it (finishTurn)
       if (!event.id) step.className = 'step done';
       if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') })); // [connectors] what a write made, with its link
       if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1'; // it changes something on a page (Regenerate asks first)
@@ -1947,6 +1960,9 @@ window.assistant.onEvent((event) => {
       break;
     case 'tabs_attached': // main read the picked tabs: what actually went along (a sleeping tab only by address)
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
+      break;
+    case 'helper': // [background helpers] a helper Claude Code runs in the background starts, progresses or ends (step-ui.js helper)
+      window.stepUI?.helper(turn, event);
       break;
     case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
       showHelperCard(event);
@@ -2075,6 +2091,41 @@ window.assistant.onEvent((event) => {
   }
 });
 
+// [background helpers] An event for the card of a reply that has ended (see onEvent): a thumbnail, files, a helper's state, a step it did.
+function lateCardEvent(t, event) {
+  switch (event.type) {
+    case 'card_files': window.stepUI?.filesMade(t, event.files); break;
+    case 'thumb': window.stepUI?.thumb(t, event); break;
+    case 'helper': window.stepUI?.helper(t, event); break;
+    case 'tool': {
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
+      const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;
+      if (!step) break;
+      if (event.helper) step.dataset.helper = '1';
+      if (!event.id) step.className = 'step done';
+      if (ACTING_TOOLS.has(event.name)) step.dataset.acts = '1';
+      if (event.id) { t.steps.set(event.id, step); startStepClock(); }
+      break;
+    }
+    case 'tool_update': {
+      const step = t.steps?.get(event.id);
+      if (!step) break;
+      const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
+      window.stepUI?.update(t, step, { ...event, label: event.label || fallback });
+      break;
+    }
+    case 'tool_done': {
+      const step = t.steps?.get(event.id);
+      if (!step) break;
+      step.classList.remove('running', 'done', 'failed', 'stopped');
+      step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
+      showStepTime(step, true);
+      window.stepUI?.done(t, step, event);
+      break;
+    }
+  }
+}
+
 // The end of the running reply's view: the text finished, the working line gone, the composer free, the next queued
 // message sent. `early`: a Claude Code reply whose text is complete while its process still sends its last line
 // (reply_complete); the run's own 'done' then only adds what it carries (late 'done' in onEvent).
@@ -2088,12 +2139,12 @@ function finishTurn(event, { early }) {
     row.append(regenButton());
     turn.working.before(row);
   }
-  if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => s.classList.contains('running') || s.classList.contains('stopped')) ? t('chat.replyStopped') : t('chat.replyDone'));
+  if (!turn.failed) announce(turn.stopped || [...turn.steps.values()].some((s) => !s.dataset.helper && (s.classList.contains('running') || s.classList.contains('stopped'))) ? t('chat.replyStopped') : t('chat.replyDone'));
   labelReply(turn.text, event.model, event.auto || turn.auto, { at: Date.now(), versions: turn.versions });
   scrollToBottom(); // (the reply's copy button and label were added below its end)
   endStream();
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
-  for (const step of turn.steps.values()) if (step.classList.contains('running')) step.className = 'step stopped';
+  for (const step of turn.steps.values()) if (step.classList.contains('running') && !step.dataset.helper) step.className = 'step stopped'; // (a helper's step goes on after the reply: its own end says how it went)
   window.stepUI?.finalize(turn, { ...event, reply: turn.text?.source || '' });
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
@@ -2108,6 +2159,8 @@ function finishTurn(event, { early }) {
   const clean = !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
   document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean, text: turn.text?.source || '', bubble: turn.text || null, chatId: shownChatId } }));
   finishedRun = { runId, turn };
+  finishedRuns.set(runId, turn);
+  while (finishedRuns.size > 8) finishedRuns.delete(finishedRuns.keys().next().value);
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
