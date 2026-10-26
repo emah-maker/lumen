@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- Projects have a real page and a tidier row. In the chat list a project is one row: its name opens the project page, the chevron lists its chats, and a + (new chat here) and a ⋯ menu (open, new chat, instructions, rename and folder) show on hover or focus, instead of three grey buttons under the row. The page is laid out like a Claude project: its name (editable), a box that starts a chat in it, its chats (pin, move, delete, search) and beside them its instructions (written in place), files, pinned pages, folder, defaults and memory.
+- **Projects have a page of their own and a tidier row in the chat list.** A project is one row: its name opens the project page, the chevron lists its chats, and a + (new chat here) and a ⋯ menu (open, new chat, instructions, rename and folder) show on hover or focus, instead of three grey buttons under the row. The page is laid out like a Claude project: its name (editable), a box that starts a chat in it, its chats (pin, move, delete, search) and beside them its instructions (written in place), files, pinned pages, folder, defaults and memory.
 
 ## 0.5.70 (2026-10-25)
 
