@@ -2321,6 +2321,30 @@ function sendSplitLayout(sp) {
   holder.splitKey = key;
   ui()?.send('split:layout', msg);
 }
+// The rectangle a tab's page fills: its side of a split pair, else the whole tab area.
+const pageRect = (tab, sp) => (sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds);
+// Bounds and full-width layout for a view that is about to be shown (layoutBody sets the same again afterwards).
+function presizeTab(tab, sp) {
+  try {
+    const at = pageRect(tab, sp);
+    const now = tab.view.getBounds();
+    if (now.x !== at.x || now.y !== at.y || now.width !== at.width || now.height !== at.height) tab.view.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height });
+    if (!sp && isNewTab(tab.view.webContents.getURL())) { const overlay = sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds }); if (overlay) setOverlay(tab, overlay); }
+  } catch { /* gone */ }
+}
+// The width a new-tab page lays itself out at: the page area with the sidebar closed (a new-tab page keeps that layout under the sidebar).
+const pageWidth = () => Math.max(contentBounds.width, contentBounds.fullWidth || 0);
+// The spare new-tab page follows the tab area's size while it waits, so the page it hands over is already laid out for it.
+function sizeSpares() {
+  const w = pageWidth();
+  const h = contentBounds.height;
+  try { // (spareNewTab is declared further down: not yet during start-up)
+    const s = spareNewTab;
+    if (!s || !(w > 0) || !(h > 0) || s.view.webContents.isDestroyed()) return;
+    const now = s.view.getBounds();
+    if (now.width !== w || now.height !== h) s.view.setBounds({ x: 0, y: 0, width: w, height: h });
+  } catch { /* gone, or not made yet */ }
+}
 function layoutBody() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
@@ -2336,6 +2360,10 @@ function layoutBody() {
     if (tab.outgoing && !visible) finishLeaving(tab); // (left before its new page drew: no new-tab page behind another tab)
     const show = visible && !viewFrozen && !tab.spareFilling && !curRec?.holdViews && !(tab.id === chatFullTab && isNewTab(tab.view.webContents.getURL()));
     if (show && uiHadFocus && !tab.view.getVisible()) tab.showGuardUntil = Date.now() + 500;
+    // A tab about to be shown is given its size, and the new-tab page its full-width layout, first: shown at the size it last had (the
+    // window or the sidebar changed since, or a spare page was made at another size) it drew a frame laid out for that size and then
+    // moved every card to the new one (test/e2e/newtab-no-jump.js).
+    if (show && !tab.view.getVisible() && !tab.fullscreen) presizeTab(tab, sp);
     if (tab.view.getVisible() !== show) {
       // Only a tab switch touches the page's background state. The tab in front hidden for a moment (the sidebar's snapshot while it
       // slides, a full-page chat) is left as it is: setBackgroundThrottling on a hidden view tells its page it is shown (Electron's
@@ -2368,6 +2396,7 @@ function layoutBody() {
     }
     if (!overlay) setOverlay(tab, null);
   }
+  sizeSpares();
   sendSplitLayout(sp);
   spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
   appleMusicWeb.clip(contentBounds);
@@ -2460,7 +2489,7 @@ function makeSpareNewTab() {
   if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory(), idle: sparePolicy.isIdle(newTabUsedAt) }) !== 'make') return; // (still starting up, short of memory, or no new tab for a long while: the check below makes it later)
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
-  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: contentBounds.width, height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
   try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });

@@ -156,8 +156,14 @@
        shrinks with the window and is never clipped or scrolled (the header is pinned in the centre column, never a card). */
     .clock { margin: 0 0 4px; font-size: var(--clock-size); white-space: nowrap; overflow: visible; line-height: 1; font-weight: 200; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
     .clock[hidden] { display: none; }
+    /* The page fades in, and nothing on it moves: the first frame the user sees is the final layout. The page's scripts build the
+       cards, the clock and the sections after the first paint of this markup (the view can already be showing), so until the
+       last of them has run (newtab.js adds html.booted in the same task) the column is invisible and its fades have not started. */
+    html:not(.booted) main { opacity: 0; }
+    html:not(.booted) .w-dock { visibility: hidden; } /* (the toolbar is made before the cards are counted: it would show its empty-page tip for a frame) */
+    html:not(.booted) :is(main, header, form, section) { animation-play-state: paused; }
     main { animation: arrive 700ms var(--ease) both; }
-    @keyframes arrive { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes arrive { from { opacity: 0; } }
     @media (prefers-reduced-motion: reduce) {
       main, #backdrop::before { animation: none !important; }
     }
@@ -366,7 +372,7 @@
     section:nth-of-type(1) { animation-delay: 80ms; }
     section:nth-of-type(2) { animation-delay: 120ms; }
     section:nth-of-type(3) { animation-delay: 160ms; }
-    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+    @keyframes rise { from { opacity: 0; } }
     @media (prefers-reduced-motion: reduce) {
       header, form, section { animation: fade 160ms ease-out backwards !important; animation-delay: 0ms !important; }
       .grid a:hover .tile, .frequent a:active, .grid a:active .tile { transform: none; }

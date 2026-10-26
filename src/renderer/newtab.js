@@ -472,7 +472,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-render();
+try { render(); } finally { document.documentElement.classList.add('booted'); } // (html.booted: newtab.html shows the page now that its cards, clock and sections are in place)
 window.addEventListener('hashchange', () => { hiddenState = null; render(); }); // (the new page data carries the saved list)
 
 // The field either searches with the engine chosen in settings (the hash carries { label, url
