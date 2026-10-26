@@ -1407,8 +1407,8 @@ async function settleAfterAction(wc, timeoutMs = 8000) {
 const CLAUDE_WORLD = 1001;
 
 // executeJavaScript never settles if the document is torn down mid-call, so bound it.
-function runScript(wc, script, timeoutMs = 10000, { mainWorld = false } = {}) {
-  const run = mainWorld ? wc.executeJavaScript(script) : wc.executeJavaScriptInIsolatedWorld(CLAUDE_WORLD, [{ code: script }]);
+function runScript(wc, script, timeoutMs = 10000, { mainWorld = false, userGesture = false } = {}) {
+  const run = mainWorld ? wc.executeJavaScript(script, userGesture) : wc.executeJavaScriptInIsolatedWorld(CLAUDE_WORLD, [{ code: script }], userGesture); // userGesture: the page sees transient user activation (a file chooser opens only with it)
   let timer;
   return Promise.race([
     run,
@@ -6218,15 +6218,15 @@ ${out.text}${note}
   async setFilesAnyWay(wc, id, open, files, paths) {
     let tried = '';
     if (id !== undefined || open.length) {
-      try { await this.setFilesByChooser(wc, id, files, paths, open); return "through the page's own file chooser"; } catch (err) {
-        if (this.signalAborted() || !/did not open a file chooser/.test(err.message)) throw err;
+      try { return await this.setFilesByChooser(wc, id, files, paths, open); } catch (err) {
+        if (this.signalAborted() || !err.noChooser) throw err;
         tried = err.message;
       }
     }
     if (await this.setFilesOnAnyInput(wc, files, paths)) return 'into a file field found in the page';
     const dropped = await this.dropFiles(wc, id, files, paths);
     if (dropped) return `by dropping them on the page (${dropped})`;
-    throw new Error(`${tried || 'The page has no file field and opened no file chooser.'} Dropping the files on the page was tried too and the page took no files. Nothing was uploaded. Read the page (read_page, screenshot) to find the button that adds files, and pass it as element_id or its menu texts in open.`);
+    throw new Error(`Nothing was uploaded. Route 1, the page's own file chooser: ${tried || 'not tried (no element_id or open was given).'} Route 2, a file field anywhere in the page: none takes these files. Route 3, dropping the files on the page: the page took no files. Read the page (read_page, screenshot) to find the button that adds files, and pass it as element_id or its menu texts in open.`);
   }
 
   // Every file field in the page (shadow roots and frames included, through DevTools' own pierced tree) that could take these files; the
@@ -6291,38 +6291,89 @@ ${out.text}${note}
     }
   }
 
-  // Click the element (and the menu steps in `open`) with the page's file chooser intercepted, then answer the chooser with the files.
+  // One click on the way to a page's file chooser: element_id, or the visible text of a menu item. Chrome opens a chooser only for a click with
+  // user activation, which a script-made click does not carry, and Google's menus act on mousedown/mouseup, so it is a trusted mouse press over
+  // the DevTools session this upload already holds (backgroundClick). An element an overlay covers (a real press would hit the overlay), or a press
+  // that never landed, gets the page's own pointer events and click() run with a user gesture instead. -> how it was clicked (for the error text).
+  async chooserClick(wc, step) {
+    const id = step.element_id ?? await this.resolveTarget(wc, step.text, 'click');
+    const target = await this.locateElement(wc, id);
+    if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
+    if (!target.covered && !target.frame && await this.backgroundClick(wc, target.x, target.y)) return 'a real mouse click';
+    if (!target.covered && target.frame && await manners.agentInputAsync(wc, () => frames.mouseClick(wc, target.x, target.y)).then(() => true, () => false)) return 'a real mouse click';
+    if (await this.elementRun(wc, id, scripts.domPress, { userGesture: true })) return target.covered ? 'a script click with a user gesture (something covers it, so a real click would hit that)' : 'a script click with a user gesture (the real click did not reach the page)';
+    throw new Error('The element is gone.');
+  }
+
+  // Click the element (and the menu steps in `open`) with the page's file chooser intercepted, then answer the chooser with the files. A page that
+  // makes an <input type=file> and click()s it without ever adding it to the document is caught by a temporary hook in the page (fileHookInstall):
+  // the input it asked to open is given the files directly. -> how it went, in a few words. Throws (noChooser) what the clicks did and what the page did.
   async setFilesByChooser(wc, id, files, paths, open = []) {
     const send = (method, params) => wc.debugger.sendCommand(method, params);
+    const evalMain = (expression, params = {}) => send('Runtime.evaluate', { expression, returnByValue: true, ...params });
     await send('Page.enable', {}).catch(() => {});
     await send('Page.setInterceptFileChooserDialog', { enabled: true });
-    let onMessage;
-    const opened = new Promise((resolve) => {
-      onMessage = (_e, method, params) => { if (method === 'Page.fileChooserOpened') resolve(params); };
-      wc.debugger.on('message', onMessage);
-    });
+    const hooked = await evalMain(scripts.fileHookInstall()).then((r) => r?.result?.value === true, () => false);
+    const readHook = () => (hooked ? evalMain(scripts.fileHookRead()).then((r) => r?.result?.value || null, () => null) : Promise.resolve(null));
+    let chooser = null;
+    const onMessage = (_e, method, params) => { if (method === 'Page.fileChooserOpened') chooser = params; };
+    wc.debugger.on('message', onMessage);
     try {
-      if (id !== undefined) await this.runTool('click', { element_id: id });
-      for (const text of open) { // a menu: each step appears once the one before it has opened
+      const steps = [...(id !== undefined ? [{ element_id: id }] : []), ...open.map((text) => ({ text }))];
+      const clicked = [];
+      for (const step of steps) { // a menu: each step appears once the one before it has opened
+        const name = step.text ? quote(step.text) : `element ${step.element_id}`;
         for (let attempt = 0; ; attempt++) {
-          try { await this.runTool('click', { text }); break; } catch (err) {
-            if (this.signalAborted() || attempt === 2) throw new Error(`Could not click ${quote(text)} to reach the file chooser: ${err.message} Nothing was uploaded.`);
+          try { clicked.push(`${name} (${await this.chooserClick(wc, step)})`); break; } catch (err) {
+            if (this.signalAborted() || attempt === 2) throw new Error(`Could not click ${name} to reach the file chooser: ${err.message} Nothing was uploaded.`);
             await sleep(700); // the menu may still be opening
           }
         }
       }
-      let timer;
-      const chooser = await Promise.race([opened, new Promise((resolve) => { timer = setTimeout(resolve, open.length ? 4000 : 2500, null); })]);
-      clearTimeout(timer);
-      if (!chooser?.backendNodeId) throw new Error('Clicking it did not open a file chooser.');
-      const node = (await send('DOM.describeNode', { backendNodeId: chooser.backendNodeId })).node;
-      const attrs = node?.attributes || [];
-      const accept = attrs[attrs.indexOf('accept') + 1] || '';
-      const problem = uploadFiles.checkFiles({ accept: attrs.includes('accept') ? accept : '', multiple: chooser.mode === 'selectMultiple' }, files);
-      if (problem) throw new Error(`${problem} (The page's file chooser was left unanswered.)`);
-      await send('DOM.setFileInputFiles', { files: paths, backendNodeId: chooser.backendNodeId });
+      // Wait for the chooser, or for the page to ask a file input to open (a moment more then for the chooser itself).
+      const wait = open.length ? 6000 : 3500;
+      let hookAt = 0;
+      for (const end = Date.now() + wait; !chooser && Date.now() < end && !(hookAt && Date.now() - hookAt > 600) && !this.signalAborted(); await sleep(80)) {
+        if (hooked && !hookAt && (await readHook())?.calls) hookAt = Date.now();
+      }
+      const seen = await readHook();
+      let field = null; // { accept, multiple }
+      let target = null; // for DOM.setFileInputFiles
+      let how = "through the page's own file chooser";
+      if (chooser?.backendNodeId) {
+        const node = (await send('DOM.describeNode', { backendNodeId: chooser.backendNodeId }).catch(() => ({}))).node;
+        if (node) {
+          const attrs = node.attributes || [];
+          field = { accept: attrs.includes('accept') ? attrs[attrs.indexOf('accept') + 1] || '' : '', multiple: chooser.mode === 'selectMultiple' };
+          target = { backendNodeId: chooser.backendNodeId };
+        }
+      }
+      if (!target && seen?.input) { // the page asked a file input to open that is not in its document, or the chooser named no node
+        if (seen.input.disabled) throw new Error('The page opened a file field that is disabled, so no file can go in it.');
+        if (seen.input.directory) throw new Error('The page opened a field that takes a whole folder, which upload_file does not do. Upload the files inside it one at a time instead.');
+        field = { accept: seen.input.accept, multiple: seen.input.multiple };
+        const { result } = await evalMain(scripts.fileHookInput(), { returnByValue: false }).catch(() => ({}));
+        if (result?.objectId) target = { objectId: result.objectId };
+        how = 'through a file field the page made and never put in its document';
+      }
+      if (!target) {
+        const why = seen?.picker ? ' It asked for files with showOpenFilePicker (the File System Access API), which upload_file cannot answer: try a drop on the page, or another upload button.'
+          : hooked && !seen?.calls ? ' It never asked a file field to open either, so the click did not reach the upload handler.' : '';
+        const err = new Error(`Clicked ${clicked.join(', then ') || 'nothing'}, but the page opened no file chooser within ${wait / 1000} s.${why}`);
+        err.noChooser = true;
+        throw err;
+      }
+      try {
+        const problem = uploadFiles.checkFiles(field, files);
+        if (problem) throw new Error(`${problem} (The page's file chooser was left unanswered.)`);
+        await send('DOM.setFileInputFiles', { files: paths, ...target });
+      } finally {
+        if (target.objectId) send('Runtime.releaseObject', { objectId: target.objectId }).catch(() => {});
+      }
+      return how;
     } finally {
       wc.debugger.removeListener('message', onMessage);
+      if (hooked) await evalMain(scripts.fileHookRemove()).catch(() => {});
       await send('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
     }
   }
@@ -6637,9 +6688,9 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
 
   // An element's script, make(id in its own frame), run where the element is. `missing`: the answer
   // when its frame has gone.
-  async elementRun(wc, id, make, { timeoutMs = 10000, missing = null } = {}) {
+  async elementRun(wc, id, make, { timeoutMs = 10000, missing = null, userGesture = false } = {}) {
     const at = frames.decodeId(id);
-    if (!at) return runScript(wc, make(id), timeoutMs);
+    if (!at) return runScript(wc, make(id), timeoutMs, { userGesture });
     const frame = await frames.find(wc, at.n, { allow: this.frameAllow() });
     return frame ? frames.run(wc, frame, make(at.k), timeoutMs) : missing;
   }

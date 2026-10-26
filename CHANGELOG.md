@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can upload files to Drive and other pages that build their file field themselves.** A page that makes an upload field, never adds it to the page and opens it from a script (Drive's New, File upload) used to leave the AI with no way to hand it files, and the AI reported that the page took none. upload_file now watches for the field the page asks to open for the length of the upload and gives it the files directly, even when the page's chooser never opens; menu steps are clicked with a real mouse press, or with a user gesture when something covers them. When no route works the error now says which route failed and why.
+
 ## 0.5.70 (2026-10-25)
 
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.
