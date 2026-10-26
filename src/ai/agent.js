@@ -4452,6 +4452,30 @@ ${prompt}` : prompt), historyImages: [] };
   }
   // ---- [/autocomplete]
 
+  // ---- [reply suggestions] A few short follow-ups for the chips under a finished reply (ai/reply-suggest.js), from the same cheaper model of
+  // the chat's own provider as autocomplete (never another company, never a CLI). Reads the chat, never changes it; the tokens go to the app's
+  // usage log only. Returns { ok, items, error? }. (Yes / No needs no call: the page finds the question itself.)
+  async replySuggestions({ messages, signal }) {
+    if (this.browser.replySuggestions?.() === false) return { ok: false, error: 'off', items: [] }; // Settings → AI → Suggest replies
+    const lib = require('./reply-suggest'); // (lazy: only once a reply has ended)
+    const { plan } = require('./autocomplete');
+    const settings = messages?.settings || {};
+    const chatModel = this.resolveAuto(settings.model || this.getOptions().model || '');
+    const transcript = (() => { try { return handoffTurns(transcriptFor(messages || []).slice(-6), 6000); } catch { return ''; } })();
+    const call = async (model, { system, messages: sent, signal: sig, maxTokens }) => {
+      const { provider, model: id } = providers.splitModel(model);
+      if (provider === 'anthropic') return this.getClient().messages.create({ model: id, max_tokens: maxTokens, system, messages: sent }, { signal: sig });
+      const apiKey = this.getKey(provider);
+      if (!apiKey) throw new Error(`No ${providers.PROVIDERS[provider].label} API key.`);
+      return providers.streamTurn({ provider, model: id, apiKey, effort: '', system, messages: sent, tools: [], signal: sig, emit: () => {}, noTools: true });
+    };
+    return lib.run({
+      chatModel, options: this.fallbackOptionsList(), transcript, plan, call, signal,
+      onUsage: (message, model) => { if (message?.usage) this.reportApi(providers.splitModel(model).provider, { model, usage: message.usage }); },
+    });
+  }
+  // ---- [/reply suggestions]
+
   // ---- [research] find_sources and research_board (ai/research-tools.js). find_sources only talks to public scholarly APIs (no key,
   // no cookies, only the AI's query leaves; in a chat that has read a page the query goes through the same OK card as web_search).
   // The board is the chat's settings.research: saved with the chat, shown in the sidebar's Research board panel (main.js research:*).

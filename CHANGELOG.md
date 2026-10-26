@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Yes / No buttons and suggested replies under the AI's answer.** When a reply ends on a yes/no question ("Want me to make the other six?", "Should I download them?"), Yes and No buttons appear under it, like Claude Code's, and one click sends your answer. This works on every AI and sends nothing anywhere. A faster, cheaper model from the chat's own AI company also suggests up to three follow-ups you're likely to send next, once per reply. Claude Code and the other command-line AIs are never started for it, so a chat on one gets follow-ups only when an API key from the same company is saved. The buttons go away as soon as you type, send or switch chats. Turn it off in Settings → AI → **Suggest replies**.
+
 ## 0.5.74 (2026-10-26)
 
 - **An agent's window no longer locks you or the agent out of a tab.** A tab you take over in Claude Code's (or another agent's) window goes back to the agent 30 seconds after your last click or key there once you leave the window, so telling the agent "go on" in your chat works; before, only Pause then Resume handed it back, and the window showed no Resume unless the agent was paused. A click or key that reaches a page while you are not in that window is the agent's own arriving late, not yours, and no longer takes the tab from it. A tab that sat behind other windows or minimized is shown again and redrawn when you bring its window up: it could keep a stale picture and ignore your clicks until you opened a new tab.
