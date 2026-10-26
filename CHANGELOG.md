@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A message you queue while a reply runs now goes into that same chat, never a new one.** When the reply ended, the waiting message was sent into whichever chat the tab in front had by then, so if the front tab had changed (the AI moved it, or the sidebar had gone to another tab's new chat) it opened or joined a different chat. It is now sent into the chat it was typed in; a message typed before its chat had a name belongs to that chat, and a new empty chat no longer takes messages queued in another one.
+
 ## 0.5.74 (2026-10-26)
 
 - **An agent's window no longer locks you or the agent out of a tab.** A tab you take over in Claude Code's (or another agent's) window goes back to the agent 30 seconds after your last click or key there once you leave the window, so telling the agent "go on" in your chat works; before, only Pause then Resume handed it back, and the window showed no Resume unless the agent was paused. A click or key that reaches a page while you are not in that window is the agent's own arriving late, not yours, and no longer takes the tab from it. A tab that sat behind other windows or minimized is shown again and redrawn when you bring its window up: it could keep a stale picture and ignore your clicks until you opened a new tab.

@@ -11044,12 +11044,17 @@ function stampRun(run, done = null) {
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
-ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null, askOpts = null) => {
+ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs = [], screenMode = null, askOpts = null, forChat = null) => {
   const { valid, rejected } = chatImages.cleanImages(images); // anything left out is said in the chat, not dropped silently
   let shownPick = null; // what every picker shows right now (the open chat's model, or the saved pick while it has none), before the sender's own chat is brought up
   try { shownPick = shownModel().pick || null; } catch { /* not set up yet */ }
   syncToSender(event); // [chat per tab] the chat of the tab this was typed in
-  adoptShownModel(shownPick); // the message goes to the model the picker showed, even when this window's or page's chat was left on another
+  // A message that waited for its chat's reply (the sidebar's waiting line) goes into THAT chat when the reply ends, not into the chat of the tab in
+  // front by then (a tool of the run may have moved the front tab, and the sidebar does not follow a run's own switch): the view names the chat it
+  // queued it in (forChat). A chat that cannot be opened (deleted meanwhile) leaves the message with the tab's chat, as before.
+  const steered = typeof forChat === 'string' && forChat !== '' && forChat !== chatId && Boolean(switchChat(forChat, { quiet: true }));
+  if (steered && event.sender && !chatPageRt.isChatSender(event)) shownChat.set(event.sender, chatId); // (this sidebar shows that chat: its own say)
+  if (!steered) adoptShownModel(shownPick); // the message goes to the model the picker showed, even when this window's or page's chat was left on another
   // [background chats] The run belongs to the chat it started in, wherever the user goes meanwhile:
   // another tab, another window, a closed sidebar or another chat (switchChat leaves it running).
   const runChat = chatId;
@@ -11065,7 +11070,9 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const going = chatRuns.get(runChat);
   const goingTab = going && !going.deleted ? (going.queued ? going.homeTab : agent.runTabIdFor(going.messages)) : null;
   const goingAt = !fromChatPage && goingTab != null && goingTab !== activeId && chatBind.chatOf(activeId) === runChat && chatBind.chatOf(goingTab) === runChat ? tabAnywhere(goingTab) : null;
-  const homeTab = fromChatPage ? null : goingAt ? goingTab : activeId;
+  // (A steered message works where its chat lives: the tab in front keeps its own chat.)
+  const ownTab = steered ? (chatBind.tabsHomeFirst(runChat).find((id) => tabAnywhere(id)) ?? (tabAnywhere(chatWorkTab.get(runChat)) ? chatWorkTab.get(runChat) : null)) : null;
+  const homeTab = fromChatPage ? null : goingAt ? goingTab : steered ? ownTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
   const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
   chatRuns.set(runChat, run);
