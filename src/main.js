@@ -298,7 +298,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -9165,6 +9165,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI → Tab to finish what I'm typing (agent.js autocomplete)
+  replySuggestions: () => readSettings().replySuggestions !== false, // [reply suggestions] Settings → AI → Suggest replies (agent.js replySuggestions)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
   memory: { // [memory] Settings → AI → Instructions and memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
@@ -11343,6 +11344,25 @@ ipcMain.handle('agent:autocomplete', async (event, prefix) => {
   }
 });
 ipcMain.on('agent:autocomplete-cancel', (event) => { autocompleteRuns.get(event.sender.id)?.abort(); });
+// [reply suggestions] Follow-ups for the chips under the reply that just ended (agent.js replySuggestions). One request per view: a newer one stops
+// the one before. `chatId`: the chat the view shows; a view that has moved to another chat since gets nothing (its chips would be for the wrong chat).
+const replySuggestRuns = new Map(); // sender id -> AbortController
+ipcMain.handle('agent:reply-suggest', async (event, forChat) => {
+  if (readSettings().replySuggestions === false) return { ok: false, error: 'off', items: [] };
+  replySuggestRuns.get(event.sender.id)?.abort();
+  const ctrl = new AbortController();
+  replySuggestRuns.set(event.sender.id, ctrl);
+  const { messages, id } = readForSender(event, () => ({ messages: agent.messages, id: chatId }));
+  if (forChat != null && id != null && String(forChat) !== String(id)) return { ok: false, error: 'moved', items: [] };
+  try {
+    const r = await agent.replySuggestions({ messages, signal: ctrl.signal });
+    return { ok: r.ok, items: Array.isArray(r.items) ? r.items : [], error: r.error };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200), items: [] };
+  } finally {
+    if (replySuggestRuns.get(event.sender.id) === ctrl) replySuggestRuns.delete(event.sender.id);
+  }
+});
 // New chat; `temporary`: one that is never saved (chats:temporary).
 function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);
