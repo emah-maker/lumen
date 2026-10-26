@@ -38,3 +38,6 @@
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; padding: 8px 14px; border-radius: var(--r-xl);
   background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 6px 20px rgba(0, 0, 0, .25); font-size: 13px; font-weight: 500;
 }
+/* "<client> is working" goes to its window when clicked (app.js send('show')) */
+.external-pill.external-show { cursor: pointer; }
+.external-pill.external-show:hover .external-pill-text { text-decoration: underline; text-underline-offset: 2px; }
