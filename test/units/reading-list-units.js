@@ -72,7 +72,9 @@ const make = (name = 'rl.json', extra = {}) => RL.create({ file: fileOf(name), n
   timed.add({ url: 'https://t.example/' });
   check('a change is pending until written', timed.pending() === true);
   await new Promise((r) => setTimeout(r, 120));
-  check('and the debounce writes it', timed.pending() === false && JSON.parse(fs.readFileSync(fileOf('timed.json'), 'utf8')).items.length === 1);
+  const startedByItself = timed.pending() === false; // (the debounce began the write, not flush())
+  await timed.flush(); // (nothing is dirty, so this only waits for that write to land: a slow disk may still be renaming the temp file)
+  check('and the debounce writes it', startedByItself && JSON.parse(fs.readFileSync(fileOf('timed.json'), 'utf8')).items.length === 1);
   // flushSync (quitting)
   const quit = make('quit.json');
   quit.add({ url: 'https://q.example/' });
