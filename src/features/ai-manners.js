@@ -214,7 +214,7 @@ const offTabRefusal = () => OFF_TAB_REFUSAL;
 // [agent window] The user clicked or typed in a tab of an outside agent's own window: it is theirs now (a sign-in code, a CAPTCHA). Reading it
 // still works; every tool that acts on it is refused with this, so the agent never fights the user for the page. The user's Resume (or the
 // agent's own new tab) gives the agent a tab to work in again.
-const USER_TOOK_OVER_REFUSAL = 'The user took over this tab (they clicked or typed in it, for example to sign in or enter a code). Do not click, type, navigate or run scripts there. You can still read it. Tell the user what you need from them, wait for them to say they are done, or work in another tab with open_tab.';
+const USER_TOOK_OVER_REFUSAL = 'The user took over this tab (they clicked or typed in it, for example to sign in or enter a code). Do not click, type, navigate or run scripts there. You can still read it. Tell the user what you need from them and wait for them to say they are done (once they leave the window, the tab is yours again 30 seconds after their last click or key there), or work in another tab with open_tab.';
 const userTookOverRefusal = () => USER_TOOK_OVER_REFUSAL;
 // null when the call may go ahead, else the error text for the model. `offTab`: the tab the tool names or would act on is kept off;
 // `tool`: its name (a tool that only reads is let through; an unnamed one is treated as acting).

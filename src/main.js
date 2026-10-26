@@ -3937,7 +3937,10 @@ function onTabGone(id, fn) {
 // [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
 // and "close the tabs the AI opened" leaves it alone. It also leaves the folded "AI tabs" group, back among the user's tabs.
 function userTookOver(tab) {
-  if (tab?.rec?.agent) { tab.rec.agent.used = true; tab.userHeld = true; } // [agent window] the user clicked or typed in the agent's window: it is theirs to keep, and this tab is theirs until they resume the agent (its acting calls on it are refused with a clear reason: ai-manners userTookOverRefusal)
+  if (tab?.rec?.agent) { // [agent window] the user clicked or typed in the agent's window: it is theirs to keep, and this tab is theirs while they are in it or a little after (agent-hands-off stillHeld; its acting calls on it are refused with a clear reason: ai-manners userTookOverRefusal)
+    if (!handsOff.userInputCounts(tab.rec)) return; // (a window the user is not in: the input is the agent's own, arriving late)
+    tab.rec.agent.used = true; tab.userHeld = Date.now();
+  }
   if (!manners.handOver(tab)) return;
   const rec = tab.rec;
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
@@ -8354,6 +8357,17 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.webContents.on('focus', () => { rec.keyboardOwner = w.webContents; }); // (see keepKeyboardFromBackgroundTab)
   w.on('focus', () => { ui()?.send('window-focus', true); if (uiReady) hang.mark('focus:followFront', followFront); hang.mark('focus:a11y', () => a11yMode?.onFocus()); }); // [chat per tab] the sidebar shows the chat of the tab in front here
   w.on('blur', () => ui()?.send('window-focus', false));
+  // [agent window] Shown behind the user's window or minimized, its pages paint unthrottled (prepareAgentTab). When the user then brings it up,
+  // the front tab's view could keep the frame it had and take no clicks or keys (a new tab worked): it is shown again once, and redrawn.
+  let agentSeen = false;
+  const freshFront = () => {
+    if (!rec.agent || !rcAlive(rec)) return;
+    const front = tabsOf(rec).find((x) => x.id === activeIdOf(rec));
+    if (!front || !alive(front) || !front.view.getVisible()) return;
+    try { front.view.setVisible(false); front.view.setVisible(true); front.view.webContents.invalidate(); } catch { /* gone */ }
+  };
+  w.on('restore', freshFront);
+  w.on('focus', () => { if (rec.agent && !agentSeen) { agentSeen = true; freshFront(); } });
   // Full screen (F11 / the View menu) has no window controls to clear: the strip drops its caption reserve (renderer: body.window-fullscreen). The first time, the toast says how to leave.
   w.on('enter-full-screen', () => { ui()?.send('window-fullscreen', true); if (process.platform !== 'darwin' && !fullScreenHinted) { fullScreenHinted = true; toast(t('fullscreen.exitHint')); } });
   w.on('leave-full-screen', () => ui()?.send('window-fullscreen', false));
@@ -8476,6 +8490,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
 // It closes a little after the session ends, unless the user used it or pinned a tab in it: then it is theirs, an ordinary window.
 const { createAgentWindows } = require('./features/agent-windows');
 const handsOff = require('./features/agent-hands-off');
+const AGENT_HOLD_MS = TEST && Number(process.env.LUMEN_AGENT_HOLD_MS) > 0 ? Number(process.env.LUMEN_AGENT_HOLD_MS) : handsOff.HOLD_MS; // [agent window] how long a tab the user took over stays theirs after they leave the window
 const windowOrder = require('./features/window-order');
 const agentWindowTitle = (label) => `${label} · Lumen`;
 function showBehind(w) {
@@ -9109,7 +9124,7 @@ const agent = new Agent({
   recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
-  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabHeld: (id) => Boolean(tabAnywhere(id)?.t?.userHeld), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls; agent window] tabHeld: the user took the tab over
+  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabHeld: (id) => { const found = tabAnywhere(id); const w = found?.rec?.win; return handsOff.stillHeld(found?.t?.userHeld, { focused: Boolean(w && !w.isDestroyed() && w.isFocused()), holdMs: AGENT_HOLD_MS }); }, tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls; agent window] tabHeld: the user took the tab over
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
