@@ -433,6 +433,51 @@
   }
 
   // ---- folder: where the project lives on this computer (set up and changed in the project's editor, host.editFolder)
+  const swapFolder = (old, data) => { const next = folderCard(data); old.replaceWith(next); return next; };
+  // The project's plain files (INSTRUCTIONS.md, AGENTS.md, sources.md, Sources/, project.json): on or off, and a way to look at the folder now.
+  function plainFiles(card, data) {
+    const p = data.project;
+    const box = el('div', { className: 'pjp-plain' });
+    const say = status();
+    if (p.portable) {
+      box.append(note(tr('projectws.portable.on', 'Plain files here: INSTRUCTIONS.md, AGENTS.md, sources.md and Sources/. Edits made elsewhere are picked up when you return to Lumen.')));
+      const check = button(tr('projectws.portable.check', 'Check the folder'), async () => {
+        check.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'sync').catch(() => null);
+        check.disabled = false;
+        let msg = out?.missing ? tr('chatpage.project.folder.missing', 'Folder missing') : out?.changed ? tr('projectws.portable.picked', 'Picked up changes from the folder.') : tr('projectws.portable.none', 'No changes in the folder.');
+        if (out?.conflicts?.length) msg += ` ${tr('projectws.portable.conflicts', 'Both sides changed: the other text is kept in {names}.', { names: out.conflicts.join(', ') })}`;
+        if (out?.changed) await reload(); // (the cards are drawn again: the line goes on the new one)
+        const live = page?.side.querySelector('.pjp-folder .pjp-status') || say;
+        live.textContent = msg;
+      });
+      const off = button(tr('projectws.portable.off', 'Stop'), async () => {
+        const out = await page.api.projectFolder(page.id, 'portable', false).catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(card, data); }
+      });
+      off.title = tr('projectws.portable.off.tip', 'Stop keeping plain files. The files in the folder stay where they are.');
+      box.append(el('div', { className: 'pjp-line' }, check, off), say);
+      return box;
+    }
+    const ask = el('div', { className: 'pjp-line' });
+    const on = button(tr('projectws.portable.turnOn', 'Keep as plain files…'), () => {
+      on.hidden = true;
+      const sure = note(tr('projectws.portable.note', 'INSTRUCTIONS.md and AGENTS.md (the name coding agents look for), sources.md, project.json and the files you add in Sources/. They are plain files and are not encrypted: anyone who can open the folder can read them. Lumen reads them again when you change them in another program. Files already added keep only their text, encrypted in Lumen; they are not copied out.'));
+      const go = button(tr('projectws.portable.write', 'Write the files'), async () => {
+        go.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'portable', true).catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(card, data); host().refresh(); await reload(); } else { go.disabled = false; say.textContent = tr('projectws.portable.failed', 'Could not write the files.'); }
+      }, 'primary');
+      const no = button(tr('chatpage.project.cancel', 'Cancel'), () => { sure.remove(); ask2.remove(); on.hidden = false; on.focus(); });
+      const ask2 = el('div', { className: 'pjp-line' }, no, go);
+      box.prepend(sure);
+      box.append(ask2);
+      go.focus();
+    });
+    ask.append(on);
+    box.append(ask, say);
+    return box;
+  }
   function folderCard(data) {
     const p = data.project;
     const root = card(tr('chatpage.project.folder', 'Folder'), { tip: p.folder ? tr('projectws.folder.note', 'Chats of this project are saved here as Markdown files unless you turn that off in the project’s settings.') : '', className: 'pjp-folder' });
@@ -441,9 +486,17 @@
       root.body.append(el('div', { className: 'pjp-line' },
         p.folderMissing ? button(tr('chatpage.project.folder.missingFix', 'Folder missing…'), () => host().editFolder(data.project), 'primary') : button(tr('chatpage.project.folder.open', 'Open folder'), () => page.api.projectFolder(page.id, 'open').catch(() => null)),
         button(tr('projectws.folder.change', 'Change…'), () => host().editFolder(data.project))));
+      if (!p.folderMissing) root.body.append(plainFiles(root, data));
     } else {
       root.body.append(note(tr('chatpage.project.folder.none', 'This project has no folder yet.')));
-      root.body.append(el('div', { className: 'pjp-line' }, button(tr('projectws.folder.add', 'Add a folder…'), () => host().editFolder(data.project))));
+      const say = status();
+      const make = button(tr('projectws.folder.save', 'Save project to a folder'), async () => {
+        make.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'save-folder').catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(root, data); host().refresh(); page.sub?.(); host().toast(tr('projectws.folder.saved', 'Saved to {path}', { path: out.folder })); } else { make.disabled = false; say.textContent = tr('projectws.folder.saveFailed', 'Could not make the folder.'); }
+      });
+      root.body.append(el('div', { className: 'pjp-line' }, make, button(tr('projectws.folder.add', 'Add a folder…'), () => host().editFolder(data.project))), say);
+      root.body.append(note(tr('projectws.folder.saveNote', 'Makes a folder with the instructions and sources as plain files and the chats as Markdown.')));
     }
     return root;
   }
@@ -837,6 +890,7 @@
         anchor: more, label: data.project.name,
         items: [
           { label: tr('projectws.folder', 'Folder and more…'), icon: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>', run: () => h.editFolder(page.data.project) },
+          { label: tr('projectws.export', 'Export project…'), icon: svg('open'), run: async () => { const out = await api.projectFolder(id, 'export').catch(() => null); if (out?.ok) h.toast(tr('projectws.export.done', 'Exported {n} files to {path}', { n: out.count, path: out.path })); else if (out && out.reason !== 'canceled') h.toast(tr('projectws.export.failed', 'Could not export the project.')); } },
           { label: tr('chatpage.project.delete', 'Delete project'), icon: '<svg viewBox="0 0 16 16"><path d="M3.5 5h9M6.5 5V3.5h3V5M5 5l.5 8h5L11 5"/></svg>', run: askDelete },
         ],
         onClose: () => { if (!document.activeElement || document.activeElement === document.body) more.focus(); },
@@ -863,6 +917,7 @@
     document.getElementById('chat-root').hidden = true;
     mount.append(root);
     document.body.classList.add('cp-project-open');
+    window.addEventListener('focus', onFocus);
     page.instructions = instructions;
     if (focus === 'instructions') { instructions.scrollIntoView({ block: 'nearest' }); instructions.start(); } else page.composerText.focus();
     return true;
@@ -871,6 +926,7 @@
     if (!page) return;
     const { root, host: h } = page;
     page = null;
+    window.removeEventListener('focus', onFocus);
     root.remove();
     const chat = document.getElementById('chat-root');
     if (chat) chat.hidden = false;
@@ -879,6 +935,16 @@
   }
   // The chats changed (a run started, a reply came, a chat moved) or the project did, in this view or in the sidebar: the lists redraw, and the
   // header and the overview follow an edit made elsewhere (never while something here is being edited).
+  // Everything the overview shows, read again (the project's folder was changed outside, a source was added elsewhere). Not while something is being edited here.
+  async function reload() {
+    if (!page || page.editing.size || page.syncing) return;
+    page.syncing = true;
+    const me = page;
+    const fresh = await me.api.project(me.id).catch(() => null);
+    me.syncing = false;
+    if (!fresh || me !== page || me.editing.size) return;
+    applyFresh(me, fresh);
+  }
   async function refresh() {
     if (!page) return;
     page.redraw?.();
@@ -893,6 +959,9 @@
     if (!me || me !== page || !fresh) { if (me) me.syncing = false; return; }
     me.syncing = false;
     if (me.editing.size) return;
+    applyFresh(me, fresh);
+  }
+  function applyFresh(me, fresh) {
     me.data.project = fresh.project;
     me.data.files = fresh.files;
     me.data.totals = fresh.totals;
@@ -910,6 +979,8 @@
     me.syncModel?.();
     me.sub?.();
   }
+  // Coming back to Lumen after editing the project's files in another program: the page looks again (main reads the folder first).
+  const onFocus = () => { if (page?.data.project.portable) reload(); };
 
   window.chatProjectPage = { open, close, isOpen: () => Boolean(page), refresh, id: () => page?.id || null };
 })();

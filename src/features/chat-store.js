@@ -645,7 +645,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return out;
   };
-  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, workFolder, links, defaults } = {}) {
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults } = {}) {
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -659,9 +659,10 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     project.name = clean;
     if (instructions !== undefined) project.instructions = cleanText(instructions, MAX_INSTRUCTIONS);
     if (description !== undefined) { const d = cleanText(description, MAX_DESCRIPTION).replace(/\s+/g, ' '); if (d) project.description = d; else delete project.description; }
-    if (folder !== undefined) { const f = cleanPath(folder); if (f) project.folder = f; else { delete project.folder; delete project.folderCreated; delete project.workFolder; } }
+    if (folder !== undefined) { const f = cleanPath(folder); if (f) project.folder = f; else { delete project.folder; delete project.folderCreated; delete project.workFolder; delete project.portable; } }
     if (folderCreated !== undefined) { if (folderCreated && project.folder) project.folderCreated = true; else delete project.folderCreated; }
     if (mirror !== undefined) { if (mirror === false) project.mirror = false; else delete project.mirror; }
+    if (portable !== undefined) { if (portable === true && project.folder) project.portable = true; else delete project.portable; } // [portable projects] instructions, sources and settings kept as plain files in the folder (features/project-portable.js; this computer only)
     if (workFolder !== undefined) { const w = cleanPath(workFolder); if (w) project.workFolder = w; else delete project.workFolder; }
     if (links !== undefined) { const l = cleanLinks(links); if (l.length) project.links = l; else delete project.links; }
     if (defaults !== undefined) { const d = cleanDefaults(defaults); if (Object.keys(d).length) project.defaults = d; else delete project.defaults; }

@@ -29,6 +29,30 @@ The browser's AI sidebar uses the same projects. A strip under its header shows 
 
 Every chat in the project gets a short list of the files, pages and websites. The AI reads one, or searches them all, with the project_files tool (a page with read_urls; a website with site_search and site_read). Only then does that text go to your AI provider, and a page or website is fetched only then. A website's search and reads ask for the same OK as any other search or page the AI opens once it has read other pages. Plan mode allows the tool.
 
+## Your project is just a folder
+
+Nothing about a project depends on Lumen, on one AI provider or on one tool. A project with a folder keeps what it is made of as plain files there:
+
+```
+<project folder>/
+  INSTRUCTIONS.md   the instructions (the source of truth)
+  AGENTS.md         the same text; coding agents (Claude Code, Codex, Gemini CLI...) read it from their working directory
+  CLAUDE.md         "@AGENTS.md", written only when there is no CLAUDE.md
+  sources.md        web pages and websites, one per line
+  Sources/          the files you added, as the real files
+  project.json      the goal line and the defaults
+  Chats/            the chats as Markdown (its own switch)
+```
+
+- **sources.md** looks like `- [Python docs](https://docs.python.org/3/) — whole site` for a website and `- [Title](https://example.com/page)` for a page. A bare address (`- https://example.com/`) and other bullets work too; any other line is yours and is ignored.
+- **project.json** is `{ "format": 1, "description": "...", "defaults": { "model": "...", "plan": true, "connectors": false, "mcp": false } }` (a key is left out when it has its usual value).
+- **Edits from outside are picked up** when you open the project, when Lumen's window gets focus again and when you change something in Lumen (Folder card: **Check the folder**). Edit `INSTRUCTIONS.md` (or `AGENTS.md`), drop a PDF, Word file, text file or picture into `Sources/`, or add a line to `sources.md`. A file edited in `Sources/` is read again; one deleted from it leaves the project; sub-folders, hidden files and types Lumen cannot read are ignored. Nothing watches the folder while Lumen is in the background.
+- **When both sides changed** since the last pass, the newer one wins and the other text is kept beside it as `INSTRUCTIONS.conflict-<date>.md` (likewise `sources`, `project`). A file you remove in Lumen moves to `Sources/Removed/`. Nothing is written twice: a second pass over an unchanged folder does nothing.
+- **It is a switch.** It is on for a new project whose folder Lumen makes. For a project you already have it is off until you turn it on (the editor's folder section, or the Folder card), and turning it on says that the files are **not encrypted** and that files you added earlier are not copied out (Lumen keeps only their text, encrypted). Turning it off leaves the files where they are. A project without a folder has **Save project to a folder**, which makes the folder and turns it on.
+- **Any AI, any tool.** The instructions, sources and memory go to every model and engine. A command-line engine (Claude Code, Codex, Gemini CLI, Grok Build) started in a project works in the project's folder (or its working folder, if you set one), so it sees the same files, including `AGENTS.md`.
+- **Export project…** (the project's ⋯ menu) writes a zip with `INSTRUCTIONS.md`, `AGENTS.md`, `sources.md`, `project.json` (with the name), `Sources/` (the real files when the folder has them, else their text), `Chats/` (Markdown), `Memory.md` and a `README.md`.
+- **Open folder as project…** (the folder button in the projects list) makes a project of any folder. One with these files (made by Lumen or by hand: `INSTRUCTIONS.md`, `AGENTS.md` or `CLAUDE.md`, `sources.md`, `Sources/`, `project.json`) gives the project its instructions, sources and settings and keeps them as plain files. A plain folder of files makes its files the sources and writes nothing into it. A folder that is already a project opens that project.
+
 ## Deleting
 
 Deleting a project shows **Undo** for a short while. After that its files and memory are erased.
