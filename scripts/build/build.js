@@ -70,6 +70,25 @@ if (googleId && googleSecret) {
   console.log('Built-in Google client: not set (LUMEN_GOOGLE_CLIENT_ID / LUMEN_GOOGLE_CLIENT_SECRET); Gmail uses the paste-your-own-client flow');
 }
 
+// Lumen's built-in Microsoft app (one-click "Sign in with Microsoft" for the Outlook, OneDrive and Outlook Calendar connectors): from LUMEN_MS_CLIENT_ID
+// (the release workflow passes a repository secret) into src/features/microsoft-client.json for this build only; gitignored and removed afterwards.
+// It is a public client's Application (client) ID, not a secret, so there is nothing else to pass. Without it the cards ask for the user's own client ID.
+const msFile = path.join(root, 'src', 'features', 'microsoft-client.json');
+const msId = (process.env.LUMEN_MS_CLIENT_ID || '').trim();
+let wroteMs = false;
+if (msId) {
+  const { cleanClientId } = require('../../src/features/microsoft-client');
+  if (!cleanClientId(msId)) {
+    console.error('LUMEN_MS_CLIENT_ID is set but is not an Application (client) ID (a GUID like 00000000-0000-0000-0000-000000000000)');
+    process.exit(1);
+  }
+  fs.writeFileSync(msFile, `${JSON.stringify({ clientId: cleanClientId(msId) })}\n`);
+  wroteMs = true;
+  console.log('Built-in Microsoft app: included (one-click Outlook, OneDrive and Calendar sign-in)');
+} else {
+  console.log('Built-in Microsoft app: not set (LUMEN_MS_CLIENT_ID); the Microsoft connectors ask for your own client ID');
+}
+
 console.log(`Building ${platformFlag.slice(2)} into ${out}`);
 // macOS signing (scripts/release/signing.js): a Developer ID certificate in CSC_LINK / CSC_KEY_PASSWORD gives a
 // hardened-runtime, Apple-signed app, notarized and stapled when APPLE_* credentials exist. Without
@@ -96,6 +115,7 @@ if (platformFlag === '--win') {
 }
 const result = spawnSync(process.execPath, [require.resolve('electron-builder/cli.js'), ...builderArgs], { cwd: root, stdio: 'inherit', env: builderEnv });
 if (wroteGoogle) fs.rmSync(googleFile, { force: true });
+if (wroteMs) fs.rmSync(msFile, { force: true });
 if (result.status !== 0) process.exit(result.status || 1);
 
 // The unsigned Windows exe must be the unmodified Electron binary (a signed one is checked by the

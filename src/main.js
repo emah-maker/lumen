@@ -8865,6 +8865,14 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
     focusApp: () => focusWindow(),
   },
+  // Outlook, OneDrive and Outlook Calendar: one Microsoft sign-in in the user's own browser (features/connectors/microsoft-auth.js), Lumen's built-in
+  // Microsoft app unless the user typed their own client ID on a card. Tests point it at 127.0.0.1.
+  microsoft: {
+    builtin: () => require('./features/microsoft-client').builtinClient(),
+    openExternal: (url) => { if (!/^https:\/\/login\.microsoftonline\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
+    canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
+    focusApp: () => focusWindow(),
+  },
   mcp: mcpClient,
   openSignIn: connectorsOpen,
   // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the

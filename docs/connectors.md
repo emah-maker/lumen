@@ -10,12 +10,21 @@ Cards are grouped as Mail and calendar, School, Files and docs, Work and Tasks, 
 |---|---|---|
 | Canvas | The Canvas you are signed in to in Lumen. Lumen finds your school's address from your browsing, or you type it. | Course list, upcoming assignments and due dates, announcements (all or per course), read one announcement. Read only. |
 | Gmail | Google sign-in in your browser (the same one the Gmail widget uses), read only. Without it, the Google sign-in already in Lumen works for unread mail only. **Allow drafts** adds Google's permission to make drafts and send. | Unread mail; with the full sign-in also search and read a message. After **Allow drafts**, **Make a draft** (a new email or a reply) asks you first and never sends. After **Allow sending**, **Send** sends an email. See [Gmail drafts](#gmail-drafts) and [Gmail sending](#gmail-sending). |
-| Google Calendar | The calendar's secret iCal address, which you paste. Only Google Calendar addresses (calendar.google.com, https) are accepted. | Events for the next days. Read only: it can't add events with an iCal address. |
+| Calendar (secret address) | The calendar's secret iCal address, which you paste, with no Google sign-in. Only Google Calendar addresses (calendar.google.com, https) are accepted. Kept for anyone who connected it before and for those who want no sign-in; the **Google Calendar** card below does more. | Events for the next days. Read only: an iCal address can't add events. |
 | GitHub | Sign in with GitHub (a one-time code, or the GitHub CLI if it is signed in): the same sign-in as the GitHub card on the new-tab page, see [Sign in with GitHub](github-signin.md). A pasted fine-grained token still works: read-only is enough for reading; for the writes give it Issues and Pull requests **Read and write**. The sign-in reads only, unless you turn on **Include private repositories** (GitHub's `repo` permission, which also allows the writes) or use the GitHub CLI. | Your pull requests and issues (author, assigned, review), read one pull request. **Comment** on an issue or pull request and **Open an issue** ask you first. |
 | Todoist | Your API token. | List tasks and projects. **Add a task** asks you first. |
 | Notion | An internal integration secret. It sees only the pages you share with it. For the writes keep **Insert content** on in its capabilities. | Search and read a page. **Add a page** (under a page you shared) and **Add to a page** (at its end) ask you first. |
 | Google Drive | Google sign-in in your own browser (one sign-in shared with Google Sheets), see [Google Drive and Sheets](#google-drive-and-sheets). | Find files by words or folder, read a Google Doc, Slides deck, Sheet or text file. **Make a folder**, **Upload** a new local file, **Replace file contents** (any file, one or many at once), **Rename**, **Move**, **Copy**, **Move to Trash** and **Share by link** each ask you first. |
 | Google Sheets | The same Google sign-in as Drive. | List a spreadsheet's tabs, read cells. **Add rows** and **Make a spreadsheet** ask you first. |
+| Google Docs | The same Google sign-in as Drive. See [More Google connectors](#more-google-connectors). | Read a document's text. **Make a document** and **Add text to a document** ask you first. |
+| Google Calendar | The same Google sign-in. | Your events (a window of days, or a search), one event with its notes. **Add an event** and **Change an event** ask you first; no guests, no invitation emails, never a delete. |
+| Google Tasks | The same Google sign-in. | Task lists and their tasks. **Add a task** and **Mark a task done** ask you first. |
+| Google Contacts | The same Google sign-in, read only. | Find a person's email, phone number or company. |
+| Zotero | An API key. See [Zotero](#zotero). | Search your library, list collections, read an item's details and abstract. Read only. |
+| Outlook | Sign in with Microsoft in your own browser (one sign-in for the next two). See [Microsoft](#microsoft-outlook-onedrive-and-outlook-calendar). | Unread mail, search, read a message. **Make a draft** asks you first; it never sends, moves or deletes mail. |
+| OneDrive | The same Microsoft sign-in, read only. | Find files, list a folder, read a Word, Excel or PowerPoint file or a text file. |
+| Outlook Calendar | The same Microsoft sign-in. | Your events. **Add an event** and **Change an event** ask you first; no attendees, no invitation emails, never a delete. |
+| Linear, Atlassian (Jira and Confluence), Sentry, Canva, Hugging Face | One click adds the service's own MCP server and signs you in on its page. See [One-click MCP servers](#one-click-mcp-servers). | Whatever that server offers, each call asking you first. |
 
 ## How the AI uses them
 
@@ -63,13 +72,21 @@ The rule: a built-in connector is replaced by the official server only when that
 | Drive | `share_link(id)` | "Anyone with the link can view" on one file, and its link. | Nothing |
 | Sheets | `append(id, rows, range?)` | The rows after the last one of the tab named (or the first tab), as plain text, never as formulas. | The rows |
 | Sheets | `create(title)` | A new empty spreadsheet in your Drive. | The title |
+| Docs | `create(title, body?)` | A new document in your Drive, with its first text (plain). | Title and text |
+| Docs | `append(id, text)` | The text after the last line of that document (plain; existing text is untouched). | The text |
+| Calendar | `create_event(title, start, end?, location?, description?)` | An event on your main Google Calendar: a local time (`2026-11-03T14:30`, one hour by default) or a date (all day). No guests, no invitation email. | Title, start, end, place, notes |
+| Calendar | `update_event(id, title?, start?, end?, location?, description?)` | Only what is given; moving an event keeps its length. Nobody is emailed. | The same |
+| Tasks | `add_task(title, due?, notes?, list_id?)` | A task in your main list (or the one named); the due date is a day. | Task, due date, notes |
+| Tasks | `complete_task(id, list_id?)` | The task ticked off. The card names it. | Nothing |
+| Outlook | `create_draft(to, cc?, subject, body)` | A plain-text message in your Outlook **Drafts** folder. Not sent: you send it from Outlook. | To, Cc, Subject and the text |
+| Outlook Calendar | `create_event`, `update_event` | As for Google Calendar, on your main Outlook calendar, in the time zone of this computer. No attendees. | The same |
 | Gmail | `create_draft(to, cc?, subject, body, reply_to_message_id?)` | A plain-text email in your Gmail **Drafts** (for a reply, in that conversation). Not sent. | To, Cc, Subject and the text |
 | Gmail | `send` | The whole email, to Google, to be sent from your account, only after **Allow sending** is on. See [Gmail sending](#gmail-sending). | Nothing is sent without your click on **Send**, unless you typed in the chat that sends are fine. |
 
 - The card shows where it goes (the repository and number, or the Notion page by its title, looked up with a read) and everything that will be sent. The text is in boxes you can change; **Allow** sends what the boxes hold, checked again like the AI's own input. Where it goes can't be changed on the card.
 - Once done, the chat shows a step such as "GitHub · Opened ada/notes#8" with **Open**, and the AI gets the same link.
 - A token that can only read gets a message instead of a failure: GitHub says to give the token Issues and Pull requests **Read and write**, Notion says to turn on **Insert content**.
-- **Not available:** adding Calendar events would need a Google sign-in with Calendar access; the iCal address the connector uses can only be read, so the AI can't add events with an iCal link.
+- **Not available:** deleting anything (events, tasks, files, mail), sending email from Outlook, and adding guests or attendees to an event (so nobody is ever invited or emailed by the AI). The secret-address Calendar card is read only because an iCal address can't write; the Google Calendar and Outlook Calendar cards can.
 
 ## Google Drive and Sheets
 
@@ -85,7 +102,59 @@ Drive and Sheets sign in with Google in **your own browser**: **Connect** opens 
 - **Rows are text.** **Add rows** writes the cells as plain text (`valueInputOption=RAW`), so a web page or email can't get a formula such as `=IMAGE(...)` or `=IMPORTDATA(...)` into your sheet through the AI. At most 200 rows of 50 cells, 1,000 characters a cell, per call.
 - **Disconnect.** Each card disconnects on its own. The shared sign-in is kept while one of them is connected, and given back to Google (revoked) when the last one goes. Disconnecting one of two therefore doesn't narrow what the sign-in can do until both are gone.
 - **When it can't connect.** Lumen's Google client comes with the release build. A build without one says so and points to the Gmail widget's **Advanced** fields: a Google Cloud client of type Desktop app that you typed there is used for Drive and Sheets too, if you turn on the Google Drive API and the Google Sheets API in that project. Google can show "hasn't verified this app" until Lumen's client is verified for these scopes; **Advanced → Go to Lumen** gets past it.
-- **Not included.** Google Calendar events can't be added yet (the Calendar card still reads an iCal address, which can't write). Deleting files for good, changing who a file is shared with beyond "anyone with the link can view", and editing the text inside a Google Doc through Drive are not offered.
+- **Not included.** Google Calendar events are added by the Google Calendar card below, not through Drive. Deleting files for good, changing who a file is shared with beyond "anyone with the link can view", and editing the text inside a Google Doc through Drive are not offered.
+
+## More Google connectors
+
+Google Docs, Google Calendar, Google Tasks and Google Contacts use the **same Google sign-in** as Drive and Sheets (kind `google`): **Connect** opens Google's consent page in your browser, asks only for the new connector's permission added to what you already gave (incremental), and opens nothing at all when the sign-in already covers it. Each card disconnects on its own; the shared sign-in is given back to Google when the last Google connector goes.
+
+| Connector | Permission asked | Why |
+|---|---|---|
+| Google Docs | `https://www.googleapis.com/auth/documents` | Read a document and add text to it (Google has no narrower permission that reads your existing documents and edits them). Nothing is changed without a card. |
+| Google Calendar | `https://www.googleapis.com/auth/calendar.events` | See, add and change events on your calendars. Lumen only uses your main calendar, never adds guests, sends `sendUpdates=none`, and has no delete. |
+| Google Tasks | `https://www.googleapis.com/auth/tasks` | See, add and tick off tasks. No delete. |
+| Google Contacts | `https://www.googleapis.com/auth/contacts.readonly` | Read-only: find a contact. |
+
+- **For whoever owns the Google Cloud project Lumen signs in with** (or the user's own client under Gmail's **Advanced**): the consent screen must list these four scopes, and the **Google Docs API**, **Google Calendar API**, **Google Tasks API** and **People API** must be enabled in the project. A project without one of them gives a message that says so ("the API isn't turned on…"), not a failure. These are sensitive (not restricted) scopes.
+- **Google Calendar vs Calendar (secret address).** The secret-address card (id `gcal`) stays as it was: it only reads, needs no Google sign-in, and keeps working for anyone who connected it. The **Google Calendar** card is a separate connector (id `calendar`) that can also add and change events. Connect whichever you prefer; connecting both just gives the AI two sources.
+- **Dates.** A start or end is `2026-11-03T14:30` (a local time in this computer's time zone) or `2026-11-03` (all day). For an all-day event the end is the **last** day (the same day: a one-day event). A move keeps the event's length. A date that doesn't exist, an end before the start, or a date mixed with a time is refused before any card.
+- **Docs text is plain.** Text goes in as plain text at the end of the document (or as the first text of a new one); formatting, links and scripts can't be planted through the AI. At most 20,000 characters at a time.
+- A write whose request fails in transit or gets a server error says "may have been made; check …" and the AI is told to look before trying again; Lumen never repeats a write by itself.
+
+## Microsoft: Outlook, OneDrive and Outlook Calendar
+
+The three Microsoft cards share **one Microsoft sign-in** in your own browser (kind `microsoft`), built like Google's: **Connect** opens Microsoft's consent page, you approve (a school or work account such as Northeastern's, or an outlook.com account), and Lumen finishes in the app. Lumen uses Authorization Code with PKCE and a `http://localhost` redirect to a one-shot listener on your computer, as a **public client** (no secret anywhere). The refresh token is kept encrypted in `connectors.json` under `microsoft`; Microsoft rotates it on each refresh and Lumen keeps the newest. Every request goes to `graph.microsoft.com` over https.
+
+| Connector | Graph permission (delegated) | What it is for |
+|---|---|---|
+| Outlook | `Mail.ReadWrite` | Read mail, and put a draft in Drafts. Microsoft has no narrower permission for drafts; Lumen never sends, moves or deletes mail. |
+| OneDrive | `Files.Read` | Read only. |
+| Outlook Calendar | `Calendars.ReadWrite` | See, add and change events. No attendees, no delete. |
+| (all) | `User.Read`, `openid`, `email`, `profile`, `offline_access` | Who you are (shown on the card) and the refresh token. |
+
+- **OneDrive reads Office files.** A `.docx`, `.xlsx` or `.pptx` (up to 15 MB) is downloaded from the short-lived address Graph gives and read by Lumen's own readers (the same ones as the file previews: no macros run, no formulas calculated, nothing fetched); plain text files are read as text; PDFs, pictures and old `.doc`/`.xls` files give their details only. The download address must be on a Microsoft file host (`sharepoint.com`, `1drv.com`, `onedrive.live.com`, `microsoftpersonalcontent.com` and the like), is fetched with no sign-in header and no redirect is followed.
+- **A school account may need its administrator.** Mail, Files and Calendar permissions are normally yours to give, but a university can require administrator approval for new apps. Then Microsoft says so on its page, and Lumen says to connect again once it is allowed.
+- **The sign-in app.** A release build may include Lumen's own Microsoft Entra app (its Application (client) ID from the `LUMEN_MS_CLIENT_ID` build secret, a GUID, not a secret). A build without one asks on each Microsoft card for **Advanced: your own app's client ID**: register an app in the Microsoft Entra admin center (accounts in any organizational directory and personal Microsoft accounts; the **Mobile and desktop applications** platform with the redirect address `http://localhost`; delegated permissions `Mail.ReadWrite`, `Files.Read`, `Calendars.ReadWrite`; public client flows allowed) and paste its client ID. An ID typed there is used instead of the built-in one, and later Microsoft connectors keep using it.
+- **Disconnect** forgets the sign-in on this computer when the last Microsoft card goes. Microsoft has no revoke call for a public client, so to take the permission back at Microsoft too, remove Lumen in your Microsoft account's app permissions (account.microsoft.com/privacy/app-access, or myapps.microsoft.com for a school account).
+- Times are shown and sent in this computer's time zone (`Prefer: outlook.timezone`). Dates are written as for Google Calendar above.
+
+## Zotero
+
+Zotero connects with an **API key** you make at zotero.org/settings/keys/new (tick **Allow library access**; read only is enough). It is sent as `Authorization: Bearer` to `api.zotero.org` only. The AI can search your personal library, list collections and their items, and read one item's title, authors, year, publication, DOI, link and abstract. It never reads notes or attachments and can't change anything.
+
+## One-click MCP servers
+
+These five cards add the service's **own official MCP server** under **Custom MCP servers** and sign you in with OAuth on its page (kind `mcp`, no token to paste). Disconnecting removes the server and its sign-in. Unlike the built-in connectors, a connected MCP server's tool definitions are sent with every message, so each card says to connect it only when you use it. A tool the server itself marks read-only runs without a card (as the reads of the old GitHub, Notion and Todoist connectors did, and the chat then counts as having read untrusted content); every other call asks first, with what it would send, unless you tick **Always allow** for that tool.
+
+| Card | Server | Checked 2026-10-25 |
+|---|---|---|
+| Linear | `https://mcp.linear.app/mcp` ([docs](https://linear.app/docs/mcp)) | Answers 401 with sign-in details; registers Lumen's `127.0.0.1` redirect; PKCE S256. |
+| Atlassian (Jira and Confluence) | `https://mcp.atlassian.com/v2/mcp` ([docs](https://developer.atlassian.com/cloud/rovo-mcp/guides/getting-started/)) | Same. A site administrator can limit which apps may sign in. |
+| Sentry | `https://mcp.sentry.dev/mcp` | Same. |
+| Canva | `https://mcp.canva.com/mcp` | Same. |
+| Hugging Face | `https://huggingface.co/mcp` | Same; works without sign-in for public search too. |
+
+Only servers whose sign-in publishes dynamic client registration and accepted a registration for Lumen's redirect when checked are listed. Not offered, because they need an app registered with the service first or an API key: Asana (its authorization server "does not support dynamic client registration"), Slack, Figma and Vercel (only reviewed clients), Dropbox and Box (trusted clients only), Zapier (an API key per user), and Microsoft and Google (no hosted server with open registration: Outlook, OneDrive and Google Docs, Calendar and Tasks use the built-in connectors above).
 
 ## Gmail drafts
 The AI can put an email in your Gmail **Drafts**: a new one, or a reply in the conversation of a message it found. A draft is not sent. You open it in Gmail, change it if you like, and send it yourself (or turn on [Allow sending](#gmail-sending)).
@@ -124,6 +193,8 @@ To turn it on:
 - Answers are kept in memory for 30 seconds so asking twice is one request. They are not written to disk. The one thing a connector keeps on disk besides the token is the [Gmail send log](#gmail-sending), if you use sending.
 - **Disconnect** deletes the saved token and the card's entry and drops cached answers at once. For Gmail, the Google sign-in made by the Gmail widget stays (it is the widget's); one made from the connector is revoked.
 - The Gmail widget's **Sign in with Google** and the Gmail connector share one Google sign-in (one token, kept encrypted). **Allow drafts** adds its permission to that shared sign-in, so it lasts until the sign-in is revoked: disconnecting a connector-made sign-in, or **Disconnect** on the Gmail widget in Settings, gives the token back to Google.
+- **Microsoft** (Outlook, OneDrive, Outlook Calendar): requests go to `graph.microsoft.com` (and, for a OneDrive file, the Microsoft file host Graph names, with no sign-in header) and the sign-in to `login.microsoftonline.com`. The sign-in opens in your own browser; Lumen never sees your password. Mail text, event details and file text go into your chat and so to the AI you picked, like any connector. See [Microsoft](#microsoft-outlook-onedrive-and-outlook-calendar).
+- **Zotero** sends its API key to `api.zotero.org` only. The **MCP presets** send what their server's tools are given to that server, after you allow each call.
 
 ## For developers
 
@@ -131,6 +202,10 @@ To turn it on:
 - Tests: `test/units/connectors-units.js` (registry, tool size, input checks and the service against stand-in servers), `test/units/connector-writes-units.js` (each write's request with an injected fetch, the card's edits, the read-only messages, and the agent's gate: no bypass, background refusal), `test/units/mcp-oauth-units.js` (OAuth against a stand-in server), `test/units/mcp-readonly-units.js` (read-only presets), `test/units/gmail-drafts-units.js` (the message Lumen builds, the Allow drafts sign-in and scope check, the drafts-only request, and the gate for drafts) and `test/e2e/connectors.js` (the settings page, the AI with a fake model, approvals, MCP and disconnect in a real window). Stand-ins for Canvas, GitHub, Todoist, Notion and a calendar are in `test/fixtures/fake-connectors.js`; in test mode only, `global.__connectorEndpoints` points a connector at 127.0.0.1.
 - Names that go into a request path (a GitHub owner/repo) are checked for `.` and `..` segments and any of `/ \ ? #`; ids in queries are plain words.
 - Drive and Sheets: `kind: 'google'` with `google.scopes` in `registry.js`; `google-auth.js` is the one Google sign-in (the consent page in the browser, the loopback redirect, incremental scopes, refresh, revoke), sealed into `connectors.json` under `google`; `service.js` `connectGoogle` and the access token the shared `ctx.http` adds (one retry after a 401); `providers/drive.js`, `providers/sheets.js` and `providers/_google.js` (answers and errors). `agent.js` `connectorUploadFile` resolves the one file of an upload (a chat attachment by ref, or a path through `device-access.js`) before the card, and `runConnector` hands exactly that file to the provider, which checks it has not changed. An update does the same for each file (`connectorUpdateFiles`), the provider looks up which Drive file each would replace for the card (`cardNames`/`planUpdate`), and `connectorUpdatePairs` hands `runConnector` only the pairs the card showed. A connector's `ctx.hasScopes()` says whether the sign-in covers the scopes it asks for now; Drive's edits check it (`beforeCard`), and the card shows a Reconnect line when it doesn't. Tests: `test/units/google-connectors-units.js` (a stand-in Google: sign-in, refresh, revoke, every request, multipart and resumable upload, the errors, the agent's card and refusals).
+- Google Docs, Calendar, Tasks and Contacts: more `kind: 'google'` entries (`providers/docs.js`, `calendar.js`, `gtasks.js`, `contacts.js`) on the same `google-auth.js` sign-in. The calendars share `dates.js` (checking and shifting the dates the AI gives). `providers/_google.js` and `_graph.js` read each service's errors.
+- Outlook, OneDrive and Outlook Calendar: `kind: 'microsoft'` with `microsoft.scopes` (`providers/outlook.js`, `onedrive.js`, `mscal.js`). `microsoft-auth.js` is the shared sign-in (same shape as `google-auth.js`: a public client, PKCE, a `localhost` redirect via `oauth.js` `redirectHost`, incremental scopes asked as a union, rotated refresh tokens); `features/microsoft-client.js` reads the built-in client ID (`LUMEN_MS_CLIENT_ID`, written into `microsoft-client.json` by `scripts/build/build.js` and passed by `release.yml`). `ctx.download(url)` fetches a OneDrive file from a Microsoft file host only. The card's optional `clientId` field is the "your own app" path.
+- One-click MCP servers: `MCP_PRESETS` in `registry.js` (kind `mcp`, `mcp.auth: 'oauth'`); add one only after checking its server answers 401 with sign-in details and registers a `127.0.0.1` redirect.
+- Tests: `test/units/more-connectors-units.js` (every provider with a stand-in fetch, the two sign-ins, the cards' text, the agent's gate for the new writes, the presets).
 - To add a connector: declare it in `registry.js`, add `providers/<id>.js` exporting `verify(ctx)` and `actions`, and add a fake to the fixtures.
 - A write action has `write: true` and `edit: [...]` (the text arguments the card lets the user change). Its provider returns `{ text, link, done }` and exports `describeWrite(action, args, names)` (everything sent) and `describeWhere` (the fixed part); an optional `cardNames(ctx, action, args)` looks up names for the card. `agent.js` `allowConnector` asks with `noBypass` and `noAlways`, applies the edits (`registry.applyEdits`), and refuses writes in background runs; `service.call(input, { readOnly })` refuses them too.
 - Gmail drafts: `features/gmail-drafts.js` builds the message (RFC 2047 headers, header line breaks refused, base64url) and `composePath()` allows `POST /users/me/drafts` only and refuses any path with a `send` part; `widgets.js` `gmailCompose` is the only code that posts to Gmail, and `gmailAllowDrafts` the incremental sign-in (`GV.signInParams({ compose: true })`: `gmail.readonly gmail.compose`, `include_granted_scopes=true`, `login_hint`). The token answer's `scope` is stored with the sign-in (`oauth.js` `encodeCreds`) and refreshed with it. The provider's `beforeCard` refuses a draft without compose before any card is shown.

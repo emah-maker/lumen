@@ -13,8 +13,9 @@
 // kind: 'session' (the user's signed-in Lumen session, read through the site's own JSON endpoints),
 //       'token'   (the user pastes an API token or secret address; encrypted at rest),
 //       'oauth'   (Lumen's existing Google sign-in, shared with the Gmail widget),
-//       'google'  (Google Drive, Sheets: one Google sign-in in the user's own browser, each with its own `google.scopes`),
-//       'mcp'     (a preset that adds a service's official MCP server to Custom MCP servers on the same page; none ships today).
+//       'google'  (Drive, Sheets, Docs, Calendar, Tasks, Contacts: one Google sign-in in the user's own browser, each with its own `google.scopes`),
+//       'microsoft' (Outlook, OneDrive, Outlook Calendar: one Microsoft sign-in in the user's own browser, a public client with no secret, each with its own `microsoft.scopes`),
+//       'mcp'     (a preset that adds a service's official MCP server, with OAuth sign-in, to Custom MCP servers on the same page: the MCP_PRESETS below).
 // Why GitHub, Notion and Todoist are built in although each has an official MCP server: those servers' tool definitions cost far more of every
 // message than this one tool does (GitHub 24 tools, about 32k characters even limited to the toolsets this covers; Notion 64 tools and Todoist
 // about 45, neither measurable below that), against about 100 characters here. A card says the official server can be added by hand under
@@ -48,6 +49,38 @@ const DRIVE_ID = /^[A-Za-z0-9_-]{1,100}$/; // a Drive file id (or "root"): plain
 const FILE_REF = /^f_[0-9a-f]{24}$/; // a chat attachment's opaque ref (features/upload-files.js)
 // A spreadsheet id, or the address of one (docs.google.com/spreadsheets/d/<id>/...); the provider takes the id out of it.
 const SHEET_ID = /^(?:https:\/\/docs\.google\.com\/spreadsheets\/d\/)?[A-Za-z0-9_-]{10,100}(?:[/?#]\S{0,200})?$/;
+// A Google Doc's id, or the address of one.
+const DOC_ID = /^(?:https:\/\/docs\.google\.com\/document\/d\/)?[A-Za-z0-9_-]{10,100}(?:[/?#]\S{0,200})?$/;
+const EVENT_ID = /^[A-Za-z0-9_-]{1,200}$/; // a Google Calendar event id or a Google task id
+const LIST_ID = /^[A-Za-z0-9_@-]{1,100}$/; // a Google Tasks list id (or "@default")
+const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+// When an event starts or ends: a local time (2026-11-03T14:30) or a date (all day). The calendar providers check it is a real one.
+const WHEN = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?$/;
+const GRAPH_ID = /^[A-Za-z0-9_=+!-]{1,300}$/; // a Microsoft Graph id (mail, event, OneDrive item): plain characters, never a path
+const ZOTERO_KEY = /^[A-Za-z0-9]{8}$/;
+// The optional field on a Microsoft card: the Application (client) ID of the user's own Microsoft Entra app, for a copy of Lumen with no sign-in of its own built in.
+const MS_CLIENT = { id: 'clientId', label: 'Advanced: your own app’s client ID (optional)', placeholder: 'Application (client) ID, only if this copy has no Microsoft sign-in', secret: false, optional: true, help: 'Leave empty to use Lumen’s own Microsoft sign-in. To use your own, register an app in the Microsoft Entra admin center (Mobile and desktop platform, redirect address http://localhost, delegated Mail.ReadWrite, Files.Read and Calendars.ReadWrite) and paste its Application (client) ID here.' };
+
+// One-click cards for official hosted MCP servers (kind 'mcp'): the card adds the server to Custom MCP servers and signs in with OAuth. Only servers
+// whose own sign-in publishes dynamic client registration (RFC 7591) AND accepted a registration for Lumen's loopback redirect when checked on
+// 2026-10-25 are here; ones that need an app registered first (Asana, Slack, Figma, Vercel, Dropbox for other clients, Box) or an API key (Zapier) are not.
+// A connected server's tools are sent with every message (unlike the one `connector` tool), so each card says to connect it only when needed.
+const MCP_PRESETS = {
+  linear: { name: 'Linear', url: 'https://mcp.linear.app/mcp', source: 'https://linear.app/docs/mcp', icon: { text: 'L', color: '#5e6ad2' }, summary: 'Find, read and update Linear issues and projects.', reads: 'Issues, projects, cycles and comments in your Linear workspace' },
+  atlassian: { name: 'Atlassian (Jira and Confluence)', url: 'https://mcp.atlassian.com/v2/mcp', source: 'https://developer.atlassian.com/cloud/rovo-mcp/guides/getting-started/', icon: { text: 'A', color: '#0c66e4' }, summary: 'Search and update Jira issues and Confluence pages.', reads: 'Jira issues and Confluence pages in the Atlassian site you pick', extra: ' A site administrator can limit which apps may sign in; if yours is refused, ask them.' },
+  sentry: { name: 'Sentry', url: 'https://mcp.sentry.dev/mcp', source: 'https://mcp.sentry.dev', icon: { text: 'S', color: '#362d59' }, summary: 'Look into errors and releases in Sentry.', reads: 'Issues, events and projects in your Sentry organization' },
+  canva: { name: 'Canva', url: 'https://mcp.canva.com/mcp', source: 'https://mcp.canva.com', icon: { text: 'C', color: '#7d2ae8' }, summary: 'Find and make Canva designs.', reads: 'Your Canva designs and what you ask it to make' },
+  huggingface: { name: 'Hugging Face', url: 'https://huggingface.co/mcp', source: 'https://huggingface.co/mcp', icon: { text: 'H', color: '#ff9d00' }, summary: 'Search models, datasets, papers and Spaces on Hugging Face.', reads: 'Hugging Face Hub models, datasets, papers and Spaces' },
+};
+function mcpPreset(id) {
+  const p = MCP_PRESETS[id];
+  return {
+    id, name: p.name, category: 'work', kind: 'mcp', icon: p.icon, summary: p.summary,
+    sessionNote: `Adds ${p.name}’s own MCP server (${p.url}) under Custom MCP servers and signs you in on its page. Its tools are sent with every message while it is connected, so connect it only when you use it.${p.extra || ''}`,
+    mcp: { name: id, type: 'http', url: p.url, auth: 'oauth', source: p.source },
+    fields: [], reads: [p.reads], does: [], actions: {},
+  };
+}
 
 const CONNECTORS = [
   {
@@ -105,9 +138,10 @@ const CONNECTORS = [
     },
   },
   {
-    // No "add an event": a secret iCal address can only be read. Adding events would need a Google sign-in with a Calendar scope Lumen doesn't ask for.
-    id: 'gcal', name: 'Google Calendar', category: 'mail', kind: 'token', icon: { text: 'G', color: '#1a73e8' },
-    summary: 'See what is on your calendar for the next days.',
+    // No "add an event": a secret iCal address can only be read. The Google Calendar card (id 'calendar', the Google sign-in) can add and change events;
+    // this one stays for people who connected it before and for anyone who wants no sign-in.
+    id: 'gcal', name: 'Calendar (secret address)', category: 'mail', kind: 'token', icon: { text: 'G', color: '#1a73e8' },
+    summary: 'See what is on a Google Calendar for the next days, read only, with no Google sign-in.',
     fields: [{ id: 'secret', label: 'Secret address in iCal format', placeholder: 'https://calendar.google.com/calendar/ical/…/basic.ics', secret: true, help: 'In Google Calendar: Settings, your calendar, “Secret address in iCal format”. Any calendar’s .ics address works.', pattern: 'url' }],
     reads: ['Event titles, times and places on that calendar'],
     does: [],
@@ -156,6 +190,64 @@ const CONNECTORS = [
     },
   },
   {
+    // Docs, Calendar, Tasks and Contacts ride the same Google sign-in as Drive and Sheets (connectors/google-auth.js), each asking for its own scope.
+    id: 'docs', name: 'Google Docs', category: 'files', kind: 'google', icon: { text: 'D', color: '#4285f4' },
+    google: { scopes: [`${GOOGLE_API}/documents`] },
+    summary: 'Read a Google Doc, make a new one and add text to the end of one.',
+    sessionNote: 'Signs in with Google in your own browser. Lumen asks Google to see and edit your documents; it only makes documents or adds text after you allow each one, as plain text. One sign-in covers all the Google connectors.',
+    fields: [],
+    reads: ['The text of a document you give the link or id of'],
+    does: ['Make a new document (asks you first)', 'Add text to the end of a document (asks you first)'],
+    actions: {
+      read: { label: 'Read a document', args: { id: str('document id or link', { required: true, max: 300, pattern: DOC_ID }) }, doc: 'The text of one Google Doc, with its link.' },
+      create: { label: 'Make a document', write: true, edit: ['title', 'body'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }), body: text('the first text, plain', 20000, { label: 'Text' }) }, doc: 'Makes a document with that text and gives its link. The user confirms first.' },
+      append: { label: 'Add text to a document', write: true, edit: ['text'], args: { id: str('document id or link', { required: true, max: 300, pattern: DOC_ID }), text: text('the text to add at the end, plain', 20000, { required: true, label: 'Text' }) }, doc: 'Adds text after the last line (plain text; existing text is untouched). The user confirms first.' },
+    },
+  },
+  {
+    // Not the secret-address calendar (gcal, read only): this one is the Google sign-in, so it can also add and change events (never delete, never invite anyone).
+    id: 'calendar', name: 'Google Calendar', category: 'mail', kind: 'google', icon: { text: 'C', color: '#4285f4' },
+    google: { scopes: [`${GOOGLE_API}/calendar.events`] },
+    summary: 'See your events, add one and change one.',
+    sessionNote: 'Signs in with Google in your own browser. Lumen asks Google to see and edit your calendar events; it only adds or changes an event after you allow each one, adds no guests and sends no invitations, and never deletes. One sign-in covers all the Google connectors.',
+    fields: [],
+    reads: ['Event titles, times, places and notes on your main calendar'],
+    does: ['Add an event (asks you first)', 'Change an event (asks you first)'],
+    actions: {
+      events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
+      event: { label: 'Read an event', args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }) }, doc: 'One event with its end time and notes.' },
+      create_event: { label: 'Add an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no guests. The user confirms first.' },
+      update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
+    },
+  },
+  {
+    id: 'gtasks', name: 'Google Tasks', category: 'tasks', kind: 'google', icon: { text: 'T', color: '#2684fc' },
+    google: { scopes: [`${GOOGLE_API}/tasks`] },
+    summary: 'See your tasks, add one and tick one off.',
+    sessionNote: 'Signs in with Google in your own browser. Lumen asks Google to see and edit your tasks; it only adds or ticks off a task after you allow each one, and never deletes. One sign-in covers all the Google connectors.',
+    fields: [],
+    reads: ['Your task lists and their tasks (titles, notes, due dates)'],
+    does: ['Add a task (asks you first)', 'Mark a task done (asks you first)'],
+    actions: {
+      lists: { label: 'Task lists', args: {}, doc: 'Your task lists with their ids.' },
+      tasks: { label: 'Your tasks', args: { list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }), done: str('yes: include done tasks', { enum: ['yes', 'no'] }) }, doc: 'Tasks in a list, with ids.' },
+      add_task: { label: 'Add a task', write: true, edit: ['title', 'due', 'notes'], args: { title: str('the task', { required: true, max: 500, label: 'Task' }), due: str('a date: 2026-11-03', { max: 10, pattern: DAY_ONLY, label: 'Due' }), notes: text('notes', 8000, { label: 'Notes' }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Adds a task. The user confirms first.' },
+      complete_task: { label: 'Mark a task done', write: true, args: { id: str('task id from tasks', { required: true, max: 200, pattern: EVENT_ID }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Ticks a task off. The user confirms first.' },
+    },
+  },
+  {
+    id: 'contacts', name: 'Google Contacts', category: 'mail', kind: 'google', icon: { text: 'P', color: '#34a853' },
+    google: { scopes: [`${GOOGLE_API}/contacts.readonly`] },
+    summary: 'Find a person’s email address, phone number or company.',
+    sessionNote: 'Signs in with Google in your own browser, read only: Lumen asks Google only to see your contacts. One sign-in covers all the Google connectors.',
+    fields: [],
+    reads: ['Names, email addresses, phone numbers and companies of contacts you search for'],
+    does: [],
+    actions: {
+      search: { label: 'Find a contact', args: { query: str('a name, email, phone or company', { required: true, max: 100 }), max: int('how many, default 10', 1, 30) }, doc: 'Contacts matching those words.' },
+    },
+  },
+  {
     id: 'github', name: 'GitHub', category: 'work', kind: 'token', icon: { text: 'G', color: '#24292f' },
     summary: 'List your pull requests and issues, read a pull request, comment and open issues.',
     sessionNote: 'The service’s own official MCP server (https://api.githubcopilot.com/mcp/, with a personal access token as an Authorization: Bearer header) can be added under Custom MCP servers, below, for its full set of tools: code, files, Actions, discussions and more. It costs far more of every message than this connector, which is why this one is built in.',
@@ -197,6 +289,78 @@ const CONNECTORS = [
       add_task: { label: 'Add a task', write: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
     },
   },
+  {
+    id: 'zotero', name: 'Zotero', category: 'school', kind: 'token', icon: { text: 'Z', color: '#cc2936' },
+    summary: 'Search your reference library and read an item’s details and abstract.',
+    fields: [{ id: 'secret', label: 'API key', placeholder: 'Zotero API key', secret: true, help: 'zotero.org/settings/keys/new: tick “Allow library access” (read only is enough).', pattern: 'zotero' }],
+    reads: ['Your library’s items (title, authors, year, abstract, link) and collections'],
+    does: [],
+    actions: {
+      search: { label: 'Search the library', args: { query: str('words in the title, authors or text', { required: true, max: 200 }), max: int('how many, default 15', 1, 40) }, doc: 'Items matching those words, newest changes first.' },
+      recent: { label: 'Recently added', args: { max: int('how many, default 15', 1, 40) }, doc: 'The items added last.' },
+      collections: { label: 'Collections', args: {}, doc: 'Your collections with their keys.' },
+      collection: { label: 'One collection', args: { key: str('collection key', { required: true, max: 8, pattern: ZOTERO_KEY }), max: int('how many, default 25', 1, 50) }, doc: 'The items in a collection.' },
+      item: { label: 'Read an item', args: { key: str('item key from search', { required: true, max: 8, pattern: ZOTERO_KEY }) }, doc: 'One item’s details, link and abstract.' },
+    },
+  },
+  {
+    // The Microsoft three share ONE sign-in (connectors/microsoft-auth.js): Lumen's own Microsoft Entra app when this build has one, or the Application (client) ID
+    // of one the user registered (the optional field). Each asks for its own Graph permission; incremental, like Google's.
+    id: 'outlook', name: 'Outlook', category: 'mail', kind: 'microsoft', icon: { text: 'O', color: '#0f6cbd' },
+    microsoft: { scopes: ['Mail.ReadWrite'] },
+    summary: 'Summarize unread mail, search your inbox, read a message and make a draft.',
+    sessionNote: 'Signs in with Microsoft in your own browser (a school or work account, or outlook.com). Lumen asks Microsoft for access to your mail so it can read it and put drafts in your Drafts folder; it never sends, moves or deletes mail. One sign-in covers Outlook, OneDrive and Microsoft Calendar.',
+    fields: [MS_CLIENT],
+    reads: ['Your unread mail (sender, subject, a short start)', 'Messages you search for or open'],
+    does: ['Make a draft in your Outlook Drafts folder (asks you first; it never sends)'],
+    actions: {
+      unread: { label: 'Unread mail', args: { max: int('how many, default 10', 1, 20) }, doc: 'Newest unread messages in the inbox.' },
+      search: { label: 'Search mail', args: { query: str('words to look for', { required: true, max: 300 }), max: int('how many, default 10', 1, 20) }, doc: 'Search all your mail.' },
+      message: { label: 'Read a message', args: { id: str('message id from unread or search', { required: true, max: 300, pattern: GRAPH_ID }) }, doc: 'The text of one message.' },
+      create_draft: {
+        label: 'Make a draft', write: true, edit: ['to', 'cc', 'subject', 'body'],
+        args: {
+          to: str('addresses: a@x.org, Name <b@y.org>', { required: true, max: 2000, pattern: ADDRESSES, label: 'To' }),
+          cc: str('copy to, same form', { max: 2000, pattern: ADDRESSES, label: 'Cc' }),
+          subject: str('the subject', { required: true, max: 250, label: 'Subject' }),
+          body: text('the text, plain', 20000, { required: true, label: 'Text' }),
+        },
+        doc: 'Puts an email in the user’s Outlook Drafts; it is never sent (the user sends it from Outlook). The user confirms first.',
+      },
+    },
+  },
+  {
+    id: 'onedrive', name: 'OneDrive', category: 'files', kind: 'microsoft', icon: { text: 'O', color: '#0364b8' },
+    microsoft: { scopes: ['Files.Read'] },
+    summary: 'Find and read your OneDrive files, including Word, Excel and PowerPoint.',
+    sessionNote: 'Signs in with Microsoft in your own browser (your school’s OneDrive works). Read only: Lumen asks Microsoft only to read your files. One sign-in covers Outlook, OneDrive and Microsoft Calendar.',
+    fields: [MS_CLIENT],
+    reads: ['File names and folders', 'The text of Word, Excel and PowerPoint files and plain text files you ask about'],
+    does: [],
+    actions: {
+      files: { label: 'Find files', args: { query: str('words in the name or text; empty: recent files'), folder_id: str('only inside this folder (id)', { max: 300, pattern: GRAPH_ID }), max: int('how many, default 15', 1, 50) }, doc: 'Search OneDrive, or list a folder or the recent files, each with its id.' },
+      read: { label: 'Read a file', args: { id: str('file id from files', { required: true, max: 300, pattern: GRAPH_ID }) }, doc: 'The text of a .docx, .xlsx, .pptx or text file (up to 15 MB), with its link. Other files give details only.' },
+    },
+  },
+  {
+    id: 'mscal', name: 'Outlook Calendar', category: 'mail', kind: 'microsoft', icon: { text: 'C', color: '#0f6cbd' },
+    microsoft: { scopes: ['Calendars.ReadWrite'] },
+    summary: 'See your Outlook calendar, add an event and change one.',
+    sessionNote: 'Signs in with Microsoft in your own browser. Lumen asks Microsoft to see and edit your calendar; it only adds or changes an event after you allow each one, adds no attendees and sends no invitations, and never deletes. One sign-in covers Outlook, OneDrive and Microsoft Calendar.',
+    fields: [MS_CLIENT],
+    reads: ['Event titles, times and places on your main calendar'],
+    does: ['Add an event (asks you first)', 'Change an event (asks you first)'],
+    actions: {
+      events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
+      create_event: { label: 'Add an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no attendees. The user confirms first.' },
+      update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 300, pattern: GRAPH_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
+    },
+  },
+  mcpPreset('linear'),
+  mcpPreset('atlassian'),
+  mcpPreset('sentry'),
+  mcpPreset('canva'),
+  mcpPreset('huggingface'),
 ];
 
 const byId = new Map(CONNECTORS.map((c) => [c.id, c]));
@@ -207,11 +371,13 @@ const PATTERNS = {
   github: /^(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255})$/,
   notion: /^(?:ntn_|secret_)[A-Za-z0-9]{20,100}$/,
   todoist: /^[A-Za-z0-9_-]{20,100}$/,
+  zotero: /^[A-Za-z0-9]{16,40}$/,
 };
 const PATTERN_MESSAGES = {
   github: 'That doesn’t look like a GitHub token. Create a fine-grained personal access token at github.com/settings/personal-access-tokens.',
   notion: 'That doesn’t look like a Notion integration secret (it starts with ntn_).',
   todoist: 'That doesn’t look like a Todoist API token.',
+  zotero: 'That doesn’t look like a Zotero API key. Make one at zotero.org/settings/keys/new.',
   url: 'Paste the calendar’s https:// address.',
 };
 function checkField(field, value) {

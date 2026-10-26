@@ -2704,7 +2704,7 @@ function buildConnectors() {
     if (c.kind === 'mcp') {
       lines.push(h('p', { class: 'note', text: `The tools come from ${c.name}’s own MCP server${c.source ? ` (${c.source.replace(/^https:\/\//, '')})` : ''}, so what exactly the AI can do is whatever that server offers. Each call still asks you first and shows what it would send, unless you tick Always allow for a tool once it is connected.` }));
       lines.push(h('p', { class: 'note', text: c.oauth ? 'You sign in on the service’s own page in your browser. Lumen never sees your password; the sign-in is kept encrypted on this computer, and Disconnect deletes it.' : 'Lumen sends nothing anywhere except this service. The token is kept encrypted on this computer, and Disconnect deletes it.' }));
-    } else lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
+    } else lines.push(h('p', { class: 'note', text: c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : c.kind === 'microsoft' ? 'Lumen sends nothing anywhere except Microsoft. The sign-in is kept encrypted on this computer. Disconnect deletes it here; to take the permission back at Microsoft too, remove Lumen in your Microsoft account’s app permissions.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.' }));
     lines.push(h('p', { class: 'note', text: 'What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.' }));
     if (c.note) lines.push(h('p', { class: 'note', text: c.note }));
     return lines;
@@ -2729,7 +2729,7 @@ function buildConnectors() {
       class: 'primary', id: `conn-${c.id}-go`, text: 'Connect', 'aria-label': `Connect ${c.name}`,
       onclick: async () => {
         go.disabled = true;
-        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : c.oauth ? 'Waiting for your browser…' : 'Connecting…';
+        go.textContent = c.id === 'gmail' || c.kind === 'google' ? 'Waiting for Google…' : c.kind === 'microsoft' ? 'Waiting for Microsoft…' : c.oauth ? 'Waiting for your browser…' : 'Connecting…';
         if (c.oauth) flash(note, `Finish signing in to ${c.name}, in the tab that opened in your browser.`, 'ok');
         flash(msg, '');
         try {
@@ -2752,7 +2752,7 @@ function buildConnectors() {
   function cardFor(c, render) {
     const connected = c.status === 'connected' || c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error';
     const mcp = c.kind === 'mcp';
-    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google' || mcp));
+    const again = c.status === 'bad-token' || (c.status === 'needs-signin' && (c.id === 'gmail' || c.kind === 'google' || c.kind === 'microsoft' || mcp));
     const status = h('span', { class: `conn-status ${c.status}`, text: c.statusText });
     const buttons = [];
     if (!connected || again) {
@@ -2762,7 +2762,7 @@ function buildConnectors() {
       const rf = h('button', { text: 'Refresh tools', 'aria-label': `Refresh the tools of ${c.name}`, onclick: async () => { rf.disabled = true; rf.textContent = 'Starting…'; try { await M.refresh(c.mcp.id); render(await C.list()); } catch (err) { rf.disabled = false; rf.textContent = 'Refresh tools'; flash(note, clean(err), 'error'); } } });
       buttons.push(rf);
     }
-    if (c.status === 'needs-signin' && c.kind !== 'google' && !mcp) {
+    if (c.status === 'needs-signin' && c.kind !== 'google' && c.kind !== 'microsoft' && !mcp) {
       buttons.push(h('button', { class: 'primary', text: 'Sign in', 'aria-label': `Sign in to ${c.name}`, onclick: async () => { await C.signIn(c.id); flash(note, `Sign in to ${c.name} in the tab that opened, then ask the AI again.`, 'ok'); } }));
     }
 
@@ -2787,7 +2787,7 @@ function buildConnectors() {
     }
     if (connected) {
       buttons.push(h('button', { id: `conn-${c.id}-disconnect`, text: 'Disconnect', 'aria-label': `Disconnect ${c.name}`, onclick: async () => {
-        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
+        if (!confirm(`Disconnect ${c.name}? Lumen forgets the saved ${c.kind === 'session' ? 'address' : c.kind === 'google' ? 'Google sign-in' : c.kind === 'microsoft' ? 'Microsoft sign-in' : mcp && c.oauth ? 'sign-in' : 'secret'}; the AI can’t use it until you connect again.`)) return;
         try { render(await C.disconnect(c.id)); flash(note, `${c.name} disconnected.`, 'ok'); custom?.refresh(); } catch (err) { flash(note, clean(err), 'error'); }
       } }));
     }
