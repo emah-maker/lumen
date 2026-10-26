@@ -1,6 +1,7 @@
-// The sidebar button (Ask AI) opens on a NEW chat, never the tab's last one (main.js chat:sidebar-target, app.js toggleSidebarByHand), with a
-// fake slow model and invisible windows (LUMEN_TEST_BACKGROUND=1). With "Sidebar button starts a new chat" ON (the default):
-//   a run streaming on this tab, sidebar closed: opening shows a new empty chat; the run keeps going and is listed as working;
+// The sidebar button (Ask AI) opens on a NEW chat, never the tab's last one, unless a chat is running in this tab (main.js chat:sidebar-target,
+// app.js toggleSidebarByHand), with a fake slow model and invisible windows (LUMEN_TEST_BACKGROUND=1). With "Sidebar button starts a
+// new chat" ON (the default):
+//   a run streaming on this tab, sidebar closed: opening shows THAT chat, live; New chat inside the sidebar still starts a new one;
 //   a reply that finished while the sidebar was closed: opening shows a new empty chat too (the reply is in History);
 //   an empty chat open already: it is reused (no pile of empty chats);
 //   a run waiting for an OK: opening shows its approval card (a question waiting for the user is never hidden);
@@ -97,11 +98,10 @@ const fakeModel = (app, other) => app.evaluate((_e, otherUrl) => {
     await close();
     check('the run goes on with the sidebar closed', await app.evaluate(() => global.__tabChats.runs().some((r) => r.live)), 'not live');
     await open();
-    const chatNew = await chatId();
-    check('opening shows a NEW empty chat, not the last chat of this tab', chatNew !== chatA && await emptyShown() && (await userMsgs()).length === 0, `${chatNew} ${await userMsgs()}`);
-    check('the running chat keeps going in the background and is listed as working', await app.evaluate((_e, id) => global.__tabChats.runs().some((r) => r.chatId === id && r.live), chatA), 'not live');
+    check('opening shows the chat that is running in this tab, live', (await chatId()) === chatA && !(await emptyShown()) && await waitFor(() => working()), `${await chatId()} ${await userMsgs()}`);
+    check('the running chat is still live', await app.evaluate((_e, id) => global.__tabChats.runs().some((r) => r.chatId === id && r.live), chatA), 'not live');
     await release();
-    check('the old chat finishes its reply', await waitFor(() => app.evaluate((_e, id) => global.__tabChats.runs().every((r) => r.chatId !== id || !r.live), chatA)), 'still live');
+    check('the chat finishes its reply, in the open sidebar', await waitFor(() => app.evaluate((_e, id) => global.__tabChats.runs().every((r) => r.chatId !== id || !r.live), chatA)), 'still live');
     await idle();
 
     // 2. a reply that finished while the sidebar was closed: a new empty chat too (the finished one is in History)

@@ -606,6 +606,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const MAX_PROJECTS = 60;
   const MAX_NAME = 60;
   const MAX_INSTRUCTIONS = 4000;
+  const MAX_DESCRIPTION = 200; // the one-line goal on the project's page
   const cleanText = (text, max) => String(text ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').replace(/\r\n?/g, '\n').trim().slice(0, max);
   const projectList = () => readIndex().projects || [];
   const projects = () => projectList().map((p) => ({ ...p }));
@@ -642,7 +643,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return out;
   };
-  function saveProject({ id, name, instructions, folder, folderCreated, mirror, workFolder, links, defaults } = {}) {
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, workFolder, links, defaults } = {}) {
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -655,6 +656,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     project.name = clean;
     if (instructions !== undefined) project.instructions = cleanText(instructions, MAX_INSTRUCTIONS);
+    if (description !== undefined) { const d = cleanText(description, MAX_DESCRIPTION).replace(/\s+/g, ' '); if (d) project.description = d; else delete project.description; }
     if (folder !== undefined) { const f = cleanPath(folder); if (f) project.folder = f; else { delete project.folder; delete project.folderCreated; delete project.workFolder; } }
     if (folderCreated !== undefined) { if (folderCreated && project.folder) project.folderCreated = true; else delete project.folderCreated; }
     if (mirror !== undefined) { if (mirror === false) project.mirror = false; else delete project.mirror; }
@@ -688,6 +690,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     project.name = clean;
     project.instructions = cleanText(fields.instructions, MAX_INSTRUCTIONS);
+    const description = cleanText(fields.description, MAX_DESCRIPTION).replace(/\s+/g, ' ');
+    if (description) project.description = description; else delete project.description;
     const links = cleanLinks(fields.links);
     if (links.length) project.links = links; else delete project.links;
     const defaults = cleanDefaults(fields.defaults);
@@ -801,6 +805,22 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return parts.join('\n');
   }
+  // The last thing said in a chat, for a card on its project's page: the assistant's last text, else yours. '' when it cannot be read.
+  async function lastWords(id, max = 160) {
+    try {
+      const snapshot = await loadAsync(id, { retry: false });
+      let mine = '';
+      let theirs = '';
+      for (const m of snapshot?.messages || []) {
+        const blocks = typeof m.content === 'string' ? [{ type: 'text', text: m.content }] : Array.isArray(m.content) ? m.content : [];
+        const said = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => (m.role === 'user' ? cleanSaved(skillWords(b.text).replace(WRAPPED, '')) : b.text)).join(' ').replace(/\s+/g, ' ').trim();
+        if (!said) continue;
+        if (m.role === 'user') mine = said; else theirs = said;
+      }
+      const out = theirs || mine;
+      return out.length > max ? out.slice(0, max - 1).trimEnd() + '…' : out;
+    } catch { return ''; }
+  }
   const textCache = new Map(); // id -> { updated, text }: a chat is read again only after it changed
   // Chats whose title or messages contain every word of the query: [{ id, snippet }] newest first (snippet: '' when the title matched).
   function search(query, { max = 100 } = {}) {
@@ -906,7 +926,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
 
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
