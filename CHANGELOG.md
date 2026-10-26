@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Closing a tab in an outside agent's window no longer takes the whole window with it.** When Claude Code, Codex or another agent working over MCP has its own Lumen window, closing one of its tabs yourself (Ctrl+W, middle-click, the tab menu) did not count as using the window, so when the agent's session ended a moment later the window closed with the tabs you still had open in it. Closing a tab there now makes the window yours, as clicking in it already did. Test: `test/e2e/close-ai-tab-by-user.js`, which also checks that closing a tab the sidebar AI is working in, has finished with or has put to sleep leaves your window open.
+
 ## 0.5.70 (2026-10-25)
 
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.
