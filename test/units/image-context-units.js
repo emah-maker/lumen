@@ -32,7 +32,7 @@ const USER = 'generate an image for each problem that explains how to do it and 
   check('illustrative requests are neither technical, diagram-like nor pointing at anything', plain.every((t) => !gen.technicalIntent(t) && !gen.contextRef(t) && !gen.diagramishIntent(t)), J(plain.filter((t) => gen.technicalIntent(t) || gen.contextRef(t) || gen.diagramishIntent(t))));
   const points = ['draw this', 'generate an image for each problem', 'make a picture of these', 'draw the figure in the pdf'];
   check('"this", "each problem", "these", "the pdf" point at something', points.every((t) => gen.contextRef(t)), J(points.filter((t) => !gen.contextRef(t))));
-  check('PICTURE_NOTE (the loose-request hint) is unchanged for requests that are not technical', /The user wants a picture: call generate_image/.test(router.PICTURE_NOTE));
+  check('PICTURE_NOTE (the loose-request hint) for requests that are not technical: find a real picture first (url), else generate_image', /The user wants a picture. If a real one exists/.test(router.PICTURE_NOTE) && /generate_image with url/.test(router.PICTURE_NOTE) && /Otherwise call generate_image/.test(router.PICTURE_NOTE));
   check('DIAGRAM_NOTE: no image model, collect the items first, ask once naming what was looked at, one svg per item with arrows and labels', /Do not use an image model/.test(router.DIAGRAM_NOTE) && /current tab/.test(router.DIAGRAM_NOTE) && /attached files/.test(router.DIAGRAM_NOTE) && /earlier messages/.test(router.DIAGRAM_NOTE) && /ask once, naming what you looked at/.test(router.DIAGRAM_NOTE) && /ONE inline ```svg block/.test(router.DIAGRAM_NOTE) && /<marker>/.test(router.DIAGRAM_NOTE), router.DIAGRAM_NOTE);
   const ask = router.noContextAsk({ tab: 'no tab is open' });
   check('the one question names the tab, attachments and chat it looked at, and what to give', /current tab \(no tab is open\)/.test(ask) && /attachments \(none\)/.test(ask) && /this chat/.test(ask) && /paste/i.test(ask), ask);
@@ -132,6 +132,25 @@ const USER = 'generate an image for each problem that explains how to do it and 
     check('generate_image: a refused diagram comes back to the model as an instruction to draw it as SVG and tell the user in one line', out?.isError === true && /Do not retry it with an image model/.test(text) && /ONE inline ```svg block/.test(text), J(out));
     release('TOOLFB');
     await run.done;
+  }
+  // ---- "make me a picture of …": not sent straight to a picture provider; the model may show a real picture found online (url)
+  {
+    asked.length = 0;
+    check('"make me a picture of the Eiffel Tower" is the model\'s to answer (it may find a real one); "draw / generate" still go to a provider', !gen.asksToMake('make me a picture of the Eiffel Tower') && gen.asksToMake('draw a cat') && gen.asksToMake('generate an image of a sunset'));
+    const fetched = [];
+    agent.fetchImpl = async (u) => { fetched.push(u); return { status: 200, ok: true, headers: { get: () => null }, arrayBuffer: async () => PNG.buffer.slice(PNG.byteOffset, PNG.byteOffset + PNG.length) }; };
+    const run = send(chat('claudecode:default'), 'RUN-URL HOLD-URL make me a picture of the eiffel tower', 1);
+    const m = await until(() => msgOf('RUN-URL'), 15000);
+    check('the model is told to find a real picture first', Boolean(m) && m.prompt.includes(router.PICTURE_NOTE), J(m?.prompt?.slice(0, 200)));
+    const out = m?.token ? await toolCall(m.token, 'generate_image', { prompt: 'The Eiffel Tower', url: 'https://upload.example.org/eiffel.png' }) : null;
+    const text = (out?.content || []).map((c) => c.text || '').join(' ');
+    check('generate_image url: the picture is fetched (no image provider asked) and the model is told where it is from', out && !out.isError && /Picture from upload\.example\.org shown/.test(text) && fetched[0] === 'https://upload.example.org/eiffel.png' && asked.length === 0, J({ out, fetched, asked }));
+    const bad = m?.token ? await toolCall(m.token, 'generate_image', { prompt: 'x', url: 'http://192.168.1.5/x.png' }) : null;
+    check('generate_image url: a private or plain-http address is refused with a plain reason', bad?.isError === true && /not a picture Lumen could load/.test((bad.content || []).map((c) => c.text || '').join(' ')), J(bad));
+    release('URL');
+    const events = await run.done;
+    check('the found picture shows in the chat, credited to its site', events.some((e) => e.type === 'image' && /upload\.example\.org/.test(JSON.stringify(e))), J(events.filter((e) => e.type === 'image')));
+    delete agent.fetchImpl;
   }
   finish();
 })().catch((e) => { console.error(e); check('suite ran to the end', false, e.message); finish(); });
