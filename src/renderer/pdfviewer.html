@@ -14,10 +14,10 @@
   <header id="bar">
     <span id="name" title=""></span>
     <span class="group">
-      <button id="prev" type="button" title="Previous page" aria-label="Previous page"><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg></button>
-      <button id="next" type="button" title="Next page" aria-label="Next page"><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button>
-      <input id="pageNumber" type="text" inputmode="numeric" autocomplete="off" value="1" aria-label="Page number" size="3" />
-      <span id="pageCount" aria-live="polite">/ 1</span>
+      <button id="prev" type="button" disabled title="Previous page" aria-label="Previous page"><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 7.5 6 4l3.5 3.5"/></svg></button>
+      <button id="next" type="button" disabled title="Next page" aria-label="Next page"><svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></button>
+      <input id="pageNumber" type="text" inputmode="numeric" autocomplete="off" value="" aria-label="Page number" size="3" disabled />
+      <span id="pageCount" aria-live="polite"></span>
     </span>
     <span class="group">
       <button id="zoomOut" type="button" title="Zoom out (Ctrl+-)" aria-label="Zoom out">&minus;</button>

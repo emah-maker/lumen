@@ -3146,17 +3146,42 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
   if (!pills || !bar || !window.assistant.externalApps) return;
   const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || '', ...(text !== undefined ? { textContent: text } : {}) });
   const button = (cls, label, onclick) => Object.assign(el('button', cls, label), { type: 'button', onclick });
+  // A short note that says the app was handed back (the pill goes with it: an idle app has none).
+  function toast(text) {
+    document.querySelector('.external-toast')?.remove();
+    const note = el('div', 'external-toast', text);
+    note.setAttribute('role', 'status');
+    document.body.append(note);
+    setTimeout(() => note.remove(), 3500);
+  }
+  const pausedBefore = new Map(); // app id -> name, for the apps that were paused at the last state
   function render(state) {
     const active = state?.active || [];
+    const nowPaused = new Map(active.filter((a) => a.paused).map((a) => [a.id, a.name]));
+    for (const [id, name] of pausedBefore) if (!nowPaused.has(id)) toast(t('external.resumedToast', { client: name }));
+    pausedBefore.clear();
+    for (const [id, name] of nowPaused) pausedBefore.set(id, name);
+    document.body.classList.toggle('external-paused', nowPaused.size > 0);
+    const chip = $('agent-window-chip');
+    if (chip && document.body.classList.contains('agent-window')) { // (the agent's own window says whose it is, and who is in control)
+      chip.dataset.base ||= chip.textContent;
+      chip.textContent = nowPaused.size ? t('agentWindow.paused') : chip.dataset.base;
+    }
     pills.replaceChildren(...active.map((a) => {
       const pill = el('div', 'external-pill' + (a.paused ? ' paused' : ''));
       pill.setAttribute('role', 'status');
       pill.dataset.appId = a.id;
-      const text = el('span', 'external-pill-text', t(a.paused ? 'external.paused' : 'external.using', { client: a.name }));
+      pill.dataset.state = a.paused ? 'paused' : 'working';
+      const text = el('span', 'external-pill-text', t(a.paused ? 'external.pausedYou' : 'external.working', { client: a.name }));
       pill.title = text.textContent;
+      const withIcon = (btn, icon) => { const g = el('span', 'external-btn-icon', icon); g.setAttribute('aria-hidden', 'true'); btn.prepend(g); return btn; };
       pill.append(el('span', 'agent-dot'), text,
-        a.paused ? button('external-resume', t('external.resume'), () => window.assistant.externalApps.send('resume', a.id)) : button('external-takeover', t('external.takeOver'), () => window.assistant.externalApps.send('takeover', a.id)),
+        a.paused
+          ? withIcon(button('external-resume', t('external.resume'), () => window.assistant.externalApps.send('resume', a.id)), '▶')
+          : withIcon(button('external-takeover', t('external.takeOver'), () => window.assistant.externalApps.send('takeover', a.id)), '✋'),
         button('external-stop', t('external.stop'), () => window.assistant.externalApps.send('stop', a.id)));
+      const main = pill.querySelector(a.paused ? '.external-resume' : '.external-takeover');
+      main.title = t(a.paused ? 'external.resumeTitle' : 'external.takeOverTitle', { client: a.name });
       return pill;
     }));
     pills.hidden = !active.length;

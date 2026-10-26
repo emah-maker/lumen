@@ -211,6 +211,11 @@ function keepOff(tab, on = true) {
 const OFF_TAB_REFUSAL = "The user keeps the AI from acting on this tab. You can read it, but don't click, type, navigate or run scripts there; ask the user to do it, or work in another tab.";
 const OFF_TAB_NOTE = '(read-only: the user keeps the AI from acting on this tab)'; // what list_tabs and the browser state say about it
 const offTabRefusal = () => OFF_TAB_REFUSAL;
+// [agent window] The user clicked or typed in a tab of an outside agent's own window: it is theirs now (a sign-in code, a CAPTCHA). Reading it
+// still works; every tool that acts on it is refused with this, so the agent never fights the user for the page. The user's Resume (or the
+// agent's own new tab) gives the agent a tab to work in again.
+const USER_TOOK_OVER_REFUSAL = 'The user took over this tab (they clicked or typed in it, for example to sign in or enter a code). Do not click, type, navigate or run scripts there. You can still read it. Tell the user what you need from them, wait for them to say they are done, or work in another tab with open_tab.';
+const userTookOverRefusal = () => USER_TOOK_OVER_REFUSAL;
 // null when the call may go ahead, else the error text for the model. `offTab`: the tab the tool names or would act on is kept off;
 // `tool`: its name (a tool that only reads is let through; an unnamed one is treated as acting).
 const offTabCheck = ({ offTab = false, tool = '' } = {}) => (offTab && (!tool || isActionTool(tool)) ? OFF_TAB_REFUSAL : null);
@@ -305,7 +310,7 @@ const userInput = {
 module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, focusAfterAiClose, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
-  isKeptOff, keepOff, offTabCheck, offTabRefusal, OFF_TAB_NOTE,
+  isKeptOff, keepOff, offTabCheck, offTabRefusal, userTookOverRefusal, OFF_TAB_NOTE,
   closeDecision, closeLeft, autosaveHost, autosaveScript, CLOSE_REFUSAL, closeGranted, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };
