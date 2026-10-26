@@ -486,7 +486,18 @@ const prompt = $('prompt');
 const send = $('send');
 let running = false;
 // Messages typed while a reply runs wait in a line (renderer/chat-queue.js); each shows as a bubble of its own under the reply.
-const line = window.chatQueue.create();
+// A copy of it is kept in localStorage (renderer/chat-queue.js createStore) while it holds anything: a reload of the UI, a crash or a restart
+// must not forget a waiting message. What a gone view left comes back when its chat is shown again (restoreCarried).
+const queueStore = (() => { try { return window.chatQueue.createStore(window.localStorage, document.body.classList.contains('chat-page') ? { key: `${window.chatQueue.STORE_KEY}.page` } : {}); } catch { return null; } })();
+let queueBeat = 0;
+function mirrorLine(list) {
+  queueStore?.save(tempChatShown() ? [] : list); // (a temporary chat is never kept, nor what waits in it)
+  if (list.length && !queueBeat) queueBeat = setInterval(() => { if (!line.length) { clearInterval(queueBeat); queueBeat = 0; return; } mirrorLine(line.list); }, window.chatQueue.BEAT_MS);
+  else if (!list.length && queueBeat) { clearInterval(queueBeat); queueBeat = 0; }
+}
+const line = window.chatQueue.create(mirrorLine);
+// This view going away on purpose (a reload, the window closing): what waits is carried at once, not after the beat has gone stale.
+window.addEventListener('pagehide', () => { if (line.length && !tempChatShown()) queueStore?.save(line.list, 0); });
 const queued = line.list;
 const QUEUED = ':scope > .queued'; // (the waiting bubbles, and the bar over them)
 let queueBar = null;
@@ -603,6 +614,7 @@ function restoreDraft() {
   autosize();
   renderAttachments();
   renderScreenBtn();
+  restoreCarried(); // (the chat is named and its box is open again: what a gone view left waiting in it)
   if (pendingView && !lazyItems) applyView();
 }
 // The chat just started here got its id: a draft typed meanwhile moves to it.
@@ -611,8 +623,10 @@ function nameChat(id) {
   drafts?.rename(null, id);
   stashRename(null, id);
   shownChatId = id;
+  line.claim(id); // (what was typed before the chat had a name is its own)
   // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
   if (!prompt.value && !pastes.length) restoreDraft();
+  restoreCarried();
 }
 let turn = null; // DOM state for the in-progress assistant reply
 let runId = 0; // events from older runs (after Stop or New chat) are ignored
@@ -1233,6 +1247,8 @@ function sendAllNow() {
 }
 function sendQueued() {
   if (running) return; // (a message typed in the meantime started its own turn: the line goes on when that one ends)
+  // No AI connected (signed out, or its key gone while the reply ran): ask() would only park the text where nothing shows it. It is unsent text in the box instead.
+  if (!modelReady) { queuedToDraft(); return; }
   // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
   const next = line.take(forOtherChat);
   if (!next) return;
@@ -2115,14 +2131,35 @@ function queuedToDraft() {
   const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
   for (const q of mine) q.bubble.remove();
   renderQueue();
-  if (!mine.some((q) => q.text || q.images?.length)) return;
-  const texts = mine.map((q) => q.text).filter(Boolean);
+  entriesToBox(mine);
+}
+// Messages that cannot go out now, as unsent text in the box (and their pictures as attachments): the box has a Send button.
+function entriesToBox(list) {
+  if (!list.some((q) => q.text || q.images?.length)) return;
+  const texts = list.map((q) => q.text).filter(Boolean);
   if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
-  const images = mine.flatMap((q) => q.images || []);
+  const images = list.flatMap((q) => q.images || []);
   if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
   autosize();
   updateSend();
 }
+// What a view that is gone (reloaded, closed, crashed, the app restarted) left waiting in this chat (queueStore): still running here, it waits
+// again as bubbles and goes out in its turn; otherwise it comes back to the box as unsent text. Once, by whoever shows the chat first.
+function restoreCarried() {
+  if (!queueStore || !shownChatId || draftHold || tempChatShown()) return;
+  const got = queueStore.carried(shownChatId, { take: true });
+  if (!got.length) return;
+  const entries = got.map((e) => ({ ...e, images: (e.images || []).map((a) => (a.media_type && a.data ? { ...a, url: `data:${a.media_type};base64,${a.data}` } : a)) }));
+  const rest = [];
+  for (const e of entries) {
+    if (running && !e.fresh) queueUp({ text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId });
+    else rest.push(e);
+  }
+  entriesToBox(rest);
+  if (entries.some((e) => e.imagesLost)) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.queued.imagesLost') }));
+  if (!running && line.length) setTimeout(sendQueued);
+}
+setTimeout(() => restoreCarried(), window.chatQueue.STALE_MS + 1000); // (what a view that closed a moment ago left looked alive until now)
 
 
 // The 'done' of a run whose reply ended early (reply_complete): the model label, Undo and the opened-tabs row. A message sent
@@ -3090,11 +3127,13 @@ function applySync(view) {
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   incomingChatId = view?.id || null;
-  clearChatView({ keepBox: sameChat });
+  const ownRun = Boolean(view?.live && running && view.live.runId === runId); // (this view's own run, drawn again: before its first event named the chat, this view had no id for it)
+  clearChatView({ keepBox: sameChat, ownRun });
   incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
+  line.claim(shownChatId);
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
@@ -3110,6 +3149,7 @@ function applySync(view) {
   } else showHistory(view?.items);
   resumeLive(view?.live);
   if (!running && line.length) setTimeout(sendQueued); // (the run ended while the view was redrawn, so no 'done' will send what waits)
+  restoreCarried();
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view); // (the chat page: a temporary chat shows its badge)
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.(); // (an open chat list marks the chat of this tab now)
@@ -3304,7 +3344,12 @@ document.querySelectorAll('.chip').forEach((chip) => {
 
 // Empties the sidebar for a new chat or another one from the history list (renderer/chats.js).
 // `keepBox`: the same chat is drawn again (applySync): its box is not touched at all.
-function clearChatView({ keepBox = false } = {}) {
+function clearChatView({ keepBox = false, ownRun = false } = {}) {
+  // The same chat drawn again (a sync while a reply runs): what waits in its line stays waiting, put back under the redrawn view. A message typed
+  // before the chat's first event named it has no owner yet: it is this chat's when the run being drawn is this view's own.
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId) || (ownRun && q.chatId == null));
+  // Leaving a chat: its own waiting messages go back to ITS box, saved with its draft just below (they used to land in the box of the next chat).
+  if (!keepBox) queuedToDraft();
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId; // (kept while other chats are shown in between)
     saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
@@ -3325,20 +3370,11 @@ function clearChatView({ keepBox = false } = {}) {
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();
-  // The same chat drawn again (a sync while a reply runs): what waits in its line stays waiting, put back under the redrawn view.
-  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId)); // (also when the redraw comes before the chat's first event named it again)
   const unsent = line.drain();
   for (const q of unsent) q.bubble.remove();
   queueBar = null; // (its element goes with the rest of the view)
   // Messages still waiting for the other chat's reply aren't lost: they come back to the box, to send here or not.
-  if (unsent.some((q) => q.text || q.images?.length)) {
-    const texts = unsent.map((q) => q.text).filter(Boolean);
-    if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
-    const images = unsent.flatMap((q) => q.images || []);
-    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
-    autosize();
-    updateSend();
-  }
+  entriesToBox(unsent);
   lazyItems = null;
   historyDrawing++;
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());

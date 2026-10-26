@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Chat: a message queued while the AI is working is no longer forgotten.** Waiting messages are kept on this machine as they are typed, so a reload, a crash or a restart does not lose them (they wait again if the reply is still running, otherwise they come back in the box). One typed right after sending, before the chat had a name, is no longer dumped into the box by the next redraw; leaving a chat sends its waiting messages back to that chat's own box, not the next chat's; and with no AI connected they return to the box instead of being parked out of sight.
+
 ## 0.5.70 (2026-10-25)
 
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.
