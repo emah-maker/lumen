@@ -298,7 +298,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -8938,6 +8938,9 @@ const connectorsFacade = {
   isWrite: (input) => connectorsSvc().isWrite(input),
   describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
+  pageTarget: (input) => connectorsSvc().pageTarget(input), // [canvas pages] Canvas is read from its pages in a tab (agent.js runCanvasPages): where, that the sign-in is good, or that it ended
+  pageOk: (id) => connectorsSvc().pageOk(id),
+  pageSignedOut: (id) => connectorsSvc().pageSignedOut(id),
   list: () => connectorsSvc().list(),
 };
 ipcMain.handle('connectors:list', () => connectorsSvc().list());
@@ -9167,6 +9170,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI → Tab to finish what I'm typing (agent.js autocomplete)
+  replySuggestions: () => readSettings().replySuggestions !== false, // [reply suggestions] Settings → AI → Suggest replies (agent.js replySuggestions)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
   memory: { // [memory] Settings → AI → Instructions and memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
@@ -10943,7 +10947,7 @@ function noteThumbs(run, msg, push) {
   if (msg.type === 'tool' || msg.type === 'tool_done' || msg.type === 'done') thumbAiTabs.at = 0; // (a step may have opened or closed a tab: the next frame asks again)
   if (msg.type === 'tool') {
     const name = String(msg.name || '');
-    if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
+    if (msg.id && stepLabelsLib.surfaceOf(name, msg.input) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
       (run.toolInputs ||= new Map()).set(msg.id, msg.input);
       if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
@@ -10967,7 +10971,7 @@ function noteThumbs(run, msg, push) {
   } else if (msg.type === 'tool_done') {
     const name = run.toolNames?.get(msg.id);
     if (name && /(^|__)close_tab$/.test(name)) run.thumbHold = null;
-    if (name && /(^|__)open_tab$/.test(name) && msg.ok !== false && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now
+    if (name && (/(^|__)open_tab$/.test(name) ? msg.ok !== false : name === 'connector') && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now (a Canvas read: the tab it read in)
       run.thumbTarget = { kind: 'tab', tabId: msg.tabId };
       const ev = thumbTargetEvent(run);
       if (ev) push(ev);
@@ -11126,6 +11130,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
+    }
+    if (msg.type === 'tool_done' && Number.isInteger(run.tabId)) { // [canvas pages] a Canvas read works in a background tab of its own: the step names it, ended or failed (a sign-in page is worth opening)
+      const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
+      if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
     if (msg.type === 'card_files' && run.doneMsg && !run.deleted) { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); } // (files listed after the run ended: kept too)
@@ -11345,6 +11353,25 @@ ipcMain.handle('agent:autocomplete', async (event, prefix) => {
   }
 });
 ipcMain.on('agent:autocomplete-cancel', (event) => { autocompleteRuns.get(event.sender.id)?.abort(); });
+// [reply suggestions] Follow-ups for the chips under the reply that just ended (agent.js replySuggestions). One request per view: a newer one stops
+// the one before. `chatId`: the chat the view shows; a view that has moved to another chat since gets nothing (its chips would be for the wrong chat).
+const replySuggestRuns = new Map(); // sender id -> AbortController
+ipcMain.handle('agent:reply-suggest', async (event, forChat) => {
+  if (readSettings().replySuggestions === false) return { ok: false, error: 'off', items: [] };
+  replySuggestRuns.get(event.sender.id)?.abort();
+  const ctrl = new AbortController();
+  replySuggestRuns.set(event.sender.id, ctrl);
+  const { messages, id } = readForSender(event, () => ({ messages: agent.messages, id: chatId }));
+  if (forChat != null && id != null && String(forChat) !== String(id)) return { ok: false, error: 'moved', items: [] };
+  try {
+    const r = await agent.replySuggestions({ messages, signal: ctrl.signal });
+    return { ok: r.ok, items: Array.isArray(r.items) ? r.items : [], error: r.error };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200), items: [] };
+  } finally {
+    if (replySuggestRuns.get(event.sender.id) === ctrl) replySuggestRuns.delete(event.sender.id);
+  }
+});
 // New chat; `temporary`: one that is never saved (chats:temporary).
 function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);
