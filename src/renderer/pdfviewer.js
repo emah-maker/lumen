@@ -20,7 +20,28 @@ const findController = new PDFFindController({ linkService, eventBus });
 const viewer = new PDFViewer({ container, viewer: $('viewer'), eventBus, linkService, findController, textLayerMode: 1, removePageBorders: true });
 linkService.setViewer(viewer);
 
-const say = (text) => { const el = $('message'); el.textContent = text || ''; el.hidden = !text; };
+// The message in the middle of the page: a line of text and, when something went wrong, the buttons that can get the PDF open another way.
+const say = (text, actions = []) => {
+  const el = $('message');
+  el.replaceChildren();
+  el.hidden = !text;
+  if (!text) return;
+  const line = document.createElement('p');
+  line.textContent = text;
+  el.append(line);
+  if (!actions.length) return;
+  const row = document.createElement('div');
+  row.className = 'actions';
+  for (const { label, run, primary } of actions) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    if (primary) button.className = 'primary';
+    button.addEventListener('click', run);
+    row.append(button);
+  }
+  el.append(row);
+};
 const nameOf = () => { try { return decodeURIComponent(new URL(base).pathname.split('/').pop() || '') || 'PDF'; } catch { return 'PDF'; } };
 document.title = nameOf();
 $('name').textContent = nameOf();
@@ -118,7 +139,9 @@ password.addEventListener('submit', (e) => { e.preventDefault(); if (!pendingPas
 
 // The first page's text, for Organize (main.js readFileText, through executeJavaScript: the page has no IPC): at most `max` characters, nothing for a PDF that did not open.
 let docOpened;
-const docReady = new Promise((resolve) => { docOpened = resolve; });
+let docReady;
+const armDoc = () => { docReady = new Promise((resolve) => { docOpened = resolve; }); };
+armDoc();
 async function firstPageText(max = 300) {
   const d = await docReady;
   if (!d) return '';
@@ -128,11 +151,50 @@ async function firstPageText(max = 300) {
   } catch { return ''; }
 }
 
-async function open() {
+// ---- when the PDF does not open
+// The viewer is never left on a toast: whatever happens, the page ends on the PDF or on a message that says what went wrong, with the buttons
+// that can get the file open another way.
+const WATCH_MS = 3000; // Chrome's viewer must have replaced this page within this long, or the message below says so
+let attempt = 0; // the current try (an answer to an older one is ignored)
+const reasonOf = (err) => {
+  const status = Number(err && err.status) || 0;
+  if (status === 401 || status === 403 || status === 410) return 'The site refused the link to this PDF. It may have expired or need you to sign in again: open it again from the site.';
+  if (status >= 400) return `The site answered with an error (${status}) instead of the PDF.`;
+  if (err && err.name === 'InvalidPDFException') return 'The site sent something that is not a PDF (a web page or a damaged file).';
+  return 'Lumen could not read this PDF.';
+};
+const FALLBACK_WHY = {
+  download: 'The site sent a download instead of a PDF page, so Chrome’s viewer could not show it either.',
+  load: 'Chrome’s viewer could not load it either.',
+  moved: 'The tab went somewhere else before Chrome’s viewer opened.',
+};
+function failed(text, { chrome = true } = {}) {
+  console.warn('pdf: showing the message:', text);
+  say(text, [
+    { label: 'Try again', primary: true, run: () => open({ fresh: true }) },
+    ...(chrome && window.lumenPdfHost?.openInChrome ? [{ label: 'Open in Chrome’s viewer', run: () => handOff('opened from the message', '') }] : []),
+    { label: 'Download', run: () => $('download').click() }, // (the same Save as the toolbar's)
+  ]);
+}
+// Chrome's viewer shows the same address in place of this page. The answer says whether that happened; with none in WATCH_MS, say so.
+async function handOff(why, before) {
+  const mine = attempt;
+  say('Opening in Chrome’s PDF viewer…');
+  const watchdog = setTimeout(() => { if (mine === attempt) failed(`${before}Chrome’s PDF viewer is taking a while to open.`); }, WATCH_MS);
+  let result = null;
+  try { result = await window.lumenPdfHost.openInChrome(why); } catch { /* answered below */ }
+  clearTimeout(watchdog);
+  if (mine !== attempt || (result && result.ok)) return; // (when it worked, this page is already gone)
+  failed(`${before}${FALLBACK_WHY[result && result.why] || 'Chrome’s viewer could not be opened.'}`, { chrome: !(result && result.why === 'download') });
+}
+
+async function open({ fresh = false } = {}) {
+  const mine = ++attempt;
   if (!source) { say('There is no PDF in this address.'); return; }
+  if (fresh) armDoc();
   say('Opening…');
   const task = pdfjsLib.getDocument({
-    url: `/data?${new URLSearchParams({ u: base })}`,
+    url: `/data?${new URLSearchParams(fresh ? { u: base, fresh: '1' } : { u: base })}`, // (fresh: not the copy main kept of an earlier try)
     cMapUrl: '/vendor/cmaps/', cMapPacked: true, standardFontDataUrl: '/vendor/standard_fonts/', wasmUrl: '/vendor/wasm/', iccUrl: '/vendor/iccs/',
     isEvalSupported: false, enableXfa: false,
   });
@@ -146,22 +208,27 @@ async function open() {
   let doc;
   try { doc = await task.promise; } catch (err) {
     docOpened(null);
+    if (mine !== attempt) return;
     const why = `${(err && err.name) || 'Error'}: ${(err && err.message) || ''}`;
     console.warn('pdf: could not open', why);
     if (err && err.name === 'PasswordException') { say('This PDF needs its password.'); return; }
-    if (err && err.name === 'MissingPDFException') { say('The PDF could not be found. It may have been moved or deleted.'); return; }
-    // pdf.js can refuse a file Chromium's own viewer shows (and a one-time link fetched a second time returns a page, not the PDF):
-    // the same address goes to Chrome's viewer instead of ending on an error.
-    if (window.lumenPdfHost?.openInChrome) { say('Opening in Chrome’s PDF viewer…'); window.lumenPdfHost.openInChrome(why); return; }
-    say(`This PDF could not be opened (${why.slice(0, 160)}).`);
+    if (err && err.name === 'MissingPDFException') { failed('The PDF could not be found. It may have been moved or deleted, or its link may have expired.', { chrome: false }); return; }
+    const reason = reasonOf(err);
+    // pdf.js can refuse a file Chromium's own viewer shows: the same address goes to Chrome's viewer instead of ending on an error.
+    // (Not when the site answered with an error status: Chrome would get the same answer.)
+    if (window.lumenPdfHost?.openInChrome && !(Number(err && err.status) >= 400)) { handOff(why, `${reason} `); return; }
+    failed(reason);
     return;
   }
+  if (mine !== attempt) return;
   say('');
   setTimeout(() => $('viewer').classList.add('sized'), 4000); // (never hidden for good, whatever happens to the first size)
   docOpened(doc);
   viewer.setDocument(doc);
   linkService.setDocument(doc, null);
   $('pageCount').textContent = `/ ${doc.numPages}`;
+  pageBox.value = '1';
+  pageBox.disabled = false;
   $('prev').disabled = true;
   $('next').disabled = doc.numPages < 2;
   doc.getMetadata().then(({ info }) => { const title = String((info && info.Title) || '').trim(); if (title) { document.title = title; $('name').textContent = title; $('name').title = title; } }).catch(() => {});
