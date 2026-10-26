@@ -140,7 +140,9 @@ function createDownloads(deps) {
 
   function setup() {
     deps.session.defaultSession.on('will-download', (event, item, contents) => {
-      if (deps.blocked?.(contents)) { event.preventDefault(); try { item.cancel(); } catch {} return; } // [agent window] an outside agent's page
+      // [agent window] An outside agent's page (Claude Code's own window): nothing lands on the user's disk until they say yes. The file waits in a
+      // temporary folder, paused, as a risky one does, and the question goes to the user's own window (askAboutAgent). No save dialog.
+      const agent = deps.agentOf?.(contents) || '';
       // A file the browser shows itself instead (a local .pptx opened in a tab: features/slides-viewer.js).
       if (deps.openInstead?.(item, contents)) { event.preventDefault(); return; }
       const dir = deps.downloadDir(); // [settings] Downloads folder unless changed in Settings
@@ -150,10 +152,10 @@ function createDownloads(deps) {
       // [settings] "Ask where to save": Electron shows its save dialog when no path is set. A risky
       // file is asked about first, so it takes the usual folder.
       // Save Link As… / Save Image As… (features/link-menu.js) ask for that one download, by its address.
-      const ask = (deps.askWhereToSave() || Boolean(deps.askOnce?.(item.getURLChain?.() || [url]))) && !risky;
+      const ask = (deps.askWhereToSave() || Boolean(deps.askOnce?.(item.getURLChain?.() || [url]))) && !risky && !agent;
       let target = null;
       let holding = null; // risky: the temporary file it downloads to until approved
-      if (risky) {
+      if (risky || agent) {
         const tmpDir = fs.mkdtempSync(path.join(deps.app.getPath('temp'), 'lumen-download-'));
         holding = path.join(tmpDir, base);
         item.setSavePath(holding); // must be set synchronously, or Electron shows its own save dialog
@@ -163,14 +165,14 @@ function createDownloads(deps) {
         if (ask) item.setSaveDialogOptions({ defaultPath: target });
         else item.setSavePath(target);
       }
-      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky, awaitingOk: risky, started: Date.now(), url, endedAt: null, speed: 0 };
+      const entry = { id: ++downloadSeq, name: path.basename(target || base), path: target, state: 'progressing', received: 0, total: item.getTotalBytes(), paused: risky || Boolean(agent), awaitingOk: risky || Boolean(agent), started: Date.now(), url, endedAt: null, speed: 0 };
       Object.defineProperties(entry, { item: { value: item, writable: true }, contents: { value: contents }, saveAs: { value: ask } });
       let lastAt = Date.now();
       let lastReceived = 0;
       downloads.unshift(entry);
       trim();
       sendDownloads();
-      if (target && !risky) deps.toast?.(t('downloads.toast.started', { name: entry.name })); // (a risky file asks first; a Save As… name is not known yet)
+      if (target && !risky && !agent) deps.toast?.(t('downloads.toast.started', { name: entry.name })); // (a risky file asks first; a Save As… name is not known yet)
       item.on('updated', (_e, state) => {
         const now = Date.now();
         const received = item.getReceivedBytes();
@@ -198,7 +200,8 @@ function createDownloads(deps) {
         if (holding && entry.awaitingOk && state === 'completed') { entry.held = true; return; }
         finish(entry, state);
       });
-      if (risky) askAboutRisky(entry, base, url, dir);
+      if (agent) askAboutAgent(entry, base, url, dir, agent, risky);
+      else if (risky) askAboutRisky(entry, base, url, dir);
     });
   }
 
@@ -229,16 +232,26 @@ function createDownloads(deps) {
   }
 
   // Programs and scripts can run code: nothing reaches the Downloads folder until the user agrees.
-  function askAboutRisky(entry, base, url, dir) {
-    const win = deps.win();
+  // [agent window] An outside agent's download: the user's own window asks (the agent's window is behind theirs). Yes saves it to the Downloads
+  // folder like any download (the agent is told where); No, or no window to ask in, cancels it.
+  function askAboutAgent(entry, base, url, dir, agent, risky) {
+    askAboutRisky(entry, base, url, dir, {
+      win: deps.userWin?.() || deps.win(),
+      type: risky ? 'warning' : 'question',
+      message: t('downloads.agentConfirm', { agent, name: base }),
+      detail: [hostOf(url) ? t('downloads.agentConfirm.detail', { host: hostOf(url) }) : t('downloads.agentConfirm.detailNoHost'), risky ? (hostOf(url) ? t('downloads.confirm.detail', { host: hostOf(url) }) : t('downloads.confirm.detailNoHost')) : ''].filter(Boolean).join(' '),
+    });
+  }
+  function askAboutRisky(entry, base, url, dir, ask = {}) {
+    const win = ask.win || deps.win();
     if (!win || win.isDestroyed()) { entry.item.cancel(); return; }
     deps.dialog.showMessageBox(win, {
-      type: 'warning',
+      type: ask.type || 'warning',
       buttons: [t('dialog.cancel'), t('downloads.confirm.button')],
       defaultId: 0,
       cancelId: 0,
-      message: t('downloads.confirm', { name: base }),
-      detail: hostOf(url) ? t('downloads.confirm.detail', { host: hostOf(url) }) : t('downloads.confirm.detailNoHost'),
+      message: ask.message || t('downloads.confirm', { name: base }),
+      detail: ask.detail || (hostOf(url) ? t('downloads.confirm.detail', { host: hostOf(url) }) : t('downloads.confirm.detailNoHost')),
     }).then(({ response }) => {
       const { item } = entry;
       if (entry.state !== 'progressing' || (!entry.held && item.getState() !== 'progressing')) return; // cancelled from the menu meanwhile

@@ -5294,7 +5294,9 @@ const downloads = createDownloads({
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   toast: (text) => toast(text), // "Downloading report.pdf", "Download failed: report.pdf"
-  blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
+  // [agent window] an agent's page: its download waits for the user's yes, asked in their own window (features/downloads.js askAboutAgent)
+  agentOf: (contents) => (contents && agentContents.has(contents) ? tabByContents(contents)?.rec?.agent?.label || 'An AI agent' : ''),
+  userWin: () => [focusedRec(), curRec, ...winRecs].find((r) => r && rcAlive(r) && winRecs.has(r) && !r.agent && !isSpare(r))?.win || null,
   onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
   onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
