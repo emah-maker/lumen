@@ -11905,6 +11905,13 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
       pill.dataset.state = a.paused ? 'paused' : 'working';
       const text = el('span', 'external-pill-text', t(a.paused ? 'external.pausedYou' : 'external.working', { client: a.name }));
       pill.title = text.textContent;
+      if (!document.body.classList.contains('agent-window')) {
+        pill.classList.add('external-show'); text.setAttribute('role', 'button'); text.tabIndex = 0;
+        pill.title = t('external.showTitle', { client: a.name });
+        const show = () => window.assistant.externalApps.send('show', a.id);
+        pill.addEventListener('click', (ev) => { if (!ev.target.closest('button')) show(); });
+        text.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); show(); } });
+      }
       const withIcon = (btn, icon) => { const g = el('span', 'external-btn-icon', icon); g.setAttribute('aria-hidden', 'true'); btn.prepend(g); return btn; };
       pill.append(el('span', 'agent-dot'), text,
         a.paused
@@ -11964,6 +11971,13 @@ let mcpPillTimer = null;
 let mcpStepNow = '';
 let mcpLastRow = null;
 
+
+
+$('agent-pill')?.addEventListener('click', (ev) => {
+  if (ev.target.closest('button') || document.body.classList.contains('agent-window')) return;
+  if (document.body.classList.contains('mcp-active')) window.assistant.externalApps.send('show');
+  else if (document.body.classList.contains('agent-away')) window.assistant.showAgentTarget?.();
+});
 function mcpPillRefresh() {
   const driving = mcpCdpActive || mcpRunning.size > 0;
   const showPill = () => {

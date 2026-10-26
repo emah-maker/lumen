@@ -1511,3 +1511,5 @@ body.split-dragging { user-select: none; cursor: col-resize; }
 .tab.split-left, .tab.split-right { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
 .tab.split-left:has(+ .tab.split-right) { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
 .tab.split-left + .tab.split-right { margin-left: -3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+/* The toolbar pill goes to where the AI works: an outside agent's window, or the tab the sidebar's AI is in (app.js) */
+body:is(.mcp-active, .agent-away):not(.agent-window) .agent-pill { cursor: pointer; }

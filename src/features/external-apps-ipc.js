@@ -117,6 +117,14 @@ function setupExternalApps(deps) {
     for (const s of ext.sessionsOf(String(id))) { const w = deps.agentWindows?.windows.get(s); try { deps.handAgentWindow?.(w, 'user'); deps.showAgentWindow?.(w); } catch {} } // (its window comes forward: now it is the user's to use, and stays theirs when the session ends)
   };
   send_.resume = (id) => { ext.resume(String(id)); for (const s of ext.sessionsOf(String(id))) { try { deps.handAgentWindow?.(deps.agentWindows?.windows.get(s), 'agent'); } catch {} } }; // (the tabs the user held go back to the agent)
+  // "<client> is working" clicked: its window comes forward, at the tab it works in, so the user sees where and what it is doing. Nothing is
+  // taken over (that is Take over); with no id, the window of whichever agent is working (the toolbar's "being driven by" pill).
+  send_.show = (id) => {
+    const aw = deps.agentWindows?.windows;
+    const recs = id ? ext.sessionsOf(String(id)).map((s) => aw?.get(s)).filter(Boolean) : (aw?.windows?.() || []);
+    const rec = recs[recs.length - 1];
+    if (rec) { try { deps.showAgentWindow?.(rec); } catch {} }
+  };
   invoke.state = () => ext.state();
 
   return { ext, invoke, send: send_, test: { ext, notes, info, answer: (id, d) => ext.answer(id, d), tokenFile: (id) => ext.tokenFileOf(id) } };
