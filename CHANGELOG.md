@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **An agent's window you bring up stays open for you.** Before, only a click or key in Claude Code's (or another agent's) window kept it once the agent was done; a window you were just reading closed about 20 seconds after its session ended. Now bringing it to the front (taskbar, the agent pill, Go to) makes it yours to keep, to read or type in.
+- **A picture opened in one chat no longer shows over the others.** The picture viewer stayed open when you switched chats; now leaving a chat closes it.
+
 ## 0.5.75 (2026-10-26)
 
 - **Click where it says an agent is working to see it.** In your window, the "Claude Code is working" pill (or "Lumen is being driven by …") brings the agent's own window forward, at the tab it is working in; nothing is taken over. The "working in another tab" pill of the sidebar's AI goes to that tab.
