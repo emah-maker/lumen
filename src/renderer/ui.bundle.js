@@ -11910,7 +11910,7 @@ const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: t
         pill.title = t('external.showTitle', { client: a.name });
         const show = () => window.assistant.externalApps.send('show', a.id);
         pill.addEventListener('click', (ev) => { if (!ev.target.closest('button')) show(); });
-        text.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); show(); } });
+        text.addEventListener('keydown', (ev) => { if ((ev.key === 'Enter' && !isImeEnter(ev)) || ev.key === ' ') { ev.preventDefault(); show(); } });
       }
       const withIcon = (btn, icon) => { const g = el('span', 'external-btn-icon', icon); g.setAttribute('aria-hidden', 'true'); btn.prepend(g); return btn; };
       pill.append(el('span', 'agent-dot'), text,
