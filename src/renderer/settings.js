@@ -134,6 +134,7 @@ function highlight(words) {
 // reader (the control's aria-describedby points at it), for search and for anything that reads the row's `.desc`. A caution that has to be read
 // before the switch is flipped (KEEP_WHOLE) always stays on the page, in full.
 const INLINE_DESC = 64;
+const INLINE_WARN = /only turn this on|trust it|trick|can[’']t be undone|cannot be undone/i; // (a caution about handing over the computer: read on the page, before the switch)
 let infoPop = null; // the one popover
 let infoBtn = null; // the (i) button it is open for
 function closeInfo(restoreFocus) {
@@ -172,7 +173,7 @@ function infoButton(label, text) {
   return b;
 }
 function row(label, desc, ...controls) {
-  const long = typeof desc === 'string' && desc.length > INLINE_DESC && !KEEP_WHOLE.test(desc);
+  const long = typeof desc === 'string' && desc.length > INLINE_DESC && !INLINE_WARN.test(desc);
   const el = h('div', { class: 'row' },
     h('div', { class: 'text' },
       h('div', { class: 'head' }, h('span', { class: 'label', text: label }), long ? infoButton(label, desc) : null),
@@ -2631,7 +2632,7 @@ async function buildPrivacy(card) {
   // [files] The remembered files live in Downloads and files > Files (buildFiles); a pointer here, for people who look for them under Privacy.
   card.group(tr('settings.files.group', 'Files')).append(
     withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Files you open are listed on the new-tab page and in the Ctrl+Shift+F picker, on this computer only. Turn that off or clear the list in Downloads and files > Files.'),
-      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened pdf documents pinned folder remember'),
   );
 
   // [passwords] Saved passwords (features/passwords.js): off by default, encrypted with the OS keychain.

@@ -35,7 +35,7 @@ check('the duplicate Theme row on the first screen is left out of search', /them
 
 // ---- long text is behind an (i)
 check('a description over a line opens from an (i) button and stays for screen readers and search', /const INLINE_DESC = 64/.test(js) && /sr-only info-text/.test(js) && /aria-expanded/.test(js) && /'aria-controls': 'info-pop'/.test(js));
-check('a caution that must be read first is never put behind the (i)', /!KEEP_WHOLE\.test\(desc\)/.test(js.slice(js.indexOf('function row(label'), js.indexOf('function row(label') + 400)));
+check('a caution that must be read first is never put behind the (i)', /!INLINE_WARN\.test\(desc\)/.test(js.slice(js.indexOf('function row(label'), js.indexOf('function row(label') + 400)));
 
 // ---- the services list
 const apps = read('src/renderer/settings-apps.js');

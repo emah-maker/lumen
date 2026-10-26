@@ -2,7 +2,9 @@
 
 Connectors let the AI use services you already have: "what's due on Canvas this week", "summarize my unread email", "draft a reply to my professor", "add a task to Todoist", "comment on that pull request", "put these notes in a Notion page", "find my lab notes in Drive", "upload this PDF to my Reports folder", "add these rows to my grades sheet". You connect each one in **Settings → Apps and connections**. Nothing is connected until you press **Connect**, and an unconnected service adds nothing to what the AI is told.
 
-## The gallery
+## The list (Settings → Apps and connections)
+
+Connectors and the new tab page's widgets are one list now: each service has one page with Connect, **Show on new tab page** and **Let the AI use it** (turning that off keeps you signed in). See docs/settings.md, Apps and connections. What follows still describes what each connector does.
 
 Cards are grouped as Mail and calendar, School, Files and docs, Work and Tasks, with **Custom MCP servers** under them. Each card shows what it is for, its state (**Not connected**, **Connected · account**, **Needs sign-in**, **Token refused**) and one button. **What it can do** on a card lists exactly what the AI can read and do with it. Connect shows the same list before you confirm.
 

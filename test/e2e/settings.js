@@ -95,8 +95,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---- nav and search ----
   const navCount = await inTab(sid, "document.querySelectorAll('#nav a').length");
-  // (Search engine and Downloads are groups on General and Extensions one on Privacy now; their ids still open it.)
-  const sectionCount = require('../../src/settings/settings-backend').SECTIONS.length - 3;
+  // (every topic is a nav entry; the older ids (search, extensions...) are links to a row or a page)
+  const sectionCount = require('../../src/settings/settings-backend').SECTIONS.length;
   check(`left nav lists all ${sectionCount} categories`, navCount === sectionCount, navCount);
   await inTab(sid, "document.querySelector('#nav a[data-section=appearance]').click()");
   await waitFor(() => inTab(sid, "!document.getElementById('cat-appearance').hidden"));
@@ -107,7 +107,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('address bar shows lumen://settings/appearance', shown === 'lumen://settings/appearance', shown);
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'proxy'; s.dispatchEvent(new Event('input')); }");
   const hits = await inTab(sid, "[...document.querySelectorAll('#sections > .pane')].filter((s) => !s.hidden).map((s) => s.id + ':' + [...s.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).length)");
-  check('search “proxy” shows only the matching row (Advanced)', JSON.stringify(hits) === '["cat-advanced:1"]', JSON.stringify(hits));
+  check('search “proxy” shows only the matching row (Advanced → Network and proxy)', JSON.stringify(hits) === '["sub-adv-network:1"]', JSON.stringify(hits));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'zzqxv'; s.dispatchEvent(new Event('input')); }");
   check('search with no match says so', (await inTab(sid, "!document.getElementById('no-results').hidden")) === true, await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden).map((r) => r.dataset.search).slice(0, 3).join(' | ')"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'night'; s.dispatchEvent(new Event('input')); }");
@@ -142,17 +142,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('turning the switch off stores aiHandsOff = true', await waitFor(async () => (await hands()) === true), String(await hands()));
   await inTab(sid, "document.getElementById('pref-aiHandsOff').click()");
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'steps'; s.dispatchEvent(new Event('input')); }");
-  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#cat-ai details.adv-rows')].filter((x) => x.querySelector('.row:not(.filtered)')); return d.length > 0 && d.every((x) => x.open); })()"));
+  check('search opens a folded “More options” list when a row inside it matches', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#sub-ai-answers details.adv-rows')].filter((x) => x.querySelector('.row:not(.filtered)')); return d.length > 0 && d.every((x) => x.open); })()"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); }");
-  check('the folded list closes again when the search is cleared', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#cat-ai details.adv-rows')]; return d.length > 0 && d.every((x) => !x.open); })()"));
+  check('the folded list closes again when the search is cleared', await inTab(sid, "(() => { const d = [...document.querySelectorAll('#sub-ai-answers details.adv-rows')]; return d.length > 0 && d.every((x) => !x.open); })()"));
   const stops = await inTab(sid, "[...document.querySelectorAll('#nav a')].filter((a) => a.tabIndex === 0).length");
   check('the category list is a single Tab stop', stops === 1, stops);
   await inTab(sid, "location.hash = '#downloads'");
-  await waitFor(() => inTab(sid, "!document.getElementById('cat-general').hidden"));
-  check('the old #downloads link opens General', await inTab(sid, "!document.getElementById('cat-general').hidden && Boolean(document.getElementById('download-dir'))"));
+  await waitFor(() => inTab(sid, "!document.getElementById('cat-downloads').hidden"));
+  check('the #downloads link opens Downloads and files', await inTab(sid, "!document.getElementById('cat-downloads').hidden && Boolean(document.getElementById('download-dir'))"));
   await inTab(sid, "location.hash = '#cookies'");
-  await waitFor(() => inTab(sid, "!document.getElementById('cat-privacy').hidden"));
-  check('#cookies scrolls to and highlights its group', await inTab(sid, "document.querySelector('.group.flash-target')?.dataset.title === 'Tracking and connections'"), await inTab(sid, "document.querySelector('.flash-target')?.dataset.title"));
+  await waitFor(() => inTab(sid, "!document.getElementById('sub-privacy-tracking')?.hidden"));
+  check('#cookies opens the Tracking protection page', await inTab(sid, "!document.getElementById('sub-privacy-tracking').hidden && Boolean(document.getElementById('pref-blockThirdPartyCookies'))"));
   await inTab(sid, "location.hash = '#ai-keys'");
   await waitFor(() => inTab(sid, "!document.getElementById('sec-ai-keys-page')?.closest('.pane')?.hidden"));
   check('#ai-keys opens the API keys page', await inTab(sid, "Boolean(document.getElementById('ai-keys')) && document.getElementById('ai-keys').offsetParent !== null"));
