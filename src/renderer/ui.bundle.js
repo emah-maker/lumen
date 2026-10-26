@@ -11907,7 +11907,10 @@ window.assistant.onOpenChat?.(async ({ id } = {}) => {
   await window.chatList?.openChat?.(id);
 });
 window.assistant.setup?.onWelcome?.(() => showSidebar(true));
-chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
+
+let frontPage = null;
+window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; });
+chatHost.needSidebar = () => { if (frontPage !== 'chat' && document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
   const name = who.setup ? t('toolbar.aiSetup') : who.name;
