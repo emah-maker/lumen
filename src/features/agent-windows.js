@@ -9,6 +9,7 @@
 //   release(key)         the session ended: after a grace period the window is closed, unless the user has used
 //                        it or pinned a tab in it, then it is kept and becomes an ordinary window (`keep`)
 //   isAgentWindow(rec)   is this window one of these (not yet kept)?
+//   inUse(rec)           is its session still on? (closing the user's last window leaves it open; it closes when its session ends)
 //
 // deps: open(label, key) -> Promise<rec>, alive(rec), close(rec), keep(rec), userUsed(rec), hasPinned(rec),
 //       graceMs, setTimer, clearTimer
@@ -84,6 +85,8 @@ function createAgentWindows({ open, alive, close, keep, userUsed = () => false, 
     release,
     releaseAll,
     isAgentWindow: (rec) => owned.has(rec),
+    // Is its session still on (not ended, not in its grace period)? Such a window stays open when the user's own windows close.
+    inUse: (rec) => [...entries.values()].some((x) => x.rec === rec && !x.timer && alive(rec)),
     windows: () => [...owned].filter(alive),
     keyOf: (rec) => [...entries.values()].find((e) => e.rec === rec)?.key ?? null,
     size: () => entries.size,

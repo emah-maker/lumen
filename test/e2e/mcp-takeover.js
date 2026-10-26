@@ -190,12 +190,22 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   r = await A.call('read_tabs', { tab_ids: [user.tabs[0].id] });
   check('the user\'s own tabs are still off limits', !/PAGE-HOME/.test(A.text(r)), A.text(r).slice(0, 200));
 
+  // The user closes their own window while the agent still works: the agent's window stays open (and Lumen with it) until its session ends.
+  const mine = (await windows()).find((w) => !w.agent);
+  await app.evaluate(({ BrowserWindow }, id) => { BrowserWindow.fromId(id)?.close(); }, mine.windowId);
+  await sleep(1000);
+  check('closing the user\'s last window leaves the window of an agent still at work open', (await app.evaluate(() => global.__agentWindows.count()).catch(() => 0)) === 1);
+  r = await A.call('read_page');
+  check('...and the agent goes on working in it', !r.result.isError, A.text(r).slice(0, 200));
   approving = false;
   await approver;
-  A.end();
   check('no UI errors', errors.length === 0, errors.join('; '));
+  A.end();
+  // Its session ends (the grace period is 1.5 s here). The user used this window above (took a tab over), so it is theirs to keep: an ordinary
+  // window now, and Lumen keeps running in it. (An unused one closes, and Lumen quits with its last window.)
+  check('once the agent\'s session ends, the window the user used stays, as their own', await waitFor(async () => (await app.evaluate(() => global.__agentWindows.count())) === 0 && (await windows()).length === 1, 15000), JSON.stringify(await windows().catch(() => null)));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
-  await app.close();
+  await app.close().catch(() => {});
   server.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
