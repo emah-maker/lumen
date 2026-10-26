@@ -8400,7 +8400,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     try { front.view.setVisible(false); front.view.setVisible(true); front.view.webContents.invalidate(); } catch { /* gone */ }
   };
   w.on('restore', freshFront);
-  w.on('focus', () => { if (rec.agent && !agentSeen) { agentSeen = true; freshFront(); } });
+  // The user brought it up (Lumen only ever shows it behind, never focuses it unasked): it is theirs to keep, to look at or type in, after the session ends.
+  w.on('focus', () => { if (rec.agent) rec.agent.looked = true; if (rec.agent && !agentSeen) { agentSeen = true; freshFront(); } });
   // Full screen (F11 / the View menu) has no window controls to clear: the strip drops its caption reserve (renderer: body.window-fullscreen). The first time, the toast says how to leave.
   w.on('enter-full-screen', () => { ui()?.send('window-fullscreen', true); if (process.platform !== 'darwin' && !fullScreenHinted) { fullScreenHinted = true; toast(t('fullscreen.exitHint')); } });
   w.on('leave-full-screen', () => ui()?.send('window-fullscreen', false));
@@ -8577,7 +8578,7 @@ const agentWindows = createAgentWindows({
   alive: (rec) => rcAlive(rec) && winRecs.has(rec),
   close: (rec) => { if (rcAlive(rec)) rec.win.close(); },
   keep: keepAgentWindow,
-  userUsed: (rec) => Boolean(rec.agent?.used),
+  userUsed: (rec) => Boolean(rec.agent?.used || rec.agent?.looked),
   hasPinned: (rec) => tabsOf(rec).some((x) => x.pinned),
   ...(TEST && Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) > 0 ? { graceMs: Number(process.env.LUMEN_AGENT_WINDOW_GRACE_MS) } : {}),
 });

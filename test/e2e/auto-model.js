@@ -71,6 +71,8 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   // A Claude Code (or other CLI) on the machine running this test would be a candidate too: keep the run the same everywhere.
   const ENGINES = ['claudecode', 'grokbuild', 'antigravity', 'codex']; // (every command-line engine: Codex joined later and answered for Auto, where the fakes see nothing)
   await app.evaluate((_e, e) => global.__patchSettings({ autoExclude: e }), ENGINES);
+  // Reply suggestions ask the cheaper model once after each reply, which the fakes would count as an answer; they have their own tests.
+  await app.evaluate(() => global.__patchSettings({ replySuggestions: false }));
 
   // ---- the picker: Auto first, the default on a fresh profile
   const options = await ui.$$eval('#model option', (os) => os.map((o) => o.value));

@@ -253,7 +253,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await runRoutines();
   check('turned on, the Canvas routine runs at 7:30 and finishes', await waitFor(async () => (await app.evaluate((_e, id) => global.__bg.find(id).status, canvas.id)) === 'done', 12000), await app.evaluate((_e, id) => JSON.stringify([global.__bg.find(id).status, global.__bg.find(id).error]), canvas.id));
   const canvasResult = await app.evaluate((_e, id) => global.__bg.find(id).routine.history.map((h) => h.result).join('\n'), canvas.id);
-  check('it was offered the connector tool and its answer came after reading Canvas', await app.evaluate(() => global.__toolsSeen.CANVAS?.has('connector') === true) && /RESULT-CANVAS/.test(canvasResult) && fakes.seen.some((r) => r.service === 'canvas' && /calendar_events/.test(r.url)), JSON.stringify([...(await app.evaluate(() => [...global.__toolsSeen.CANVAS || []])), fakes.seen.map((r) => r.url)]));
+  check('it was offered the connector tool and its answer came after reading Canvas', await app.evaluate(() => global.__toolsSeen.CANVAS?.has('connector') === true) && /RESULT-CANVAS/.test(canvasResult) && fakes.seen.some((r) => r.service === 'canvas' && /^\/calendar\b/.test(r.url)) && !fakes.seen.some((r) => r.service === 'canvas' && /calendar_events/.test(r.url)),JSON.stringify([...(await app.evaluate(() => [...global.__toolsSeen.CANVAS || []])), fakes.seen.map((r) => r.url)]));
   check('no password was asked for or sent (Canvas was read with the signed-in session only)', fakes.seen.filter((r) => r.service === 'canvas').every((r) => !r.auth), '');
 
   // ---- The full-page chat: the same phrase, the same store.
