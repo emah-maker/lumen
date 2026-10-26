@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
+const { EventEmitter } = require('events');
 const { pathToFileURL } = require('url');
 const pv = require('../../src/features/pdf-viewer');
 const pdfInput = require('../../src/features/pdf-input');
@@ -112,17 +113,64 @@ const src = (...p) => fs.readFileSync(path.join(__dirname, '..', '..', 'src', ..
   // A PDF pdf.js could not open goes to Chrome viewer in place of the viewer's entry, and is then left there (no loop back to the viewer).
   const pdfAddr = 'https://a.test/files/notes.pdf';
   const removed = []; const loaded = [];
-  const failTab = { isDestroyed: () => false, getURL: () => pv.viewerUrl(pdfAddr + '#page=2'), loadURL: (u) => { loaded.push(u); return Promise.resolve(); }, navigationHistory: { getActiveIndex: () => 3, getEntryAtIndex: () => ({ url: pv.viewerUrl(pdfAddr + '#page=2') }), removeEntryAtIndex: (i) => removed.push(i) } };
+  const failSession = new EventEmitter();
+  const failTab = { session: failSession, isDestroyed: () => false, getURL: () => pv.viewerUrl(pdfAddr + '#page=2'), loadURL: (u) => { loaded.push(u); return Promise.resolve(); }, navigationHistory: { getActiveIndex: () => 3, getEntryAtIndex: () => ({ url: pv.viewerUrl(pdfAddr + '#page=2') }), removeEntryAtIndex: (i) => removed.push(i) } };
   const rt2 = pv.create();
-  check('fallback: an unopenable PDF loads its own address (Chrome viewer) and drops the viewer entry', rt2.fallback(failTab) === pdfAddr + '#page=2' && loaded[0] === pdfAddr + '#page=2' && (await new Promise((r) => setImmediate(r)), removed[0] === 3), J({ loaded, removed }));
+  check('fallback: an unopenable PDF loads its own address (Chrome viewer) and drops the viewer entry', (await rt2.fallback(failTab)).address === pdfAddr + '#page=2' && loaded[0] === pdfAddr + '#page=2' && removed[0] === 3, J({ loaded, removed }));
   check('fallback: that PDF is kept in Chrome viewer for the tab (with or without a fragment), others still route', rt2.keptInChrome(failTab, pdfAddr) && rt2.keptInChrome(failTab, pdfAddr + '#page=9') && !rt2.keptInChrome(failTab, 'https://a.test/other.pdf') && !rt2.keptInChrome(cmdTab, pdfAddr));
-  check('fallback: nothing on a page that is not the viewer', rt2.fallback({ ...failTab, getURL: () => 'https://a.test/' }) === null && rt2.fallback(null) === null);
+  check('fallback: nothing on a page that is not the viewer (answered, not ignored)', (await rt2.fallback({ ...failTab, getURL: () => 'https://a.test/' })).why === 'address' && (await rt2.fallback(null)).ok === false);
+  // The answer says what happened: a load that becomes a download leaves the tab on the viewer ('download'), another error is 'load'.
+  const rt3 = pv.create();
+  const aborted = Object.assign(new Error('ERR_ABORTED (-3) loading'), { code: 'ERR_ABORTED', errno: -3 });
+  const dlSession = new EventEmitter();
+  const dlTab = { ...failTab, session: dlSession, loadURL: () => { dlSession.emit('will-download', {}, {}, dlTab); return Promise.reject(aborted); } };
+  const asDownload = await rt3.fallback(dlTab);
+  check('fallback: a load the site turns into a download is reported as one, and the address is not kept in Chrome viewer', asDownload.ok === false && asDownload.why === 'download' && !rt3.keptInChrome(dlTab, pdfAddr) && dlSession.listenerCount('will-download') === 0, J(asDownload));
+  const moveTab = { ...failTab, session: new EventEmitter(), loadURL: () => Promise.reject(aborted) };
+  const brokenTab = { ...failTab, session: new EventEmitter(), loadURL: () => Promise.reject(Object.assign(new Error('ERR_CONNECTION_REFUSED'), { code: 'ERR_CONNECTION_REFUSED', errno: -102 })) };
+  const asMoved = await pv.create().fallback(moveTab);
+  const asLoad = await pv.create().fallback(brokenTab);
+  check('fallback: an abort with no download is "moved", another load error is "load" with its code', asMoved.why === 'moved' && asLoad.why === 'load' && /CONNECTION_REFUSED/.test(asLoad.detail), J({ asMoved, asLoad }));
   const viewerJs = src('renderer', 'pdfviewer.js');
-  check('viewer page: a failed open (not a password, not missing) asks for Chrome viewer and logs the real error', viewerJs.includes('window.lumenPdfHost?.openInChrome') && viewerJs.includes("console.warn('pdf: could not open'") && main.includes("ipcMain.on('pdf:fallback'") && src('preload', 'permissions-preload.js').includes("openInChrome: (why) => ipcRenderer.send('pdf:fallback'"));
+  check('viewer page: a failed open (not a password, not missing) asks for Chrome viewer and logs the real error', viewerJs.includes('window.lumenPdfHost?.openInChrome') && viewerJs.includes("console.warn('pdf: could not open'") && main.includes("ipcMain.handle('pdf:fallback'") && src('preload', 'permissions-preload.js').includes("openInChrome: (why) => ipcRenderer.invoke('pdf:fallback'"));
+  check('viewer page: the handoff is answered and watched, and a failure shows Try again / Open in Chrome viewer / Download (never the toast for good)', /WATCH_MS = 3000/.test(viewerJs) && /label: 'Try again'/.test(viewerJs) && /Open in Chrome’s viewer/.test(viewerJs) && /label: 'Download'/.test(viewerJs) && /await window\.lumenPdfHost\.openInChrome/.test(viewerJs) && /fresh: '1'/.test(viewerJs));
+  check('viewer page: with no document the toolbar shows no page count and the page controls are off', /<span id="pageCount"[^>]*><\/span>/.test(src('renderer', 'pdfviewer.html')) && /id="pageNumber"[^>]*disabled/.test(src('renderer', 'pdfviewer.html')) && /id="prev" type="button" disabled/.test(src('renderer', 'pdfviewer.html')));
   // A body the server compressed comes back decoded: its length and ranges no longer fit, so they are not passed on.
   const gz = pv.createHandler({ netFetchFor: () => async () => new Response('%PDF-1.7 whole', { status: 200, headers: { 'content-encoding': 'gzip', 'content-length': '5', 'accept-ranges': 'bytes' } }) });
   const gzRes = await gz(new Request(pv.dataUrl(pdfAddr), { headers: { 'sec-fetch-site': 'same-origin' } }), {});
   check('data: a compressed upstream body is passed on without its encoded length or ranges', gzRes.status === 200 && !gzRes.headers.get('content-length') && gzRes.headers.get('accept-ranges') === 'none' && (await gzRes.text()) === '%PDF-1.7 whole', J([...gzRes.headers]));
+  // A link that works once: the full answer is kept, so pdf.js's later asks (ranges, a retry, Save) are answered from it.
+  {
+    const body = Buffer.from('%PDF-1.4\n' + 'x'.repeat(5000) + '\n%%EOF\n');
+    const asked = [];
+    const once = pv.createHandler({ netFetchFor: () => async (url, init) => {
+      asked.push(init.headers.range || '');
+      if (asked.length > 1) return new Response('<html>expired</html>', { status: 403 });
+      return new Response(body, { status: 200, headers: { 'content-length': String(body.length), 'accept-ranges': 'bytes', 'content-disposition': 'attachment' } });
+    } });
+    const oneSession = {};
+    const askOnce = (headers = {}, extra = '') => once(new Request(pv.dataUrl('https://a.test/once.pdf') + extra, { headers: { 'sec-fetch-site': 'same-origin', ...headers } }), oneSession);
+    const first = await askOnce();
+    check('data: the first full answer is streamed whole without offering ranges (pdf.js reads it to the end instead of dropping it)', first.status === 200 && first.headers.get('accept-ranges') === 'none' && Buffer.from(await first.arrayBuffer()).equals(body), J([...first.headers]));
+    const ranged = await askOnce({ range: 'bytes=0-9' });
+    check('data: a later range is answered from the kept bytes (one ask of the link, not two)', ranged.status === 206 && Buffer.from(await ranged.arrayBuffer()).equals(body.subarray(0, 10)) && ranged.headers.get('content-range') === `bytes 0-9/${body.length}` && asked.length === 1, J({ asked, status: ranged.status }));
+    const suffix = await askOnce({ range: 'bytes=-8' });
+    const save2 = await askOnce({}, '&dl=1');
+    check('data: a suffix range, a whole second read and Save all come from the kept bytes', suffix.status === 206 && Buffer.from(await suffix.arrayBuffer()).equals(body.subarray(body.length - 8)) && save2.status === 200 && /attachment/.test(save2.headers.get('content-disposition') || '') && (await save2.arrayBuffer()).byteLength === body.length && asked.length === 1, J(asked));
+    const fresh = await askOnce({}, '&fresh=1');
+    check('data: fresh=1 (Try again) asks the site again, and a refusal is passed on as it is', fresh.status === 403 && asked.length === 2, J({ status: fresh.status, asked }));
+    const html2 = pv.createHandler({ netFetchFor: () => async () => new Response('<html>sign in</html>', { status: 200, headers: { 'content-type': 'text/html' } }) });
+    const notPdf = await html2(new Request(pv.dataUrl('https://a.test/page.pdf'), { headers: { 'sec-fetch-site': 'same-origin' } }), {});
+    check('data: an answer that is not a PDF is passed on and not kept', notPdf.status === 200 && (await notPdf.text()) === '<html>sign in</html>');
+    let n = 0;
+    const cut = pv.createHandler({ netFetchFor: () => async () => { n++; return new Response(body.subarray(0, 100), { status: 200, headers: { 'content-length': String(body.length) } }); } });
+    const cutSession = {};
+    const cutAsk = () => cut(new Request(pv.dataUrl('https://a.test/cut.pdf'), { headers: { 'sec-fetch-site': 'same-origin' } }), cutSession);
+    await (await cutAsk()).arrayBuffer().catch(() => {});
+    await new Promise((r) => setTimeout(r, 20));
+    await (await cutAsk()).arrayBuffer().catch(() => {});
+    check('data: a download that ended short is not kept (the next ask goes to the site)', n === 2, String(n));
+  }
   const agent = src('ai', 'agent.js');
   check('AI: read_pdf reads the PDF behind the viewer address, list_tabs and the approval card show its address, per-site AI off follows it', /pdfViewer\.pdfUrlOf\(wc\.getURL\(\)\)/.test(agent) && /taskTabUrl\(\) \{ try \{ const u = .*pdfViewer\.pdfUrlOf\(u\) \|\| u/.test(agent) && /const url = pdfViewer\.pdfUrlOf\(raw\) \|\| raw/.test(agent) && /aiOff: \(url\) => aiSites\.isOff\(pdfViewer\.pdfUrlOf\(url\) \|\| url\)/.test(main));
 

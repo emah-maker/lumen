@@ -12404,9 +12404,13 @@ ipcMain.handle('eml:open', async (e, index) => {
   return true;
 });
 ipcMain.on('pdf:print', (e) => { if (e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url)) printTab(e.sender); });
-ipcMain.on('pdf:fallback', (e, why) => { // the viewer could not open its PDF: Chrome's viewer shows it instead (features/pdf-viewer.js fallback)
-  if (e.senderFrame !== e.sender.mainFrame || !pdfViewer.isViewerUrl(e.senderFrame?.url)) return;
-  if (pdfRt.fallback(e.sender)) console.warn(`[pdf] Lumen's viewer could not open a PDF (${String(why || 'unknown').slice(0, 300)}); showing it in Chrome's viewer`);
+// the viewer could not open its PDF: Chrome's viewer shows it instead (features/pdf-viewer.js fallback). The answer ({ ok, why }) tells the viewer
+// whether that happened; it never goes unanswered, so the viewer can say what went wrong instead of waiting.
+const fromPdfViewer = (e) => e.senderFrame === e.sender.mainFrame && pdfViewer.isViewerUrl(e.senderFrame?.url);
+ipcMain.handle('pdf:fallback', async (e, why) => {
+  if (!fromPdfViewer(e)) { console.warn('[pdf] a fallback request from outside the viewer was dropped'); return { ok: false, why: 'denied' }; }
+  console.warn(`[pdf] Lumen's viewer could not open a PDF (${String(why || 'unknown').slice(0, 300)}); trying Chrome's viewer`);
+  return pdfRt.fallback(e.sender);
 });
 aiSites.register(ipcMain);
 // Auto-allow actions (the sidebar's switch): the sidebar's AI clicks and types on any site without

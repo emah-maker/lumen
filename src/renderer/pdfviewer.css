@@ -35,6 +35,9 @@ button.primary { background: var(--accent-deep); color: var(--on-accent); }
 @media (prefers-reduced-motion: reduce) { .pdfViewer .page .loadingIcon::after { animation: none; } }
 .textLayer ::selection { background: rgba(10, 132, 255, 0.35); }
 #message { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 460px; padding: 18px 22px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--hairline); box-shadow: var(--page-shadow); text-align: center; z-index: 4; }
+#message p { margin: 0; }
+#message .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+#message .actions[hidden] { display: none; }
 #password { position: absolute; left: 50%; top: 35%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 10px; width: 300px; padding: 18px 20px; border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--hairline); box-shadow: var(--page-shadow); z-index: 5; }
 #password p { margin: 0; }
 @media print { #bar, #findBar, #message, #password { display: none !important; } }
