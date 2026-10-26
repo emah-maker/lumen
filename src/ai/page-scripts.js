@@ -607,6 +607,74 @@ function uploadCleanup(token) {
   })()`;
 }
 
+// ---- upload_file, the chooser route (agent.js setFilesByChooser)
+// A press on the element with the pointer and mouse events a click sends, then click(), for an element a real mouse press cannot reach (an overlay
+// covers it). Run with a user gesture (runScript userGesture), so the page's own input.click() still opens a file chooser.
+function domPress(id) {
+  return `(() => {
+    ${HELPERS}
+    const entry = entryFor(${id});
+    if (!entry) return false;
+    const el = entry.el;
+    const r = el.getBoundingClientRect();
+    const at = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) el.dispatchEvent(type.startsWith('pointer') ? new PointerEvent(type, { ...at, pointerType: 'mouse' }) : new MouseEvent(type, at));
+    el.click();
+    return true;
+  })()`;
+}
+
+// Runs in the page's MAIN world (DevTools Runtime.evaluate), not the isolated one: a page that makes an <input type=file> on demand and never adds it
+// to the document (Drive's upload items) leaves nothing for a search to find, so for the length of the upload the page's own click() and
+// showPicker() on a file input are recorded (rec.last: the newest input asked to open) and still run as before. showOpenFilePicker (the File System
+// Access API, which no chooser interception answers) is refused with an AbortError, counted in rec.picker, so no native dialog opens unattended.
+function fileHookInstall() {
+  return `(() => {
+    const key = Symbol.for('lumen.fileHook');
+    if (window[key]) return true;
+    const rec = { last: null, calls: 0, picker: 0, undo: [] };
+    const proto = HTMLInputElement.prototype;
+    for (const name of ['click', 'showPicker']) {
+      const orig = proto[name];
+      if (typeof orig !== 'function') continue;
+      const own = Object.prototype.hasOwnProperty.call(proto, name);
+      proto[name] = function () {
+        try { if (String(this.type).toLowerCase() === 'file') { rec.last = this; rec.calls++; } } catch {}
+        return orig.apply(this, arguments);
+      };
+      rec.undo.push(() => { if (own) proto[name] = orig; else delete proto[name]; });
+    }
+    if (typeof window.showOpenFilePicker === 'function') {
+      const orig = window.showOpenFilePicker;
+      window.showOpenFilePicker = function () { rec.picker++; return Promise.reject(new DOMException('The user aborted a request.', 'AbortError')); };
+      rec.undo.push(() => { window.showOpenFilePicker = orig; });
+    }
+    window[key] = rec;
+    return true;
+  })()`;
+}
+// What the hook saw: { calls, picker, input } (input: null, or the newest file input the page asked to open: its accept, multiple, disabled, directory).
+function fileHookRead() {
+  return `(() => {
+    const rec = window[Symbol.for('lumen.fileHook')];
+    if (!rec) return null;
+    const el = rec.last;
+    return { calls: rec.calls, picker: rec.picker, input: el ? { accept: el.getAttribute('accept') || '', multiple: el.multiple, disabled: el.disabled, directory: el.hasAttribute('webkitdirectory') } : null };
+  })()`;
+}
+// The newest file input the page asked to open, as a remote object (for DOM.setFileInputFiles { objectId }); undefined when none.
+function fileHookInput() { return `(() => { const rec = window[Symbol.for('lumen.fileHook')]; return rec && rec.last ? rec.last : undefined; })()`; }
+function fileHookRemove() {
+  return `(() => {
+    const key = Symbol.for('lumen.fileHook');
+    const rec = window[key];
+    if (!rec) return false;
+    for (const undo of rec.undo) { try { undo(); } catch {} }
+    delete window[key];
+    return true;
+  })()`;
+}
+
 // ---- upload_file, the drop route (agent.js dropFiles)
 // Counts the files a drop on the page carries (the browser's own drag and drop first), and answers dragover/drop at the window when the page
 // did not, so a page with no drop target is never navigated to the dropped file.
@@ -708,4 +776,4 @@ const glance = `(() => {
   return { title: document.title, focus };
 })()`;
 
-module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, domPress, fileHookInstall, fileHookRead, fileHookInput, fileHookRemove, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };

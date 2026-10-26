@@ -105,6 +105,26 @@ const PAGE = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'drive-like.
   r = await call({ paths: files.slice(0, 1), open: ['New', 'Folder upload'] });
   check('a menu step that does not exist is named in the error and nothing was uploaded', !r.ok && /Folder upload/.test(r.error) && !/picker:/.test(await pageLog()), JSON.stringify(r));
 
+  // ---- 5b. pages whose handler gets in the way of the chooser (each fixture mode in test/fixtures/drive-like.html)
+  await load('?trustedmenu');
+  r = await call({ paths: files.slice(0, 3), open: ['New', 'File upload'] });
+  log = await pageLog();
+  check('a menu item that acts on a real mouseup only still opens the chooser: the click is a real mouse press', r.ok && log.includes(`picker: ${expected(files.slice(0, 3))}`), `${JSON.stringify(r)} | ${log}`);
+  await load('?detached');
+  r = await call({ paths: files.slice(0, 5), open: ['New', 'File upload'] });
+  log = await pageLog();
+  check('an input the page makes, never adds to its document and click()s still gets the files', r.ok && log.includes(`picker: ${expected(files.slice(0, 5))}`), `${JSON.stringify(r)} | ${log}`);
+  await load('?covered');
+  r = await call({ paths: files.slice(0, 2), open: ['New', 'File upload'] });
+  log = await pageLog();
+  check('a menu item an overlay covers is clicked with a user gesture, so the chooser still opens', r.ok && log.includes(`picker: ${expected(files.slice(0, 2))}`), `${JSON.stringify(r)} | ${log}`);
+  await load('?lateclick');
+  r = await call({ paths: files.slice(0, 4), open: ['New', 'File upload'] });
+  log = await pageLog();
+  check('a page that click()s a detached input with no user activation left: the hook gives that input the files', r.ok && log.includes(`picker: ${expected(files.slice(0, 4))}`) && /never put in its document/.test(r.out), `${JSON.stringify(r)} | ${log}`);
+  const stillHooked = await app.evaluate(async () => global.__agent.browser.activeTab().webContents.executeJavaScript('Boolean(window[Symbol.for("lumen.fileHook")])'));
+  check('the hook is gone from the page afterwards', stillHooked === false, stillHooked);
+
   // ---- 6. the device-access rules still hold
   await load('?latent');
   const secret = path.join(os.homedir(), '.ssh', 'id_rsa');
