@@ -27,6 +27,9 @@ const ENDPOINTS = {
 };
 const IDENTITY = ['openid', 'email']; // who signed in (for the card): non-sensitive scopes
 const TIMEOUT_MS = 20e3;
+const JOIN_MS = 15e3; // (signIn: a repeat this soon joins the sign-in already open)
+// What the network said, for the error a person reads ("net::ERR_PROXY_CONNECTION_FAILED"): a bare "couldn't reach" left nothing to go on.
+const why = (err) => { const m = String(err?.cause?.message || err?.message || '').replace(/\s+/g,' ').trim().slice(0, 120); return m && m !== 'fetch failed' ? ` (${m})` : ''; };
 
 const scopeList = (s) => String(s || '').split(/\s+/).filter(Boolean);
 const covers = (granted, wanted) => { const have = new Set(scopeList(granted)); return wanted.every((w) => have.has(w)); };
@@ -44,7 +47,7 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
       const text = Buffer.from(await res.arrayBuffer()).toString('utf8').slice(0, 65536);
       return { ok: res.status >= 200 && res.status < 300, status: res.status, body: text, retryAfter: res.headers?.get?.('retry-after') };
     } catch (err) {
-      throw new OA.OAuthError(controller.signal.aborted ? 'Google took too long to answer.' : 'Couldn’t reach Google. Check the connection.', { kind: 'other' });
+      throw new OA.OAuthError(controller.signal.aborted ? 'Google took too long to answer.' : `Couldn’t reach Google. Check the connection.${why(err)}`, { kind: 'other' });
     } finally { clearTimeout(timer); }
   }
 
@@ -64,7 +67,18 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
   });
 
   let flow = null;
+  // A second Sign in for the same permissions within a few seconds (a second press, or two parts of Lumen asking at once) joins the
+  // one already open instead of opening another browser tab and cancelling the first: finishing in the first tab then went nowhere.
+  // A press after that starts afresh (the user may have closed the tab without finishing).
+  let joining = null; // { key, at, promise }
   async function signIn(scopes) {
+    const key = [...new Set(scopes)].sort().join(' ');
+    if (joining && joining.key === key && now() - joining.at < JOIN_MS) return joining.promise;
+    const promise = signInOnce(scopes);
+    joining = { key, at: now(), promise };
+    try { return await promise; } finally { if (joining?.promise === promise) joining = null; }
+  }
+  async function signInOnce(scopes) {
     if (!openExternal) throw new Error('Lumen can’t open your browser here.');
     if (!canKeepSecrets()) throw new Error('This computer has no secure place for Lumen to keep the sign-in (the system keyring is off), so Google can’t be connected.');
     const c = client();

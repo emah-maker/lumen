@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sign in with Google (and Microsoft) finishes connecting.** Two sign-ins could start at once, each opening a browser tab, and the second cancelled the first, so finishing in the first tab went nowhere; now a repeat within a few seconds joins the sign-in already open, and only one tab opens. The step after you sign in (Lumen trading Google's answer for its token) tries a second way when Lumen's own network path can't send it (something in the browser session, such as a block list, an extension or a proxy setting, left it at "Couldn't reach Google" with the network fine), and when it still fails the message now says what the network reported.
+- **Claude Code in Lumen prefers Lumen's own browser tools.** With full access it is told to use Lumen's tools (mcp__lumen__) over your other browser-driving MCP servers such as Playwright, and to tell any helper agent it starts to do the same, so a page opens in a Lumen tab, on the chat's browser card. The other servers stay available.
+- **Settings is more compact.** Rows are shorter (40 px instead of 48), and groups and the page's top sit closer together, so a topic needs less scrolling.
+
 ## 0.5.74 (2026-10-26)
 
 - **An agent's window no longer locks you or the agent out of a tab.** A tab you take over in Claude Code's (or another agent's) window goes back to the agent 30 seconds after your last click or key there once you leave the window, so telling the agent "go on" in your chat works; before, only Pause then Resume handed it back, and the window showed no Resume unless the agent was paused. A click or key that reaches a page while you are not in that window is the agent's own arriving late, not yours, and no longer takes the tab from it. A tab that sat behind other windows or minimized is shown again and redrawn when you bring its window up: it could keep a stale picture and ignore your clicks until you opened a new tab.
