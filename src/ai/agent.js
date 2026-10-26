@@ -3830,6 +3830,17 @@ ${prompt}` : prompt), historyImages: [] };
   async generateImageTool(input) {
     const scope = taskScope.getStore();
     if (!scope?.chat || scope.gate?.external === true) throw new Error("Pictures can only be made in Lumen's own chat.");
+    // [image routing] A real picture found online (url): fetched here (https, no cookies, no private address, a real png/jpeg/webp/gif,
+    // features/gen-images.js fetchRemoteImage) and shown in the chat like a made one, credited to its site. No image provider is used.
+    if (typeof input?.url === 'string' && input.url.trim()) {
+      let host = '';
+      try { host = new URL(input.url.trim()).hostname.replace(/^www\./, ''); } catch { /* below */ }
+      const got = host ? await genImages.fetchRemoteImage(input.url.trim(), { fetchImpl: this.fetchImpl || globalThis.fetch }) : null;
+      if (!got) throw new Error('That address is not a picture Lumen could load (it must be an https address of a png, jpeg, webp or gif). Try another result, or make one instead.');
+      const caption = String(input?.prompt ?? '').trim().slice(0, 300);
+      (scope.toolImages ||= []).push({ data: got.buffer.toString('base64'), alt: caption || host, credit: `From ${host}` });
+      return `Picture from ${host} shown to the user in the chat. Say in a few words where it is from; do not describe it at length.`;
+    }
     const prompt = String(input?.prompt ?? '').trim().slice(0, 4000);
     if (!prompt) throw new Error('prompt is empty');
     if (typeof input?.svg === 'string' && input.svg.trim()) { // exact math, graphs and diagrams: drawn to a PNG here and shown inline (no file, no tab)
@@ -4055,6 +4066,9 @@ ${prompt}` : prompt), historyImages: [] };
     // [image routing] Exact technical drawings, and requests that point at something ("each problem", "this"), are the model's: a picture
     // provider would see only these words. (/image …: the user's own words, as typed.)
     if (!asked.explicit && (genImages.technicalIntent(userText) || genImages.contextRef(userText))) return false;
+    // [image routing] "make me / create a picture of the Eiffel Tower": a real picture found online may do, quicker and free. The model decides
+    // (PICTURE_NOTE). Only "generate / draw / paint / design …" and /image go straight to a picture provider.
+    if (!asked.explicit && !genImages.asksToMake(userText)) return false;
     const withConversation = this.hasConversation(messages, { attachedFiles });
     const picked = String(messages.settings.model);
     const viaEngine = /^(claudecode|grokbuild|antigravity|codex):/.test(picked);
@@ -5093,7 +5107,12 @@ ${prompt}` : prompt), historyImages: [] };
       }
     }
     // [image routing] The prompt leaves for an image provider: after page content was read, the user sees it first (once per prompt).
-    if (name === 'generate_image' && taintHolder(run)?.tainted) {
+    // [image routing] A picture found online (generate_image url): after page content was read, a new site needs the user's OK, as read_urls does.
+    if (name === 'generate_image' && typeof input?.url === 'string' && input.url.trim() && taintHolder(run)?.tainted) {
+      for (const host of destinationHosts('read_urls', { urls: [input.url] })) {
+        if (!(await this.askOpen(host, gate, null))) throw new Error(`The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
+      }
+    } else if (name === 'generate_image' && taintHolder(run)?.tainted) {
       const prompt = String(input.prompt ?? '');
       const card = { query: prompt, title: `${who} wants to send this to an image AI: ${quote(prompt, 160)}` };
       if (!(await this.askOpen(`image prompt: ${prompt.slice(0, 200)}`, gate, card))) throw new Error(`The user did not allow ${who} to send this picture request out. Ask them what to do instead.`);

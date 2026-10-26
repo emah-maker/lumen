@@ -107,8 +107,8 @@ async function route(deps) {
 // One short tool for every engine (the API tool list and Lumen's MCP tools): prompt budget test/acceptance/chat-prompt-budget.js.
 const TOOL = {
   name: 'generate_image',
-  description: 'Make/edit a picture shown in chat, not HTML. Image model sees only prompt: describe subject fully. svg: exact math/graphs.',
-  input_schema: { type: 'object', properties: { prompt: { type: 'string' }, edit: { type: 'boolean' }, svg: { type: 'string' } }, required: ['prompt'] },
+  description: 'Chat picture, no HTML. Model sees only prompt: describe subject fully. svg: exact math. url: web pic.',
+  input_schema: { type: 'object', properties: { prompt: { type: 'string' }, edit: { type: 'boolean' }, svg: { type: 'string' }, url: { type: 'string' } }, required: ['prompt'] },
 };
 // Adds the tool to agent.js's TOOLS (before the derived lists are built), like snapshot.js's.
 function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true }); }
@@ -116,8 +116,9 @@ function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true 
 // What the model is told after a picture was made (the picture itself is shown in the chat, never sent back to it).
 const toolResult = (r) => `Picture made with ${r.credit} and shown to the user in the chat. Do not repeat it or describe it at length.`;
 
-// Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first.
-const PICTURE_NOTE = 'The user wants a picture: call generate_image (it shows in the chat) with a self-contained prompt written from what they mean in this conversation. Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: use the svg option for exact math, graphs and diagrams.';
+// Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first, or
+// only names the picture ("make me a picture of the Eiffel Tower"): a real one found online is quicker and free, so it is tried first.
+const PICTURE_NOTE = 'The user wants a picture. If a real one exists (a real place, animal, person, product, logo or map) and they did not ask you to draw or generate it, find it rather than make one, which is quicker and costs nothing: web_search or read_urls a page that shows it, then call generate_image with url (the https address of the picture file itself) and a short prompt as its caption. Otherwise call generate_image (it shows in the chat) with a self-contained prompt written from what they mean in this conversation. Never write an HTML, SVG or other file for it, and never open a browser or tab to preview it. A picture model draws text and math badly: use the svg option for exact math, graphs and diagrams.';
 
 // Told to the model (same hidden block, only for the message in hand) when the picture wanted is an exact technical drawing (free-body
 // diagrams, circuits, schematics, graphs: genImages.technicalIntent) or when a picture provider declined or failed such a request. A picture

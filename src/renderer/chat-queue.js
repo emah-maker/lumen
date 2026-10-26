@@ -17,6 +17,13 @@
   const READ_EVENTS = new Set(['text', 'thinking', 'tool', 'desktop_card', 'helper_card', 'plan', 'approval']);
   const countsAsRead = (type) => READ_EVENTS.has(type);
 
+  // Whose a message typed now is: the chat shown; while a run of the view has not named its chat yet (nothing is shown then), the chat that run continues
+  // (`runOwner`; null for a new chat, whose first event names it and claims what waited). null: nobody's yet.
+  const ownerNow = ({ shown = null, running = false, runOwner = null } = {}) => shown || (running ? runOwner : null) || null;
+  // Is a line entry for another chat than the one this view is in? An entry with an owner is, unless the owner is the chat shown or run here; also while no
+  // chat is shown (a new empty chat must never take what was queued in another chat). An entry with no owner is never another chat's.
+  const otherChat = (id, state) => Boolean(id && id !== ownerNow(state) && id !== (state?.shown ?? null));
+
   // 1st, 2nd, 3rd, 4th (English; the label around it comes from the locale)
   function ordinal(n) {
     const v = Math.abs(Math.trunc(n)) % 100;
@@ -137,7 +144,7 @@
     return null;
   }
 
-  const api = { advance, countsAsRead, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);

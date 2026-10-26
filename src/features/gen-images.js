@@ -102,6 +102,10 @@ const NOUN = '(?:image|picture|photo|photograph|illustration|drawing|painting|lo
 const MAKE = /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|'d\s+like)\s+(?:you\s+to\s+|to\s+)?)?(?:generate|create|make|produce|render|design|draw|paint|sketch|illustrate)\s+(?:me\s+|us\s+)?(?:an?\s+|some\s+|another\s+)?(?:(?!(?:the|this|that|these|those|my|our|your|its|his|her|their)\b)[\w'-]+\s+){0,4}?(?:image|picture|photo|photograph|illustration|drawing|painting|logo|icon|poster|wallpaper|artwork|portrait|cartoon|sketch|rendering|render)s?\b(?!\s+(?:upload|gallery|carousel|component|tag|element|format|file|viewer|editor|library|processing|resize|compression|optimi[sz]ation|url|path|src|attribute|hosting|cdn|loading|loader)\b)/i;
 const DRAW = /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:draw|paint|sketch|illustrate)\s+(?:me\s+|us\s+)?(?:an?\s+|the\s+|some\s+)(?!(?:conclusion|comparison|parallel|line|distinction|connection|map\s+of\s+the\s+code|attention|breath|blank)\b)[^\n]{3,}/i;
 const SLASH = /^\s*\/(?:image|imagine|draw)\s+([\s\S]{2,})$/i;
+// Words that ask for a picture to be MADE ("generate", "draw", "paint", "design"…), as against "make me / create / get a picture of X",
+// where a real one found online may serve better (the model decides: agent.js imageTurn leaves those to it, with PICTURE_NOTE).
+const MADE = /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|'d\s+like)\s+(?:you\s+to\s+|to\s+)?)?(?:generate|draw|paint|sketch|illustrate|design|render)\b/i;
+const asksToMake = (text) => MADE.test(String(text || ''));
 function imageRequest(text) {
   const t = String(text || '').trim();
   if (!t || t.length > 600) return null;
@@ -346,6 +350,6 @@ async function fetchRemoteImage(url, { fetchImpl = globalThis.fetch, max = MAX_B
 }
 
 module.exports = {
-  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, pictureIntent, technicalIntent, diagramishIntent, contextRef, markdownImages,
+  MAX_BYTES, MAX_PER_REPLY, sniff, parseDataUrl, fromBase64, extractImages, resolveImage, imageRequest, asksToMake, pictureIntent, technicalIntent, diagramishIntent, contextRef, markdownImages,
   createImageStore, pathsIn, toolImagePaths, fromFileUrl, findLocalImages, publicHost, fetchRemoteImage,
 };

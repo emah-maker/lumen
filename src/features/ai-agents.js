@@ -126,7 +126,7 @@ function setupAiAgents(deps) {
     const load = () => (real ||= require('./external-apps-ipc').setupExternalApps({ app, ipcMain, readSettings, writeSettings, userWc, mcpCommand: () => mcpCommand(), mcpServer: () => mcpServer, startMcp: () => startMcp(), findClaude: () => AGENTS.claude.find(), get agentWindows() { return deps.agentWindows; }, showAgentWindow: (rec) => deps.showAgentWindow?.(rec), handAgentWindow: (rec, to) => deps.handAgentWindow?.(rec, to) }));
     for (const name of ['info', 'enable', 'require-token', 'setup', 'add', 'connect', 'revoke', 'ask', 'open-config', 'answer']) ipcMain.handle(`mcp:external-${name}`, (_e, ...a) => load().invoke[name](...a));
     ipcMain.handle('mcp:external-state', () => (real ? real.invoke.state() : { active: [], prompts: [] })); // (every window asks at start: that must not load it)
-    for (const name of ['stop', 'takeover', 'resume']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
+    for (const name of ['stop', 'takeover', 'resume', 'show']) ipcMain.on(`mcp:external-${name}`, (_e, id) => load().send[name](id));
     if (require('../test-mode').isTest()) Object.defineProperty(global, '__externalApps', { get: () => load().test, configurable: true });
     return { load, ext: () => load().ext };
   })();

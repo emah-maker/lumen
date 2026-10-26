@@ -139,6 +139,11 @@
   // box: the cards are held where they were drawn when it began (WE.holdBase / holdItems), until a change is saved.
   let editBase = null;
   const heldItems = () => WE.holdItems(items, editBase);
+  function instantly() {
+    const box = boxEl();
+    box.classList.add('w-instant');
+    requestAnimationFrame(() => requestAnimationFrame(() => box.classList.remove('w-instant')));
+  }
   function layoutNow() {
     view = WL.resolve(heldItems(), o);
     place(view);
@@ -151,11 +156,18 @@
     for (const fn of layoutHooks) fn();
   }
   let scheduled = 0;
+  let laidOutSize = window.innerWidth + 'x' + window.innerHeight; // the window size the cards were last placed for
   function relayout() {
     if (scheduled) return;
     scheduled = requestAnimationFrame(() => {
       scheduled = 0;
       if (drag || !items.length) return;
+      // The window (or the view) changed size: the cards are placed for the new size at once, as their widths and heights are (those
+      // never slide). Sliding only their corners made a page shown after a resize (another tab, a spare page made at another size)
+      // open with its cards in the old places and glide to the new ones.
+      const size = window.innerWidth + 'x' + window.innerHeight;
+      if (size !== laidOutSize) instantly();
+      laidOutSize = size;
       if (window.newtabSize?.held?.()) { measure(); place(view); return; } // a clock or search-bar drag: the cards keep their cells (new px for a new window) until it ends
       // A new window width: the column's sizes fitted to it first, so the cards are never drawn pushed meanwhile.
       if (!window.newtabSize?.held?.()) window.newtabSize?.fitNow?.();
