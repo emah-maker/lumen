@@ -72,9 +72,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     const pageText = () => inPage("document.getElementById('messages').textContent");
     const newChatHere = async () => {
       await waitFor(() => inPage("Boolean(document.querySelector('.cp-pj'))"));
-      await inPage("(() => { const row = document.querySelector('.cp-pj'); if (!row.classList.contains('on')) row.click(); })()");
-      await waitFor(() => inPage("Boolean([...document.querySelectorAll('.cp-pj-act')].find((b) => /New chat/.test(b.textContent)))"));
-      await inPage("[...document.querySelectorAll('.cp-pj-act')].find((b) => /New chat/.test(b.textContent)).click()");
+      await inPage("document.querySelector('.cp-pj-new').click()");
     };
 
     await send('slow question in chat A');

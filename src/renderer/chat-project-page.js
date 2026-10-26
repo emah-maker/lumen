@@ -1,10 +1,12 @@
 // lumen://chat > Projects > Open project: a project as a workspace for the AI (like Claude and ChatGPT projects, but it knows the browser).
 // Loaded the first time a project is opened (chat-page.js adds this script and chat-project-page.css then), never with the page.
-//   window.chatProjectPage.open({ api, id, host })   host: { chats(), projects(), openChat(id), newChat(project), editFolder(project), moveChats(ids, projectId),
-//                                                       undoToast(text, ms, undo), toast(text), models() -> [{ value, label }], closed(), refresh() }
+//   window.chatProjectPage.open({ api, id, host, focus? })   focus: 'instructions' puts the cursor in the instructions box
+//     host: { chats(), projects(), openChat(id), newChat(project, text?), editFolder(project), moveChats(ids, projectId), moveToNewProject(chat), cleared?(),
+//             undoToast(text, ms, undo), toast(text), models() -> [{ value, label }], closed(), refresh() }
 //   window.chatProjectPage.close() / .isOpen() / .refresh()
-// What it shows: the project's instructions, its files (read on this computer into text the AI can search and read), its pinned pages,
-// the defaults a new chat starts with, what the AI saved in its chats (memory), and its chats. A search looks in the chats and the files.
+// What it shows: a box that starts a chat in the project, its chats (pin, move, delete; a search looks in the chats and the files), and
+// beside them the setup: its instructions (written in place), files (read on this computer into text the AI can search and read), pinned
+// pages, folder, the defaults a new chat starts with, and what the AI saved in its chats (memory).
 (() => {
   const tr = (key, english, vars) => { const out = window.chatTr ? window.chatTr(key, english) : english; return vars ? out.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : out; };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -34,22 +36,42 @@
     return b;
   };
 
-  // ---- instructions
+  // ---- instructions: written in place (a click in the box and type; it is saved when the box loses focus or with Save)
   function instructionsCard(data) {
     const { limits } = data;
     const text = el('textarea', { className: 'pjp-text', rows: 6, maxLength: limits.instructions, value: data.project.instructions || '', placeholder: tr('chatpage.project.hint', 'How should the AI work in this project? For example: answer in a formal tone, or the audience is first-year students.') });
     text.setAttribute('aria-label', tr('chatpage.project.instructions', 'Instructions'));
     const say = status();
+    const count = el('span', { className: 'pjp-count' });
+    let saved = text.value;
+    const fit = () => { text.style.height = 'auto'; text.style.height = `${Math.min(Math.max(text.scrollHeight + 2, 120), 360)}px`; };
+    const dirty = () => text.value !== saved;
     const save = button(tr('chatpage.project.save', 'Save'), async () => {
+      if (!dirty()) return;
       save.disabled = true;
-      const out = await page.api.saveProject({ id: page.id, name: data.project.name, instructions: text.value }).catch(() => null);
+      const sending = text.value;
+      const out = await page.api.saveProject({ id: page.id, name: data.project.name, instructions: sending }).catch(() => null);
       save.disabled = false;
-      say.textContent = out && !out.error ? tr('projectws.saved', 'Saved.') : tr('chatpage.project.failed', 'Could not save the project.');
-      if (out && !out.error) data.project = out;
+      if (out && !out.error) { data.project = out; saved = sending; say.textContent = tr('projectws.saved', 'Saved.'); } else say.textContent = tr('chatpage.project.failed', 'Could not save the project.');
+      show();
+      if (out && !out.error) host().refresh();
     }, 'primary');
-    return card(tr('chatpage.project.instructions', 'Instructions'), text,
-      note(tr('projectws.instructions.note', 'Sent to the AI with every chat in this project, on every model. Up to {n} characters. Together with the list of files and pages below, about {m} characters go with each message; anything longer is cut.', { n: limits.instructions, m: limits.instructions + limits.index })),
-      el('div', { className: 'pjp-line' }, save, say));
+    save.classList.add('pjp-save');
+    const show = () => {
+      save.hidden = !dirty();
+      count.textContent = `${text.value.length.toLocaleString()} / ${limits.instructions.toLocaleString()}`;
+    };
+    text.addEventListener('input', () => { say.textContent = ''; show(); fit(); });
+    text.addEventListener('blur', () => { if (dirty()) save.click(); });
+    text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isImeEnter(e)) { e.preventDefault(); save.click(); } });
+    show();
+    queueMicrotask(fit);
+    const root = card(tr('chatpage.project.instructions', 'Instructions'), text,
+      el('div', { className: 'pjp-line pjp-between' }, el('div', { className: 'pjp-line' }, save, say), count),
+      note(tr('projectws.instructions.note', 'Sent to the AI with every chat in this project, on every model. Up to {n} characters. Together with the list of files and pages below, about {m} characters go with each message; anything longer is cut.', { n: limits.instructions, m: limits.instructions + limits.index })));
+    root.classList.add('pjp-instructions');
+    root.fit = fit;
+    return root;
   }
 
   // ---- files
@@ -201,32 +223,93 @@
     return card(tr('projectws.memory', 'Memory'), list, note(tr('projectws.memory.note', 'Saved in this project’s chats, so only its chats see it, next to your general memory.')));
   }
 
+  // ---- folder: where the project lives on this computer (set up and changed in the project's editor, host.editFolder)
+  function folderCard(data) {
+    const p = data.project;
+    const body = [];
+    if (p.folder) {
+      body.push(el('p', { className: `pjp-path${p.folderMissing ? ' missing' : ''}`, textContent: p.folderMissing ? `${tr('chatpage.project.folder.missing', 'Folder missing')}: ${p.folder}` : p.folder }));
+      body.push(el('div', { className: 'pjp-line' },
+        p.folderMissing ? button(tr('chatpage.project.folder.missingFix', 'Folder missing…'), () => host().editFolder(data.project), 'primary') : button(tr('chatpage.project.folder.open', 'Open folder'), () => page.api.projectFolder(page.id, 'open').catch(() => null)),
+        button(tr('projectws.folder.change', 'Change…'), () => host().editFolder(data.project))));
+      body.push(note(tr('projectws.folder.note', 'Chats of this project are saved here as Markdown files unless you turn that off in the project’s settings.')));
+    } else {
+      body.push(note(tr('chatpage.project.folder.none', 'This project has no folder yet.')));
+      body.push(el('div', { className: 'pjp-line' }, button(tr('projectws.folder.add', 'Add a folder…'), () => host().editFolder(data.project))));
+    }
+    const root = card(tr('chatpage.project.folder', 'Folder'), ...body);
+    root.classList.add('pjp-folder');
+    return root;
+  }
+
   // ---- chats
-  function chatsCard() {
-    const list = el('ul', { className: 'pjp-list pjp-chats' });
-    list.setAttribute('aria-label', tr('projectws.chats', 'Chats'));
-    const draw = () => {
-      const mine = host().chats().filter((c) => c.project === page.id && !c.archived);
-      list.replaceChildren(...mine.map((c) => {
-        const li = el('li', { className: 'pjp-row' });
-        li.dataset.chat = c.id;
-        const open = el('button', { type: 'button', className: 'pjp-chat-open', textContent: c.title || tr('chats.untitled', 'Chat') });
-        open.onclick = () => host().openChat(c.id);
-        const when = c.updated ? new Date(c.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
-        const move = el('select', { className: 'pjp-select pjp-move' });
-        move.setAttribute('aria-label', `${tr('chatpage.project.move', 'Move to project')}: ${c.title || ''}`);
-        move.append(el('option', { value: '', textContent: tr('chatpage.project.move', 'Move to project') }));
-        for (const p of host().projects()) if (p.id !== page.id) move.append(el('option', { value: p.id, textContent: p.name }));
-        move.append(el('option', { value: '__none', textContent: tr('chatpage.project.none', 'Remove from project') }));
-        move.onchange = async () => { const v = move.value; if (v) await host().moveChats([c.id], v === '__none' ? null : v); };
-        li.append(open, el('span', { className: 'pjp-row-meta', textContent: when }), move);
-        return li;
+  const when = (ms) => {
+    if (!ms) return '';
+    const d = new Date(ms);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return tr('chats.yesterday', 'Yesterday');
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(d.getFullYear() === now.getFullYear() ? {} : { year: 'numeric' }) });
+  };
+  const myChats = () => host().chats().filter((c) => c.project === page.id && !c.archived).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.updated || 0) - (a.updated || 0));
+  function chatRow(c) {
+    const li = el('li', { className: `pjp-chat${c.pinned ? ' pinned' : ''}` });
+    li.dataset.chat = c.id;
+    const open = el('button', { type: 'button', className: 'pjp-chat-open' },
+      el('span', { className: 'pjp-chat-title', textContent: c.title || tr('chats.untitled', 'Chat') }),
+      el('span', { className: 'pjp-chat-when', textContent: [c.pinned ? tr('chats.pinned', 'Pinned') : '', when(c.updated)].filter(Boolean).join(' · ') }));
+    open.onclick = () => host().openChat(c.id);
+    const acts = el('div', { className: 'pjp-chat-acts' });
+    const label = c.title || tr('chats.untitled', 'Chat');
+    const act = (name, text, run) => { const b = window.chatIconButton(name, `${text}: ${label}`); b.title = text; b.onclick = run; return b; };
+    acts.append(
+      act(c.pinned ? 'unpin' : 'pin', c.pinned ? tr('chats.unpin', 'Unpin') : tr('chats.pin', 'Pin to top'), async (e) => {
+        e.currentTarget.disabled = true;
+        const ok = await page.api.pin(c.id, !c.pinned).catch(() => false);
+        if (ok === false) e.currentTarget.disabled = false; else host().refresh();
+      }),
+      act('project', tr('chatpage.project.move', 'Move to project'), (e) => {
+        window.chatProjects.picker({ api: page.api, chat: c, projects: host().projects(), anchor: e.currentTarget, onPick: (pid) => host().moveChats([c.id], pid), onDone() {}, onNew: (chat) => host().moveToNewProject(chat) });
+      }),
+      act('delete', tr('chats.delete', 'Delete'), async (e) => {
+        const b = e.currentTarget;
+        b.disabled = true;
+        const out = await page.api.remove(c.id).catch(() => null);
+        if (!out) { b.disabled = false; host().toast(tr('chats.deleteFailed', 'Could not delete')); return; }
+        if (out.cleared) host().cleared?.();
+        if (out.undo) host().undoToast(tr('chats.deleted', 'Chat deleted'), out.undoMs || 8000, async () => { const ok = await page.api.undoRemove(c.id); host().refresh(); return ok; });
+        host().refresh();
       }));
-      if (!mine.length) list.append(el('li', { className: 'pjp-empty', textContent: tr('chatpage.project.empty', 'No chats in this project yet. Start one here, or move a chat in from its ⋯ menu.') }));
+    li.append(open, acts);
+    return li;
+  }
+  // The chats section: a heading with the count and the search box, the rows (or an empty state), and the search's results in their place.
+  function chatsSection() {
+    const root = el('section', { className: 'pjp-chats-sec' });
+    root.setAttribute('aria-labelledby', 'pjp-chats-h');
+    const count = el('span', { className: 'pjp-chats-count' });
+    const head = el('div', { className: 'pjp-chats-head' }, el('h2', { className: 'pjp-h pjp-h-big', id: 'pjp-chats-h', textContent: tr('projectws.chats', 'Chats') }), count);
+    const search = searchBox();
+    head.append(search.input);
+    const list = el('ul', { className: 'pjp-chat-list' });
+    list.setAttribute('aria-label', tr('projectws.chats', 'Chats'));
+    const emptyState = el('div', { className: 'pjp-empty-state' },
+      el('p', { className: 'pjp-empty-title', textContent: tr('projectws.chats.empty.title', 'No chats yet') }),
+      el('p', { className: 'pjp-note', textContent: tr('projectws.chats.empty.text', 'Write above to start the first one. You can also drag a chat from the list onto this project, or use a chat’s ⋯ menu.') }));
+    const draw = () => {
+      const mine = myChats();
+      list.replaceChildren(...mine.map(chatRow));
+      emptyState.hidden = mine.length > 0;
+      list.hidden = !mine.length;
+      count.textContent = mine.length ? String(mine.length) : '';
+      if (page.sub) page.sub();
     };
+    page.list = list;
+    page.redraw = draw;
     draw();
-    chatsCard.redraw = draw;
-    return card(tr('projectws.chats', 'Chats'), list);
+    root.append(head, search.out, list, emptyState);
+    return root;
   }
 
   // ---- search: the project's chats and files
@@ -240,7 +323,8 @@
     const run = async () => {
       const q = input.value.trim();
       const mine = ++seq;
-      page.grid.hidden = Boolean(q);
+      page.list.hidden = Boolean(q) || !myChats().length;
+      page.root.querySelector('.pjp-empty-state').hidden = Boolean(q) || myChats().length > 0;
       out.hidden = !q;
       if (!q) return;
       const lower = q.toLowerCase();
@@ -271,15 +355,30 @@
     return { input, out };
   }
 
-  // ---- the page
-  async function open({ api, id, host: h }) {
+  // ---- the box that starts a chat in this project (Enter sends; the chat opens with the project's instructions, files and defaults)
+  function composer(data) {
+    const form = el('form', { className: 'pjp-composer' });
+    const text = el('textarea', { className: 'pjp-compose-text', rows: 2, placeholder: tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: data.project.name }) });
+    text.setAttribute('aria-label', tr('projectws.compose.label', 'Message for a new chat in this project'));
+    const go = el('button', { type: 'submit', className: 'btn primary pjp-go', textContent: tr('projectws.compose.go', 'Start chat') });
+    form.append(text, el('div', { className: 'pjp-compose-bar' }, el('span', { className: 'pjp-compose-hint', textContent: tr('projectws.compose.hint', 'Uses this project’s instructions, files and defaults.') }), go));
+    form.onsubmit = (e) => { e.preventDefault(); go.disabled = true; const v = text.value; host().newChat(page.data.project, v); };
+    text.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isImeEnter(e)) { e.preventDefault(); form.requestSubmit(); } });
+    page.composerText = text;
+    return form;
+  }
+
+  // ---- the page: a header (name, counts, settings, delete), then two columns. Left: the box that starts a chat and the project's chats.
+  // Right: instructions, files, pinned pages, folder, defaults, memory. One column on a narrow window.
+  async function open({ api, id, host: h, focus = '' }) {
     close(false);
     const data = await api.project(id).catch(() => null);
     if (!data) return false;
     const root = el('section', { className: 'pjp', id: 'cp-project-page' });
-    page = { api, id, host: h, root, grid: null, data };
+    page = { api, id, host: h, root, data, list: null, redraw: null, sub: null, composerText: null };
     root.setAttribute('aria-label', data.project.name);
-    const back = el('button', { type: 'button', className: 'btn small pjp-back', textContent: `← ${tr('projectws.back', 'Chats')}` });
+    const back = el('button', { type: 'button', className: 'pjp-back' });
+    back.append(el('span', { className: 'pjp-back-arrow', textContent: '←' }), tr('projectws.back', 'Chats'));
     back.onclick = () => close();
     const title = el('input', { type: 'text', className: 'pjp-title', value: data.project.name, maxLength: 60 });
     title.setAttribute('aria-label', tr('chatpage.project.name', 'Project name'));
@@ -288,12 +387,17 @@
       if (!name) { title.value = data.project.name; return; }
       if (name === data.project.name) return;
       const out = await api.saveProject({ id, name }).catch(() => null);
-      if (out && !out.error) { data.project = out; root.setAttribute('aria-label', out.name); h.refresh(); } else title.value = data.project.name;
+      if (out && !out.error) { data.project = out; root.setAttribute('aria-label', out.name); page.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: out.name })); h.refresh(); } else title.value = data.project.name;
     };
     title.addEventListener('blur', rename);
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); title.blur(); } else if (e.key === 'Escape') { title.value = data.project.name; title.blur(); } });
-    const fresh = button(tr('chatpage.project.newChat', 'New chat here'), () => h.newChat(data.project), 'primary');
-    const folder = button(tr('projectws.folder', 'Folder and more…'), () => h.editFolder(data.project));
+    const sub = el('p', { className: 'pjp-sub' });
+    page.sub = () => {
+      const n = myChats().length;
+      const f = (page.data.files || []).length;
+      sub.textContent = [tr(n === 1 ? 'projectws.count.chat' : 'projectws.count.chats', n === 1 ? '{n} chat' : '{n} chats', { n }), f ? tr(f === 1 ? 'projectws.count.file' : 'projectws.count.files', f === 1 ? '{n} file' : '{n} files', { n: f }) : ''].filter(Boolean).join(' · ');
+    };
+    const settings = button(tr('projectws.folder', 'Folder and more…'), () => h.editFolder(data.project));
     const del = twoStep(tr('chatpage.project.delete', 'Delete project'), tr('projectws.deleteAgain', 'Click again: its chats stay'), async () => {
       const ok = await api.removeProject(id).catch(() => false);
       if (!ok) { del.disabled = false; return; }
@@ -306,17 +410,20 @@
       });
       h.refresh();
     }, 'danger');
-    const head = el('header', { className: 'pjp-head' }, back, title, el('div', { className: 'pjp-actions' }, fresh, folder, del));
-    const search = searchBox();
-    const grid = el('div', { className: 'pjp-grid' }, instructionsCard(data), filesCard(data), linksCard(data), defaultsCard(data), memoryCard(data), chatsCard());
-    page.grid = grid;
-    root.append(head, el('div', { className: 'pjp-search' }, search.input), search.out, grid);
-    const main = document.querySelector('.cp-main');
+    const head = el('header', { className: 'pjp-head' }, back,
+      el('div', { className: 'pjp-head-row' }, el('div', { className: 'pjp-head-text' }, title, sub), el('div', { className: 'pjp-actions' }, settings, del)));
+    const instructions = instructionsCard(data);
+    const main = el('div', { className: 'pjp-main' }, composer(data), chatsSection());
+    const side = el('aside', { className: 'pjp-side' }, instructions, filesCard(data), linksCard(data), folderCard(data), defaultsCard(data), memoryCard(data));
+    side.setAttribute('aria-label', tr('projectws.side', 'Project setup'));
+    page.sub();
+    root.append(el('div', { className: 'pjp-wrap' }, head, el('div', { className: 'pjp-cols' }, main, side)));
+    const mount = document.querySelector('.cp-main');
     document.getElementById('chat-root').hidden = true;
-    main.append(root);
+    mount.append(root);
     document.body.classList.add('cp-project-open');
-    title.blur();
-    back.focus();
+    instructions.fit();
+    if (focus === 'instructions') { const box = instructions.querySelector('.pjp-text'); instructions.scrollIntoView({ block: 'nearest' }); box.focus(); box.setSelectionRange(box.value.length, box.value.length); } else page.composerText.focus();
     return true;
   }
   function close(notify = true) {
@@ -329,7 +436,7 @@
     document.body.classList.remove('cp-project-open');
     if (notify) h.closed?.();
   }
-  const refresh = () => { if (page) chatsCard.redraw?.(); };
+  const refresh = () => { if (page) page.redraw?.(); };
 
   window.chatProjectPage = { open, close, isOpen: () => Boolean(page), refresh, id: () => page?.id || null };
 })();

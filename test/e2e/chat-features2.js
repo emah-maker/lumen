@@ -119,8 +119,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await shot('projects-editor-light');
   await inPage(`(() => { document.querySelector('.cp-pj-input').value = 'Zoology'; document.querySelector('.cp-pj-text').value = 'Always answer in exactly one word per sentence.'; document.querySelector('.cp-pj-box').requestSubmit(); })()`);
   check('saving makes the project (and shows it in the rail)', await waitFor(async () => (await app.evaluate(() => global.__chats.store().projects().map((p) => p.name))).join() === 'Zoology' && (await inPage("document.querySelector('.cp-pj .cp-pj-name')?.textContent")) === 'Zoology'), await inPage("document.getElementById('cp-projects').textContent"));
-  check('a project made with + opens its (empty) list', await inPage("document.querySelector('.cp-pj.on .cp-pj-name')?.textContent") === 'Zoology' && (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 0, '');
-  await inPage("document.querySelector('.cp-pj.on').click()"); // back to all chats
+  check('a project made with + is open in the rail (its chats listed under it, none yet)', await inPage("document.querySelector('.cp-pj-item.open .cp-pj-name')?.textContent") === 'Zoology' && (await inPage("document.querySelectorAll('.cp-pj-chats .cp-pj-chat').length")) === 0, '');
   await waitFor(async () => (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 1);
   // Move the chat in from its row menu.
   await inPage("document.querySelector('#cp-items .chat-item .chat-more').click()");
@@ -136,24 +135,22 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   const sys = await app.evaluate(() => global.__fake.systems.at(-1));
   check('the project\'s instructions reach the AI for that chat', /<project_instructions>/.test(sys) && /exactly one word per sentence/.test(sys), sys.slice(-400));
   // A new chat started in the project gets them from its first message and is recorded in it.
-  await inPage("document.querySelector('.cp-pj.on, .cp-pj').click()");
-  await inPage("[...document.querySelectorAll('.cp-pj-act')].find((b) => /New chat/.test(b.textContent)).click()");
+  await inPage("document.querySelector('.cp-pj-new').click()");
   await waitFor(async () => (await inPage("document.querySelectorAll('.msg').length")) === 0);
   await send('A fresh question');
   const n2 = await app.evaluate(() => global.__fake.systems.length);
   check('a new chat in the project has the instructions at once', /exactly one word per sentence/.test(await app.evaluate(() => global.__fake.systems.at(-1))), n2);
   check('and is saved in the project', await waitFor(async () => (await chatList()).filter((c) => c.project).length === 2), JSON.stringify(await chatList()));
-  check('the project\'s view lists only its chats', (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 2);
+  check('the rail lists both chats under the project', await waitFor(async () => (await inPage("document.querySelector('.cp-pj .cp-pj-count')?.textContent")) === '2'), await inPage("document.getElementById('cp-projects').textContent"));
   // A chat outside the project gets none.
-  await inPage("document.querySelector('.cp-pj.on').click()"); // back to all chats
   await inPage("document.getElementById('new-chat').click()");
   await waitFor(async () => (await inPage("document.querySelectorAll('.msg').length")) === 0);
   await send('Unrelated');
   check('a chat outside any project has no project instructions', !/project_instructions/.test(await app.evaluate(() => global.__fake.systems.at(-1))), '');
   const outsider = (await chatList()).find((c) => !c.project);
   // Delete the project: chats stay.
-  await inPage("document.querySelector('.cp-pj').click()");
-  await inPage("[...document.querySelectorAll('.cp-pj-act')].find((b) => /instructions|Instructions/i.test(b.textContent)).click()");
+  await inPage("document.querySelector('.cp-pj-more').click()");
+  await inPage("[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].find((b) => /Rename and folder/.test(b.textContent)).click()");
   await inPage("document.querySelector('.cp-pj-delete').click(); document.querySelector('.cp-pj-delete').click();");
   check('deleting the project keeps its chats, now outside any project', await waitFor(async () => { const l = await chatList(); return l.length === 3 && l.every((c) => !c.project) && (await app.evaluate(() => global.__chats.store().projects().length)) === 0; }), JSON.stringify(await chatList()));
   check('the outsider is untouched', (await chatList()).some((c) => c.id === outsider.id));

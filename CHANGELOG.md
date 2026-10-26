@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Projects have a real page and a tidier row. In the chat list a project is one row: its name opens the project page, the chevron lists its chats, and a + (new chat here) and a ⋯ menu (open, new chat, instructions, rename and folder) show on hover or focus, instead of three grey buttons under the row. The page is laid out like a Claude project: its name (editable), a box that starts a chat in it, its chats (pin, move, delete, search) and beside them its instructions (written in place), files, pinned pages, folder, defaults and memory.
+
 ## 0.5.70 (2026-10-25)
 
 - **Settings: the AI and Advanced pages are grouped by what the settings do.** Approvals (how the AI asks, the background option, hands-off, agents' own windows), Computer access (files, other apps, terminals, Word), Let agents use Lumen (everything that lets an outside agent in) and Graphics and effects each have one list; "Bypass in background tasks" shows only while Bypass is chosen, "Side tabs: icons only" only with the Side layout, and descriptions no longer say "On/Off by default". The unused meeting-helper setting is removed from old settings files.

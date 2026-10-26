@@ -83,9 +83,7 @@ function makePdf(pages) {
     // "New chat here" in the rail, as a user does it
     const startIn = (pid) => inPage(`(async () => {
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-      const find = () => [...document.querySelectorAll('.cp-pj-act')].find((b) => /New chat here/.test(b.textContent));
-      if (!find()) { document.querySelector('.cp-pj[data-id="${pid}"]').click(); await wait(600); }
-      find().click();
+      document.querySelector('.cp-pj-item[data-project="${pid}"] .cp-pj-new').click();
       await wait(900);
       return true;
     })()`);
@@ -175,7 +173,7 @@ function makePdf(pages) {
     check('the page opens', opened === true && (await inPage("Boolean(document.getElementById('cp-project-page'))")) === true);
     const text = await inPage("document.getElementById('cp-project-page').innerText");
     check('the page shows instructions, the three files, the pinned page, defaults and memory', (await inPage("document.querySelector('#cp-project-page .pjp-title').value")) === 'Biology thesis' && /budget\.md/.test(text) && /essay\.docx/.test(text) && /bio\.pdf/.test(text) && /Reference page/.test(text) && /Defaults/.test(text) && /kiwi/.test(text), JSON.stringify([/Biology thesis/.test(text), /budget.md/.test(text), /essay.docx/.test(text), /bio.pdf/.test(text), /Reference page/.test(text), /Defaults/.test(text), /kiwi/.test(text)]));
-    const instr = await inPage("document.querySelector('#cp-project-page textarea').value");
+    const instr = await inPage("document.querySelector('#cp-project-page .pjp-text').value");
     check('the instructions are in their box', instr === 'Answer in a formal tone.', instr);
     await inPage("(async () => { const input = document.querySelector('.pjp-search-input'); input.value = 'dollars'; input.dispatchEvent(new Event('input')); })()");
     await waitFor(async () => /4,000 dollars/.test(await inPage("document.querySelector('.pjp-results').innerText") || ''), 6000);
