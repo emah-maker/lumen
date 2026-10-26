@@ -8298,8 +8298,10 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
-    // [agent window] The user's last window closed: an agent's window does not keep Lumen running on its own.
-    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r)) r.win.close();
+    // [agent window] The user's last window closed: an agent's window whose session has ended (or is in its grace period) goes with it, but one an agent
+    // is still working in stays open, and Lumen with it, until that session ends (agentWindows.release then closes it, and Lumen quits as the last
+    // window goes). Closing their own window used to take the agent's work down mid-task.
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r) && !agentWindows.inUse(r)) r.win.close();
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a

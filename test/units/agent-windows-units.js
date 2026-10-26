@@ -69,7 +69,9 @@ function harness(over = {}) {
     const h = harness();
     const a = {};
     const w = await h.windows.ensure(a, 'Claude Code');
+    check('while its session is on, the window is in use (closing the user\'s last window leaves it open)', h.windows.inUse(w) === true, '');
     h.windows.release(a);
+    check('...and not once the session ended (its grace period: it goes with the user\'s last window)', h.windows.inUse(w) === false, '');
     check('closing waits for a grace period', h.closed.length === 0 && h.timers.at(-1).ms === GRACE_MS, JSON.stringify(h.timers.at(-1)?.ms));
     h.fire();
     check('an unused window closes after the grace', h.closed[0] === w && h.kept.length === 0, JSON.stringify(h.closed));
