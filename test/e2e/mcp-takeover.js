@@ -21,6 +21,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_AGENT_WINDOW_GRACE_MS: '1500', LUMEN_AGENT_HOLD_MS: '1500', ANTHROPIC_API_KEY: 'sk-ant-test' };
 
   const server = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/dl/')) { res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', `attachment; filename="${req.url.slice(4).split('?')[0]}"`); res.end('agent file'); return; } // a download
     const name = (req.url || '/').replace(/^\//, '').split('?')[0].toUpperCase() || 'HOME';
     res.setHeader('Content-Type', 'text/html');
     res.end(`<!doctype html><title>Page ${name}</title><body style="margin:0"><h1>PAGE-${name}</h1><input id="code" aria-label="code ${name}" style="position:absolute;left:40px;top:120px;width:300px;height:40px"><button id="b" style="position:absolute;left:40px;top:200px;width:200px;height:40px" onclick="document.title='clicked ${name}'">Press ${name}</button></body>`);
@@ -184,6 +185,22 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('the agent can still open a new tab of its own', !r.result.isError, A.text(r));
   r = await A.call('read_page');
   check('...and read it', !r.result.isError && /PAGE-OTHER/.test(A.text(r)), A.text(r).slice(0, 300));
+
+  // A download the agent starts waits for the user's yes, asked in the user's own window; nothing reaches the folder before.
+  const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agent-dl-'));
+  await app.evaluate((_e, dir) => global.__patchSettings({ downloadDir: dir }), dlDir);
+  const asked = () => app.evaluate(() => global.__dialogs.currentId());
+  r = await A.call('navigate', { url: `${base}/dl/report.txt` });
+  check('a download in the agent\'s window asks the user first', await waitFor(async () => (await asked()) !== null, 8000), A.text(r).slice(0, 200));
+  await sleep(400);
+  check('...and nothing reaches the folder while unanswered', fs.readdirSync(dlDir).length === 0, fs.readdirSync(dlDir).join(','));
+  await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 1 }));
+  check('after Download it is saved in the Downloads folder', await waitFor(() => fs.existsSync(path.join(dlDir, 'report.txt')) && fs.readFileSync(path.join(dlDir, 'report.txt'), 'utf8') === 'agent file', 8000), fs.readdirSync(dlDir).join(','));
+  r = await A.call('navigate', { url: `${base}/dl/other.txt` });
+  await waitFor(async () => (await asked()) !== null, 8000);
+  await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 0 }));
+  await sleep(800);
+  check('after Cancel nothing is saved', !fs.existsSync(path.join(dlDir, 'other.txt')), fs.readdirSync(dlDir).join(','));
 
   // The user's own tabs stay out of reach (#352).
   const user = (await windows()).find((w) => !w.agent);

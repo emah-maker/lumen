@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **An agent's window can download files, with your OK.** A download Claude Code (or another outside agent) starts in its own window used to be cancelled. Now your own Lumen window asks "Claude Code wants to download “report.pdf”" with where it comes from; Download saves it to your Downloads folder (the agent is told where), Cancel drops it. Nothing reaches the folder before you answer, and a file that can run programs says so too.
+
 - **An agent's window shows Lumen's icon on the taskbar.** Claude Code's (or another agent's) own window was made without an icon to open faster, so Windows showed Electron's on its taskbar button and preview. It gets Lumen's icon just after it opens.
 
 - **Sign in with Google (and Microsoft) finishes connecting.** Two sign-ins could start at once, each opening a browser tab, and the second cancelled the first, so finishing in the first tab went nowhere; now a repeat within a few seconds joins the sign-in already open, and only one tab opens. The step after you sign in (Lumen trading Google's answer for its token) tries a second way when Lumen's own network path can't send it (something in the browser session, such as a block list, an extension or a proxy setting, left it at "Couldn't reach Google" with the network fine), and when it still fails the message now says what the network reported.

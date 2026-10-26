@@ -124,7 +124,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
     check('the agent window gets Lumen\'s icon once its UI is loading (made without one, its taskbar button showed Electron\'s)', /if \(agentOf\) agentStep\([^\n]*w\.setIcon\(WINDOW_ICON\)/.test(main));
     check('an outside agent\'s call whose window is gone throws instead of running in the user\'s', /scope\?\.mcp && !\(scope\.rec && winRecs\.has\(scope\.rec\)/.test(main));
     check('keyboard focus helpers skip agent windows the user is not in', (main.match(/handsOff\.mayFocus\(/g) || []).length >= 2);
-    check('downloads from an agent window are cancelled', /blocked: \(contents\) => Boolean\(contents && agentContents\.has\(contents\)\)/.test(main) && /deps\.blocked\?\.\(contents\)/.test(src('src/features/downloads.js')));
+    check('downloads from an agent window wait for the user\'s yes, asked in their own window', /agentOf: \(contents\) => \(contents && agentContents\.has\(contents\)/.test(main) && /userWin: \(\) =>/.test(main) && /if \(agent\) askAboutAgent\(/.test(src('src/features/downloads.js')) && /awaitingOk: risky \|\| Boolean\(agent\)/.test(src('src/features/downloads.js')));
     const mcp = src('src/features/ai-agents.js');
     check('the agent session carries its private clipboard on its scope', /clipboard: \(session\.clipboard \|\|= /.test(mcp));
     check('the MCP path calls no focus, raise or always-on-top', !/app\.focus|moveTop|setAlwaysOnTop|\.focus\(\)/.test(mcp) && !/focus|moveTop|raise/.test(src('src/features/agent-windows.js').replace(/\/\/.*$/gm, '')));
