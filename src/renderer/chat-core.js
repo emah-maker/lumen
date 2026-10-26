@@ -3280,7 +3280,9 @@ async function askOnNewTopic(text, images, tabs) {
   if (!window.chatTopic.isNewTopic(text, said)) return false;
   const previous = await window.assistant.chats?.list().then((r) => r.current).catch(() => null);
   if (!previous || running) return false;
+  const here = await window.assistant.chats?.currentProject?.().catch(() => null); // (a chat of a project goes on in it: the new one starts there too)
   $('new-chat').click();
+  if (here?.project) { const view = await window.assistant.chats.newInProject(here.project.id).catch(() => null); if (view) applySync(view); }
   const notice = append(Object.assign(document.createElement('div'), { className: 'notice topic-split' }));
   const back = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('chat.newTopic.back') });
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
