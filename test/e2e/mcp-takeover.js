@@ -232,6 +232,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('once the agent\'s session ends, the window the user used stays, as their own', await waitFor(async () => (await app.evaluate(() => global.__agentWindows.count())) === 0 && (await windows()).length === 1, 15000), JSON.stringify(await windows().catch(() => null)));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close().catch(() => {});
+  try { if (app.process().exitCode === null) app.process().kill(); } catch { /* gone */ } // (the agent window the test used stays as the user's own, so Lumen keeps running: never leave it behind)
   server.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
