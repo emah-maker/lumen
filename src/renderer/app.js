@@ -2724,8 +2724,9 @@ function applyStill(visible, { fade = false } = {}) {
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
-// [sidebar keeps the run] ...except when this tab's chat is working, waiting for an OK, or finished unread while the sidebar was
-// closed: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting says.
+// [sidebar keeps the run] ...except when a chat is working in this tab (its own, or the one whose run drives the tab; the latest if
+// several) or waiting for an OK: main (chat:sidebar-target) says so, and that chat shows with its live state, whatever the setting
+// says. A chat that only finished unread does not hold the button. Ctrl+J and the menu take the same path.
 let toggleSeq = 0;
 async function toggleSidebarByHand() {
   // What the toggle does is decided at the press, from what was last asked for (not from what the button shows yet): five quick
@@ -2735,7 +2736,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch { /* an older main: no such question */ } // [ask ai new chat] only a run waiting for an OK keeps its chat; a working or unread one stays in History (and on its tab's chip)
+    try { target = await window.assistant.sidebarTarget?.({ liveOnly: true }); } catch { /* an older main: no such question */ } // [sidebar shows the running chat] a run working in this tab, or waiting for an OK, keeps its chat (live); a chat that finished unread stays in History
     if (mine !== toggleSeq || sidebarWanted !== opening) return; // pressed again (or changed by something else) while main answered: that decides
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({

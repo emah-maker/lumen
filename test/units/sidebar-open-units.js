@@ -41,7 +41,18 @@ check('main.js answers chat:sidebar-target for the front tab of a window (its ch
 check('index.src.html loads sidebar-open.js before app.js', (() => { const h = read('src/renderer/index.src.html'); return h.indexOf('sidebar-open.js') > 0 && h.indexOf('sidebar-open.js') < h.indexOf('src="app.js"'); })());
 
 // Ask AI starts a new chat even over a working or unread one: main only keeps a run that waits for an OK, and the other entry points start new chats
-check('app.js asks main only about a run waiting for an OK (approvalOnly), so a working or unread chat does not hold the button', /sidebarTarget\?\.\(\{ approvalOnly: true \}\)/.test(app) && /approvalOnly === true\) return null/.test(read('src/main.js')) && /approvalOnly === true/.test(read('src/preload/preload.js')));
+check('app.js asks main only about live runs (liveOnly): a chat working in the tab or waiting for an OK holds the button, one that finished unread does not', /sidebarTarget\?\.\(\{ liveOnly: true \}\)/.test(app) && /liveOnly === true\) return null/.test(read('src/main.js')) && /liveOnly === true/.test(read('src/preload/preload.js')));
+check('main.js picks the chat with chat-runs sidebarPick', /chatRunsLib\.sidebarPick\(hits\)/.test(read('src/main.js')));
+{
+  const { sidebarPick } = require('../../src/features/chat-runs');
+  const h = (id, reason, startedAt) => ({ id, reason, startedAt });
+  check('sidebarPick: nothing, nothing', sidebarPick([]) === null && sidebarPick() === null);
+  check('sidebarPick: a single running chat', sidebarPick([h('a', 'running', 5)]).id === 'a');
+  check('sidebarPick: several running: the most recently started', sidebarPick([h('a', 'running', 5), h('b', 'running', 9), h('c', 'running', 7)]).id === 'b');
+  check('sidebarPick: a run waiting for an OK outranks a later running one', sidebarPick([h('a', 'approval', 1), h('b', 'running', 9)]).id === 'a');
+  check('sidebarPick: running outranks unread, whatever the order', sidebarPick([h('u', 'unread', 99), h('r', 'running', 1)]).id === 'r');
+  check('sidebarPick: only unread: the first (the tab\'s own chat)', sidebarPick([h('own', 'unread', 1), h('x', 'unread', 5)]).id === 'own');
+}
 check('"Ask AI about this" and the command bar ask in a new chat unless the open one is empty (askInFreshChat)', /onAskSelection\(\(text\) => \{[\s\S]*?askInFreshChat\(/.test(app) && /cmdbar:ask'[\s\S]*?askInFreshChat\(text\)/.test(app) && /function askInFreshChat\(text\) \{\s*if \(!\$\('empty'\)\.hidden\) \$\('new-chat'\)\.click\(\);/.test(read('src/renderer/chat-core.js')));
 check('the new-tab page\'s Ask AI with nothing typed opens the chat page on a new chat (fresh)', /fresh: true/.test(read('src/features/chat-page.js')) && /first\?\.fresh/.test(read('src/renderer/chat-page.js')));
 

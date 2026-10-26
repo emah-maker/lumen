@@ -227,7 +227,7 @@ function projects({ store, removed = () => {} }) {
     scan() {
       if (!store.usable()) throw new SyncError('unavailable', 'Projects cannot be read right now');
       const out = new Map();
-      for (const p of store.projects()) out.set(p.id, { value: { name: p.name, instructions: p.instructions || '', created: p.created || 0, ...(p.links ? { links: p.links.map((l) => ({ url: l.url, title: l.title || '' })) } : {}), ...(p.defaults ? { defaults: p.defaults } : {}) } });
+      for (const p of store.projects()) out.set(p.id, { value: { name: p.name, instructions: p.instructions || '', created: p.created || 0, ...(p.description ? { description: p.description } : {}), ...(p.links ? { links: p.links.map((l) => ({ url: l.url, title: l.title || '' })) } : {}), ...(p.defaults ? { defaults: p.defaults } : {}) } });
       return out;
     },
     has: (id) => store.projects().some((p) => p.id === id),

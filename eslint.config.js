@@ -68,6 +68,7 @@ module.exports = [
   // tabs-ask.js ("@" tabs in the composer) is loaded after chat-core.js and uses t and updateSend.
   { files: ['src/renderer/tabs-ask.js'], languageOptions: { globals: { t: 'readonly', updateSend: 'readonly' } } },
   // chats.js is loaded after app.js and uses its helpers.
+  { files: ['src/renderer/sidebar-projects.js'], languageOptions: { globals: { applySync: 'readonly', prompt: 'readonly' } } }, // (chat-core.js's: the sidebar's project strip draws a started chat)
   { files: ['src/renderer/chats.js'], languageOptions: { globals: { $: 'readonly', clearChatView: 'readonly', showHistory: 'readonly', resumeLive: 'readonly', shownChatId: 'writable' } } },
   // tab-search-match.js and app.js are loaded before tab-search.js and are used by it.
   { files: ['src/renderer/tab-search.js'], languageOptions: { globals: { tabSearchMatch: 'readonly', freezePage: 'readonly', thawPage: 'readonly' } } },

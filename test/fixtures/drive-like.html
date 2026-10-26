@@ -31,17 +31,23 @@
   const names = (files) => [...files].map((f) => f.name + ':' + f.size).join(', ');
   // "File upload" makes a hidden multiple input on demand and clicks it, which opens the native chooser (like Drive).
   // ?latent: no click at all, only a hidden input already in the page. ?dropOnly: nothing but the drop target.
-  document.getElementById('up').addEventListener('click', (e) => {
+  // ?detached: the input is never added to the document (nothing for a search to find). ?lateclick: detached, and clicked 5.6 s after the press,
+  // when the press's user activation (5 s) is gone, so Chrome opens no chooser (only a hook on input.click() can see it). ?trustedmenu: the item acts on a
+  // real mouseup only (Google's menus), a script click does nothing. ?covered: a transparent overlay sits over the open menu, so a real press hits it.
+  const start = () => {
     document.getElementById('menu').classList.remove('open');
     if (mode === 'noclick') return;
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.style.display = 'none';
-    document.body.appendChild(input);
     input.addEventListener('change', () => log('picker: ' + names(input.files)));
-    input.click();
-  });
+    if (mode !== 'detached' && mode !== 'lateclick') { input.style.display = 'none'; document.body.appendChild(input); }
+    if (mode === 'lateclick') setTimeout(() => input.click(), 5600); else input.click();
+  };
+  const up = document.getElementById('up');
+  if (mode === 'trustedmenu') up.addEventListener('mouseup', (e) => { if (e.isTrusted) start(); });
+  else up.addEventListener('click', start);
+  if (mode === 'covered') { const s = document.createElement('div'); s.id = 'shield'; s.style.cssText = 'position:fixed;left:24px;top:56px;width:220px;height:120px;z-index:9'; document.body.appendChild(s); }
   if (mode === 'latent') {
     const input = document.createElement('input');
     input.type = 'file';

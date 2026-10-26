@@ -302,7 +302,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -5836,10 +5836,15 @@ function projectSettingsFor(id) {
 const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder'];
 // The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
 function syncProjectInstructions() {
-  const settings = agent.messages.settings;
-  if (!settings) return;
-  for (const key of PROJECT_SETTING_KEYS) delete settings[key];
-  Object.assign(settings, projectSettingsFor(chatId));
+  const follow = (messages, id) => {
+    const settings = messages?.settings;
+    if (!settings) return;
+    for (const key of PROJECT_SETTING_KEYS) delete settings[key];
+    Object.assign(settings, projectSettingsFor(id));
+  };
+  follow(agent.messages, chatId);
+  // (a chat left running in the background keeps its own messages: its project's edits, and a move in or out, reach it too)
+  try { for (const run of chatRuns.values()) if (run.messages !== agent.messages && !run.deleted) follow(run.messages, run.chatId); } catch { /* not set up yet */ }
 }
 function keepPendingProject(id) {
   const pid = pendingProject.get(id);
@@ -6399,13 +6404,13 @@ ipcMain.handle('chat:sidebar-target', (event, opts) => {
   const reasonOf = (id) => {
     const run = chatRuns.get(id);
     if (run && !run.deleted && run.pending.size) return 'approval';
-    if (opts?.approvalOnly === true) return null; // [ask ai new chat] the AI button starts a new chat even over a running one; only a question waiting for an OK keeps its chat
     if (chatBusy(id)) return 'running';
+    if (opts?.liveOnly === true) return null; // [sidebar shows the running chat] the AI button keeps a chat that works or waits for an OK; one that finished unread stays in History (a new chat opens)
     return unreadChats.has(id) ? 'unread' : null;
   };
   const ownsFront = [...chatRuns.values()].filter((r) => runIsLive(r) && !r.queued && agent.runTabIdFor(r.messages) === front).map((r) => r.chatId);
-  const hits = [chatBind.chatOf(front), ...ownsFront].filter(Boolean).map((id) => ({ id, reason: reasonOf(id) })).filter((h) => h.reason);
-  const hit = hits.find((h) => h.reason === 'approval') || hits.find((h) => h.reason === 'running') || hits[0];
+  const hits = [...new Set([chatBind.chatOf(front), ...ownsFront].filter(Boolean))].map((id) => ({ id, reason: reasonOf(id), startedAt: chatRuns.get(id)?.startedAt || 0 })).filter((h) => h.reason);
+  const hit = chatRunsLib.sidebarPick(hits); // (several runs touch this tab: the one waiting for an OK, else the latest started)
   if (!hit) return null;
   if (hit.id !== chatId && !switchChat(hit.id, { ensure: true, quiet: true })) return null;
   if (chatBind.chatOf(front) == null) chatBind.bind(front, hit.id);
@@ -11538,7 +11543,7 @@ ipcMain.handle('chats:show-tab', (event, id) => {
 });
 // [projects] The list, and every change: a new one, an edit, delete (its chats stay, out of any project), a chat moved in or out,
 // and a new chat that starts inside a project.
-const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000) });
+const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000), description: p?.description === undefined ? undefined : String(p.description).slice(0, 1000) });
 const dialogParent = (event) => { try { return BrowserWindow.fromWebContents(event.sender) || win; } catch { return win; } };
 async function pickFolder(event, title, defaultPath) {
   const picked = await electronDialog.showOpenDialog(dialogParent(event), { title, ...(defaultPath ? { defaultPath } : {}), properties: ['openDirectory', 'createDirectory'] });
@@ -11619,7 +11624,7 @@ ipcMain.handle('chats:project-set', (_e, id, projectId) => {
 // activity (the recency order stays) and does not touch a running chat. A chat still working on its first reply has no saved entry yet:
 // its project waits in pendingProject, as for a chat started inside a project.
 const chatIdList = (ids) => (Array.isArray(ids) ? [...new Set(ids.map(String))].slice(0, 200) : []);
-ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
+ipcMain.handle('chats:project-move', (event, ids, projectId) => {
   const list = chatIdList(ids);
   const target = projectId ? String(projectId) : null;
   if (target && !chats().projects().some((p) => p.id === target)) return null;
@@ -11627,27 +11632,37 @@ ipcMain.handle('chats:project-move', (_e, ids, projectId) => {
   const moves = chats().moveToProject(list, target);
   if (!moves) return null;
   for (const id of list) {
-    if (moves.some((m) => m.id === id) || chats().has(id) || !chatRuns.has(id) || !runIsLive(chatRuns.get(id))) continue;
+    // (the open chat before its first message is not saved either: the sidebar's project picker sets its project, and its first save keeps it)
+    const waiting = id === chatId && !chats().has(id) && !temporaryChats.has(id);
+    if (moves.some((m) => m.id === id) || chats().has(id) || !(waiting || (chatRuns.has(id) && runIsLive(chatRuns.get(id))))) continue;
     const from = pendingProject.get(id) || null;
     if (from === target) continue;
     if (target) pendingProject.set(id, target); else pendingProject.delete(id);
     moves.push({ id, from });
   }
-  if (moves.length) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
+  if (moves.length) {
+    syncProjectInstructions(); pushAttention(); mirrorAfterMove(before);
+    if (moves.some((x) => x.id === chatId)) chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender); // (the other views show the open chat's project)
+  }
   return { moves };
 });
-ipcMain.handle('chats:project-restore', (_e, moves) => {
+ipcMain.handle('chats:project-restore', (event, moves) => {
   const list = (Array.isArray(moves) ? moves : []).slice(0, 200).filter((m) => m && typeof m.id === 'string').map((m) => ({ id: m.id, from: m.from ? String(m.from) : null }));
   const before = list.map((m) => [m.id, projectIdOf(m.id)]);
   let n = chats().restoreProjects(list);
   for (const m of list) {
-    if (chats().has(m.id) || !chatRuns.has(m.id)) continue;
+    if (chats().has(m.id) || !(chatRuns.has(m.id) || m.id === chatId)) continue;
     if (m.from && chats().projects().some((p) => p.id === m.from)) pendingProject.set(m.id, m.from); else pendingProject.delete(m.id);
     n++;
   }
-  if (n) { syncProjectInstructions(); pushAttention(); mirrorAfterMove(before); }
+  if (n) {
+    syncProjectInstructions(); pushAttention(); mirrorAfterMove(before);
+    if (list.some((x) => x.id === chatId)) chatPageRt.broadcast('chat:sync', { view: chatView() }, event.sender);
+  }
   return n;
 });
+// The sidebar's project strip: the open chat's project ({ id, name } or null), and how many projects there are.
+ipcMain.handle('chats:current-project', () => ({ id: chatId, project: projectChipFor(chatId).project || null, count: chats().projects().length }));
 ipcMain.handle('chats:new-in-project', (event, projectId) => {
   if (!chats().projects().some((p) => p.id === String(projectId))) return null;
   startNewChat(event);
@@ -11750,7 +11765,11 @@ ipcMain.handle('chats:project-get', async (_e, id) => {
   const store = projectFiles();
   let memoryEntries = [];
   try { memoryEntries = memory().list().filter((e) => e.project === p.id).sort((a, b) => b.updated - a.updated); } catch { /* memory unreadable */ }
-  return { project: withFolderState(p), files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+  // "Continue where you left off": what was said last in the project's few most recent chats
+  const snippets = {};
+  const recent = chats().list().filter((c) => !c.missing && !c.archived && c.project === p.id).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 6);
+  await Promise.all(recent.map(async (c) => { snippets[c.id] = await chats().lastWords(c.id); }));
+  return { project: withFolderState(p), snippets, files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
 });
 // Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
 // text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.

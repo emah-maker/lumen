@@ -88,6 +88,14 @@ function notification(kind, { reply = '', error = '', chat = '', summary = '', t
   return { title: line ? tr('agent.notify.done', { reply: line }, `Lumen finished: ${line}`) : tr('agent.notify.doneEmpty', {}, 'Lumen finished'), body };
 }
 
+// [sidebar shows the running chat] Which of the chats that touch the front tab the sidebar button opens on. `hits`: { id, reason, startedAt }
+// for each chat of the tab (its own, or one whose run works in it) with a reason: 'approval' (waits for an OK), 'running', 'unread'.
+// A question waiting for the user first, then a working chat, then the rest; among equals the run started last (most recent) wins.
+function sidebarPick(hits = []) {
+  const latest = (list) => list.reduce((best, h) => (!best || (h.startedAt || 0) >= (best.startedAt || 0) ? h : best), null);
+  return latest(hits.filter((h) => h.reason === 'approval')) || latest(hits.filter((h) => h.reason === 'running')) || hits[0] || null;
+}
+
 // The mark on the sidebar's toolbar button: 'approval' (a run waits for an OK) outranks 'unread' (a
 // reply finished while the sidebar was closed or another chat was open), or null.
 function attention({ approvals = 0, unread = 0 } = {}) {
@@ -105,4 +113,4 @@ function chatBadge({ running = false, queued = false, approvals = 0, unread = fa
   return null;
 }
 
-module.exports = { MAX_RUNS, canStart, firstLine, notifyText, outcome, inView, plan, notification, attention, chatBadge };
+module.exports = { sidebarPick, MAX_RUNS, canStart, firstLine, notifyText, outcome, inView, plan, notification, attention, chatBadge };
