@@ -66,13 +66,13 @@ const { openSettingsTab } = require('../helpers/settings-tab');
     await until(async () => (await pref('hardwareAcceleration')) === true);
 
     // ---- an Add button with nothing typed
-    run = await openSettingsTab(app, 'privacy');
+    run = await openSettingsTab(app, 'privacy-adblock');
     const clickAdd = (inputId) => run(`(() => { const i = document.getElementById("${inputId}"); i.value = ""; i.closest(".controls").querySelector("button").click(); return i.closest(".controls").querySelector(".note")?.textContent || ""; })()`);
     check('empty Add (ads allow-list) says what to type', /Type a site first/.test(await clickAdd('adblock-add')));
     check('empty Add: the box has the cursor', (await run('document.activeElement?.id')) === 'adblock-add');
-    run = await openSettingsTab(app, 'ai');
+    run = await openSettingsTab(app, 'ai-privacy');
     check('empty "Turn off AI" says what to type', /Type a site first/.test(await clickAdd('ai-off-add')));
-    run = await openSettingsTab(app, 'tabs');
+    run = await openSettingsTab(app, 'tabs-sleep');
     const unloadAdd = await run('(() => { const b = document.getElementById("unload-never-add-add"); if (!b) return "no button"; b.click(); return b.closest(".row").querySelector(".note[role=status]")?.textContent || ""; })()');
     check('empty "Add site" in Tabs says what to type', /Type a site first/.test(unloadAdd), unloadAdd);
 

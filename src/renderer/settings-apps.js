@@ -13,7 +13,7 @@
 //   Drive, Sheets, Docs, Calendar, Tasks, Contacts   one Google grant (features/connectors/google-auth.js); the Google client under Advanced is the one Gmail and these use.
 // The AI switch keeps a sign-in when it is turned off (connectors:set-paused).
 
-const APP_WIDGET_OF = { gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' }; // connector id -> the new-tab card of the same service
+const APP_WIDGET_OF = { gmail: 'gmail', todoist: 'todoist', github: 'github' }; // connector id -> the new-tab card of the same service
 const APP_CARD_ONLY = [
   { id: 'spotify', name: 'Spotify', category: 'music', icon: { text: 'S', color: '#1db954' }, type: 'spotify', summary: 'Music that plays in Lumen, with what is playing on the new tab page.' },
   { id: 'applemusic', name: 'Apple Music', category: 'music', icon: { text: 'A', color: '#fa233b' }, type: 'applemusic', summary: 'What is playing in Apple Music, on the new tab page.' },
@@ -49,6 +49,7 @@ async function buildApps(card) {
   // How the service stands: the text, whether it is signed in, and whether the sign-in needs doing again.
   function standing(svc) {
     const c = connOf(svc);
+    if (svc.id === 'github' && ws.github?.signedIn && ws.github?.expired) return { text: tr('settings.widgets.github.expired', 'GitHub no longer accepts this sign-in. Sign in again.'), on: true, again: true, cls: 'err' };
     if (c) {
       const on = c.status !== 'off';
       return { text: c.paused ? `${c.statusText} · AI off` : c.statusText, on, again: c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error', cls: c.status === 'connected' ? 'ok' : on ? 'err' : '' };
@@ -90,7 +91,10 @@ async function buildApps(card) {
     const msg = h('span', { class: 'note', id: id('message'), role: 'status', 'aria-live': 'polite' });
     const connectBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-connect` });
     const disconnectBtn = armedButton('Disconnect', 'Disconnect? Click again', () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
-    const accountRow = row(tr('settings.apps.account', 'Account'), null, connectBtn, disconnectBtn);
+    // A service that signs in through a site (Canvas, Gmail's session) whose sign-in ended: Sign in opens its page in a Lumen tab.
+    const signInBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-signin`, text: tr('settings.apps.signIn', 'Sign in'), hidden: true, 'aria-label': `Sign in to ${svc.name}`, onclick: async () => { await C.signIn(svc.id); say(`Sign in to ${svc.name} in the tab that opened, then ask the AI again.`, 'ok'); } });
+    const switchBtn = svc.id === 'github' ? h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), hidden: true, onclick: async () => { try { const r = await W.githubStart({ privateRepos: githubPriv() }); if (r?.state) ws = r.state; await refresh(); } catch (err) { say(clean(err), 'err'); } } }) : null;
+    const accountRow = row(tr('settings.apps.account', 'Account'), null, ...(switchBtn ? [switchBtn] : []), signInBtn, connectBtn, disconnectBtn);
     accountRow.querySelector('.text').append(statusNote, msg);
 
     // ---- what Connect needs from you (a token, an address): fields that show while it is not connected
@@ -143,10 +147,10 @@ async function buildApps(card) {
         case 'todoist': {
           const token = vals.secret.trim();
           if (!token) throw new Error('Paste your Todoist API token first.');
-          await W.projects(token); // (checks it)
-          await W.setSecret('todoist', token); // the card's token; the connector reads it from there
-          data = await C.sync('todoist');
-          if (data.connectors.find((x) => x.id === 'todoist')?.status === 'off') data = await C.connect('todoist', { secret: token });
+          data = await C.connect('todoist', { secret: token }); // (checks it with Todoist)
+          await W.setSecret('todoist', token); // the widget's token: the one the connector reads from now on
+          data = await C.disconnect('todoist'); // (its own copy goes: a disconnect of a shared token would sign the widget out, an own one does not)
+          data = await C.sync('todoist'); // the connector now follows the widget's token
           break;
         }
         case 'github': {
@@ -226,7 +230,7 @@ async function buildApps(card) {
     const options = [];
     const cardLink = svc.type ? linkRow(tr('settings.apps.widgets', 'Widgets on the new tab page'), { href: '#widgets', more: 'widget card new tab page show hide add' }) : null; // (a card only shows the service: how it looks is on the Widgets page, the sign-in is here)
     if (cardLink) { cardLink.id = id('card'); options.push(cardLink); }
-    if (svc.connector && c0()) options.push(row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())));
+    if (svc.connector && c0()) { const aboutRow = row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())); aboutRow.id = id('about'); options.push(aboutRow); }
     let gmailRows = [];
     if (svc.id === 'gmail') {
       const draftsSw = sw('drafts', tr('settings.apps.drafts', 'Let the AI write drafts'), 'Asks Google for permission to save drafts in your Gmail. The AI never sends them.', async () => {
@@ -268,10 +272,10 @@ async function buildApps(card) {
 
     // ---- Google's client: your own Google Cloud client instead of Lumen's (moved here from the Gmail card)
     function googleClientRows() {
-      const idIn = h('input', { type: 'text', id: 'app-google-clientid', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID') });
-      const secretIn = h('input', { type: 'password', id: 'app-google-clientsecret', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
-      const drop = h('textarea', { id: 'app-google-json', rows: 3, spellcheck: false, autocomplete: 'off', placeholder: tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text'), 'aria-label': tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text') });
-      const found = h('span', { class: 'note', role: 'status', id: 'app-google-found' });
+      const idIn = h('input', { type: 'text', id: `app-${svc.id}-google-clientid`, autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID') });
+      const secretIn = h('input', { type: 'password', id: `app-${svc.id}-google-clientsecret`, autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
+      const drop = h('textarea', { id: `app-${svc.id}-google-json`, rows: 3, spellcheck: false, autocomplete: 'off', placeholder: tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text'), 'aria-label': tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text') });
+      const found = h('span', { class: 'note', role: 'status', id: `app-${svc.id}-google-found` });
       const readClient = async (text) => {
         const r = await W.gmailParseClient(text);
         if (r?.error) { flash(found, r.error, 'warn'); return; }
@@ -288,7 +292,7 @@ async function buildApps(card) {
         const t = e.dataTransfer?.getData('text');
         if (t) readClient(t);
       });
-      const go = h('button', { type: 'button', class: 'primary', id: 'app-google-connect', text: tr('settings.apps.ownConnect', 'Connect with this client'), onclick: async () => {
+      const go = h('button', { type: 'button', class: 'primary', id: `app-${svc.id}-google-connect`, text: tr('settings.apps.ownConnect', 'Connect with this client'), onclick: async () => {
         if (!idIn.value.trim() || !(secretIn.value.trim() || ws.secrets?.gmail)) { flash(found, tr('settings.gmail.needClient', 'First drop the client JSON file above, or type your Client ID and secret.'), 'warn'); drop.focus(); return; }
         go.disabled = true;
         flash(found, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
@@ -302,9 +306,11 @@ async function buildApps(card) {
         go.disabled = false;
         await refresh();
       } });
-      const back = h('button', { type: 'button', id: 'app-google-reset', text: tr('settings.apps.ownReset', 'Use Lumen’s sign-in again'), onclick: async () => { try { ws = await W.gmailDisconnect(); flash(found, tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok'); } catch (err) { flash(found, clean(err), 'err'); } await refresh(); } });
+      const back = h('button', { type: 'button', id: `app-${svc.id}-google-reset`, text: tr('settings.apps.ownReset', 'Use Lumen’s sign-in again'), onclick: async () => { try { ws = await W.gmailDisconnect(); flash(found, tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok'); } catch (err) { flash(found, clean(err), 'err'); } await refresh(); } });
       return [
         row(tr('settings.apps.ownClient', 'Use my own Google client'), tr('settings.apps.ownClientDesc', 'Lumen signs in to Google with its own client. If Google blocks it (“Access blocked”), or you want the 7-day-free setup of your own Google Cloud project, make a client there (Desktop app, with the Gmail, Drive and Sheets APIs on) and give it here. The same client is used for Gmail, Drive and Sheets. Google’s limits for unverified apps then apply: while your project is in Testing, only test users you add can connect, and the connection ends every 7 days.')),
+        ...[[1, 'gmailProject', 'settings.gmail.step1Link', 'Create a project', 'settings.gmail.step1', 'Make a Google Cloud project (any name).'], [2, 'gmailApi', 'settings.gmail.step2Link', 'Turn on the Gmail API', 'settings.gmail.step2', 'Press Enable on the Gmail API page (and on the Drive and Sheets pages if you use them).'], [3, 'gmailConsent', 'settings.gmail.step3Link', 'Set up the consent screen', 'settings.gmail.step3', 'User type External, and add your own Google address as a test user.'], [4, 'gmailClient', 'settings.gmail.step4Link', 'Create the client', 'settings.gmail.step4', 'Application type Desktop app, then Download JSON.']]
+          .map(([n, key, lk, label, hk, hint]) => h('div', { class: 'row stack' }, h('span', { class: 'note' }, h('strong', { text: `${n}. ` }), `${tr(hk, hint)} `, h('button', { type: 'button', class: 'linkish', 'data-help': key, text: tr(lk, label), onclick: () => W.help(key) })))),
         h('div', { class: 'row stack' }, drop, found),
         row(tr('settings.gmail.clientId', 'Google OAuth Client ID'), tr('settings.gmail.filledByJson', 'Filled in for you when you drop the JSON file; or type it.'), idIn),
         row(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), tr('settings.gmail.secretHelp', 'From the same client. Stored encrypted by your system.'), secretIn),
@@ -331,14 +337,16 @@ async function buildApps(card) {
       statusNote.className = `note ${st.cls}`;
       const needsFields = fieldRows.length > 0 && (!st.on || st.again);
       const label = svc.id === 'github' ? tr('settings.widgets.github.signIn', 'Sign in with GitHub') : svc.id === 'spotify' ? tr('settings.apps.spotifyLogin', 'Log in with Spotify') : svc.id === 'slack' ? tr('settings.apps.slackSetup', 'Set up Slack') : cc?.kind === 'google' || svc.id === 'gmail' ? tr('settings.apps.googleSignIn', 'Sign in with Google') : tr('settings.apps.connect', 'Connect');
-      connectBtn.textContent = st.again ? tr('settings.apps.connectAgain', 'Connect again') : label;
+      connectBtn.textContent = st.again ? (svc.id === 'github' ? tr('settings.widgets.github.signInAgain', 'Sign in again') : tr('settings.apps.connectAgain', 'Connect again')) : label;
       connectBtn.setAttribute('aria-label', `${connectBtn.textContent}: ${svc.name}`);
       connectBtn.hidden = st.on && !st.again;
       disconnectBtn.button.hidden = !st.on || accountless;
+      signInBtn.hidden = !(cc && cc.status === 'needs-signin' && !['google', 'microsoft', 'mcp'].includes(cc.kind));
       for (const r of fieldRows) r.hidden = !needsFields;
       ghSync(st.on && !st.again);
       const pending = svc.id === 'github' && ws.github?.pending;
       connectBtn.hidden = connectBtn.hidden || Boolean(pending);
+      if (switchBtn) switchBtn.hidden = !(st.on && !st.again) || Boolean(pending);
       if (aiSw) {
         aiSw.input.checked = Boolean(cc) && cc.status !== 'off' && !cc.paused;
         aiSw.input.disabled = !cc || cc.status === 'off';
@@ -376,6 +384,6 @@ async function buildApps(card) {
 
   // ---- Custom MCP servers (a page of its own; anything with an MCP server, beyond the services above)
   const mcpEl = buildMcpServers(); // settings-mcp-servers.js
-  slots.get('mcp-servers').append(mcpEl);
+  slots.get('mcp-servers').append(stackRow(tr('settings.apps.mcpServers', 'Servers you added'), null, mcpEl));
   syncAll();
 }

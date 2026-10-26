@@ -8817,7 +8817,7 @@ const connectorsGoogleReal = {
     let email = auth.email;
     if (!auth.oauth) {
       try {
-        const res = await googleMailFeed(GA.feedUrl(0));
+        const res = await ((TEST && global.__googleMailFake) || googleMailFeed)(GA.feedUrl(0)); // (a test stands in for Google)
         const parsed = res.status === 200 ? GA.parseFeed(res.body) : null;
         signedIn = Boolean(parsed?.ok);
         email = parsed?.email || '';

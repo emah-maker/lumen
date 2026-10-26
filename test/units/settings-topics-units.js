@@ -40,10 +40,10 @@ check('a caution that must be read first is never put behind the (i)', /!INLINE_
 // ---- the services list
 const apps = read('src/renderer/settings-apps.js');
 check('the list is made from the connector registry, so a new connector appears by itself', /C\.list\(\)/.test(apps) && /data\.connectors\.map\(\(c\) => \(\{ id: c\.id/.test(apps) && /data\.categories/.test(apps));
-check('the services that have a card as well as a connector are Gmail, Calendar, Todoist and GitHub', /APP_WIDGET_OF = \{ gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' \}/.test(apps));
+check('the services that have a widget as well as a connector are Gmail, Todoist and GitHub (the Calendar widget keeps its own link list)', /APP_WIDGET_OF = \{ gmail: 'gmail', todoist: 'todoist', github: 'github' \}/.test(apps));
 check('a service page owns the sign-in (Connect, Disconnect), has Let the AI use it, and only points at Widgets (no card switch, no card sign-in)', /'ai'/.test(apps) && /conn-\$\{svc\.id\}-connect/.test(apps) && /conn-\$\{svc\.id\}-disconnect/.test(apps) && /Let the AI use it/.test(apps) && !/Show on new tab page/.test(apps) && /href: '#widgets'/.test(apps) && !/W\.save\(/.test(apps));
 check('Widgets are offered only for connected services: Connect it first links to the service, a disconnected service\'s widget says Reconnect, and the editor hides every sign-in', /Connect \$\{svc\.name\} first/.test(js) && /isn’t connected\. Reconnect/.test(js) && /const fromService = SERVICE_TYPES\.has\(type\)/.test(js) && /\.widget-form\.service \.wf-account/.test(read('src/renderer/settings.css')) && /accountPanel/.test(js) && /accountPanel\('slack'\)/.test(apps));
-check('the Google client override is under Advanced on the Google pages', /googleClientRows/.test(apps) && /settings\.apps\.advanced/.test(apps) && /app-google-clientid/.test(apps));
+check('the Google client override is under Advanced on the Google pages', /googleClientRows/.test(apps) && /settings\.apps\.advanced/.test(apps) && /-google-clientid/.test(apps));
 const registryHasWidgetOnly = ['spotify', 'applemusic', 'slack', 'muse'].every((id) => !registry.get(id));
 check('Spotify, Apple Music, Slack and Meta Muse are cards without a connector, listed beside the connectors', registryHasWidgetOnly && /APP_CARD_ONLY/.test(apps));
 const widgetSummary = require('../../src/renderer/widget-summary');

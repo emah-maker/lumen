@@ -68,36 +68,38 @@ const FEED = (who) => `<?xml version="1.0" encoding="UTF-8"?><feed version="0.3"
     check('no console errors on the page', (await app.evaluate(() => global.__errs)).length === 0, JSON.stringify(await app.evaluate(() => global.__errs)));
 
     // ---- Settings: the default mode, the account picker, and the Advanced setup ----
-    const settingsId = await app.evaluate(() => global.__settings.open('appearance'));
+    const settingsId = await app.evaluate(() => global.__settings.open('widgets'));
     const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [settingsId, code]);
     await sleep(1500);
+    // (a Gmail widget is edited once Gmail is connected under Apps and connections: the Google sign-in already in Lumen counts)
+    const conn = await sp("window.lumenSettings.ai.connectors.connect('gmail', {}).then(() => 'connected', (e) => String(e.message))");
+    check('settings: Gmail connects from its page with the Google sign-in already in Lumen', conn === 'connected', conn);
+    await sp("location.hash = '#general'; true");
+    await sleep(300);
+    await sp("location.hash = '#widgets'; true");
+    await sleep(1000);
     await sp(`document.querySelector('.widget-item[data-id="wgmail001"]').click()`);
     await sleep(1500);
     const google = await sp(`(() => ({ g: !document.getElementById('widget-gmail-google').hidden, o: !document.getElementById('widget-gmail-oauth').hidden, opts: [...document.querySelectorAll('#widget-gmail-account option')].map((o) => o.textContent), limits: document.getElementById('widget-gmail-limits').textContent, status: document.getElementById('widget-gmail-gstatus').textContent }))()`);
     check('settings: the Google sign-in way shows first, the own-client way is hidden', google.g === true && google.o === false, JSON.stringify(google));
     check('settings: the account picker lists the signed-in accounts by address', JSON.stringify(google.opts) === JSON.stringify(['me@example.com', 'work@example.com']) && /Signed in to Google in Lumen: 2 accounts/.test(google.status), JSON.stringify(google));
     check('settings: it says what the feed cannot do', /unread messages only/i.test(google.limits), google.limits);
-    await sp("location.hash = '#widgets'");
-    await sleep(500);
-    await sp("document.getElementById('widget-gmail-mode').scrollIntoView({ block: 'start' })");
+    // the sign-in is on the Gmail page of Apps and connections: the guided steps and the own-client JSON are under its Advanced
+    await sp("location.hash = '#app-gmail'");
+    for (let i = 0; i < 60 && !(await sp("Boolean(document.querySelector('#sub-app-gmail details.adv-rows'))")); i++) await sleep(150);
+    await sp("document.querySelector('#sub-app-gmail details.adv-rows').open = true");
     await sleep(300);
     await shot('settings-google', 'global.__settings.contents(' + settingsId + ')');
-    await sp(`document.querySelector('#widget-gmail-mode [data-value="oauth"]').click()`);
-    await sleep(300);
-    const adv = await sp(`(() => ({ g: !document.getElementById('widget-gmail-google').hidden, o: !document.getElementById('widget-gmail-oauth').hidden, helps: [...document.querySelectorAll('[data-help]')].map((b) => b.dataset.help), connect: document.getElementById('widget-gmail-connect').textContent }))()`);
-    check('settings: Advanced shows the four guided steps and the Connect button', adv.o === true && adv.g === false && JSON.stringify(adv.helps) === JSON.stringify(['gmailProject', 'gmailApi', 'gmailConsent', 'gmailClient']) && /Connect Gmail/.test(adv.connect), JSON.stringify(adv));
+    const adv = await sp(`(() => ({ helps: [...document.querySelectorAll('#sub-app-gmail [data-help]')].map((b) => b.dataset.help), connect: document.getElementById('app-gmail-google-connect').textContent }))()`);
+    check('settings: Advanced on the Gmail page shows the four guided steps and the Connect button', JSON.stringify(adv.helps) === JSON.stringify(['gmailProject', 'gmailApi', 'gmailConsent', 'gmailClient']) && /Connect/.test(adv.connect), JSON.stringify(adv));
     const json = JSON.stringify({ installed: { client_id: '123456789012-abcdefghijklmnop.apps.googleusercontent.com', client_secret: 'GOCSPX-abcdefgh_ij-12', redirect_uris: ['http://localhost'] } });
-    await sp(`(() => { const t = document.getElementById('widget-gmail-json'); t.value = ${JSON.stringify(json)}; t.dispatchEvent(new Event('change')); })()`);
+    await sp(`(() => { const t = document.getElementById('app-gmail-google-json'); t.value = ${JSON.stringify(json)}; t.dispatchEvent(new Event('change')); })()`);
     await sleep(600);
-    const filled = await sp(`({ id: document.getElementById('widget-clientid').value, secretLen: document.getElementById('widget-clientsecret').value.length, found: document.getElementById('widget-gmail-found').textContent, box: document.getElementById('widget-gmail-json').value })`);
-    check('settings: dropping or pasting the downloaded client JSON fills in the Client ID and secret', filled.id === '123456789012-abcdefghijklmnop.apps.googleusercontent.com' && filled.secretLen === 21 && /Got the client/.test(filled.found) && filled.box === '', JSON.stringify({ ...filled, secretLen: filled.secretLen }));
-    await sp(`(() => { const t = document.getElementById('widget-gmail-json'); t.value = '{"web":{"client_id":"x"}}'; t.dispatchEvent(new Event('change')); })()`);
+    const filled = await sp(`({ id: document.getElementById('app-gmail-google-clientid').value, secretLen: document.getElementById('app-gmail-google-clientsecret').value.length, found: document.getElementById('app-gmail-google-found').textContent, box: document.getElementById('app-gmail-google-json').value })`);
+    check('settings: dropping or pasting the downloaded client JSON fills in the Client ID and secret', filled.id === '123456789012-abcdefghijklmnop.apps.googleusercontent.com' && filled.secretLen === 21 && /Got the client/.test(filled.found) && filled.box === '', JSON.stringify(filled));
+    await sp(`(() => { const t = document.getElementById('app-gmail-google-json'); t.value = '{"web":{"client_id":"x"}}'; t.dispatchEvent(new Event('change')); })()`);
     await sleep(400);
-    check('settings: a Web application client file is refused with the reason', /Desktop app/.test(await sp(`document.getElementById('widget-gmail-found').textContent`)), '');
-    await sp("location.hash = '#widgets'");
-    await sleep(500);
-    await sp("document.getElementById('widget-gmail-mode').scrollIntoView({ block: 'start' })");
-    await sleep(300);
+    check('settings: a Web application client file is refused with the reason', /Desktop app/.test(await sp(`document.getElementById('app-gmail-google-found').textContent`)), '');
     await shot('settings-advanced', 'global.__settings.contents(' + settingsId + ')');
     check('the stand-in feed was only ever asked for mail.google.com feed addresses', (await app.evaluate(() => global.__googleMailCalls)).every((u) => /^https:\/\/mail\.google\.com\/mail\/u\/[0-9]\/feed\/atom$/.test(u)), JSON.stringify(await app.evaluate(() => global.__googleMailCalls)));
     check('no secret reached settings.json', !/GOCSPX/.test(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')), '');

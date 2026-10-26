@@ -87,8 +87,8 @@ check('the no-results state has a suggestions block', settingsSrc.includes('no-r
   };
 
   ranks("'agents' finds the rows about agents, not every row of the AI page", 'agents', ['Asking before it acts', 'Allow AI agents to connect'], ['Model|', 'Short, focused', 'Status', 'Offer in']);
-  check("the page's own name ('ai and agents') still lists the whole page", hits('ai and agents').length === rows.filter((r) => r.cat === AI).length, hits('ai and agents').join(' ; '));
-  check("a page's first word names the page, its last word does not", S.categoryHit(S.parse('ai'), AI) && S.categoryHit(S.parse('ai agents'), AI) && !S.categoryHit(S.parse('agents'), AI) && S.categoryHit(S.parse('privacy'), 'Privacy and security') && !S.categoryHit(S.parse('security'), 'Privacy and security'));
+  check("the page's own name ('ai') still lists the whole page", rows.filter((r) => r.cat === AI).every((r) => hits('ai').includes(`${r.label}|${r.group}`)), hits('ai').join(' ; '));
+  check("a page's first word names the page, its last word does not", S.categoryHit(S.parse('ai'), AI) && S.categoryHit(S.parse('apps'), 'Apps and connections') && !S.categoryHit(S.parse('connections'), 'Apps and connections') && !S.categoryHit(S.parse('agents'), AI) && S.categoryHit(S.parse('privacy'), 'Privacy and security') && !S.categoryHit(S.parse('security'), 'Privacy and security'));
   check("a longer query is not a near match ('privacy settings' is not the Privacy page)", !S.categoryHit(S.parse('privacy settings'), 'Privacy and security'));
   ranks("'claude' finds Claude Code's rows and only those", 'claude', ['Status|Claude Code', 'Offer in the model menu|Claude Code'], ['Model|', 'Translate with', 'Show the AI', 'Status|Grok', 'Offer in the model menu|Grok']);
   ranks("'grok' finds Grok Build's rows and not Claude Code's", 'grok', ['Status|Grok Build', 'Offer in the model menu|Grok Build'], ['Model|', 'Translate with', 'Show the AI', 'Status|Claude', 'Offer in the model menu|Claude']);

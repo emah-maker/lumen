@@ -2692,7 +2692,7 @@ function connAbout(c) {
     parts.push(`The tools come from ${c.name}’s own MCP server${c.source ? ` (${c.source.replace(/^https:\/\//, '')})` : ''}, so what exactly the AI can do is whatever that server offers. Each call still asks you first and shows what it would send, unless you tick Always allow for a tool once it is connected.`);
     parts.push(c.oauth ? 'You sign in on the service’s own page in your browser. Lumen never sees your password; the sign-in is kept encrypted on this computer, and Disconnect deletes it.' : 'Lumen sends nothing anywhere except this service. The token is kept encrypted on this computer, and Disconnect deletes it.');
   } else {
-    parts.push(c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.');
+    parts.push(c.kind === 'session' ? 'It uses the sign-in you already have in Lumen and sends nothing anywhere except that site. Disconnect removes this link.' : c.kind === 'google' ? 'Lumen sends nothing anywhere except Google. The sign-in is kept encrypted on this computer. Disconnect deletes it and, once no other Google connector uses it, gives it back to Google.' : c.kind === 'microsoft' ? 'Lumen sends nothing anywhere except Microsoft. The sign-in is kept encrypted on this computer. Disconnect deletes it here; to take the permission back at Microsoft too, remove Lumen in your Microsoft account’s app permissions.' : 'Lumen sends nothing anywhere except this service. The secret is kept encrypted on this computer, and Disconnect deletes it.');
   }
   parts.push('What it returns goes into your chat, so it is also sent to the AI you are using (Anthropic, OpenAI, Google, xAI or whichever you picked), like the text of a page.');
   if (c.note) parts.push(c.note);
@@ -2751,7 +2751,7 @@ function connDetectChips(c, input, C) {
 
 
 
-const APP_WIDGET_OF = { gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' };
+const APP_WIDGET_OF = { gmail: 'gmail', todoist: 'todoist', github: 'github' };
 const APP_CARD_ONLY = [
   { id: 'spotify', name: 'Spotify', category: 'music', icon: { text: 'S', color: '#1db954' }, type: 'spotify', summary: 'Music that plays in Lumen, with what is playing on the new tab page.' },
   { id: 'applemusic', name: 'Apple Music', category: 'music', icon: { text: 'A', color: '#fa233b' }, type: 'applemusic', summary: 'What is playing in Apple Music, on the new tab page.' },
@@ -2787,6 +2787,7 @@ async function buildApps(card) {
 
   function standing(svc) {
     const c = connOf(svc);
+    if (svc.id === 'github' && ws.github?.signedIn && ws.github?.expired) return { text: tr('settings.widgets.github.expired', 'GitHub no longer accepts this sign-in. Sign in again.'), on: true, again: true, cls: 'err' };
     if (c) {
       const on = c.status !== 'off';
       return { text: c.paused ? `${c.statusText} · AI off` : c.statusText, on, again: c.status === 'needs-signin' || c.status === 'bad-token' || c.status === 'error', cls: c.status === 'connected' ? 'ok' : on ? 'err' : '' };
@@ -2828,7 +2829,10 @@ async function buildApps(card) {
     const msg = h('span', { class: 'note', id: id('message'), role: 'status', 'aria-live': 'polite' });
     const connectBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-connect` });
     const disconnectBtn = armedButton('Disconnect', 'Disconnect? Click again', () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
-    const accountRow = row(tr('settings.apps.account', 'Account'), null, connectBtn, disconnectBtn);
+
+    const signInBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-signin`, text: tr('settings.apps.signIn', 'Sign in'), hidden: true, 'aria-label': `Sign in to ${svc.name}`, onclick: async () => { await C.signIn(svc.id); say(`Sign in to ${svc.name} in the tab that opened, then ask the AI again.`, 'ok'); } });
+    const switchBtn = svc.id === 'github' ? h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), hidden: true, onclick: async () => { try { const r = await W.githubStart({ privateRepos: githubPriv() }); if (r?.state) ws = r.state; await refresh(); } catch (err) { say(clean(err), 'err'); } } }) : null;
+    const accountRow = row(tr('settings.apps.account', 'Account'), null, ...(switchBtn ? [switchBtn] : []), signInBtn, connectBtn, disconnectBtn);
     accountRow.querySelector('.text').append(statusNote, msg);
 
 
@@ -2881,10 +2885,10 @@ async function buildApps(card) {
         case 'todoist': {
           const token = vals.secret.trim();
           if (!token) throw new Error('Paste your Todoist API token first.');
-          await W.projects(token);
+          data = await C.connect('todoist', { secret: token });
           await W.setSecret('todoist', token);
+          data = await C.disconnect('todoist');
           data = await C.sync('todoist');
-          if (data.connectors.find((x) => x.id === 'todoist')?.status === 'off') data = await C.connect('todoist', { secret: token });
           break;
         }
         case 'github': {
@@ -2964,7 +2968,7 @@ async function buildApps(card) {
     const options = [];
     const cardLink = svc.type ? linkRow(tr('settings.apps.widgets', 'Widgets on the new tab page'), { href: '#widgets', more: 'widget card new tab page show hide add' }) : null;
     if (cardLink) { cardLink.id = id('card'); options.push(cardLink); }
-    if (svc.connector && c0()) options.push(row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())));
+    if (svc.connector && c0()) { const aboutRow = row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())); aboutRow.id = id('about'); options.push(aboutRow); }
     let gmailRows = [];
     if (svc.id === 'gmail') {
       const draftsSw = sw('drafts', tr('settings.apps.drafts', 'Let the AI write drafts'), 'Asks Google for permission to save drafts in your Gmail. The AI never sends them.', async () => {
@@ -3006,10 +3010,10 @@ async function buildApps(card) {
 
 
     function googleClientRows() {
-      const idIn = h('input', { type: 'text', id: 'app-google-clientid', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID') });
-      const secretIn = h('input', { type: 'password', id: 'app-google-clientsecret', autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
-      const drop = h('textarea', { id: 'app-google-json', rows: 3, spellcheck: false, autocomplete: 'off', placeholder: tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text'), 'aria-label': tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text') });
-      const found = h('span', { class: 'note', role: 'status', id: 'app-google-found' });
+      const idIn = h('input', { type: 'text', id: `app-${svc.id}-google-clientid`, autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID') });
+      const secretIn = h('input', { type: 'password', id: `app-${svc.id}-google-clientsecret`, autocomplete: 'off', spellcheck: false, maxlength: 300, placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
+      const drop = h('textarea', { id: `app-${svc.id}-google-json`, rows: 3, spellcheck: false, autocomplete: 'off', placeholder: tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text'), 'aria-label': tr('settings.gmail.dropHere', 'Drop the downloaded client JSON file here, or paste its text') });
+      const found = h('span', { class: 'note', role: 'status', id: `app-${svc.id}-google-found` });
       const readClient = async (text) => {
         const r = await W.gmailParseClient(text);
         if (r?.error) { flash(found, r.error, 'warn'); return; }
@@ -3026,7 +3030,7 @@ async function buildApps(card) {
         const t = e.dataTransfer?.getData('text');
         if (t) readClient(t);
       });
-      const go = h('button', { type: 'button', class: 'primary', id: 'app-google-connect', text: tr('settings.apps.ownConnect', 'Connect with this client'), onclick: async () => {
+      const go = h('button', { type: 'button', class: 'primary', id: `app-${svc.id}-google-connect`, text: tr('settings.apps.ownConnect', 'Connect with this client'), onclick: async () => {
         if (!idIn.value.trim() || !(secretIn.value.trim() || ws.secrets?.gmail)) { flash(found, tr('settings.gmail.needClient', 'First drop the client JSON file above, or type your Client ID and secret.'), 'warn'); drop.focus(); return; }
         go.disabled = true;
         flash(found, tr('settings.gmail.waiting', 'Finish signing in, in your browser. Lumen is waiting…'), 'ok');
@@ -3040,9 +3044,11 @@ async function buildApps(card) {
         go.disabled = false;
         await refresh();
       } });
-      const back = h('button', { type: 'button', id: 'app-google-reset', text: tr('settings.apps.ownReset', 'Use Lumen’s sign-in again'), onclick: async () => { try { ws = await W.gmailDisconnect(); flash(found, tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok'); } catch (err) { flash(found, clean(err), 'err'); } await refresh(); } });
+      const back = h('button', { type: 'button', id: `app-${svc.id}-google-reset`, text: tr('settings.apps.ownReset', 'Use Lumen’s sign-in again'), onclick: async () => { try { ws = await W.gmailDisconnect(); flash(found, tr('settings.gmail.disconnected', 'Disconnected. Google confirmed Lumen no longer has access.'), 'ok'); } catch (err) { flash(found, clean(err), 'err'); } await refresh(); } });
       return [
         row(tr('settings.apps.ownClient', 'Use my own Google client'), tr('settings.apps.ownClientDesc', 'Lumen signs in to Google with its own client. If Google blocks it (“Access blocked”), or you want the 7-day-free setup of your own Google Cloud project, make a client there (Desktop app, with the Gmail, Drive and Sheets APIs on) and give it here. The same client is used for Gmail, Drive and Sheets. Google’s limits for unverified apps then apply: while your project is in Testing, only test users you add can connect, and the connection ends every 7 days.')),
+        ...[[1, 'gmailProject', 'settings.gmail.step1Link', 'Create a project', 'settings.gmail.step1', 'Make a Google Cloud project (any name).'], [2, 'gmailApi', 'settings.gmail.step2Link', 'Turn on the Gmail API', 'settings.gmail.step2', 'Press Enable on the Gmail API page (and on the Drive and Sheets pages if you use them).'], [3, 'gmailConsent', 'settings.gmail.step3Link', 'Set up the consent screen', 'settings.gmail.step3', 'User type External, and add your own Google address as a test user.'], [4, 'gmailClient', 'settings.gmail.step4Link', 'Create the client', 'settings.gmail.step4', 'Application type Desktop app, then Download JSON.']]
+          .map(([n, key, lk, label, hk, hint]) => h('div', { class: 'row stack' }, h('span', { class: 'note' }, h('strong', { text: `${n}. ` }), `${tr(hk, hint)} `, h('button', { type: 'button', class: 'linkish', 'data-help': key, text: tr(lk, label), onclick: () => W.help(key) })))),
         h('div', { class: 'row stack' }, drop, found),
         row(tr('settings.gmail.clientId', 'Google OAuth Client ID'), tr('settings.gmail.filledByJson', 'Filled in for you when you drop the JSON file; or type it.'), idIn),
         row(tr('settings.gmail.clientSecret', 'Google OAuth client secret'), tr('settings.gmail.secretHelp', 'From the same client. Stored encrypted by your system.'), secretIn),
@@ -3069,14 +3075,16 @@ async function buildApps(card) {
       statusNote.className = `note ${st.cls}`;
       const needsFields = fieldRows.length > 0 && (!st.on || st.again);
       const label = svc.id === 'github' ? tr('settings.widgets.github.signIn', 'Sign in with GitHub') : svc.id === 'spotify' ? tr('settings.apps.spotifyLogin', 'Log in with Spotify') : svc.id === 'slack' ? tr('settings.apps.slackSetup', 'Set up Slack') : cc?.kind === 'google' || svc.id === 'gmail' ? tr('settings.apps.googleSignIn', 'Sign in with Google') : tr('settings.apps.connect', 'Connect');
-      connectBtn.textContent = st.again ? tr('settings.apps.connectAgain', 'Connect again') : label;
+      connectBtn.textContent = st.again ? (svc.id === 'github' ? tr('settings.widgets.github.signInAgain', 'Sign in again') : tr('settings.apps.connectAgain', 'Connect again')) : label;
       connectBtn.setAttribute('aria-label', `${connectBtn.textContent}: ${svc.name}`);
       connectBtn.hidden = st.on && !st.again;
       disconnectBtn.button.hidden = !st.on || accountless;
+      signInBtn.hidden = !(cc && cc.status === 'needs-signin' && !['google', 'microsoft', 'mcp'].includes(cc.kind));
       for (const r of fieldRows) r.hidden = !needsFields;
       ghSync(st.on && !st.again);
       const pending = svc.id === 'github' && ws.github?.pending;
       connectBtn.hidden = connectBtn.hidden || Boolean(pending);
+      if (switchBtn) switchBtn.hidden = !(st.on && !st.again) || Boolean(pending);
       if (aiSw) {
         aiSw.input.checked = Boolean(cc) && cc.status !== 'off' && !cc.paused;
         aiSw.input.disabled = !cc || cc.status === 'off';
@@ -3114,7 +3122,7 @@ async function buildApps(card) {
 
 
   const mcpEl = buildMcpServers();
-  slots.get('mcp-servers').append(mcpEl);
+  slots.get('mcp-servers').append(stackRow(tr('settings.apps.mcpServers', 'Servers you added'), null, mcpEl));
   syncAll();
 }
 ;
@@ -4824,6 +4832,7 @@ class Slot {
   attachPage(sub, label, desc, more = '', value, icon) {
     sub.pending = ''; sub.isSub = true;
     sub.parent = this.isSub ? this : null;
+    sub.host = this;
     if (slots.has(sub.id) && !slots.get(sub.id).isSub) { slots.get(sub.id).el.id = `sec-${sub.id}-parent`; slots.set(`${sub.id}~parent`, slots.get(sub.id)); }
     slots.set(sub.id, sub);
     const catTitle = categories.get(this.cat).title;
@@ -6158,9 +6167,10 @@ async function buildWidgets(card) {
       const gStatus = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-gstatus' });
       const gSignIn = h('button', { type: 'button', id: 'widget-gmail-signin', class: 'primary big', text: tr('settings.gmail.signInLumen', 'Sign in to Gmail') });
       const gCheck = h('button', { type: 'button', id: 'widget-gmail-recheck', text: tr('settings.gmail.checkAgain', 'Check again') });
+
+      const accountPickRow = setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).'));
       const googleRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-google' },
         h('div', { class: 'sp-actions' }, gSignIn, gCheck), gStatus,
-        setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).')),
         h('span', { class: 'note', text: tr('settings.gmail.googleHow', 'Uses the Google sign-in you already have in Lumen. Nothing to set up, no Google Cloud project, no key. Lumen only reads Gmail’s unread list: sender, subject and a preview. It cannot send, delete or change anything.') }),
         h('span', { class: 'note', id: 'widget-gmail-limits', text: tr('settings.gmail.googleLimits', 'This way shows unread messages only (up to the newest 20), not read mail or other labels. For more, use your own Google Cloud client under Advanced.') }));
       let signedIn = ws.gmailGoogle?.signedIn;
@@ -6298,7 +6308,7 @@ async function buildWidgets(card) {
       });
       draw();
 
-      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); };
+      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); accountPickRow.hidden = !isGoogle(); };
       inputs.mode.addEventListener('change', () => { showMode(); if (isGoogle() && signedIn == null) loadAccounts(); });
       showMode();
       if (isGoogle()) loadAccounts();
@@ -6318,7 +6328,7 @@ async function buildWidgets(card) {
       if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); }
       fields.replaceChildren(
         section(tr('settings.gmail.account', 'Account'), [h('div', { class: 'row stack' }, inputs.mode), googleRow, oauthRow]),
-        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
+        section(tr('settings.gmail.show', 'Show'), [accountPickRow, setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
     }
 
     function slackFields(same) {
@@ -6878,6 +6888,14 @@ async function buildWidgets(card) {
     h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
+
+  const refreshAll = async () => {
+    try { [ws, conns] = await Promise.all([S.widgets.state(), S.ai.connectors.list().then((d) => d.connectors)]); } catch { return; }
+    if (!formHost.firstChild) renderList();
+  };
+  S.widgets.onChanged?.(() => { refreshAll(); });
+  window.addEventListener('hashchange', () => { if (location.hash === '#widgets') refreshAll(); });
+  window.addEventListener('focus', () => { if (!document.hidden && !card.pane?.hidden) refreshAll(); });
 
 
   const applyEdit = (state) => {
@@ -8023,7 +8041,9 @@ function show() {
   if (searching) {
     for (const slot of slots.values()) {
       if (!slot.isSub || !hitsBySlot.get(slot)) continue;
+      const counted = !slot.link.classList.contains('filtered');
       slot.link.classList.add('filtered');
+      if (counted && slot.host) hitsBySlot.set(slot.host, Math.max(0, (hitsBySlot.get(slot.host) || 0) - 1));
       const g = slot.link.closest('.group');
       if (g && ![...g.querySelectorAll('.row')].some((r) => !r.classList.contains('filtered'))) g.hidden = true;
     }
@@ -8033,7 +8053,7 @@ function show() {
     const own = c.slots.reduce((sum, [sid, , o]) => sum + (o?.page ? 0 : (hitsBySlot.get(slots.get(sid)) || 0)) + (hitsBySlot.get(slots.get(`${sid}~parent`)) || 0), 0);
     const subs = [...slots.values()].filter((s) => s.isSub && s.cat === id).reduce((sum, s) => sum + (hitsBySlot.get(s) || 0), 0);
     const hits = own + subs;
-    c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub) || view.root;
+    c.pane.hidden = searching ? own === 0 : id !== view.cat || Boolean(view.sub) || view.root;
     c.pane.style.order = searching ? String(-Math.max(0, ...c.slots.map(([sid]) => slots.get(sid)?.best || 0), ...[...slots.values()].filter((s) => s.isSub && s.cat === id).map((s) => s.best || 0))) : '';
     any ||= hits > 0;
     const dim = searching && hits === 0;

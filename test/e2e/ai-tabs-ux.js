@@ -47,8 +47,8 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   const app = read('src/renderer/app.js');
   check('toggle: the Menu key and Shift+F10 open the same menu as a right-click', /e\.key !== 'ContextMenu' && !\(e\.shiftKey && e\.key === 'F10'\)/.test(app) && /hideAiButton\?\.addEventListener\('contextmenu'/.test(app));
   const settings = read('src/renderer/settings.js');
-  const group = /card\.group\(tr\('settings\.ai\.groupAiTabs', 'AI tabs'\)\)\.append\(([\s\S]*?)\n {2}\);/.exec(settings)?.[1] || '';
-  check('settings: the AI tabs group holds Hide, When the AI finishes and Bring to front', /toggle\('hideAiTabs'/.test(group) && /select\('closeAiTabs'/.test(group) && /toggle\('aiStayOnMyTab'/.test(group), group.slice(0, 200));
+  const group = /slots\.get\('ai-tabs'\)\.append\(([\s\S]*?)\n {2}\);/.exec(settings)?.[1] || '';
+  check('settings: the AI tabs page holds Hide, When the AI finishes and Bring to front', /toggle\('hideAiTabs'/.test(group) && /select\('closeAiTabs'/.test(group) && /toggle\('aiStayOnMyTab'/.test(group), group.slice(0, 200));
   check('settings: the three rows are not listed anywhere else in the AI section', (settings.match(/select\('closeAiTabs'/g) || []).length === 1 && (settings.match(/toggle\('aiStayOnMyTab'/g) || []).length === 1 && (settings.match(/toggle\('hideAiTabs'/g) || []).length === 1);
   const css = read('src/renderer/styles.css');
   check('chip: a needs-you state has its own look (not just a count)', /\.hide-ai-tabs\.needs-you/.test(css));
@@ -89,10 +89,10 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
       const g = document.getElementById('pref-hideAiTabs')?.closest('.group');
       const ids = g ? [...g.querySelectorAll('input[id^="pref-"], select[id^="pref-"]')].map((e) => e.id) : [];
       const opts = [...(document.getElementById('pref-closeAiTabs')?.options || [])].map((o) => o.value + '=' + o.text);
-      return JSON.stringify({ title: g?.querySelector('.group-title')?.textContent, ids, opts, hide: document.getElementById('pref-hideAiTabs')?.getAttribute('aria-label'), when: document.getElementById('pref-closeAiTabs')?.getAttribute('aria-label'), front: document.getElementById('pref-aiStayOnMyTab')?.getAttribute('aria-label') });
+      return JSON.stringify({ title: document.getElementById('pref-hideAiTabs')?.closest('.pane')?.querySelector('.pane-title')?.textContent, ids, opts, hide: document.getElementById('pref-hideAiTabs')?.getAttribute('aria-label'), when: document.getElementById('pref-closeAiTabs')?.getAttribute('aria-label'), front: document.getElementById('pref-aiStayOnMyTab')?.getAttribute('aria-label') });
     })()`);
     const r = JSON.parse(rows || '{}');
-    check('settings: the AI tabs group has Group, Hide, When the AI finishes and Bring to front and Keep AI tabs I click on, together', r.title === 'AI tabs' && JSON.stringify(r.ids) === JSON.stringify(['pref-groupAiTabs', 'pref-hideAiTabs', 'pref-aiStayOnMyTab', 'pref-closeAiTabs', 'pref-keepViewedAiTabs']), rows);
+    check('settings: the AI tabs page has Group, Hide, When the AI finishes and Bring to front and Keep AI tabs I click on, together', r.title === 'Tabs the AI opens' && JSON.stringify(r.ids) === JSON.stringify(['pref-groupAiTabs', 'pref-hideAiTabs', 'pref-aiStayOnMyTab', 'pref-closeAiTabs', 'pref-keepViewedAiTabs']), rows);
     check('settings: When the AI finishes offers Leave open / Ask / Close and keeps the stored values', JSON.stringify(r.opts) === JSON.stringify(['off=Leave open', 'ask=Ask', 'always=Close']) && r.when === 'When the AI finishes', rows);
     check('settings: the row labels use the one phrase', r.hide === 'Hide AI tabs' && /tabs the AI opened/.test(r.front || ''), rows);
     check('settings: Hide AI tabs starts off', (await inTab("document.getElementById('pref-hideAiTabs').checked")) === false && (await prefs()).hideAiTabs !== true);

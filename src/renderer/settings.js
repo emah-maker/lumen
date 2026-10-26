@@ -474,6 +474,7 @@ class Slot {
   attachPage(sub, label, desc, more = '', value, icon) {
     sub.pending = ''; sub.isSub = true;
     sub.parent = this.isSub ? this : null;
+    sub.host = this; // (the list its row is in)
     if (slots.has(sub.id) && !slots.get(sub.id).isSub) { slots.get(sub.id).el.id = `sec-${sub.id}-parent`; slots.set(`${sub.id}~parent`, slots.get(sub.id)); } // (the old slot and the page share an id: the slot's element gets another, the page keeps sec-<id>)
     slots.set(sub.id, sub);
     const catTitle = categories.get(this.cat).title;
@@ -1808,9 +1809,10 @@ async function buildWidgets(card) {
       const gStatus = h('span', { class: 'sp-status', role: 'status', id: 'widget-gmail-gstatus' });
       const gSignIn = h('button', { type: 'button', id: 'widget-gmail-signin', class: 'primary big', text: tr('settings.gmail.signInLumen', 'Sign in to Gmail') });
       const gCheck = h('button', { type: 'button', id: 'widget-gmail-recheck', text: tr('settings.gmail.checkAgain', 'Check again') });
+      // (which signed-in Google account the card reads is how the card shows, so its row is under Show, not in the sign-in that moved to Apps and connections)
+      const accountPickRow = setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).'));
       const googleRow = h('div', { class: 'row stack sp-login', id: 'widget-gmail-google' },
         h('div', { class: 'sp-actions' }, gSignIn, gCheck), gStatus,
-        setting(tr('settings.gmail.accountPick', 'Google account'), inputs.account, tr('settings.gmail.accountPickHint', 'Which signed-in Google account the card reads (Gmail’s account list, in the order Google gives it).')),
         h('span', { class: 'note', text: tr('settings.gmail.googleHow', 'Uses the Google sign-in you already have in Lumen. Nothing to set up, no Google Cloud project, no key. Lumen only reads Gmail’s unread list: sender, subject and a preview. It cannot send, delete or change anything.') }),
         h('span', { class: 'note', id: 'widget-gmail-limits', text: tr('settings.gmail.googleLimits', 'This way shows unread messages only (up to the newest 20), not read mail or other labels. For more, use your own Google Cloud client under Advanced.') }));
       let signedIn = ws.gmailGoogle?.signedIn;
@@ -1948,7 +1950,7 @@ async function buildWidgets(card) {
       });
       draw();
       // Only the chosen way shows.
-      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); };
+      const showMode = () => { googleRow.hidden = !isGoogle(); oauthRow.hidden = isGoogle(); accountPickRow.hidden = !isGoogle(); };
       inputs.mode.addEventListener('change', () => { showMode(); if (isGoogle() && signedIn == null) loadAccounts(); });
       showMode();
       if (isGoogle()) loadAccounts();
@@ -1968,7 +1970,7 @@ async function buildWidgets(card) {
       if (!gmailWatchOn) { gmailWatchOn = true; S.widgets.onChanged?.(() => gmailWatch?.()); } // one listener per page, whatever editor is open
       fields.replaceChildren(
         section(tr('settings.gmail.account', 'Account'), [h('div', { class: 'row stack' }, inputs.mode), googleRow, oauthRow]),
-        section(tr('settings.gmail.show', 'Show'), [setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
+        section(tr('settings.gmail.show', 'Show'), [accountPickRow, setting(tr('settings.gmail.count', 'Messages shown'), inputs.count), inputs.snippets]));
     }
     // ---- slack: guided setup (create the app from a prefilled link, copy one token), then what to show ----
     function slackFields(same) {
@@ -2528,6 +2530,14 @@ async function buildWidgets(card) {
     h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
+  // A service connected or disconnected elsewhere (its page, a sign-in tab): the offers and the greyed widgets follow.
+  const refreshAll = async () => {
+    try { [ws, conns] = await Promise.all([S.widgets.state(), S.ai.connectors.list().then((d) => d.connectors)]); } catch { return; }
+    if (!formHost.firstChild) renderList();
+  };
+  S.widgets.onChanged?.(() => { refreshAll(); });
+  window.addEventListener('hashchange', () => { if (location.hash === '#widgets') refreshAll(); });
+  window.addEventListener('focus', () => { if (!document.hidden && !card.pane?.hidden) refreshAll(); });
   // A card's gear on the new-tab page opens that widget's editor; its Add widget picker opens the form for a new one.
   // Returns whether it opened one (the page was built with a request pending, or Settings was already open and was told).
   const applyEdit = (state) => {
@@ -3673,7 +3683,9 @@ function show() {
   if (searching) {
     for (const slot of slots.values()) {
       if (!slot.isSub || !hitsBySlot.get(slot)) continue;
+      const counted = !slot.link.classList.contains('filtered');
       slot.link.classList.add('filtered');
+      if (counted && slot.host) hitsBySlot.set(slot.host, Math.max(0, (hitsBySlot.get(slot.host) || 0) - 1)); // (its row is not shown, so it is no hit of the list it is in)
       const g = slot.link.closest('.group');
       if (g && ![...g.querySelectorAll('.row')].some((r) => !r.classList.contains('filtered'))) g.hidden = true;
     }
@@ -3683,7 +3695,7 @@ function show() {
     const own = c.slots.reduce((sum, [sid, , o]) => sum + (o?.page ? 0 : (hitsBySlot.get(slots.get(sid)) || 0)) + (hitsBySlot.get(slots.get(`${sid}~parent`)) || 0), 0);
     const subs = [...slots.values()].filter((s) => s.isSub && s.cat === id).reduce((sum, s) => sum + (hitsBySlot.get(s) || 0), 0);
     const hits = own + subs;
-    c.pane.hidden = searching ? hits === 0 : id !== view.cat || Boolean(view.sub) || view.root;
+    c.pane.hidden = searching ? own === 0 : id !== view.cat || Boolean(view.sub) || view.root;
     c.pane.style.order = searching ? String(-Math.max(0, ...c.slots.map(([sid]) => slots.get(sid)?.best || 0), ...[...slots.values()].filter((s) => s.isSub && s.cat === id).map((s) => s.best || 0))) : ''; // best-matching page first
     any ||= hits > 0;
     const dim = searching && hits === 0;

@@ -144,7 +144,7 @@ const vcal = (name, events) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:$
   await shot('one-failing.png');
 
   // The Settings editor.
-  const settingsId = await app.evaluate(() => global.__settings.open('appearance'));
+  const settingsId = await app.evaluate(() => global.__settings.open('widgets'));
   const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [settingsId, code]);
   const waitFor = async (code, tries = 60) => { for (let i = 0; i < tries; i++) { if (await sp(code).catch(() => false)) return true; await sleep(150); } return false; };
   await waitFor("Boolean(document.body.dataset.ready && document.querySelector('.widget-item'))");
