@@ -6859,7 +6859,9 @@ async function askOnNewTopic(text, images, tabs) {
   if (!window.chatTopic.isNewTopic(text, said)) return false;
   const previous = await window.assistant.chats?.list().then((r) => r.current).catch(() => null);
   if (!previous || running) return false;
+  const here = await window.assistant.chats?.currentProject?.().catch(() => null);
   $('new-chat').click();
+  if (here?.project) { const view = await window.assistant.chats.newInProject(here.project.id).catch(() => null); if (view) applySync(view); }
   const notice = append(Object.assign(document.createElement('div'), { className: 'notice topic-split' }));
   const back = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('chat.newTopic.back') });
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
@@ -8001,7 +8003,7 @@ function startChat() {
         tabActions.push(closeTabs);
       }
       if (menu) actions.append(rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, ...tabActions, del);
-      else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
+      else actions.append(...tabActions, rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`);
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`);
       li.append(openBtn);
@@ -11989,13 +11991,33 @@ $('agent-stop')?.addEventListener('click', () => {
   }
 
   const iconButton = window.chatIconButton;
+  let knownProjects = [];
   const item = window.createChatItems({
     api,
     open: (id) => openChat(id),
     share: (id) => openChat(id, { share: true }),
     rerender: () => render(),
     cleared: () => { clearChatView(); refreshUsage(''); },
+    extra: (chat) => (window.sidebarProjects && knownProjects.length ? [window.sidebarProjects.moveButton(chat, { projects: knownProjects, rerender: render })] : []),
   });
+
+
+
+  let projectsLoad = null;
+  const loadProjects = () => (projectsLoad ||= new Promise((resolve) => {
+    const add = (el) => new Promise((ok, fail) => { el.onload = ok; el.onerror = fail; (el.rel ? document.head : document.body).append(el); });
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'sidebar-projects.css' });
+    const projectCss = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-projects.css' });
+    Promise.all([add(projectCss), add(css), add(Object.assign(document.createElement('script'), { src: 'chat-projects.js' }))])
+      .then(() => add(Object.assign(document.createElement('script'), { src: 'sidebar-projects.js' }))).then(resolve, () => { projectsLoad = null; resolve(); });
+  }));
+  let projectAsk = 0;
+  async function checkProject() {
+    const mine = ++projectAsk;
+    const r = await api.currentProject?.().catch(() => null);
+    if (!r || mine !== projectAsk) return;
+    if (r.count || r.project) { await loadProjects(); window.sidebarProjects?.set(r); } else window.sidebarProjects?.set(r);
+  }
 
   const tools = window.chatListTools;
   let view = 'chats';
@@ -12008,6 +12030,8 @@ $('agent-stop')?.addEventListener('click', () => {
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats: fresh, projects } = await api.list();
+    knownProjects = projects || [];
+    if (knownProjects.length) await loadProjects();
     const names = new Map((projects || []).map((p) => [p.id, p.name]));
     const chats = live.order(fresh).map((c) => (c.project && names.has(c.project) ? { ...c, projectName: names.get(c.project) } : c));
     const play = live.flip();
@@ -12038,7 +12062,10 @@ $('agent-stop')?.addEventListener('click', () => {
     }
     redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    const block = window.sidebarProjects && knownProjects.length ? window.sidebarProjects.block({ projects: knownProjects, chats, current, open: openChat, rerender: render, close: () => closePanel(false) }) : null;
+    const first = !knownProjects.length ? Object.assign(document.createElement('button'), { type: 'button', className: 'chat-project-hint', textContent: window.chatTr('chatpage.project.new', 'New project') }) : null;
+    if (first) first.onclick = async () => { await loadProjects(); window.sidebarProjects?.newProject(); };
+    panel.replaceChildren(head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) {
@@ -12089,7 +12116,8 @@ $('agent-stop')?.addEventListener('click', () => {
   api.onUsage(refreshUsage);
   api.list().then((r) => refreshUsage(r.currentUsage)).catch(() => {});
 
-  api.onChanged?.(() => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  api.onChanged?.(() => { checkProject(); if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  checkProject();
 
 
 
