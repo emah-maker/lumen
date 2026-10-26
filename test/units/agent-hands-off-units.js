@@ -38,6 +38,20 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
     check('an ordinary window is unaffected', H.mayFocus({ agent: null, win: win(false) }) === true);
   }
 
+  // ---- a tab the user takes over: only their input counts, and it comes back to the agent after they leave
+  {
+    const win = (focused) => ({ isDestroyed: () => false, isFocused: () => focused });
+    check('input in an agent window the user is not in is not theirs (the agent\'s own click, arriving late)', H.userInputCounts({ agent: { label: 'x' }, win: win(false) }) === false);
+    check('input in an agent window the user is in is theirs', H.userInputCounts({ agent: { label: 'x' }, win: win(true) }) === true);
+    check('input in an ordinary window is always the user\'s', H.userInputCounts({ agent: null, win: win(false) }) === true && H.userInputCounts(null) === true);
+    const at = 1000;
+    check('a tab never taken over is not held', H.stillHeld(0, { focused: true, now: at }) === false && H.stillHeld(undefined) === false);
+    check('held while the user is in the window, however long ago they clicked', H.stillHeld(at, { focused: true, now: at + 10 * H.HOLD_MS }) === true);
+    check('held for HOLD_MS after their last input once they left', H.stillHeld(at, { focused: false, now: at + H.HOLD_MS - 1 }) === true);
+    check('...then the agent\'s again', H.stillHeld(at, { focused: false, now: at + H.HOLD_MS }) === false);
+    check('the hold is 30 s, as the refusal says', H.HOLD_MS === 30000 && /30 seconds/.test(require('../../src/features/ai-manners').userTookOverRefusal()));
+  }
+
   // ---- foreign tab ids and the refusal text
   {
     const bad = H.foreignTabIds([1, 2, 9, 9, 99], [1, 2], (id) => id === 9);

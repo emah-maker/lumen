@@ -18,7 +18,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 600)}`}`); };
   const root = path.join(__dirname, '..', '..');
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-takeover-'));
-  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_AGENT_WINDOW_GRACE_MS: '1500', ANTHROPIC_API_KEY: 'sk-ant-test' };
+  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_AGENT_WINDOW_GRACE_MS: '1500', LUMEN_AGENT_HOLD_MS: '1500', ANTHROPIC_API_KEY: 'sk-ant-test' };
 
   const server = http.createServer((req, res) => {
     const name = (req.url || '/').replace(/^\//, '').split('?')[0].toUpperCase() || 'HOME';
@@ -150,6 +150,34 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('Resume: a toast says so, the paused look goes', await waitFor(async () => /Resumed: .* is working again/.test(await aui.$eval('.external-toast', (e) => e.textContent).catch(() => '')) && !(await aui.evaluate(() => document.body.classList.contains('external-paused'))) && (await aui.evaluate(() => document.getElementById('agent-window-chip').textContent)) === (await aui.evaluate(() => document.getElementById('agent-window-chip').dataset.base)), 4000), await aui.evaluate(() => document.getElementById('agent-window-chip').textContent));
   r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
   check('after Resume the tab is the agent tab again', !r.result.isError, A.text(r));
+
+  // The agent's own click can reach a page late (a window behind others or minimized): input in an agent window the user is not in
+  // is never theirs, so it cannot lock the agent out of its own tab.
+  const user0 = (await windows()).find((w) => !w.agent);
+  const leave = () => app.evaluate((_e, id) => { const rec = global.__agentWindows.recOf(id); rec.win.blur(); }, aw.windowId);
+  await app.evaluate(({ BrowserWindow }, id) => { BrowserWindow.fromId(id)?.focus(); }, user0.windowId);
+  await leave();
+  await sleep(200);
+  check('the agent window is not focused now', !(await app.evaluate((_e, id) => global.__agentWindows.recOf(id).win.isFocused(), aw.windowId)));
+  await click(100, 140);
+  await sleep(200);
+  r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
+  check('a click in the page while the user is not in the window does not take the tab from the agent', !r.result.isError, A.text(r));
+
+  // The user takes the tab over again, then leaves the window: a little after their last input the tab is the agent's again.
+  await app.evaluate((_e, id) => { const rec = global.__agentWindows.recOf(id); rec.win.focus(); }, aw.windowId);
+  await sleep(300);
+  await click(100, 140);
+  await sleep(200);
+  r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
+  check('the user clicked in it again: held', r.result.isError === true && /user took over/i.test(A.text(r)), A.text(r));
+  await leave();
+  await sleep(300);
+  r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
+  check('...still held just after they leave', r.result.isError === true && /user took over/i.test(A.text(r)), A.text(r));
+  await sleep(1600);
+  r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
+  check('...and the agent\'s again once the hold has passed', !r.result.isError, A.text(r));
 
   // A new tab of its own is still the agent's to work in.
   r = await A.call('open_tab', { url: `${base}/other` });

@@ -59,7 +59,7 @@ const WHEN = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?$/;
 const GRAPH_ID = /^[A-Za-z0-9_=+!-]{1,300}$/; // a Microsoft Graph id (mail, event, OneDrive item): plain characters, never a path
 const ZOTERO_KEY = /^[A-Za-z0-9]{8}$/;
 // The optional field on a Microsoft card: the Application (client) ID of the user's own Microsoft Entra app, for a copy of Lumen with no sign-in of its own built in.
-const MS_CLIENT = { id: 'clientId', label: 'Advanced: your own app’s client ID (optional)', placeholder: 'Application (client) ID, only if this copy has no Microsoft sign-in', secret: false, optional: true, help: 'Leave empty to use Lumen’s own Microsoft sign-in. To use your own, register an app in the Microsoft Entra admin center (Mobile and desktop platform, redirect address http://localhost, delegated Mail.ReadWrite, Files.Read and Calendars.ReadWrite) and paste its Application (client) ID here.' };
+const MS_CLIENT = { id: 'clientId', label: 'Advanced: your own app’s client ID (optional)', placeholder: 'Application (client) ID, only if this copy has no Microsoft sign-in', secret: false, optional: true, help: 'Leave empty to use Lumen’s own Microsoft sign-in. To use your own, register an app in the Microsoft Entra admin center (Mobile and desktop platform, redirect address http://localhost, delegated Mail.ReadWrite, Files.Read and Calendars.ReadWrite.Shared) and paste its Application (client) ID here.' };
 
 // One-click cards for official hosted MCP servers (kind 'mcp'): the card adds the server to Custom MCP servers and signs in with OAuth. Only servers
 // whose own sign-in publishes dynamic client registration (RFC 7591) AND accepted a registration for Lumen's loopback redirect when checked on
@@ -344,7 +344,7 @@ const CONNECTORS = [
   },
   {
     id: 'mscal', name: 'Outlook Calendar', category: 'mail', kind: 'microsoft', icon: { text: 'C', color: '#0f6cbd' },
-    microsoft: { scopes: ['Calendars.ReadWrite'] },
+    microsoft: { scopes: ['Calendars.ReadWrite.Shared'] },
     summary: 'See your Outlook calendar, add an event and change one.',
     sessionNote: 'Signs in with Microsoft in your own browser. Lumen asks Microsoft to see and edit your calendar; it only adds or changes an event after you allow each one, adds no attendees and sends no invitations, and never deletes. One sign-in covers Outlook, OneDrive and Microsoft Calendar.',
     fields: [MS_CLIENT],
