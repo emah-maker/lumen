@@ -127,6 +127,7 @@ function create({
       id: def.id, base, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
       google: def.id === 'gmail' ? google : null,
       email: def.kind === 'google' ? entry.account || '' : '', // (the account a Google connector is signed in as)
+      hasScopes: def.kind === 'google' ? () => { try { return googleAuth().has(def.google.scopes); } catch { return false; } } : null, // (does the sign-in cover everything this connector asks for now? Drive's edits need the full scope an older sign-in lacks)
       async http(target, { method = 'GET', query, json, body, headers = {}, accept = 'application/json', max = MAX_BODY, allowAuth = false, timeout = TIMEOUT_MS } = {}) {
         let url;
         try { url = /^https?:\/\//i.test(target) ? new URL(target) : new URL(`${base}${target}`); } catch { throw new ConnectorError('That address isn’t valid.', 'args'); }
@@ -212,13 +213,16 @@ function create({
     if (live === 'needs-signin' || live === 'bad-token') status = live;
     const e = connected[def.id];
     const account = e?.account || '';
+    let upgrade = false; // a Google sign-in made before the connector asked for what it asks now (Drive's full access): Connect again adds it
+    if (entry && def.kind === 'google' && status === 'connected') { try { upgrade = !googleAuth().has(def.google.scopes); } catch { upgrade = false; } }
+    if (upgrade) status = 'needs-signin';
     // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
     let drafts = null;
     if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
     const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
+      status, statusText: upgrade ? `Reconnect to let the AI change all your files${account ? ` · ${account}` : ''}` : status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
@@ -446,12 +450,14 @@ function create({
     const args = input.args || {};
     const p = provider(def.id);
     const entry = connected[def.id];
+    const cardCtx = entry ? makeCtx(def, entry, signal) : null;
+    if (cardCtx && file) cardCtx.file = file; // (a Drive update looks up the files it would replace for the card)
     if (entry && p.beforeCard) { // a write that can't happen yet says why, and no card is shown for it
-      try { await p.beforeCard(makeCtx(def, entry, signal), input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
+      try { await p.beforeCard(cardCtx, input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
     }
     let names = {};
-    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
-    if (file) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
+    if (entry && p.cardNames) { try { names = (await p.cardNames(cardCtx, input.action, args)) || {}; } catch { names = {}; } }
+    if (file && !Array.isArray(file)) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
     if (input.action === 'send') { try { sendLog().room(); } catch (err) { const e = new Error(err.message); e.kind = 'other'; throw e; } } // (a send that can't go gets no card)
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);
