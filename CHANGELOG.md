@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sign in with Google works out of the box.** Release builds now include Lumen's own Google client, so Gmail, Google Drive and Google Sheets connect with one click and no Google Cloud setup. A client you pasted under Gmail → Advanced still wins over the built-in one. Google shows an "unverified app" notice on the consent page until the app is verified.
+
 ## 0.5.71 (2026-10-25)
 
 - **Projects have a home base page, and the sidebar knows about them.** A project is one row in the chat list: its name opens its page, the chevron lists its chats, and a + (new chat here) and a ⋯ menu show on hover or focus. The page is where you work on that project: its name and a one-line goal, quick actions (New chat, Add files, Open folder), a big box that starts a chat in it (with a model picker and attach), "Continue where you left off" (the latest chats as cards with what was said last, and a mark while one is working), the full searchable list, and an overview of what the AI works from: instructions read as text and edited on request, files, pinned pages, the linked folder, defaults and memory. The browser's AI sidebar has the same projects: a strip under its header says which project the open chat is in and picks one for it (a new chat starts with the project's model and plan default; a chat with messages moves, with Undo), its chat list shows the projects with their chats, + and ⋯, "Move to project" is on each row, and a project row opens that project's page. A new topic started from a project chat stays in the project, and a project's edits now reach its chats that are still running in the background.
