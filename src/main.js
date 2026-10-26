@@ -4049,6 +4049,7 @@ function aiWorkingTabAfterClose(tab) {
 // closeTab({ destroyed: true }), already wired to every tab's 'destroyed' event, finishes the job.
 function requestCloseTab(id) {
   const tab = tabs.find((t) => t.id === id);
+  if (tab?.rec?.agent && !tab.aiClosing) tab.rec.agent.used = true; // [agent window] the user closed a tab in the agent's window (Ctrl+W, middle-click and the menu are no UI click): it is theirs to keep, its other tabs do not go when the session ends
   if (!alive(tab)) { closeTab(id, { user: !tab?.aiClosing }); return; } // (a sleeping tab closed for the AI is not the user closing their window's last tab)
   tab.pendingCloseUrl = realUrl(tab.view.webContents) || '';
   tab.pendingCloseTitle = tab.view.webContents.getTitle() || ''; // [tab chips] (the page is gone by the time closeTab runs)
