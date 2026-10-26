@@ -103,6 +103,12 @@
     img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
   }
 
+  // A picture opened in a chat belongs to that chat: leaving it (clearChatView) closes the viewer, or the plain layer, over it.
+  function closeAll() {
+    window.chatImageViewer?.closeAll?.();
+    for (const box of document.querySelectorAll('.gen-lightbox')) box.querySelector('.gen-lightbox-close')?.click();
+  }
+
   function enlargeBasic(pic, url, opener) {
     const root = document.querySelector('[data-chat-root]') || document.body;
     const box = el('div', { className: 'gen-lightbox' });
@@ -226,5 +232,5 @@
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable, enlarge };
+  window.genImages = { figure, decorate, load, zoomable, enlarge, closeAll };
 })();

@@ -2456,6 +2456,12 @@ explain describe list find give compare difference summarize summary write rewri
     img.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
   }
 
+
+  function closeAll() {
+    window.chatImageViewer?.closeAll?.();
+    for (const box of document.querySelectorAll('.gen-lightbox')) box.querySelector('.gen-lightbox-close')?.click();
+  }
+
   function enlargeBasic(pic, url, opener) {
     const root = document.querySelector('[data-chat-root]') || document.body;
     const box = el('div', { className: 'gen-lightbox' });
@@ -2579,7 +2585,7 @@ explain describe list find give compare difference summarize summary write rewri
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable, enlarge };
+  window.genImages = { figure, decorate, load, zoomable, enlarge, closeAll };
 })();
 ;
 // ---- chat-canvas.js
@@ -7072,6 +7078,7 @@ function clearChatView({ keepBox = false, ownRun = false } = {}) {
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId;
     saveDraft();
+    window.genImages?.closeAll?.();
     stashView(shownChatId);
     pendingView = null;
     pendingOpen = null;

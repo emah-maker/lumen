@@ -291,5 +291,5 @@
     return { close, box, get scale() { return scale; } };
   }
 
-  window.chatImageViewer = { open };
+  window.chatImageViewer = { open, closeAll: () => { current?.(true); } }; // (closeAll: leaving the chat the picture was opened in)
 })();
