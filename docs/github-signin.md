@@ -1,12 +1,12 @@
 # Sign in with GitHub
 
-The GitHub card on the new-tab page and the GitHub connector (the AI's `github` tool) share one sign-in. Press **Sign in with GitHub** on the card (or in Settings → Home → Widgets → GitHub) and both are set up. No token to create or paste.
+The GitHub card on the new-tab page and the GitHub connector (the AI's `github` tool) share one sign-in. Press **Sign in with GitHub** on the card (or in Settings → Apps and connections → GitHub) and both are set up. No token to create or paste.
 
 ## The three ways in
 
 1. **Sign in with GitHub** (the device flow). Lumen asks GitHub for a one-time code, shows it on the card, and opens `github.com/login/device` in a Lumen tab. Enter the code, approve, and the card fills in by itself. Lumen polls GitHub at the interval GitHub gives (and five seconds slower each time GitHub says `slow_down`) and stops when the code runs out (15 minutes at most).
 2. **Use GitHub CLI sign-in.** Offered only when `gh` is installed and already signed in. One click: Lumen runs `gh auth token --hostname github.com` (hidden, no terminal window) and keeps that token.
-3. **Paste a token** (Settings → Home → Widgets → GitHub → Advanced). The older way; a fine-grained personal access token still works.
+3. **Paste a token** (Settings → Apps and connections → GitHub → Advanced). The older way; a fine-grained personal access token still works.
 
 Settings also has **Switch account** (GitHub signs in the account that is signed in on github.com; sign out there first to pick another) and **Sign out**. Sign out removes only Lumen's copy of the token; to revoke a token from the one-time-code sign-in, remove Lumen under [github.com/settings/applications](https://github.com/settings/applications) (a gh CLI token belongs to the CLI: `gh auth logout`). If the GitHub connector was connected with its own pasted token, signing in or out on the card leaves it alone. A token GitHub stops accepting (revoked, expired) turns the card into **Sign in again**, and the AI tool says the same instead of showing a raw error.
 

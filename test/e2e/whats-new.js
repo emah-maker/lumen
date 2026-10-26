@@ -2,7 +2,7 @@
 // older version gets the release notes once over the window (the dialogs overlay), with Got it and the
 // "Show what's new after updates" switch; closing records the version and saves the switch; the next
 // launch shows nothing; a first run records the version silently; test mode shows nothing unless the
-// test opts in (LUMEN_WHATS_NEW_TEST); Settings → Updates has the switch and a button that reopens
+// test opts in (LUMEN_WHATS_NEW_TEST); Settings → Updates and about has the switch and a button that reopens
 // the notes; and the card is drawn over the normal window, never in a private one.
 // Run with LUMEN_TEST_BACKGROUND=1 to keep the windows invisible.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -88,7 +88,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await waitFor(() => settingsOf(updated).showWhatsNew === false, 4000); // (saved once the card's promise settles, a moment after it closes)
       check('update: switching it off on the card saves showWhatsNew: false', settingsOf(updated).showWhatsNew === false && settingsOf(updated).lastSeenVersion === version, JSON.stringify(settingsOf(updated)));
 
-      // ---- Settings → Updates: the switch (now off) and the button that reopens the notes
+      // ---- Settings → Updates and about: the switch (now off) and the button that reopens the notes
       const id = await app.evaluate(() => global.__settings.open('updates'));
       const inTab = (code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return `ERROR ${err?.message || err}`; } }, [id, code]);
       await waitFor(() => inTab("document.body?.dataset.ready === '1' && Boolean(document.getElementById('whats-new-open'))"));

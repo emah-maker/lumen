@@ -39,7 +39,7 @@ const path = require('path');
   await app.evaluate(() => global.__agent.reset()); // settings apply to new chats
   check('ADHD rules back when turned on again', (await ask()).includes('short, focused answers; follow this'), 'missing');
 
-  // Custom instructions (Settings → AI and agents): typed in the two boxes, sent in the system prompt of a new chat, off with the toggle.
+  // Custom instructions (Settings → AI): typed in the two boxes, sent in the system prompt of a new chat, off with the toggle.
   check('Settings has the two instruction boxes and a toggle', (await inSettings("['ai-instructions-about', 'ai-instructions-style', 'pref-aiInstructionsOn'].every((id) => document.getElementById(id))")) === true, 'missing');
   await inSettings("(() => { const b = document.getElementById('ai-instructions-about'); b.value = 'I am a marine biologist.'; b.dispatchEvent(new Event('change')); })()");
   await ui.waitForTimeout(400);

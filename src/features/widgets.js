@@ -2125,6 +2125,7 @@ function createWidgets(deps) {
     }
     if (secret && CONNECTORS[widget.type].secret) deps.setSecret(CONNECTORS[widget.type].secret, secret);
     if (secret && widget.type === 'github') { gh().markGood(); deps.onGithubChange?.(); } // a pasted token is the connector's too
+    if (secret && widget.type === 'todoist') deps.onTodoistChange?.(); // (so is Todoist's: the connector reads the card's token)
     if (widget.type === 'weather') rememberPlaces(widget.wx.places);
     const next = id ? widgets.map((w) => (w.id === id ? widget : w)) : [...widgets, widget];
     save(next);
@@ -2134,7 +2135,8 @@ function createWidgets(deps) {
     refresh(list().find((w) => w.id === widget.id) || widget).catch(() => {});
     return { widget: list().find((w) => w.id === widget.id) || widget, message };
   }
-  function remove(id) {
+  // keepSecret: Settings' "Show on new tab page" switch only hides the card; the sign-in or key stays for the connector and for turning it on again.
+  function remove(id, { keepSecret = false } = {}) {
     const widgets = list();
     const gone = widgets.find((w) => w.id === id);
     const next = ST.drop(widgets, id); // a stack shows its next member
@@ -2142,12 +2144,26 @@ function createWidgets(deps) {
     cache.delete(id);
     // The last widget that used a token takes the token with it.
     const secret = gone && CONNECTORS[gone.type].secret;
-    if (secret && !next.some((w) => CONNECTORS[w.type].secret === secret) && !(secret === 'github' && deps.githubInUse?.())) { // (the GitHub connector shares the sign-in: removing the card keeps it)
+    const shared = (secret === 'github' && deps.githubInUse?.()) || (secret === 'todoist' && deps.todoistInUse?.()); // (the GitHub and Todoist connectors share the sign-in or token: removing the card keeps it)
+    if (secret && !keepSecret && !next.some((w) => CONNECTORS[w.type].secret === secret) && !shared) {
       if (secret === 'gmail') revokeGoogle(OA.decodeCreds(deps.getSecret(secret)));
       deps.setSecret(secret, null);
       spotifyTokens.delete(secret);
       sessions.get(secret)?.invalidate();
     }
+    deps.onUpdate?.();
+    return true;
+  }
+  // Apps and connections: a service's key or token (Todoist, Muse, Twelve Data, CoinGecko) saved or forgotten without a card. For Todoist the connector reads
+  // it from here, so one token serves the card and the AI.
+  const KEY_SERVICES = new Set(['todoist', 'muse', 'stocks', 'crypto']);
+  function setServiceSecret(type, value) {
+    if (!KEY_SERVICES.has(type)) throw new Error('That service has no key to save here.');
+    const v = String(value || '').trim();
+    if (v.length > 600) throw new Error('That is too long to be a key.');
+    deps.setSecret(CONNECTORS[type].secret, v || null);
+    for (const w of list()) if (w.type === type) cache.delete(w.id);
+    if (type === 'todoist') deps.onTodoistChange?.();
     deps.onUpdate?.();
     return true;
   }
@@ -3130,7 +3146,7 @@ function createWidgets(deps) {
     return { oauth: Boolean(creds?.refresh), email: creds?.refresh ? str(creds.email, 200) : '', oneClick: GC.uiState({ clientId: '', stored: creds, builtin: googleClient() }).oneClick, compose: Boolean(creds?.refresh) && GV.hasScope(creds.scope, GV.COMPOSE_SCOPE) };
   }
   const gmailApi = (path) => { if (!/^\/users\/me\/(messages|labels)/.test(path)) throw new Error('Not a read-only Gmail request.'); return gmailGet(helpers('gmail'), sessionFor('gmail'), path); };
-  // "Allow drafts" (Settings → AI and agents → Connectors → Gmail): the signed-in account's sign-in again, with the same client,
+  // "Allow drafts" (Settings → Apps and connections → Gmail): the signed-in account's sign-in again, with the same client,
   // asking Google to add gmail.compose to what it already allows. Only ever started by that button.
   async function gmailAllowDrafts() {
     const creds = OA.decodeCreds(deps.getSecret('gmail'));
@@ -3190,7 +3206,7 @@ function createWidgets(deps) {
       throw certain(new OA.OAuthError(e.message, { reconnect: Boolean(e.reconnect), kind: e.rate ? 'rate' : 'other' }));
     }
   }
-  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose, gmailSend };
+  return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, setServiceSecret, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose, gmailSend };
 }
 
 module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

@@ -1,4 +1,4 @@
-// "Connect <app>" in one click (Settings > AI and agents > "Let other apps use Lumen", and the Allow prompt of a Claude Code that has no token):
+// "Connect <app>" in one click (Settings > AI > "Let other apps use Lumen", and the Allow prompt of a Claude Code that has no token):
 // make (or reuse) the app's token app and put Lumen into the app's own config WITH its token file, so it connects verified and never asks again.
 //  - Claude Code: through its real CLI (`claude mcp remove` then `claude mcp add --scope user`), never a hand-edited ~/.claude.json and never
 //    a project-scope .mcp.json (that one gets committed).

@@ -7,7 +7,7 @@
 // and --permission-mode dontAsk refuses anything else instead of prompting. Lumen's own approval
 // card still gates acting tools, because every call goes through the MCP server's callTool.
 //
-// [full access] Settings → AI and agents → "Give Claude Code full access to this computer" (claudeCodeFullAccess,
+// [full access] Settings → AI → "Give Claude Code full access to this computer" (claudeCodeFullAccess,
 // off by default) runs the CLI the way it runs in a terminal instead: all its built-in tools (Bash,
 // file reads and edits), the user's own MCP servers, skills and slash commands, Claude Code's own
 // system prompt (Lumen's is appended), the home folder as its working directory, and no permission
@@ -22,7 +22,7 @@ const { removeDir, removeDirSync } = require('./temp-dirs');
 const { exists, lookup, killTree, validModel, usageOf, perTurnResult } = require('./cli-utils');
 const { turnLimitHit } = require('./loop-guard');
 const { isSignedOutText } = require('./auth-sync');
-const effortLib = require('./effort'); // Settings → AI and agents → AI providers: reasoning effort per AI
+const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 const aiFiles = require('../features/ai-files'); // [ai files] files the CLI's own tools wrote (noteWritten)
 
@@ -54,7 +54,7 @@ async function findClaude() {
   return null;
 }
 
-// The one way to ask "is Claude Code here, and where": Settings → AI and agents → AI providers and Settings → AI and agents → Usage both
+// The one way to ask "is Claude Code here, and where": Settings → AI → AI providers and Settings → AI → Usage both
 // go through this, so they cannot disagree. With the shared engine it is the path that engine already runs (still on disk), else a
 // fresh look that the engine remembers too; without one (no engine yet) it is a plain look.
 async function resolveClaude(engine) {
@@ -154,7 +154,7 @@ const MODELS = [
 // prompt plus CLAUDE_CODE_NOTE (agent.js) names the mcp__lumen__ tools. Tool use itself needs no
 // prompt: the tool definitions come from the MCP server.
 // [full access] Claude Code keeps its own system prompt (its tools, CLAUDE.md, skills): Lumen's is appended.
-// [cc settings] userSettings (Settings → AI and agents → "Use my Claude Code settings in Lumen chats", off by default): off, the CLI loads
+// [cc settings] userSettings (Settings → AI → "Use my Claude Code settings in Lumen chats", off by default): off, the CLI loads
 // only project settings (--setting-sources project; the cwd is an empty folder, so none), which skips the user's CLAUDE.md, rules,
 // memory and hooks (about 1.9k tokens and a few hundred ms of SessionStart hooks per chat) while the OAuth login still works.
 // [full access] always loads them: it runs as in a terminal.
@@ -164,7 +164,7 @@ function buildArgs({ mcpConfig, sessionId, resume, systemPrompt, model = 'defaul
     ...(!fullAccess && !userSettings ? SETTING_SOURCES_PROJECT : []),
     ...(maxTurns > 0 ? ['--max-turns', String(maxTurns)] : []), // unset: no cap
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
-    ...effortLib.cliArgs('claudecode', effort), // Settings → AI and agents → AI providers: --effort (none: the CLI's own default)
+    ...effortLib.cliArgs('claudecode', effort), // Settings → AI → AI providers: --effort (none: the CLI's own default)
     '--mcp-config', mcpConfig, fullAccess ? '--append-system-prompt' : '--system-prompt', systemPrompt, resume ? '--resume' : '--session-id', sessionId,
   ];
 }
@@ -984,7 +984,7 @@ class ClaudeCodeEngine {
         if (again.failed) this.needUserSettings = false; // it did not help: the next message tries the lean start again
         else if (!settingsNoticeShown) {
           settingsNoticeShown = true;
-          emit({ type: 'notice', text: 'Claude Code needed your own Claude Code settings (~/.claude/settings.json) to connect, so Lumen loaded them for this chat. To always load them, turn on Settings → AI and agents → Use my Claude Code settings in Lumen chats.' });
+          emit({ type: 'notice', text: 'Claude Code needed your own Claude Code settings (~/.claude/settings.json) to connect, so Lumen loaded them for this chat. To always load them, turn on Settings → AI → Use my Claude Code settings in Lumen chats.' });
         }
         return again;
       }

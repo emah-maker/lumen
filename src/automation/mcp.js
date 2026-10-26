@@ -126,7 +126,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
     try {
       switch (method) {
         case 'initialize': {
-          if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → AI and agents → Allow AI agents to connect).');
+          if (!enabled(session)) return fail(id, -32001, 'AI agent connections are turned off in Lumen settings (Settings → AI → Allow AI agents to connect).');
           const info = params.clientInfo || {};
           session.clientName = clientLabel(info);
           const veto = await onInitialize?.(session, info); // [external apps] a reason to refuse this client (features/external-apps.js admit, deferred: it never waits for the user), or nothing
@@ -282,7 +282,7 @@ async function connectOrLaunch(userData, launch, log, { deadlineMs = 90000, poll
         // not up yet
       }
     }
-    throw new Error(`Lumen did not start within ${Math.round(deadlineMs / 1000)} seconds. If it is open, turn on Settings, AI and agents, Allow AI agents to connect.`);
+    throw new Error(`Lumen did not start within ${Math.round(deadlineMs / 1000)} seconds. If it is open, turn on Settings, AI, Allow AI agents to connect.`);
   }
 }
 function defaultSpawn(launch) {
@@ -403,7 +403,7 @@ async function relay(opts = {}) {
     const end = Date.now() + timing.tokenMs;
     for (;;) {
       try { const t = fs.readFileSync(tokenPath(userData), 'utf8').trim(); if (t) return t; } catch {}
-      if (Date.now() >= end) throw new Error('Lumen is running but is not accepting agents. Turn on Settings, AI and agents, Allow AI agents to connect.');
+      if (Date.now() >= end) throw new Error('Lumen is running but is not accepting agents. Turn on Settings, AI, Allow AI agents to connect.');
       await new Promise((r) => setTimeout(r, 100));
     }
   };

@@ -4,7 +4,7 @@
 'use strict';
 
 const HOVER_MS = 100; // a pointer resting on a tab this long means to open it
-const PRELOAD_CHOICES = [0, 1, 2, 3, 5]; // Settings > Tabs > Memory: "Preload tabs after startup"
+const PRELOAD_CHOICES = [0, 1, 2, 3, 5]; // Settings → Tabs and browsing > Memory: "Preload tabs after startup"
 const PRELOAD_DEFAULT = 1;
 const FREEZE_FIRST_CHOICES = [0, 10, 30, 60]; // minutes a tab that goes to sleep stays frozen (instant to wake) before it unloads; 0: unload at once
 const FREEZE_FIRST_DEFAULT = 10;

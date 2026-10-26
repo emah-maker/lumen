@@ -3,7 +3,7 @@
 // supplies what is connected and how each provider is called (backends); this module decides who is asked, in what order, and what a
 // failure means.
 //
-//   setting           Settings → AI and agents → Image generation (imageGen): 'auto' (default), 'off', or one provider.
+//   setting           Settings → AI → Image generation (imageGen): 'auto' (default), 'off', or one provider.
 //   providers         grokbuild (Grok Build's image_gen / image_edit, through the user's own sign-in), xai (Grok API), gemini, openai, openrouter.
 //                     Never a key the user has not set: only connected providers are ever asked, and a provider that is not connected
 //                     is never offered a request.
@@ -72,10 +72,10 @@ async function route(deps) {
   const connected = typeof deps.connected === 'function' ? await deps.connected() : (deps.connected || {});
   const edit = Boolean(source);
   const p = plan({ setting: deps.setting, current: deps.current, connected, cooling: deps.cooling || (() => false), exclude: deps.exclude, edit });
-  if (p.mode === 'off') throw fail('off', 'Picture making is turned off in Settings → AI and agents → Image generation. Tell the user, and describe the picture in words instead.');
+  if (p.mode === 'off') throw fail('off', 'Picture making is turned off in Settings → AI → Image generation. Tell the user, and describe the picture in words instead.');
   if (!p.order.length) {
-    if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI and agents → Image generation, but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}${edit && !CAN_EDIT[p.missing] ? ' (or it cannot edit pictures)' : ''}. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI and agents → Image generation) but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}. Pick another provider there, or Automatic.` });
-    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI and agents), or sign in to Grok Build. Tell them that; do not ask for a key in the chat.`);
+    if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI → Image generation, but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}${edit && !CAN_EDIT[p.missing] ? ' (or it cannot edit pictures)' : ''}. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI → Image generation) but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}. Pick another provider there, or Automatic.` });
+    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), or sign in to Grok Build. Tell them that; do not ask for a key in the chat.`);
   }
   const tried = [];
   for (const key of p.order) {

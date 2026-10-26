@@ -212,7 +212,7 @@
         }));
         parts.push(line);
       } else if (!project) {
-        parts.push(el('p', { className: 'cp-pj-path', textContent: tr('chatpage.project.folder.new', 'A new folder with the project’s name is made in your Projects folder (Settings → AI and agents).') }));
+        parts.push(el('p', { className: 'cp-pj-path', textContent: tr('chatpage.project.folder.new', 'A new folder with the project’s name is made in your Projects folder (Settings → AI).') }));
         parts.push(el('div', { className: 'cp-pj-line' }, small(tr('chatpage.project.folder.existing', 'Use an existing folder…'), async () => {
           const dir = await api.pickProjectFolder().catch(() => null);
           if (dir) { pickedFolder = dir; confirmed = false; say(''); drawFolder(); }

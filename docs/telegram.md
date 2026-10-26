@@ -7,7 +7,7 @@ Lumen has no servers. While it is open, it asks Telegram for new messages to you
 ## Set it up
 
 1. In Telegram, message **@BotFather**, send `/newbot`, pick a name and a username. BotFather gives you a token like `123456789:AA…`.
-2. In Lumen, open **Settings → AI and agents → Phone (Telegram)** and turn on **Take requests from my Telegram bot**.
+2. In Lumen, open **Settings → AI → Let agents use Lumen → Phone (Telegram)** and turn on **Take requests from my Telegram bot**.
 3. Paste the token under **Bot token** and press **Save token**. Lumen checks it with Telegram, then stores it encrypted with your OS keychain. It is never shown again, never logged, and only ever sent to Telegram (`api.telegram.org`).
 4. Press **Pair**. Lumen shows a 6-digit code for 10 minutes. Send `/pair <code>` to your bot from your Telegram account. Lumen replies **Paired**, and Settings shows the chat's name.
 

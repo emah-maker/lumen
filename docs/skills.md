@@ -1,6 +1,6 @@
 # Skills
 
-A skill is a saved set of instructions for a task you do often. Type `/` in the sidebar or the full-page chat to run one (`/summarize`, `/translate French`), or right-click selected text on a page → **Run skill**. Manage them in Settings → AI and agents → **Skills**.
+A skill is a saved set of instructions for a task you do often. Type `/` in the sidebar or the full-page chat to run one (`/summarize`, `/translate French`), or right-click selected text on a page → **Run skill**. Manage them in Settings → AI → **Skills**.
 
 A skill is only text. Running it sends an ordinary chat message, so the usual approval cards apply. A skill can never turn approvals off or give the AI new permissions.
 

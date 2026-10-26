@@ -186,7 +186,7 @@
   stealthBtn.onclick = toggleStealth;
 
   // Live listener. Chromium's speech recognition can't work in Electron (it needs Google's own key), so Listen records the
-  // microphone in 20-second pieces and turns each into text with the chat box's voice input (Settings → AI and agents → Voice input,
+  // microphone in 20-second pieces and turns each into text with the chat box's voice input (Settings → AI → Chat box and voice,
   // renderer/dictation.js, ai/dictation.js): the same provider and key, the audio sent once and never saved.
   const PIECE_MS = 20000;
   let listening = null; // { stream, recorder, timer, status }

@@ -1,4 +1,4 @@
-// "Sidebar button starts a new chat" (Settings → AI and agents, renderer/sidebar-open.js, app.js toggleSidebarByHand), with a fake model and
+// "Sidebar button starts a new chat" (Settings → AI, renderer/sidebar-open.js, app.js toggleSidebarByHand), with a fake model and
 // invisible windows (LUMEN_TEST_BACKGROUND=1): the AI button opens the sidebar on an empty chat and the old chat is in History;
 // an empty chat is reused; a reply still being written is not lost when the sidebar closes; with the setting off the old chat
 // comes back; History opens a chat from another tab in this tab's sidebar without switching tabs.

@@ -1,4 +1,4 @@
-// Local AI: models that run on this computer under Ollama or LM Studio (Settings → AI and agents → AI providers → Local).
+// Local AI: models that run on this computer under Ollama or LM Studio (Settings → AI → AI providers → Local).
 // Both servers speak the OpenAI Chat Completions protocol, so chat goes through ai/providers.js like any other provider;
 // this file holds what is specific to them: the server address (and the rule that it stays on this computer unless the
 // user says otherwise), finding the installed models, and which of them can use tools. No key, and nothing leaves the machine.

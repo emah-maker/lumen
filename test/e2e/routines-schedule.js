@@ -225,7 +225,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   await ui.evaluate(() => document.querySelector('.routine-template-card .routine-template-add').click());
   const email = await waitFor(async () => (await view()).routines.find((r) => r.template === 'email'));
   check('one click adds "Morning email check", switched off, on weekdays at 8:00', email && email.enabled === false && email.schedule.repeat === 'weekdays' && email.schedule.time === '08:00' && email.title === 'Morning email check', JSON.stringify(email));
-  check('its request names the Gmail connector and says what to do when it is not connected', await app.evaluate((_e, id) => { const t = global.__bg.find(id); return /app gmail/.test(t.prompt) && /Settings, then AI and agents, then Connectors/.test(t.prompt) && /never reply to, send, archive or delete/.test(t.prompt); }, email.id), '');
+  check('its request names the Gmail connector and says what to do when it is not connected', await app.evaluate((_e, id) => { const t = global.__bg.find(id); return /app gmail/.test(t.prompt) && /Settings, then AI, then Connectors/.test(t.prompt) && /never reply to, send, archive or delete/.test(t.prompt); }, email.id), '');
   check('the card now says it is added and cannot be added twice', await waitFor(() => ui.evaluate(() => { const b = document.querySelector('.routine-template-card .routine-template-add'); return b && b.disabled && /Already added/.test(b.textContent); })), '');
   await travelTo(nextClock(await clockNow(), 8, 0, true) + 5000);
   await runRoutines();

@@ -48,7 +48,7 @@ window.addEventListener('resize', reportBounds);
 // ---------- motion ----------
 
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
-// The system setting, or Settings → Appearance → Accessibility → Reduce motion (the pref-reduce-motion class):
+// The system setting, or Settings → Accessibility → Reduce motion (the pref-reduce-motion class):
 // the springs and FLIP animations run in JS, so the CSS rule alone didn't stop them.
 const motionReduced = () => reduceMotion.matches || document.documentElement.classList.contains('pref-reduce-motion');
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1558,7 +1558,7 @@ function fillHoverCard(el) {
   hostEl.textContent = tab.isolated && host ? t('tabs.isolatedHost', { host }) : host; // opened by the AI in its own empty session
   if (tab.aiOpened || tab.openedByApp) hostEl.textContent = [hostEl.textContent, openedNote(tab)].filter(Boolean).join(' · '); // [ai manners]
   if (tab.aiKeepOff) hostEl.textContent = [hostEl.textContent, t('tabs.aiKeptOff')].filter(Boolean).join(' · '); // [ai off-tab]
-  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings > Tabs > Page unloading)
+  if (tab.sleeping) hostEl.textContent = [hostEl.textContent, t('tabs.sleepingHover'), tab.freedMb > 0 ? t('tabs.freedHover', { mb: tab.freedMb }) : ''].filter(Boolean).join(' · '); // asleep: the card says how to wake it, and about how much memory it freed (Settings → Tabs and browsing > Page unloading)
   hostEl.hidden = !host && !tab.aiOpened && !tab.openedByApp && !tab.aiKeepOff && !tab.sleeping;
   return true;
 }
@@ -2720,7 +2720,7 @@ function applyStill(visible, { fade = false } = {}) {
   settleStill = settle;
   widened.then(() => afterPaint(settle)); // (closing: the sidebar goes once main has widened the view over it)
 }
-// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI and agents "Sidebar button
+// [sidebar new chat] The AI button and Ctrl+J, when they open the sidebar, start a new empty chat (Settings → AI "Sidebar button
 // starts a new chat"; an already empty chat is reused). Every other way in (showSidebar(true): a chat to show, "Ask AI about
 // this", a notification, a task or agent event, a run waiting for an OK) keeps the chat it is asked to show. The chat that was
 // open stays in History, and a reply still being written there carries on.
@@ -3137,7 +3137,7 @@ const mcpSteps = new Map(); // step id -> row
 // "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
 const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
 
-// ---------- other apps using Lumen (features/external-apps.js, Settings → AI and agents → Let other apps use Lumen) ----------
+// ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
 // A pill per app that is working (or paused), with Stop and Take over; and a pill like the update one (Allow this time / Deny) when an app that has not been allowed
 // yet wants to connect. Both come from main's external:state (the app's own window gets only its own pill).
 (() => {

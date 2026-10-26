@@ -520,7 +520,7 @@ function create(deps) {
     return edit(entry.chatId, card.messageId, `${card.text}\n\n${escapeMarkdownV2(t(key))}`, { parse_mode: 'MarkdownV2' });
   }
 
-  // ---- Settings → AI and agents → Phone (Telegram)
+  // ---- Settings → AI → Let agents use Lumen → Phone (Telegram)
   function status() {
     const s = tg();
     return {

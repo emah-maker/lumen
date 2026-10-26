@@ -2,7 +2,7 @@
 
 With **Memory** on, the AI in the sidebar keeps short notes between chats: things you tell it about yourself ("I'm vegetarian", "I live in Boston") and standing requests ("always give prices in euros"). They go to the AI at the start of every chat, so you don't have to say them again. It is off by default.
 
-Turn it on in **Settings → AI and agents → Memory**.
+Turn it on in **Settings → AI → Instructions and memory**.
 
 ## How it works
 
@@ -26,7 +26,7 @@ With **Search past chats** on (the default while Memory is on), the AI can look 
 
 ## See, edit and delete
 
-- **Settings → AI and agents → Memory → Saved memory** lists every note with **Edit** and **Delete**, and **Delete all memory**.
+- **Settings → AI → Instructions and memory → Saved memory** lists every note with **Edit** and **Delete**, and **Delete all memory**.
 - Type **/memory** in the chat to see what is saved, with a link to Settings.
 - Turning Memory off keeps the notes but stops sending or saving them.
 - If the notes can't be read on this computer (another computer's keychain, or a damaged file), Settings says so and offers **Start over**: the file is set aside as `memory.json.bad` (not deleted) and memory starts empty.

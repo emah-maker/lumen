@@ -16,10 +16,10 @@ function failure(ctx, res, { thing = 'that' } = {}) {
   const { code, message } = errorOf(res.text);
   const name = ctx.name || 'Microsoft';
   if (res.status === 429 || /TooManyRequests|ApplicationThrottled|ActivityLimitReached/i.test(code)) return new ConnectorError(`${name} is busy (rate limit). Try again in a minute.`, 'rate');
-  if (res.status === 403 && /ErrorAccessDenied|Authorization_RequestDenied|AccessDenied/i.test(code)) return new ConnectorError(`Microsoft didn’t give Lumen that permission, or this account (a school’s administrator may limit it) can’t use it. Tell the user to connect ${name} again in Settings → AI and agents → Connectors and accept everything it asks.`, 'auth');
+  if (res.status === 403 && /ErrorAccessDenied|Authorization_RequestDenied|AccessDenied/i.test(code)) return new ConnectorError(`Microsoft didn’t give Lumen that permission, or this account (a school’s administrator may limit it) can’t use it. Tell the user to connect ${name} again in Settings → Apps and connections and accept everything it asks.`, 'auth');
   if (res.status === 403 || res.status === 404) return new ConnectorError(`${name} can’t find ${thing}, or this account can’t use it.`, 'missing');
   if (res.status === 400) return new ConnectorError(`${name} didn’t accept that${message ? ` (${message})` : ''}.`, 'args');
-  if (res.status === 401) return new ConnectorError(`Microsoft ended the ${name} sign-in. Ask the user to connect ${name} again in Settings → AI and agents → Connectors.`, 'auth');
+  if (res.status === 401) return new ConnectorError(`Microsoft ended the ${name} sign-in. Ask the user to connect ${name} again in Settings → Apps and connections.`, 'auth');
   return new ConnectorError(`${name} answered ${res.status}${message ? ` (${message})` : ''}. Try again in a moment.`, 'other');
 }
 

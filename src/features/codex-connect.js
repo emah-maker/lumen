@@ -1,4 +1,4 @@
-// Settings → AI and agents → "Add to Codex CLI" and the Codex row's status: Codex is found however it was installed
+// Settings → AI → "Add to Codex CLI" and the Codex row's status: Codex is found however it was installed
 // (ai/codex-locate.js: npm, standalone .exe, winget, Store alias, Homebrew, an app bundle, a path the user picked),
 // connected by `codex mcp add` (or, for an older CLI and for a moved Lumen, by merging one entry into
 // config.toml with a backup: ai/codex-config.js), and its sign-in is asked of the CLI itself.

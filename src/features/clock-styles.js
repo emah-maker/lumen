@@ -1,6 +1,6 @@
 // [look] The new-tab clock's styles and the greeting's fonts: the choices, their defaults, the checks, and
 // the time split into parts. Pure functions, no DOM, no Electron: used by settings-backend.js (validates the
-// settings, lists the choices for Settings → Home), renderer/newtab.js (draws the clock) and the unit tests.
+// settings, lists the choices for Settings → New tab page), renderer/newtab.js (draws the clock) and the unit tests.
 // How each style looks (fonts, weight, tracking, layout) is CSS in renderer/newtab.html, with the same
 // stacks for the previews in renderer/settings.css. System fonts only: the page loads no fonts.
 (function () {

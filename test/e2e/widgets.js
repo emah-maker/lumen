@@ -259,13 +259,13 @@ function server(opts) {
   check('migration: the Todoist token and unrelated settings are untouched', JSON.parse((await settingsFile())).homeWidgets.length === 4, (await settingsFile()).slice(0, 100));
 
   // ---- adding widgets from the Settings page (its own preload and IPC) ----
-  const settingsId = await app.evaluate(() => global.__settings.open('appearance'));
+  const settingsId = await app.evaluate(() => global.__settings.open('widgets'));
   const sp = (code) => app.evaluate((_e, [id, c]) => global.__settings.contents(id).executeJavaScript(c), [settingsId, code]);
-  for (let i = 0; i < 40 && !(await sp("Boolean(document.body.dataset.ready && document.getElementById('widget-add'))").catch(() => false)); i++) await sleep(150);
+  for (let i = 0; i < 40 && !(await sp("Boolean(document.body.dataset.ready && document.getElementById('widget-add-weather'))").catch(() => false)); i++) await sleep(150);
   const waitFor = async (code, tries = 40) => { for (let i = 0; i < tries; i++) { if (await sp(code).catch(() => false)) return true; await sleep(150); } return false; };
   const listState = () => sp("({ items: [...document.querySelectorAll('.widget-item')].map((e) => e.textContent), note: document.getElementById('widget-list-note').textContent })");
   // A weather widget with two searched places and My location (consent not given yet).
-  await sp("document.getElementById('widget-add').click()");
+  await sp("document.getElementById('widget-add-weather').click()");
   for (const q of ['Boston', 'Paris']) {
     await sp(`document.getElementById('widget-city').value = ${JSON.stringify(q)}; document.getElementById('widget-search').click()`);
     check(`Settings: searching “${q}” lists the match, with region and country`, await waitFor("document.querySelectorAll('#widget-found button').length > 0") && /\+ .*(Massachusetts|France)/.test(await sp("document.querySelector('#widget-found button').textContent")), 'no result');
@@ -278,8 +278,14 @@ function server(opts) {
   for (let i = 0; i < 40 && (await sp("Boolean(document.getElementById('widget-form'))")); i++) await sleep(150);
   let s = await listState();
   check('Settings: the weather widget lists its places', s.items.length === 5 && /Weather/.test(s.items[4]) && /Boston, Trip \+1 · °/.test(s.items[4]), JSON.stringify(s));
-  await sp("document.getElementById('widget-add').click()");
-  await sp(`document.querySelector('.seg [data-type=todoist]').click(); document.getElementById('widget-token').value = ${JSON.stringify(TOKEN)};`);
+  // A card of a service is offered only once the service is connected: Todoist says Connect first until its token is saved (on its page in Apps and connections).
+  check('Settings: Todoist is not offered before it is connected (Connect Todoist first)', (await sp("/Connect Todoist first/.test(document.getElementById('widget-connect-todoist')?.textContent || '') && !document.getElementById('widget-add-todoist')")) === true, '');
+  await sp(`window.lumenSettings.widgets.setSecret('todoist', ${JSON.stringify(TOKEN)}).then(() => true)`);
+  await sp("location.hash = '#general'; true");
+  await sleep(300);
+  await sp("location.hash = '#widgets'; true");
+  check('Settings: once its token is saved Todoist is offered (Add)', await waitFor("Boolean(document.getElementById('widget-add-todoist'))"), '');
+  await sp("document.getElementById('widget-add-todoist').click()");
   await sp("document.getElementById('widget-load-projects').click()");
   check('Settings: Todoist projects are fetched for the picker', await waitFor("document.querySelectorAll('#widget-project option').length === 3") && (await sp("[...document.querySelectorAll('#widget-project option')].map((o) => o.textContent).join()")) === 'Home,Inbox,Work', await sp("document.getElementById('widget-note').textContent"));
   await sp("document.getElementById('widget-save').click()");
@@ -761,7 +767,8 @@ function server(opts) {
   // ---- removing the last Todoist widget forgets the token ----
   await W('remove', ID.todo);
   const after = JSON.parse((await settingsFile()));
-  check('removing the Todoist widget removes its token', !after.keys?.['widget:todoist'] && !after.homeWidgets.some((x) => x.type === 'todoist'), JSON.stringify(after.keys || {}));
+  // (the AI's Todoist connector reads this token, so taking the card off the page keeps it; Disconnect on its page in Apps and connections forgets it)
+  check('removing the Todoist widget keeps the token the AI connector shares, and Disconnect forgets it', Boolean(after.keys?.['widget:todoist']) && !after.homeWidgets.some((x) => x.type === 'todoist') && (await sp("window.lumenSettings.ai.connectors.disconnect('todoist').then(() => true)")) === true && !JSON.parse(await (async () => { await app.evaluate(() => global.__settingsFlush?.()); return settingsFile(); })()).keys?.['widget:todoist'], JSON.stringify(after.keys || {}));
 
   await app.close();
   fake.srv.close();

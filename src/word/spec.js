@@ -172,7 +172,7 @@ function stepLabel(input = {}, name = '') {
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const wrap = (text, name) => `<untrusted_page_content source="word: ${defang(String(name || 'document')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
 
-const OFF_TEXT = 'Using Microsoft Word is off. The user can turn it on in Settings → AI and agents → "Let the AI use Microsoft Word".';
+const OFF_TEXT = 'Using Microsoft Word is off. The user can turn it on in Settings → AI → "Let the AI use Microsoft Word".';
 const NO_WORD = 'Microsoft Word is not installed on this computer, so it cannot be driven. Documents can still be read (action read with path to a .docx file), and a .docx file can get new paragraphs, headings and tables written straight into it (insert or table with path), without Word.';
 const NOT_WINDOWS = 'Using Word works on Windows for now. On this computer a .docx file can still be read (action read with path) and given new paragraphs, headings and tables (insert or table with path).';
 

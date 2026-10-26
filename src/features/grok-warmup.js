@@ -1,4 +1,4 @@
-// Warm-up for Grok Build ("Warm up Grok Build when Lumen starts", Settings -> AI and agents, key grokWarmup).
+// Warm-up for Grok Build ("Warm up Grok Build when Lumen starts", Settings -> AI, key grokWarmup).
 // Grok reads its prompt from --prompt-file at spawn, so unlike Claude Code's kept process it can't wait for
 // the next message. What can be done ahead of it is the setup a message starts with: the binary lookup
 // (a `where` spawn, ~55 ms), Lumen's HTTP gate, the folders, config.toml + gate script and the sign-in link

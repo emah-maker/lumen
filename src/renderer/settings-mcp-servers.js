@@ -1,6 +1,6 @@
-// Settings → AI and agents → Connectors → "Custom MCP servers": servers you add yourself, whose tools the sidebar's AI can use
-// (features/mcp-client.js). The ones a Connectors card added (GitHub, Notion, Todoist) are managed on their cards, not here.
-// Loaded before settings.js and called from settings-connectors.js; it uses settings.js's h(), stackRow() and flash() helpers.
+// Settings → Apps and connections → Custom MCP servers: servers you add yourself, whose tools the sidebar's AI can use
+// (features/mcp-client.js). The ones a service's page added (a preset in the connector registry) are managed on that page, not here.
+// Loaded before settings.js and called from settings-apps.js; it uses settings.js's h(), stackRow() and flash() helpers.
 // Saved secrets never come back to this page: only their names do, and a value left empty when editing keeps the saved one.
 
 function buildMcpServers() {
@@ -103,7 +103,6 @@ function buildMcpServers() {
 
   M.list().then(render).catch((err) => flash(note, clean(err), 'err'));
   const el = h('section', { class: 'conn-cat conn-mcp', id: 'ai-mcp-servers', 'aria-label': 'Custom MCP servers' },
-    h('h2', { text: 'Custom MCP servers' }),
     h('p', { class: 'note', text: 'Anything with an MCP server, beyond the services above: add its program or address and the AI in the sidebar gets its tools (for API-key models; Claude Code and Grok Build use only Lumen’s own tools). It asks you before each call and shows what it would send; a server only starts when you’ve added and switched it on.' }),
     list, form, h('div', { class: 'item' }, add, note));
   el.refresh = () => M.list().then(render).catch(() => {}); // the Connectors cards changed a server: look again

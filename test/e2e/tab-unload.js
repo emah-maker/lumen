@@ -1,4 +1,4 @@
-// Settings > Tabs > Page unloading, end to end in a hidden Lumen (LUMEN_TEST_BACKGROUND): every control in the section is changed and
+// Settings → Tabs and browsing > Page unloading, end to end in a hidden Lumen (LUMEN_TEST_BACKGROUND): every control in the section is changed and
 // the value is persisted to settings.json and takes effect at once (no restart); a tab unloads after the timer and stays loaded when an
 // exception applies; the tab menu's "Unload tab", "Unload other tabs" and "Never unload this site"; "Unload all background tabs now";
 // the status panel; the Reload placeholder; "Reset to defaults". LUMEN_UNLOAD_SHOT=<file.png> also saves a picture of the section.

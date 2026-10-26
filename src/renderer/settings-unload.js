@@ -1,4 +1,4 @@
-// Settings > Tabs > Page unloading: when unused tabs unload (or freeze), what never does, the site lists, how an unloaded tab looks and
+// Settings → Tabs and browsing > Page unloading: when unused tabs unload (or freeze), what never does, the site lists, how an unloaded tab looks and
 // comes back, the manual controls and a live status panel. Uses settings.js's row helpers (h, tr, st, save, row, toggle, select, stackRow);
 // settings.js calls buildUnloading(slot) while it builds the page. features/tab-sleep.js decides, main.js acts, at once on a change.
 // Every string is a settings.unload.* key (locales/en.json).

@@ -1,5 +1,5 @@
 // [connectors] Gmail sending: the rules for the AI's one way to send an email, built on the drafts code (gmail-drafts.js). Pure: no
-// network and no Electron. Loaded only when a send is asked for (the registry hides the action until Settings → Connectors →
+// network and no Electron. Loaded only when a send is asked for (the registry hides the action until Settings → Apps and connections →
 // Gmail → Allow sending is on).
 //
 // A send goes out in exactly two ways, and nothing else:

@@ -227,7 +227,7 @@ const HEAVY = ['Refactor the checkout flow across the codebase and debug why the
   const settingsRun = await openSettingsTab(app);
   await waitFor(async () => (await settingsRun("Boolean(document.getElementById('ai-model'))")) === true);
   check('Settings picker: Auto first and selected', (await settingsRun("[...document.querySelectorAll('#ai-model option')].map((o) => o.value)[0] + '|' + document.getElementById('ai-model').value")) === 'auto|auto');
-  check('Settings → AI and agents → Auto may use: one tick per provider', Number(await settingsRun("document.querySelectorAll('#ai-auto-use input[type=checkbox]').length")) >= 2);
+  check('Settings → AI → Auto may use: one tick per provider', Number(await settingsRun("document.querySelectorAll('#ai-auto-use input[type=checkbox]').length")) >= 2);
 
   // The ticks write the setting (only valid ids are kept), and the list follows the connected providers.
   await settingsRun("(() => { const box = document.querySelector('#auto-use-openai'); box.click(); return box.checked; })()");

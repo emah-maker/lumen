@@ -5,7 +5,7 @@ Lumen can chat with AI models that run on your own computer, through **Ollama** 
 ## Set it up
 
 1. Install and start Ollama (it listens on `http://127.0.0.1:11434`) or LM Studio (turn on its local server; it listens on `http://127.0.0.1:1234/v1`), and download at least one model.
-2. In Lumen, open **Settings → AI and agents → AI providers → Local (Ollama / LM Studio)**.
+2. In Lumen, open **Settings → AI → AI providers → Local (Ollama / LM Studio)**.
 3. Switch on **Use local models**, choose the **Server**, and press **Detect**. Lumen lists the models you have installed.
 4. Pick one from any model menu, under **Local**.
 

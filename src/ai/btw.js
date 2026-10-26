@@ -6,7 +6,7 @@
 //
 // Which model answers:
 //  - an API chat: the chat's own provider, on its cheaper sibling when one is known (subagents.helperModel, the same mapping
-//    the delegate helpers use; Settings → AI and agents → helpers "same model" keeps the chat's model). A refused sibling falls back to
+//    the delegate helpers use; Settings → AI → helpers "same model" keeps the chat's model). A refused sibling falls back to
 //    the chat's own model.
 //  - a chat on an engine (Claude Code, Grok Build, Antigravity, Codex): Lumen does not make that model call itself and an
 //    engine's one-shot is neither cheap nor isolated (it would start the CLI with its tools and session), so an API model

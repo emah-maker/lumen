@@ -1,4 +1,4 @@
-// The token an outside app (Claude Desktop, Cursor, VS Code, Claude Code...) is given in Settings → AI and agents → "Let other apps use Lumen".
+// The token an outside app (Claude Desktop, Cursor, VS Code, Claude Code...) is given in Settings → AI → "Let other apps use Lumen".
 // Shape: lmn_<12 hex: the public id>_<48 hex: the secret>. The bridge (mcp.js) never sends the token: it proves it knows it for the
 // connection's nonce (HMAC), as it does for Lumen's own per-run token, so a process squatting on the channel learns nothing.
 // Pure and Electron-free: the bridge process loads it too. Used by features/external-apps.js.

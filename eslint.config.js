@@ -33,7 +33,7 @@ module.exports = [
   { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser, isImeEnter: 'readonly' } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
-  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildConnectors: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildApps: 'readonly', SERVICE_TYPES: 'readonly', APP_OF_TYPE: 'readonly', APP_CARD_ONLY: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },
   // settings-sync.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-sync.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', status: 'readonly', flash: 'readonly', armedButton: 'readonly', withKeywords: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
@@ -50,7 +50,10 @@ module.exports = [
   // settings-focus.js (Settings → General → Focus mode): loaded before settings.js; it also assigns the page's `st` after a change.
   { files: ['src/renderer/settings-focus.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', withKeywords: 'readonly', S: 'readonly', st: 'writable' } } },
   { files: ['src/renderer/settings-external-apps.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', $: 'readonly' } } },
-  { files: ['src/renderer/settings-mcp-servers.js', 'src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly', buildMcpServers: 'readonly' } } },
+  { files: ['src/renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
+  { files: ['src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly' } } },
+  // settings-apps.js (Settings → Apps and connections) is loaded before settings.js and uses its helpers (called later, from its builder).
+  { files: ['src/renderer/settings-apps.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', collapsible: 'readonly', linkRow: 'readonly', refreshValues: 'readonly', slots: 'readonly', isImeEnter: 'readonly', buildMcpServers: 'readonly', buildOne: 'readonly', connClean: 'readonly', connAbout: 'readonly', connToolsView: 'readonly', connSendLogView: 'readonly', connDetectChips: 'readonly' } } },
   // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
   { files: ['src/renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.

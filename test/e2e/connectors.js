@@ -1,4 +1,4 @@
-// Connectors in Lumen (features/connectors/, agent.js `connector` tool, Settings → AI and agents → Connectors), with no real network:
+// Connectors in Lumen (features/connectors/, agent.js `connector` tool, Settings → Apps and connections), with no real network:
 // stand-in Canvas, GitHub and Todoist on 127.0.0.1 (test/fixtures/fake-connectors.js), a fake model in place of Claude.
 //  - the settings page is one page: the gallery, with a "Custom MCP servers" section under it (no second MCP page, no coming-soon cards);
 //  - the settings page shows the gallery; connecting Canvas (the signed-in session), GitHub and Todoist (a pasted token) works from it;
@@ -65,20 +65,22 @@ async function main() {
     }, fakes.urls);
 
     console.log('--- the gallery');
-    const inSettings = await openSettingsTab(app, 'you-and-ai');
-    await waitFor(async () => (await inSettings("document.querySelectorAll('[data-connector]').length")) > 5);
-    const gallery = await inSettings("JSON.stringify({ cats: [...document.querySelectorAll('.conn-cat h2')].map((h) => h.textContent), cards: [...document.querySelectorAll('[data-connector]')].map((c) => [c.dataset.connector, c.dataset.status, c.querySelector('.conn-status')?.textContent, c.querySelector('button')?.textContent]) })");
+    const inSettings = await openSettingsTab(app, 'apps');
+    const connStatus = (id) => app.evaluate((_e, i) => global.__connectors.list().connectors.find((c) => c.id === i).status, id);
+    const click2 = (id) => inSettings(`(() => { const b = document.getElementById('${id}'); b.click(); b.click(); return true; })()`); // (Disconnect asks twice)
+    await waitFor(async () => (await inSettings("document.querySelectorAll('[data-sub^=app-]').length")) > 15);
+    const gallery = await inSettings("JSON.stringify({ cats: [...document.querySelectorAll('#sec-apps .group-title')].map((h) => h.textContent), cards: [...document.querySelectorAll('#sec-apps [data-sub^=app-]')].map((c) => [c.dataset.sub.slice(4), '', c.querySelector('.value')?.textContent, c.querySelector('.label')?.textContent]) })");
     const g = JSON.parse(gallery);
-    check('settings: a gallery grouped by Mail and calendar, School, Files and docs, Work, Tasks, then Custom MCP servers in the same page (no Music)', g.cats.join() === 'Mail and calendar,School,Files and docs,Work,Tasks,Custom MCP servers', gallery);
-    check('settings: every card starts Not connected with a Connect button, and nothing says coming soon (Slack and Spotify are gone)', g.cards.find((c) => c[0] === 'canvas')?.slice(1).join('|') === 'off|Not connected|Connect' && ['github', 'notion', 'todoist', 'drive', 'sheets'].every((id) => g.cards.find((c) => c[0] === id)?.[2] === 'Not connected') && !g.cards.some((c) => ['slack', 'spotify'].includes(c[0])) && !/coming soon/i.test(await inSettings("document.getElementById('ai-connectors').textContent")), gallery);
-    const permsText = await inSettings("(document.querySelector('[data-connector=todoist] .conn-details')?.textContent || '')");
+    check('settings: one list grouped by Mail and calendar, School, Files and docs, Work, Tasks (from the registry), then Music and Other for the services that only had a widget', g.cats.join() === 'Mail and calendar,School,Files and docs,Work,Tasks,Music,Other' && g.cards.length >= 22, gallery);
+    check('settings: every service starts Not connected, nothing says coming soon, and Spotify, Apple Music, Slack and Meta Muse are listed beside the connectors', g.cards.find((c) => c[0] === 'canvas')?.[2] === 'Not connected' && ['github', 'notion', 'todoist', 'drive', 'sheets', 'spotify', 'applemusic', 'slack', 'muse'].every((id) => g.cards.find((c) => c[0] === id)?.[2] !== undefined) && !/coming soon/i.test(await inSettings("document.getElementById('sec-apps').textContent")), gallery);
+    const permsText = await inSettings("(document.querySelector('#app-todoist-about .info-text')?.textContent || '')");
     check('settings: a card says exactly what the AI can read and do before anything is connected', /Your tasks and projects/.test(permsText) && /Add a task \(asks you first\)/.test(permsText) && /Disconnect deletes it/.test(permsText), permsText);
-    const more = JSON.parse(await inSettings("JSON.stringify(Object.fromEntries(['outlook', 'docs', 'linear', 'zotero'].map((id) => [id, document.querySelector('[data-connector=' + id + '] .conn-details')?.textContent || ''])))"));
+    const more = JSON.parse(await inSettings("JSON.stringify(Object.fromEntries(['outlook', 'docs', 'linear', 'zotero'].map((id) => [id, document.querySelector('#app-' + id + '-about .info-text')?.textContent || ''])))"));
     check('settings: the new cards say where things go before anything is connected (Microsoft, Google, an MCP preset, Zotero)', /Lumen sends nothing anywhere except Microsoft/.test(more.outlook) && /Mail.*read.*Drafts|drafts/i.test(more.outlook) && /Lumen sends nothing anywhere except Google/.test(more.docs) && /MCP server/.test(more.linear) && /Your library/i.test(more.zotero), JSON.stringify(more));
-    const msCard = await inSettings("(() => { const c = document.querySelector('[data-connector=outlook]'); c.querySelector('button').click(); return new Promise((r) => setTimeout(() => r(JSON.stringify({ field: !!document.querySelector('#conn-outlook-clientId'), go: document.querySelector('#conn-outlook-go')?.textContent })), 300)); })()");
-    check('settings: the Microsoft card’s Connect form has the optional own-client-ID field and a Connect button', JSON.parse(msCard).field === true && JSON.parse(msCard).go === 'Connect', msCard);
-    const notes = JSON.parse(await inSettings("JSON.stringify(Object.fromEntries(['github', 'notion', 'todoist'].map((id) => [id, document.querySelector('[data-connector=' + id + '] .conn-details')?.textContent || ''])))"));
-    check('settings: the custom MCP servers are inside the Connectors page (one list), there is no second page for them, and GitHub, Notion and Todoist say their official MCP server can be added there', (await inSettings("Boolean(document.querySelector('#ai-connectors #ai-mcp-servers #mcp-server-add')) && !document.querySelector('[data-sub=mcp-servers]') && !document.getElementById('sub-mcp-servers')")) === true && Object.values(notes).every((t) => /official MCP server/.test(t) && /Custom MCP servers/.test(t)), JSON.stringify(notes));
+    const msCard = await inSettings("JSON.stringify({ field: !!document.querySelector('#conn-outlook-clientId'), go: document.querySelector('#conn-outlook-connect')?.textContent })");
+    check('settings: the Microsoft page has the optional own-client-ID field and a Connect button', JSON.parse(msCard).field === true && /Connect|Sign in/.test(JSON.parse(msCard).go), msCard);
+    const notes = JSON.parse(await inSettings("JSON.stringify(Object.fromEntries(['github', 'notion', 'todoist'].map((id) => [id, document.querySelector('#app-' + id + '-about .info-text')?.textContent || ''])))"));
+    check('settings: Custom MCP servers are a page of Apps and connections, and GitHub, Notion and Todoist say their official MCP server can be added there', (await inSettings("Boolean(document.querySelector('#sub-mcp-servers #mcp-server-add'))")) === true && Object.values(notes).every((t) => /official MCP server/.test(t) && /Custom MCP servers/.test(t)), JSON.stringify(notes));
     check('nothing is connected yet, so the AI is offered no connector tool', await app.evaluate(() => global.__connectors.defs().length === 0 && !global.__mcpTools.map((t) => t.name).includes('connector')), '');
 
     // One sidebar run with a fake Claude asking for `toolUses` in order; every card gets `answer`.
@@ -107,11 +109,11 @@ async function main() {
 
     console.log('--- Canvas: the signed-in session');
     // Connect Canvas from the page, signed out first: it is saved as "Needs sign-in" and nothing is read.
-    await inSettings("window.confirm = () => true; document.getElementById('conn-canvas-connect').click(); true");
+    await inSettings("window.confirm = () => true; true");
     await waitFor(async () => (await inSettings("Boolean(document.getElementById('conn-canvas-domain'))")) === true);
-    await inSettings("document.getElementById('conn-canvas-domain').value = 'school.instructure.com'; document.getElementById('conn-canvas-go').click(); true");
-    await waitFor(async () => (await inSettings("document.querySelector('[data-connector=canvas]')?.dataset.status")) === 'needs-signin');
-    check('Canvas, signed out: the card says Needs sign-in and offers Sign in', (await inSettings("document.querySelector('[data-connector=canvas] .conn-status')?.textContent")) === 'Needs sign-in' && /Sign in/.test(await inSettings("[...document.querySelectorAll('[data-connector=canvas] button')].map((b) => b.textContent).join()")), '');
+    await inSettings("document.getElementById('conn-canvas-domain').value = 'school.instructure.com'; document.getElementById('conn-canvas-connect').click(); true");
+    await waitFor(async () => (await connStatus('canvas')) === 'needs-signin');
+    check('Canvas, signed out: the page says Needs sign-in and offers Sign in', /Needs sign-in/.test(await inSettings("document.getElementById('app-canvas-status').textContent")) && (await inSettings("Boolean(document.getElementById('conn-canvas-signin') && !document.getElementById('conn-canvas-signin').hidden)")) === true, '');
     const signedOut = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }] });
     check('Canvas, signed out: the AI is told to have the user sign in, and the login redirect was not followed', signedOut.results[0]?.error && /isn’t signed in/.test(signedOut.results[0].text) && !fakes.seen.some((r) => r.service === 'canvas' && /login/.test(r.url)), JSON.stringify(signedOut.results));
     // The user signs in to Canvas in Lumen: its session cookie.
@@ -122,14 +124,14 @@ async function main() {
 
     console.log('--- GitHub and Todoist: a pasted token');
     for (const [id, token] of [['github', TOKENS.github], ['todoist', TOKENS.todoist]]) {
-      await inSettings(`document.getElementById('conn-${id}-connect').click(); true`);
+      await inSettings('true');
       await waitFor(async () => (await inSettings(`Boolean(document.getElementById('conn-${id}-secret'))`)) === true);
       const type = await inSettings(`document.getElementById('conn-${id}-secret').type`);
       check(`${id}: the token field is a password field`, type === 'password', type);
-      await inSettings(`document.getElementById('conn-${id}-secret').value = ${JSON.stringify(token)}; document.getElementById('conn-${id}-go').click(); true`);
-      await waitFor(async () => (await inSettings(`document.querySelector('[data-connector=${id}]')?.dataset.status`)) === 'connected');
+      await inSettings(`document.getElementById('conn-${id}-secret').value = ${JSON.stringify(token)}; document.getElementById('conn-${id}-connect').click(); true`);
+      await waitFor(async () => (await connStatus(id)) === 'connected');
     }
-    check('GitHub and Todoist show Connected · account', (await inSettings("document.querySelector('[data-connector=github] .conn-status')?.textContent")) === 'Connected · ada-dev' && (await inSettings("document.querySelector('[data-connector=todoist] .conn-status')?.textContent")) === 'Connected · ada@example.com', '');
+    check('GitHub and Todoist show Connected · account', (await inSettings("document.getElementById('app-github-status').textContent")) === 'Connected · ada-dev' && /^Connected · ada@example\.com/.test(await inSettings("document.getElementById('app-todoist-status').textContent")), '');
     const pageHtml = String(await inSettings("document.documentElement.outerHTML"));
     check('settings: the page never holds a token or the session cookie', !pageHtml.includes(TOKENS.github) && !pageHtml.includes(TOKENS.todoist) && !pageHtml.includes('fake-canvas-session'), 'secret in page');
     const disk = fs.readFileSync(path.join(profile, 'connectors.json'), 'utf8');
@@ -244,7 +246,7 @@ async function main() {
     await inSettings("document.getElementById('mcp-server-add').click(); true");
     await waitFor(async () => (await inSettings("Boolean(document.getElementById('mcp-form-type'))")) === true);
     await inSettings(`(() => { const set = (id, v) => { const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('change')); }; set('mcp-form-type', 'http'); set('mcp-form-name', 'mine'); set('mcp-form-url', ${JSON.stringify(mcp.url)}); set('mcp-form-header-name', 'Authorization'); set('mcp-form-header-value', 'Bearer tok'); document.getElementById('mcp-form-save').click(); return true; })()`);
-    check('a server added under Custom MCP servers is listed in the same page, with Edit, Remove and a switch', await waitFor(async () => (await inSettings("Boolean(document.querySelector('#ai-connectors #mcp-servers [data-mcp-server=mine] .switch'))")) === true), await inSettings("document.getElementById('mcp-servers')?.outerHTML.slice(0, 300)"));
+    check('a server added under Custom MCP servers is listed on its page, with Edit, Remove and a switch', await waitFor(async () => (await inSettings("Boolean(document.querySelector('#sub-mcp-servers #mcp-servers [data-mcp-server=mine] .switch'))")) === true), await inSettings("document.getElementById('mcp-servers')?.outerHTML.slice(0, 300)"));
     const withMcp = await run({ toolUses: [] });
     check('its tools reach the model beside the one connector tool', await app.evaluate(async () => (await global.__mcpClient.tools()).defs.some((d) => d.name === 'mine__shout')) && withMcp.requests[0]?.length === 1, JSON.stringify(withMcp.requests));
     const mineCall = await run({ toolUses: [{ name: 'mine__shout', input: { text: 'hi' } }], answer: false });
@@ -255,16 +257,16 @@ async function main() {
     mcp.server.close();
 
     console.log('--- disconnect');
-    await inSettings("window.confirm = () => true; document.getElementById('conn-github-disconnect').click(); true");
-    await waitFor(async () => (await inSettings("document.querySelector('[data-connector=github]')?.dataset.status")) === 'off');
-    check('GitHub disconnected from the page: the card is Not connected again', (await inSettings("document.querySelector('[data-connector=github] .conn-status')?.textContent")) === 'Not connected', '');
+    await click2('conn-github-disconnect');
+    await waitFor(async () => (await connStatus('github')) === 'off');
+    check('GitHub disconnected from the page: the service is Not connected again', await waitFor(async () => (await inSettings("document.getElementById('app-github-status').textContent")) === 'Not connected'), '');
     const disk2 = fs.readFileSync(path.join(profile, 'connectors.json'), 'utf8');
     check('its token is gone from the file (the others stay)', !/github/.test(disk2) && /todoist/.test(disk2) && /canvas/.test(disk2), disk2);
     const afterOne = await run({ toolUses: [{ input: { app: 'github', action: 'prs' } }] });
     check('the model’s tool no longer lists GitHub, and a call to it fails without reaching GitHub', afterOne.requests[0]?.[0] && !/github:/.test(afterOne.requests[0][0].description) && !afterOne.requests[0][0].enum.includes('github') && afterOne.results[0]?.error && /Unknown app/.test(afterOne.results[0].text), JSON.stringify(afterOne));
     for (const id of ['todoist', 'canvas']) {
-      await inSettings(`document.getElementById('conn-${id}-disconnect').click(); true`);
-      await waitFor(async () => (await inSettings(`document.querySelector('[data-connector=${id}]')?.dataset.status`)) === 'off');
+      await click2(`conn-${id}-disconnect`);
+      await waitFor(async () => (await connStatus(id)) === 'off');
     }
     const none = await run({ toolUses: [] });
     const disk3 = fs.readFileSync(path.join(profile, 'connectors.json'), 'utf8');

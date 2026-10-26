@@ -1,6 +1,6 @@
 // Routine web links: a small HTTP listener on 127.0.0.1 that lets something else on this computer start a routine
 // (Shortcuts, cron, a script, or a tunnel the user set up for Zapier or IFTTT). Off unless the user turns on
-// routineWebhooks (Settings → AI and agents → Routines). The runner (features/background-runner.js) starts and stops it.
+// routineWebhooks (Settings → AI → Routines). The runner (features/background-runner.js) starts and stops it.
 //
 // One request does one thing: POST /routines/<routine id>/run with `Authorization: Bearer <key>`. The key is 32 random
 // bytes made for that routine, shown to the user once; only its SHA-256 is kept (with the routine, in the encrypted

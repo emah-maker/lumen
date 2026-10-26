@@ -131,7 +131,7 @@ const FORMS = {
     const chart = select([['no', 'Just the list'], ['yes', 'Chart on top']], tv.chart ? 'yes' : 'no');
     const symbolField = field('Symbol', symbol, 'Like NASDAQ:AAPL, BINANCE:BTCUSDT or SPX.');
     const listFields = [
-      field('Symbols', symbols, tv.list ? `Synced with “${str(tv.list.name, 60)}” in your TradingView account; editing here unlinks it.` : 'One per line; ###Name starts a section. To import a list from your TradingView account, use Settings → Widgets.'),
+      field('Symbols', symbols, tv.list ? `Synced with “${str(tv.list.name, 60)}” in your TradingView account; editing here unlinks it.` : 'One per line; ###Name starts a section. To import a list from your TradingView account, use Settings → Apps and connections.'),
       field('Layout', chart),
     ];
     const sync = () => { const w = view.value === 'watchlist'; symbolField.hidden = w; for (const f of listFields) f.hidden = !w; };
@@ -153,7 +153,7 @@ const FORMS = {
     area.spellcheck = false;
     area.placeholder = '{ "name": "…", "url": "https://…", "view": "stats", "stats": [ { "label": "…", "path": "…" } ] }';
     area.value = s.recipe ? JSON.stringify(s.recipe, null, 2) : '';
-    return { nodes: [field('Recipe (JSON)', area, 'One https address that answers JSON and what to show from it. Examples and the format: Settings → Widgets → Custom.')], read: () => ({ recipe: area.value }), first: area };
+    return { nodes: [field('Recipe (JSON)', area, 'One https address that answers JSON and what to show from it. Examples and the format: Settings → Apps and connections → Custom.')], read: () => ({ recipe: area.value }), first: area };
   },
   weather(s, editing) {
     const city = input('text', '', { maxlength: '80', placeholder: 'Boston', autocomplete: 'off' });
@@ -161,7 +161,7 @@ const FORMS = {
     const clock = select(CLOCKS, s.clock || 'auto');
     const places = editing && s.places?.length ? placeList(s.places) : null;
     const nodes = [];
-    if (places) nodes.push(field('Places', places.node, 'Press a place to remove it. “My location” is changed in Settings → Widgets.'));
+    if (places) nodes.push(field('Places', places.node, 'Press a place to remove it. “My location” is changed in Settings → Apps and connections.'));
     nodes.push(field(places ? 'Add a place' : 'City', city, places ? 'Optional.' : undefined), field('Units', units), field('Clock', clock, 'How the hourly forecast writes the time.'));
     return { nodes, read: () => ({ city: city.value, units: units.value, clock: clock.value, drop: places ? places.drop() : [] }), first: city, guard: () => keepOne(places, city) };
   },
@@ -275,7 +275,7 @@ const FORMS = {
     const places = coins.length ? placeList(coins.map((c) => c.sym), { noun: 'coin', tips: coins.map((c) => `${c.sym} (${c.id})`) }) : null;
     const add = input('text', '', { maxlength: '200', placeholder: 'solana, dogecoin', spellcheck: 'false', autocomplete: 'off' });
     const nodes = [];
-    if (places) nodes.push(field('Coins', places.node, 'Press a coin to remove it. The key for more requests is in Settings → Widgets.'));
+    if (places) nodes.push(field('Coins', places.node, 'Press a coin to remove it. The key for more requests is in Settings → Apps and connections.'));
     nodes.push(field('Add coins', add, `CoinGecko ids, separated by commas: the end of a coin page’s address on coingecko.com. Up to ${MAX_COINS}.`));
     const guard = () => {
       const pieces = coinPieces(add.value);
@@ -448,7 +448,7 @@ function open(target) {
 }
 
 // The clock and greeting card: each choice is saved the moment it is made (do=look, one key at a time) and the page
-// follows; Done (or Escape) only closes. Same words and values as Settings → Home.
+// follows; Done (or Escape) only closes. Same words and values as Settings → New tab page.
 const STYLES = [['classic', 'Classic'], ['rounded', 'Rounded'], ['thin', 'Thin'], ['serif', 'Serif'], ['mono', 'Mono'], ['bold', 'Stacked']];
 const HOURS = [['auto', 'Auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']];
 const CARDS = [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']];

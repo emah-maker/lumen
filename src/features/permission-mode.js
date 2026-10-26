@@ -3,7 +3,7 @@
 //   ask    (default) every approval card asks
 //   auto   "Auto-allow actions": the sidebar's AI skips the per-site cards (agent.js autoAllows)
 //   bypass "Bypass permissions": every card is answered allow, with a step saying so (agent.js askApproval)
-// Pure: the sidebar's bolt menu (main.js agent:permission-mode), Settings → AI and agents and the agent all read it here.
+// Pure: the sidebar's bolt menu (main.js agent:permission-mode), Settings → AI and the agent all read it here.
 const MODES = ['ask', 'auto', 'bypass'];
 
 const modeOf = (s) => (s?.bypassPermissions === true ? 'bypass' : s?.askBeforeActing === false ? 'auto' : 'ask');

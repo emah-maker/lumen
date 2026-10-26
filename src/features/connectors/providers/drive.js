@@ -38,9 +38,9 @@ const getFile = async (ctx, id, fields = FILE_FIELDS) => G.json(ctx, await ctx.h
 // Editing a file Lumen did not make needs the full drive scope. A sign-in made before that scope existed (drive.readonly + drive.file) says
 // so plainly, and the AI tells the user to press Connect on the Drive card, which asks Google for the one new permission.
 function needFull(ctx) {
-  if (typeof ctx.hasScopes === 'function' && !ctx.hasScopes()) throw new ConnectorError('Lumen’s Google Drive permission is the older one (read your files, change only the ones Lumen made), which can’t change this. Tell the user to press Connect on Google Drive in Settings → AI and agents → Connectors and allow full access to their Drive. Nothing was changed.', 'auth');
+  if (typeof ctx.hasScopes === 'function' && !ctx.hasScopes()) throw new ConnectorError('Lumen’s Google Drive permission is the older one (read your files, change only the ones Lumen made), which can’t change this. Tell the user to press Connect on Google Drive in Settings → Apps and connections and allow full access to their Drive. Nothing was changed.', 'auth');
 }
-const SHARE_HINT = 'If Lumen didn’t make this file, the user may need to connect Google Drive again in Settings → AI and agents → Connectors to allow editing all their files.';
+const SHARE_HINT = 'If Lumen didn’t make this file, the user may need to connect Google Drive again in Settings → Apps and connections to allow editing all their files.';
 
 // A local file the user allowed on the card, looked at again just before its bytes go: still there, same size, not changed since.
 function readLocal(f, verb) {

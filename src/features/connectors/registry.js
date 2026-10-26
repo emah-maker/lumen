@@ -1,5 +1,5 @@
 // Connectors: services the AI in the sidebar and the full-page chat can use once the user connects them
-// (Settings → AI and agents → Connectors). This file only DECLARES them (what each is, how it signs in, what the
+// (Settings → Apps and connections). This file only DECLARES them (what each is, how it signs in, what the
 // AI may read and do, its few actions with tight argument schemas) and builds the one tool the AI sees.
 // It has no Electron and no network and loads cheaply; service.js keeps what is connected and runs the
 // actions through the providers in this folder (loaded only when one is used).
@@ -447,14 +447,14 @@ function toolDef({ readOnly = false } = {}) {
 function validate(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return 'Input must be an object';
   const ids = connectedIds();
-  if (!ids.length) return 'No service is connected. Tell the user they can connect one in Settings → AI and agents → Connectors.';
+  if (!ids.length) return 'No service is connected. Tell the user they can connect one in Settings → Apps and connections.';
   const c = get(input.app);
   if (!c || !ids.includes(c.id)) return `Unknown app “${String(input.app).slice(0, 40)}”. Connected: ${ids.join(', ')}`;
   const action = typeof input.action === 'string' ? input.action : '';
   if (action === 'help') return null;
   const a = c.actions[action];
   if (!a) return `Unknown action “${action.slice(0, 40)}” for ${c.id}. Actions: ${Object.keys(offeredActions(c)).join(', ')}`;
-  if (!offered(c, [action, a])) return 'Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → AI and agents → Connectors. Nothing was sent. You can still make a draft.';
+  if (!offered(c, [action, a])) return 'Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → Apps and connections. Nothing was sent. You can still make a draft.';
   if (input.args === undefined || input.args === null) input.args = {};
   if (typeof input.args !== 'object' || Array.isArray(input.args)) return 'args must be an object';
   for (const [key, spec] of Object.entries(a.args)) {

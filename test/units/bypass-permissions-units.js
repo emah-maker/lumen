@@ -1,4 +1,4 @@
-// Bypass permissions (Settings → AI and agents, the bolt menu in the sidebar head; agent.js askApproval / bypassOn, features/permission-mode.js),
+// Bypass permissions (Settings → AI, the bolt menu in the sidebar head; agent.js askApproval / bypassOn, features/permission-mode.js),
 // plain Node: no Electron. With it on, every approval card is answered "allow" by itself and shown as a step ("Allowed automatically:
 // …"); with it off each card still asks. Covers one check per card type, the user's own blocks (AI off on a site, a tab kept off,
 // hands-off mode) that still refuse first, the "Choose file…" card that still needs the user, outside agents, and the pure mode logic.

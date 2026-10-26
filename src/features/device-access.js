@@ -1,4 +1,4 @@
-// [device access] Settings → AI and agents → "Let the AI use files on this computer" (aiDeviceAccess, off by default). With it on:
+// [device access] Settings → AI → "Let the AI use files on this computer" (aiDeviceAccess, off by default). With it on:
 //
 //   - upload_file takes `paths` (a file on this computer, such as ~/Desktop/photo.png) as well as attached refs,
 //   - list_files lists a folder (newest first) so the AI can find "the screenshot on my desktop",
@@ -19,7 +19,7 @@ const MAX_CLIP_CHARS = 20000; // clipboard text handed to the model
 
 class DeviceAccessError extends Error {}
 
-const OFF_TEXT = 'Using files on this computer is off. The user can turn on Settings → AI and agents → "Let the AI use files on this computer", or attach the file in the chat instead.';
+const OFF_TEXT = 'Using files on this computer is off. The user can turn on Settings → AI → "Let the AI use files on this computer", or attach the file in the chat instead.';
 
 // Folders under the home folder that hold credentials: never listed, never uploaded.
 const SECRET_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.config/gcloud', '.config/gh', '.password-store', 'Library/Keychains', 'Library/Cookies'];

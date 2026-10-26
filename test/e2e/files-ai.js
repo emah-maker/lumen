@@ -87,7 +87,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
   // ---- the slow way, and remembering it
   await app.evaluate(() => global.__patchSettings({ aiDeviceAccess: false }));
   const off = await run('list_files', { find: 'thesis draft' });
-  check('find: with "Let the AI use files" off, a miss says so and searches nothing', /Settings → AI and agents/.test(off.text) && (await scans()).worker === 0, off.text);
+  check('find: with "Let the AI use files" off, a miss says so and searches nothing', /Settings → AI/.test(off.text) && (await scans()).worker === 0, off.text);
   await app.evaluate(() => global.__patchSettings({ aiDeviceAccess: true }));
   const slow = await run('list_files', { find: 'thesis draft' });
   const afterSlow = await scans();

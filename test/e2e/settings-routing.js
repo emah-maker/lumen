@@ -43,7 +43,7 @@ const { tmpProfile, env, root, sleep } = require('../helpers/_settings-open-rig'
       return [s, [cat, sub]];
     })))`));
     const bad = [];
-    const cats = ['general', 'appearance', 'home', 'tabs', 'privacy', 'ai', 'updates', 'advanced'];
+    const cats = ['general', 'appearance', 'accessibility', 'ai', 'apps', 'home', 'tabs', 'privacy', 'downloads', 'updates', 'advanced'];
     for (const link of SECTION_LINKS) {
       const [cat, sub] = expected[link];
       if (!cat) { bad.push(`${link}: the page does not know it`); continue; }
@@ -63,18 +63,18 @@ const { tmpProfile, env, root, sleep } = require('../helpers/_settings-open-rig'
     for (const s of ['focus', 'external-apps', 'connectors', 'ai-providers', 'ai-keys-page', 'extensions-page', 'visual-effects', 'newtab']) check(`"${s}" is a link`, SECTION_LINKS.includes(s));
 
     // ---- Back from a sub-page restores the scroll
-    await open('ai');
-    await waitIn(id, 'view.cat === "ai" && !view.sub && document.body.dataset.ready === "1"');
+    await open('apps');
+    await waitIn(id, 'view.cat === "apps" && !view.sub && document.body.dataset.ready === "1"');
     await run(id, 'window.scrollTo(0, 1500); true');
     await sleep(200);
     const y0 = await run(id, 'window.scrollY');
-    check('the AI page is long enough to scroll', y0 > 600, y0);
-    await run(id, 'slots.get("skills").link.click(); true');
-    await waitIn(id, 'view.sub === "skills"');
+    check('the Apps and connections list is long enough to scroll', y0 > 600, y0);
+    await run(id, 'slots.get("app-github").link.click(); true');
+    await waitIn(id, 'view.sub === "app-github"');
     await sleep(150);
     check('a sub-page opens at the top', (await run(id, 'window.scrollY')) < 5, await run(id, 'window.scrollY'));
-    await run(id, 'document.querySelector("#sub-skills .back").click(); true');
-    await waitIn(id, '!view.sub && !document.querySelector("#cat-ai").hidden');
+    await run(id, 'document.querySelector("#sub-app-github .back").click(); true');
+    await waitIn(id, '!view.sub && !document.querySelector("#cat-apps").hidden');
     await sleep(200);
     const y1 = await run(id, 'window.scrollY');
     check('Back (button) returns to the scroll position the link was followed from', Math.abs(y1 - y0) <= 2, `${y0} -> ${y1}`);
@@ -82,8 +82,8 @@ const { tmpProfile, env, root, sleep } = require('../helpers/_settings-open-rig'
     await run(id, 'window.scrollTo(0, 900); true');
     await sleep(150);
     const y2 = await run(id, 'window.scrollY');
-    await run(id, 'slots.get("macros").link.click(); true');
-    await waitIn(id, 'view.sub === "macros"');
+    await run(id, 'slots.get("app-notion").link.click(); true');
+    await waitIn(id, 'view.sub === "app-notion"');
     await run(id, 'history.back(); true');
     await waitIn(id, '!view.sub');
     await sleep(250);
@@ -121,8 +121,8 @@ const { tmpProfile, env, root, sleep } = require('../helpers/_settings-open-rig'
     await waitIn(id, 'document.body.dataset.ready === "1"');
     const dupes = await run(id, `(() => { const seen = new Map(); for (const el of document.querySelectorAll('[id]')) seen.set(el.id, (seen.get(el.id) || 0) + 1); return JSON.stringify([...seen].filter(([, n]) => n > 1).map(([k, n]) => k + 'x' + n)); })()`);
     check('no id is used twice in Settings', dupes === '[]', dupes);
-    check('the Widgets page and the Home slot have different ids', await run(id, '!!document.getElementById("sec-widgets")?.closest(".subpane") && !!document.getElementById("sec-widgets-parent")'));
-    check('the startup radios and the pages list have different ids', await run(id, 'document.getElementById("startup-pages").classList.contains("list") && document.getElementById("startup-opt-pages").type === "radio"'));
+    check('the Widgets page is a page of the New tab page', await run(id, '!!document.getElementById("sec-widgets")?.closest(".subpane") && slots.get("widgets").cat === "home"'));
+    check('the startup choice and the pages list have different ids', await run(id, 'document.getElementById("startup-pages").classList.contains("list") && document.getElementById("startup-select").tagName === "SELECT"'));
 
     // ---- the command bar
     const openBar = async (text) => {
@@ -141,18 +141,18 @@ const { tmpProfile, env, root, sleep } = require('../helpers/_settings-open-rig'
     await shotWindow('routing-command-bar.png');
     // (the bar shows a few rows per query: each page is looked up by its name, as a person would)
     const siteCats = JSON.parse(await run(id, 'JSON.stringify([...categories.values()].map((c) => [c.id, c.title]))'));
-    const siteSubs = JSON.parse(await run(id, 'JSON.stringify([...slots.values()].filter((s) => s.isSub).map((s) => [s.id, s.title]))'));
+    const siteSubs = JSON.parse(await run(id, 'JSON.stringify([...slots.values()].filter((s) => s.isSub && !s.id.startsWith("app-")).map((s) => [s.id, s.title]))'));
     const found = async (title) => { await ui.fill('#cmdbar-input', title); await sleep(120); return ui.evaluate(() => [...document.querySelectorAll('.cmdbar-item[data-group="setting"]')].map((e) => [e.dataset.id.replace('settings:', ''), e.querySelector('.cmdbar-title').textContent])); };
     const missCat = []; const missSub = [];
     for (const [c, title] of siteCats) if (!(await found(title)).some((e) => e[0] === c && e[1] === title)) missCat.push(c);
-    for (const [sid, title] of siteSubs) { const want = sid === 'extensions-page' ? 'extensions' : sid; if (!(await found(title)).some((e) => e[0] === want)) missSub.push(sid); }
+    for (const [sid, title] of siteSubs) { const want = sid; if (!(await found(title)).some((e) => e[0] === want)) missSub.push(sid); }
     check('every current category is listed under its sidebar name', missCat.length === 0, missCat.join());
     check('every sub-page is listed', missSub.length === 0, missSub.join());
     const stale = [];
-    for (const old of ['About Lumen', 'You and AI']) if ((await found(old)).some((e) => e[1] === old)) stale.push(old);
-    check('the retired names are gone ("About Lumen", "You and AI")', stale.length === 0, stale.join());
+    for (const old of ['You and AI']) if ((await found(old)).some((e) => e[1] === old)) stale.push(old);
+    check('the retired name is gone ("You and AI")', stale.length === 0, stale.join());
     await ui.keyboard.press('Escape');
-    for (const [target, query] of [['connectors', 'connectors'], ['usage', 'usage'], ['routines', 'routines'], ['site-permissions', 'site permissions']]) {
+    for (const [target, query] of [['widgets', 'widgets'], ['usage', 'usage'], ['routines', 'routines'], ['site-permissions', 'site permissions']]) {
       await open('general');
       await waitIn(id, 'view.cat === "general" && !view.sub');
       if (!(await openBar(query))) { check(`the bar opens for "${target}"`, false); continue; }

@@ -2,7 +2,7 @@
 // unit tests (test/units/settings-search-units.js).
 //  - A query word matches where a word of the setting starts with it ("mode" finds "Dark mode", not "Model").
 //  - A few everyday words also match what the setting calls it ("night" finds the dark theme, "adblock" the tracker blocker).
-//  - A page's title ("AI and agents") only counts when the query is about that page (categoryHit), not every word in it, or "agents" would list every row on the page.
+//  - A page's title ("AI") only counts when the query is about that page (categoryHit), not every word in it, or "agents" would list every row on the page.
 //  - Every query word must match; a hit in the label beats one in the group title, which beats one in the helper text.
 (function () {
   // query word -> other words that mean the same here (each side is matched at word starts, never as a substring).
@@ -50,7 +50,7 @@
     return matchesAll(`${search} ${titles}`.toLowerCase(), words) ? 1 : 0;
   }
 
-  // Does the query name this whole page ("AI and agents")? Only when it holds the title's first word and nothing else the title lacks:
+  // Does the query name this whole page ("AI")? Only when it holds the title's first word and nothing else the title lacks:
   // "ai", "ai agents" and "privacy" do, "agents" does not. (A word of three letters or more may be the start of the title's word.)
   const STOP = new Set(['and', 'the', 'of', 'for', 'to', 'a', 'an']);
   function categoryHit(words, title) {

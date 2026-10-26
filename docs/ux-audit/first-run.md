@@ -4,7 +4,7 @@ Walked hidden on a throwaway profile with every AI hidden: no key, and `LUMEN_CL
 
 ## Found
 
-1. **Settings, AI and agents showed an empty grey pill where the model picker goes.** `.picker-button` is `display: flex`, which beat its `hidden` attribute, so with nothing connected an empty dropdown with a chevron sat beside "No AI connected yet. Add a key or sign in under Accounts and keys below." The way in was a section further down the page.
+1. **Settings, AI showed an empty grey pill where the model picker goes.** `.picker-button` is `display: flex`, which beat its `hidden` attribute, so with nothing connected an empty dropdown with a chevron sat beside "No AI connected yet. Add a key or sign in under Accounts and keys below." The way in was a section further down the page.
 2. **The toolbar button was a bare sparkle.** Its name ("Set up AI") only showed as a tooltip.
 3. **The toolbar said "Set up AI" even when an AI was connected, if Auto was the pick.** Auto across providers (the default once two are connected) mapped to the "nothing connected" identity. Found in the first-chat shots: the sidebar was working while the button still asked for setup.
 4. **The setup card put what needs an install first.** On a computer with nothing, a new user saw a greyed Claude Code row ("Not found... run claude once and type /login"), then an Antigravity row that only led to Settings, then OpenRouter and the API key. Codex and Grok Build were hidden when missing but Antigravity was not, so the list looked arbitrary.
@@ -33,6 +33,6 @@ Tests: `test/e2e/first-run.js` (new, in `scripts/test/test-all.js`), a check in 
 ## Left
 
 - Short, focused answers on by default is a product call, not a bug; it changes every new user's answers and is easy to miss. Worth a second look: a first chat is shorter than ChatGPT or Claude.ai users expect.
-- Settings, AI and agents with nothing connected still lists the controls that only matter once connected ("Auto may use", "Use my Claude Code settings", image generation); an empty-state that folds them away would be a larger change.
+- Settings, AI with nothing connected still lists the controls that only matter once connected ("Auto may use", "Use my Claude Code settings", image generation); an empty-state that folds them away would be a larger change.
 - A chat on a test key showed "This chat: cost n/a" above the first message; not reproduced with a real key, so left.
 - `test/e2e/setup.js` is stale (expects three setup options, a model list without Auto) and is not in `test-all`; `test/e2e/first-run.js` covers the same ground, so it was left alone.

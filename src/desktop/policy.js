@@ -1,4 +1,4 @@
-// [desktop apps] What the AI may and may not do in other programs on this computer (Settings → AI and agents, "Let the AI use other apps on
+// [desktop apps] What the AI may and may not do in other programs on this computer (Settings → AI, "Let the AI use other apps on
 // this computer"). Pure functions of their inputs, so test/units/desktop-units.js runs them in plain Node.
 //
 // Three layers, checked in this order for every call:
@@ -100,7 +100,7 @@ function blockedReason(win, opts = {}) {
   if (hit(SYSTEM)) return 'That changes the computer\'s own settings or runs code (Windows Settings, System Settings, Task Manager, Activity Monitor, script tools, installers), which the AI does not touch. The user can do it themselves.';
   if (hit(PASSWORD_MANAGERS) || PASSWORD_TITLE.test(title)) return 'That is a password manager. The AI never uses password managers.';
   if (hit(FINANCE) || FINANCE_TITLE.test(title)) return 'That is a banking or finance app. The AI does not use these; the user can do it themselves.';
-  if (hit(TERMINALS) && opts.terminals !== true) return 'That is a terminal. The AI does not use terminals unless the user allows it in Settings → AI and agents (a terminal can run anything on this computer).';
+  if (hit(TERMINALS) && opts.terminals !== true) return 'That is a terminal. The AI does not use terminals unless the user allows it in Settings → AI (a terminal can run anything on this computer).';
   return '';
 }
 
@@ -136,7 +136,7 @@ function decide(win, opts = {}) {
   return { status: 'ask', app, name, warn };
 }
 
-const OFF_TEXT = 'Using other apps on this computer is off. The user can turn on Settings → AI and agents → "Let the AI use other apps on this computer".';
+const OFF_TEXT = 'Using other apps on this computer is off. The user can turn on Settings → AI → "Let the AI use other apps on this computer".';
 const NOT_WINDOWS = 'Not available on this platform. Operating other apps works on Windows and macOS for now.';
 const NOT_SUPPORTED = NOT_WINDOWS;
 

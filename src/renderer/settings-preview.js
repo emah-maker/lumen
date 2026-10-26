@@ -1,4 +1,4 @@
-// Settings → Home: the live preview of the new-tab page. It shows what the page will look like with everything chosen now: the background (a
+// Settings → New tab page: the live preview of the new-tab page. It shows what the page will look like with everything chosen now: the background (a
 // gradient, a solid, or your picture), the accent (also Match wallpaper), the animated effect drawn live at a small scale (the page's own effects,
 // renderer/newtab-effects.js), the clock (style, size, card, shadow), the greeting (font, your name), the search box's width, the widget cards'
 // glass, and the light or dark theme. Pointing at a background tile (or an effect) swaps only that, keeping all the rest.

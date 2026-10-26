@@ -35,7 +35,7 @@ function gateDecision(toolName, toolNames) {
   return DENY(`Only Lumen's browser tools are allowed here (${n.slice(0, 60) || 'unnamed tool'} is not one of them).`);
 }
 
-// [full access] The same rule for a run the user gave full access (Settings → AI and agents → Give Grok Build full access): the CLI's
+// [full access] The same rule for a run the user gave full access (Settings → AI → Give Grok Build full access): the CLI's
 // own tools (shell, files, its other tools) are the user's to allow, so they pass without a card. Lumen's own tools do
 // not get weaker: a name that claims to be Lumen's (lumen__ + anything) is allowed only when it is one of Lumen's tools,
 // so the gate still fails closed for them. Lumen's tools themselves are checked again by the MCP server (callTool).
@@ -59,7 +59,7 @@ function terminalCommand(msg) {
 }
 
 // { tools, callTool, enabled, onEvent, onTerminalApproval, terminalEnabled }: as mcp.js startServer, plus
-// terminalEnabled() -> false: Settings → AI and agents turned Grok's terminal off, so every run_terminal_command is denied
+// terminalEnabled() -> false: Settings → AI turned Grok's terminal off, so every run_terminal_command is denied
 // without a card (checked before an earlier "always" too), and
 // onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
@@ -79,7 +79,7 @@ function startHttp({ tools, extraTools = null, callTool, enabled = () => true, o
   // deny -- same fail-closed default as an unreachable gate). No onTerminalApproval wired up (a
   // caller that never expects Grok to reach this far): deny, same as before this existed.
   async function terminalDecision(run, msg) {
-    if (!terminalEnabled()) return DENY("Terminal commands are turned off in Lumen (Settings → AI and agents). Do not try again: answer with Lumen's browser tools only.");
+    if (!terminalEnabled()) return DENY("Terminal commands are turned off in Lumen (Settings → AI). Do not try again: answer with Lumen's browser tools only.");
     if (run.chatSessionId && chatSessionsAllowed.has(run.chatSessionId)) return null;
     if (!onTerminalApproval) return DENY("Lumen isn't set up to approve terminal commands here.");
     const command = terminalCommand(msg);

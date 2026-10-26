@@ -62,7 +62,7 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, e
   const session = OA.createSession({
     tokenUrl: () => ep('msToken'), post: formPost, now, provider: PROVIDER,
     load: creds, save,
-    messages: () => ({ reconnect: 'Microsoft ended the sign-in. Connect again in Settings → AI and agents → Connectors.', client: 'Microsoft stopped accepting this sign-in app. Connect again in Settings; if that fails, paste your own app’s client ID on the card.' }),
+    messages: () => ({ reconnect: 'Microsoft ended the sign-in. Connect again in Settings → Apps and connections.', client: 'Microsoft stopped accepting this sign-in app. Connect again in Settings; if that fails, paste your own app’s client ID on the card.' }),
   });
 
   let flow = null;

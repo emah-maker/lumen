@@ -1,5 +1,5 @@
 // The chat's own reasoning effort (the Effort row of the composer's model menu): which levels each model offers, how a chat's
-// level (messages.settings.effort) is resolved against Settings → AI and agents → AI providers, and what each engine is given. Plain Node.
+// level (messages.settings.effort) is resolved against Settings → AI → AI providers, and what each engine is given. Plain Node.
 const effort = require('../../src/ai/effort');
 const { Agent, MODELS } = require('../../src/ai/agent');
 const claudeCode = require('../../src/ai/claude-code');

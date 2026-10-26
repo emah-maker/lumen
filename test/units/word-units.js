@@ -90,7 +90,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   // ---- the setting: on by default, and nothing loads at startup
   {
     const backend = read('src/settings/settings-backend.js');
-    check('setting: aiWordControl is on by default (Settings → AI and agents keeps the switch)', /aiWordControl: true,/.test(backend) && /toggle\('aiWordControl'/.test(read('src/renderer/settings.js')) && /"settings\.ai\.wordControl": "Let the AI use Microsoft Word"/.test(read('src/locales/en.json')));
+    check('setting: aiWordControl is on by default (Settings → AI keeps the switch)', /aiWordControl: true,/.test(backend) && /toggle\('aiWordControl'/.test(read('src/renderer/settings.js')) && /"settings\.ai\.wordControl": "Let the AI use Microsoft Word"/.test(read('src/locales/en.json')));
     const fia = read('src/renderer/settings.js'); const en = read('src/locales/en.json');
     check('setting: aiFilesInApps is app | auto | file, auto by default, on the AI page above the Word switch, with English strings', backend.includes("aiFilesInApps: 'auto'") && backend.includes("case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null)") && fia.indexOf("select('aiFilesInApps'") > fia.indexOf("toggle('aiDesktopControl'") && fia.indexOf("select('aiFilesInApps'") < fia.indexOf("toggle('aiWordControl'") && en.includes('"settings.ai.filesInApps": "Work on files in their apps"') && en.includes('"settings.ai.filesInApps.file": "From the file"'));
     check('setting: the switch sits below the desktop-app ones', read('src/renderer/settings.js').indexOf("toggle('aiWordControl'") > read('src/renderer/settings.js').indexOf("toggle('aiDesktopControl'"));
@@ -133,7 +133,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
 
   {
     const r = makeRig({ enabled: false });
-    check('off: with the switch off the tool says how to turn it on and touches nothing', /Settings → AI and agents/.test(await rejects(() => r.word.run({ action: 'list' }, r.ctx)) || '') && r.store.calls.length === 0);
+    check('off: with the switch off the tool says how to turn it on and touches nothing', /Settings → AI/.test(await rejects(() => r.word.run({ action: 'list' }, r.ctx)) || '') && r.store.calls.length === 0);
     const r2 = makeRig({ platform: 'darwin' });
     check('other systems: a plain "Windows for now" and the file route is named; nothing is started', /Windows for now/.test(await rejects(() => r2.word.run({ action: 'list' }, r2.ctx)) || '') && /Windows for now/.test(await rejects(() => r2.word.run({ action: 'replace', find: 'a' }, r2.ctx)) || ''));
     const r3 = makeRig({ installed: false });
@@ -417,7 +417,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('docx: a heading matches without case, by start or by part, in unicode', (await docx.readDocx(headed.buf)).text.split('\n')[1] === 'hit by lower case');
   }
 
-  // ---- Settings → AI and agents → Work on files in their apps (aiFilesInApps): app | auto | file
+  // ---- Settings → AI → Work on files in their apps (aiFilesInApps): app | auto | file
   {
     const real = path.join(tmp, 'Mode test.docx');
     const maker = makeRig({ installed: false });

@@ -12,7 +12,7 @@
 //     first page of a large file before it has all of it. Only the viewer itself may ask (Sec-Fetch-Site: same-origin).
 //   - A tab that goes to a PDF (an address ending .pdf, or a response that turns out to be application/pdf) is sent to
 //     lumen-pdf://app/viewer.html?u=<that address>; the address bar keeps showing the PDF's own address (displayUrl).
-//   - Settings → General → Downloads → "Open PDFs with": Lumen's viewer (default) or Chrome's. PDFs embedded in a page (<embed>,
+//   - Settings → Downloads and files → "Open PDFs with": Lumen's viewer (default) or Chrome's. PDFs embedded in a page (<embed>,
 //     <iframe>) and downloads are left alone.
 const fs = require('fs');
 const path = require('path');

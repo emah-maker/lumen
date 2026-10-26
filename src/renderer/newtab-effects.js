@@ -402,7 +402,7 @@
     }
     if (document.hidden) run.onVisibility(); else run.raf = requestAnimationFrame(frame);
   };
-  // The same effects as a small picture: Settings → Home draws one on the preview's canvas (renderer/settings-preview.js). The scene is simulated at a
+  // The same effects as a small picture: Settings → New tab page draws one on the preview's canvas (renderer/settings-preview.js). The scene is simulated at a
   // page-sized stage (so the particle counts, speeds and sizes are what the page has) and drawn scaled down onto the canvas. Several independent
   // previews never share state with the page's own run above; only the shared `style` size is set before each step.
   //   const fx = createEffectPreview(canvas, { stageW, stageH });   fx.set({ name, color, amount, speed, size, text, accent, animate }); fx.stop();

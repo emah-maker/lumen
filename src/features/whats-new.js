@@ -144,7 +144,7 @@ function createWhatsNew(deps) {
     return present(releasesBetween(releases(), stored, current), { from: cleanVersion(stored) });
   }
 
-  // Help → What's New… and Settings → Updates: the running version's notes and the few before it.
+  // Help → What's New… and Settings → Updates and about: the running version's notes and the few before it.
   function open() {
     const current = deps.app.getVersion();
     const list = releases().filter((r) => compareVersions(r.version, current) <= 0).sort((a, b) => compareVersions(b.version, a.version)).slice(0, ON_DEMAND);

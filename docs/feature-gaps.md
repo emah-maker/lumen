@@ -21,7 +21,7 @@ Each item is wired into its menus, has a shortcut where browsers usually have on
 | **New Window** | `Ctrl+N` / `Cmd+N`, ⋯ → New Window, File → New Window (macOS; works with no window open). Opens a normal window with one new tab, offset from the window in front. |
 | **Close Window** | `Ctrl+Shift+W` / `Shift+Cmd+W`, File → Close Window (macOS). |
 | **Page info** | Click the lock (or **Not secure**) beside the address, press Enter on it, or go to ⋯ → This Page → Site Information… The menu shows the site and its connection, **Ask / Allow / Block** for location, camera and microphone, notifications and clipboard, the site's remembered zoom with a reset, how many cookies it has, **Clear Cookies and Site Data…** (asks first), and **Site Settings…** |
-| **Link and image menu** | Right-click a link for **Open Link in New Window**, **Open Link in Private Window** and **Save Link As…**. Right-click an image for **Save Image As…** and **Copy Image Address**. Save … As always asks where to save, whatever Settings → General → Downloads says. The page menu gets **Print…**. |
+| **Link and image menu** | Right-click a link for **Open Link in New Window**, **Open Link in Private Window** and **Save Link As…**. Right-click an image for **Save Image As…** and **Copy Image Address**. Save … As always asks where to save, whatever Settings → Downloads and files says. The page menu gets **Print…**. |
 | **Per-site zoom, remembered** | A zoom you set by hand (`Ctrl+=` / `Ctrl+-`) is kept for that site across restarts (`siteZoom` in settings.json). `Ctrl+0` or the zoom pill forgets it. |
 | **Crash recovery** | If Lumen didn't quit normally and **On startup** is set to open a new tab or specific pages, the next launch asks "Lumen didn't shut down correctly. Restore the N tabs you had open?" (**Not Now / Restore**). With **Continue where you left off** (the default), the tabs come back anyway, so it doesn't ask. |
 | **Keyboard Shortcuts** | `Ctrl+Shift+/` (`Ctrl+?`), ⋯ → Keyboard Shortcuts, or Help → Keyboard Shortcuts on macOS. A sheet lists every shortcut for the platform you're on. |
@@ -36,7 +36,7 @@ Polish in the same round:
 - The error page names what went wrong and what to try for the common network errors ("You're offline", "This site can't be found: check the address for a typo", "refused to connect", "took too long to respond", a redirect loop with a hint to clear the site's cookies, the ad blocker), instead of one "Can't open this page" for all of them.
 - English strings that bypassed `t()` now go through it: the page menu's Save Page As and View Page Source, the video menu (Picture in Picture, Open Video in New Tab, Copy Video Address), the spelling items (No Spelling Suggestions, Add to Dictionary), the risky-download prompt, the Open File dialog and the Export Chat dialog.
 - Windows high contrast (forced colors): the active and selected tabs, pressed toolbar buttons, the address field, focus rings and Settings' switches stay visible. Before, they were drawn with backgrounds the system flattens.
-- Settings → Updates has **Copy version details** and **Report a problem**, for bug reports.
+- Settings → Updates and about has **Copy version details** and **Report a problem**, for bug reports.
 - On macOS the UI's shortcut hints read the Mac way (New tab (⌘T), Search tabs (⇧⌘A)) instead of "Ctrl+".
 - The lock is now a real, focusable button with a focus ring, an accessible name and `aria-haspopup`. Before, it was a picture with a tooltip.
 
@@ -76,7 +76,7 @@ Polish in the same round:
 | **Startup and home** | Startup pages; no home button | Optional home button | — | Homepage | Partial | No: the new-tab page is the home, and Arc and Safari's default toolbars have no home button either | S |
 | **Full screen** | F11 and macOS full screen | Same, plus presentation mode | Same | Same | Have | — | — |
 | **Address bar** | Inline completion, history and seed suggestions, search engine choice, Ask the AI (`Alt+Enter`) | Remote suggestions, site search keywords, paste and go | Same | Same | Partial: no remote search suggestions, no keywords | Remote suggestions: no (they send every keystroke to the search engine, against "private by default"). Keywords: later. Speed is being reworked separately | M |
-| **About and version** | Settings → Updates (versions, paths), Internals, macOS About panel (added) | `chrome://version` | Same | About Safari | Have | — | — |
+| **About and version** | Settings → Updates and about (versions, paths), Internals, macOS About panel (added) | `chrome://version` | Same | About Safari | Have | — | — |
 | **Task manager** | Settings → Advanced (every process, memory and CPU) | Shift+Esc window, end process | Same | Activity Monitor | Partial: no end process | Later | S |
 | **Fonts** | Font size and minimum font size | Plus font families | Same | Same | Partial | No: rarely changed | S |
 | **Media hub and autoplay** | — | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Missing | Later: a small media button for tabs playing audio would fit the tab strip, which already shows audio | M |

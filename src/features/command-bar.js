@@ -10,10 +10,7 @@ const MAX_BOOKMARKS = 500;
 const MAX_URL = 300; // a longer link stays in History but is poor to show (as in the address bar's suggestions)
 
 // What a Settings section id may be (the sections of lumen://settings the bar lists).
-const SECTION_IDS = ['general', 'appearance', 'home', 'tabs', 'privacy', 'ai', 'updates', 'advanced', 'search', 'downloads', 'languages', 'startup',
-  'default-browser', 'focus', 'accessibility', 'system', 'reset', 'ai-providers', 'ai-keys-page', 'connectors', 'connect-agents',
-  'external-apps', 'routines', 'skills', 'macros', 'usage', 'telegram', 'widgets', 'clock-greeting', 'site-permissions', 'site-data',
-  'passwords', 'extensions', 'task-manager', 'internals'];
+const SECTION_IDS = ['general', 'appearance', 'accessibility', 'ai', 'apps', 'home', 'tabs', 'privacy', 'downloads', 'updates', 'advanced', 'search', 'startup', 'default-browser', 'reset', 'languages', 'sync', 'focus', 'ai-answers', 'ai-keys-page', 'ai-providers', 'ai-memory', 'ai-approvals', 'ai-tabs', 'ai-helpers', 'ai-chat', 'ai-computer', 'ai-privacy', 'ai-agents', 'routines', 'skills', 'macros', 'usage', 'mcp-servers', 'home-background', 'home-effect', 'widgets', 'tabs-groups', 'tabs-sleep', 'privacy-clear', 'privacy-tracking', 'privacy-adblock', 'privacy-passwords', 'privacy-safe', 'site-permissions', 'site-data', 'extensions-page', 'downloads-recent', 'about-lumen', 'system', 'adv-network', 'automation', 'adv-diagnostics', 'task-manager', 'internals', 'connect-agents', 'external-apps', 'telegram', 'clock-greeting', 'passwords'];
 
 // d: { history() -> Map, bookmarks() -> [], isWebUrl(url), act: { name: () => void } }. act holds one function per command id below
 // (the names are the ids with the dashes made camelCase), main.js fills it with the same functions the menus and keys call.

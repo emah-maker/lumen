@@ -116,7 +116,7 @@ process.stdin.on('data', (d) => {
   const before = await pics();
   await send('draw a small blue paper plane icon');
   const off = await notices();
-  check('full access off: the notice says what to do', off.some((n) => /can't make pictures/.test(n) && /full access/.test(n) && /Settings → AI and agents/.test(n) && /model menu/.test(n)), J(off));
+  check('full access off: the notice says what to do', off.some((n) => /can't make pictures/.test(n) && /full access/.test(n) && /Settings → AI/.test(n) && /model menu/.test(n)), J(off));
   check('full access off: the run is the locked-down one, and its reply\'s paths show nothing', lastRun().argv.includes('dontAsk') && lastRun().argv.includes('--tools') && (await pics()) === 0 && before >= 0, J(lastRun().argv));
 
   check('no UI errors', errors.length === 0, errors.join('; '));

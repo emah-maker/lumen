@@ -1923,7 +1923,7 @@ const WIDGET_RENDERERS = {
           b.addEventListener('click', () => filePick(kind));
           acts.append(b);
         }
-        if (!data.remember) { // Remember files I open is off: one click turns it on (Settings > General > Files has it too)
+        if (!data.remember) { // Remember files I open is off: one click turns it on (Settings > Downloads and files > Files has it too)
           const on = el('button', 'w-btn fl-turn-on', ft('files.card.turnOn', 'Turn on'));
           on.type = 'button';
           on.addEventListener('click', () => filesDo(() => globalThis.lumenFiles.remember()));

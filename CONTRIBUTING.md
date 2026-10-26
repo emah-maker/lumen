@@ -4,7 +4,7 @@ Thanks for helping. Lumen is a small project, so the process is light.
 
 ## Before you start
 
-- For a bug, open an issue with the steps to reproduce it, what you expected and what happened. Include your OS and the Lumen version (**Settings → Updates**).
+- For a bug, open an issue with the steps to reproduce it, what you expected and what happened. Include your OS and the Lumen version (**Settings → Updates and about**).
 - For a feature or a larger change, open an issue first so we can agree on the approach before you write code.
 - **Security problems:** don't open a public issue. Use GitHub's private vulnerability reporting (**Security → Report a vulnerability**) on this repository.
 

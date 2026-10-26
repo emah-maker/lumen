@@ -1,4 +1,4 @@
-// "Keep Codex connected" (Settings -> AI and agents, key codexKeepConnected, on by default): each sidebar chat that talks to
+// "Keep Codex connected" (Settings -> AI, key codexKeepConnected, on by default): each sidebar chat that talks to
 // Codex gets its own long-lived `codex app-server` process, which stays up between the chat's messages, so a later message
 // skips everything a new `codex exec` does before the model is asked.
 //

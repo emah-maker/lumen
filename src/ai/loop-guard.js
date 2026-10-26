@@ -46,7 +46,7 @@ class RepeatDetector {
 // any) goes on the results of step N, whether step N is the last one (answer in text, tools off), and
 // what to say about run_script. Nothing here blocks a tool; it only advises and picks the wrap-up turn.
 const SAFETY_CEILING = 1000; // "Unlimited" still ends, gracefully, here
-const STEP_CHOICES = [30, 60, 120, 250]; // Settings → AI and agents → Max steps per task; 0 = Unlimited
+const STEP_CHOICES = [30, 60, 120, 250]; // Settings → AI → Max steps per task; 0 = Unlimited
 // The saved setting -> a step limit: a positive whole number, or 0 for unlimited (also for anything unreadable).
 const stepLimit = (v) => (Number.isInteger(v) && v > 0 ? Math.min(v, SAFETY_CEILING) : 0);
 const SCRIPT_FREE = 2; // run_script calls per run before each further one carries a "use a dedicated tool" note
