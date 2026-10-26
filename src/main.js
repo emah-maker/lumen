@@ -298,7 +298,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -5294,7 +5294,9 @@ const downloads = createDownloads({
   askWhereToSave: () => settingsBackend.askWhereToSave(),
   askOnce: (urls) => saveAsMarks.take(urls), // Save Link As… / Save Image As…
   toast: (text) => toast(text), // "Downloading report.pdf", "Download failed: report.pdf"
-  blocked: (contents) => Boolean(contents && agentContents.has(contents)), // [agent window] an agent's page saves nothing to the user's disk and opens no save dialog
+  // [agent window] an agent's page: its download waits for the user's yes, asked in their own window (features/downloads.js askAboutAgent)
+  agentOf: (contents) => (contents && agentContents.has(contents) ? tabByContents(contents)?.rec?.agent?.label || 'An AI agent' : ''),
+  userWin: () => [focusedRec(), curRec, ...winRecs].find((r) => r && rcAlive(r) && winRecs.has(r) && !r.agent && !isSpare(r))?.win || null,
   onChange: () => { managers?.pushDownloads(); if (downloads.list.length) warmDownloadsPanelSoon(); }, // (a download exists: the button is showing)
   onOpened: (file) => { filesApi().note(file, { source: 'download' }).catch(() => {}); }, // [files] a download the user opened goes on the Recent list
   onPin: (file) => { filesApi().pinPath(file).then((e) => { if (e) toast(t('files.pinned', { name: e.name })); }).catch(() => {}); }, // [files] "Pin to Files" on a download
@@ -8191,7 +8193,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     minWidth: 800,
     minHeight: 500,
     title: agentOf ? agentWindowTitle(agentOf.label) : 'Lumen',
-    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode, ~50 ms of the main process; the taskbar shows the app's own)
+    ...(agentOf ? {} : { icon: WINDOW_ICON }), // (an agent's window: no icon to decode here, ~50 ms of the main process; it gets Lumen's icon once its UI is loading, below)
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7',
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 13 } }
@@ -8298,8 +8300,10 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r))) { closeSpare(); closeDragCard(); } // no windows left to tear a tab off
     const next = [...winRecs].find((r) => rcAlive(r) && !isSpare(r) && !r.agent) || [...winRecs].find((r) => rcAlive(r) && !isSpare(r));
     if (next) enterWindow(next);
-    // [agent window] The user's last window closed: an agent's window does not keep Lumen running on its own.
-    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r)) r.win.close();
+    // [agent window] The user's last window closed: an agent's window whose session has ended (or is in its grace period) goes with it, but one an agent
+    // is still working in stays open, and Lumen with it, until that session ends (agentWindows.release then closes it, and Lumen quits as the last
+    // window goes). Closing their own window used to take the agent's work down mid-task.
+    if (![...winRecs].some((r) => rcAlive(r) && !isSpare(r) && !r.agent)) for (const r of [...winRecs]) if (r.agent && rcAlive(r) && !agentWindows.inUse(r)) r.win.close();
     refreshWindowMenu(); // a window closed
   });
   // The browser UI's own page crashed: reload it and send it the tabs again, instead of leaving a
@@ -8375,7 +8379,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
   w.on('blur', hideSuggestions);
   // [agent window] Making the window (~5 ms), showing it (~2-5 ms) and starting its UI's load (~3 ms) are each a turn of their own: in one they
   // were a 12 ms stall of the main process, which other sessions' calls were then waiting behind (test/mcp-perf.js).
-  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); }, w); }, w);
+  // (its icon comes in a turn of its own after the UI: made without one, Windows showed Lumen.exe's own, Electron's, on its taskbar button and preview)
+  if (agentOf) agentStep(() => { showWindow(); agentStep(() => { w.loadFile(UI_HTML).catch(() => {}); agentStep(() => { try { if (!w.isDestroyed()) w.setIcon(WINDOW_ICON); } catch { /* the app's own icon stays */ } }, w); }, w); }, w);
   else w.loadFile(UI_HTML);
   // A window's first tabs open as soon as extensions and the filter lists are ready (tabsGate), while its UI is still
   // loading: the first page's renderer starts and its page loads alongside the UI instead of after it (~150 ms sooner
@@ -8854,6 +8859,16 @@ const connectorsGoogleReal = {
 };
 const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
 let connectorsLive = null;
+// [connectors] The Google and Microsoft sign-ins' own requests (the code traded for a token, a refresh): Chromium's network first (the profile's
+// proxy), then Node's own when that one could not send the request at all. Something in the default session (an ad-block list, an extension, a
+// proxy setting) left "Sign in with Google" at "Couldn't reach Google" right after the user signed in, with the network fine. Only the sign-in
+// addresses take this path; a connector's own calls never go twice (a write must not be repeated).
+async function signInFetch(url, options = {}) {
+  try { return await net.fetch(url, { ...options, credentials: 'omit' }); } catch (err) {
+    if (options.signal?.aborted) throw err;
+    try { return await globalThis.fetch(url, options); } catch (again) { again.firstTry = err; throw again; }
+  }
+}
 const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
   userData: app.getPath('userData'),
   secrets: {
@@ -8877,6 +8892,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Google Drive and Sheets: one Google sign-in in the user's own browser (features/connectors/google-auth.js). Lumen's built-in Google
   // client, unless the user typed their own for the Gmail widget (that one wins, as it does there). Tests point it at 127.0.0.1.
   workspace: {
+    fetch: signInFetch,
     builtin: () => require('./features/google-client').builtinClient(),
     own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
     openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
@@ -8886,6 +8902,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Outlook, OneDrive and Outlook Calendar: one Microsoft sign-in in the user's own browser (features/connectors/microsoft-auth.js), Lumen's built-in
   // Microsoft app unless the user typed their own client ID on a card. Tests point it at 127.0.0.1.
   microsoft: {
+    fetch: signInFetch,
     builtin: () => require('./features/microsoft-client').builtinClient(),
     openExternal: (url) => { if (!/^https:\/\/login\.microsoftonline\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
     canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
@@ -8921,6 +8938,9 @@ const connectorsFacade = {
   isWrite: (input) => connectorsSvc().isWrite(input),
   describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
+  pageTarget: (input) => connectorsSvc().pageTarget(input), // [canvas pages] Canvas is read from its pages in a tab (agent.js runCanvasPages): where, that the sign-in is good, or that it ended
+  pageOk: (id) => connectorsSvc().pageOk(id),
+  pageSignedOut: (id) => connectorsSvc().pageSignedOut(id),
   list: () => connectorsSvc().list(),
 };
 ipcMain.handle('connectors:list', () => connectorsSvc().list());
@@ -9150,6 +9170,7 @@ const agent = new Agent({
   autoFallback: fallbackOn, fallbackOptions: () => modelOptions(), onFallback: () => modelsChanged(), // [model fallback] the picker shows the stand-in
   autoRoute, autoEscalate, autoDeny: (id) => autoDenied.add(id), onAuto: () => modelsChanged(), // [auto model] ai/auto-model.js
   chatAutocomplete: () => readSettings().chatAutocomplete !== false, // [autocomplete] Settings → AI → Tab to finish what I'm typing (agent.js autocomplete)
+  replySuggestions: () => readSettings().replySuggestions !== false, // [reply suggestions] Settings → AI → Suggest replies (agent.js replySuggestions)
   boardChanged: (chat) => researchChanged(chat), // [research] the AI added to the chat's research board (ai/research-tools.js): the panel redraws, the chat is saved
   memory: { // [memory] Settings → AI → Instructions and memory (ai/memory.js): the memory tool's store, and which chat a run belongs to
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
@@ -10926,7 +10947,7 @@ function noteThumbs(run, msg, push) {
   if (msg.type === 'tool' || msg.type === 'tool_done' || msg.type === 'done') thumbAiTabs.at = 0; // (a step may have opened or closed a tab: the next frame asks again)
   if (msg.type === 'tool') {
     const name = String(msg.name || '');
-    if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
+    if (msg.id && stepLabelsLib.surfaceOf(name, msg.input) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
       (run.toolInputs ||= new Map()).set(msg.id, msg.input);
       if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
@@ -10950,7 +10971,7 @@ function noteThumbs(run, msg, push) {
   } else if (msg.type === 'tool_done') {
     const name = run.toolNames?.get(msg.id);
     if (name && /(^|__)close_tab$/.test(name)) run.thumbHold = null;
-    if (name && /(^|__)open_tab$/.test(name) && msg.ok !== false && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now
+    if (name && (/(^|__)open_tab$/.test(name) ? msg.ok !== false : name === 'connector') && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now (a Canvas read: the tab it read in)
       run.thumbTarget = { kind: 'tab', tabId: msg.tabId };
       const ev = thumbTargetEvent(run);
       if (ev) push(ev);
@@ -11116,6 +11137,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
+    }
+    if (msg.type === 'tool_done' && Number.isInteger(run.tabId)) { // [canvas pages] a Canvas read works in a background tab of its own: the step names it, ended or failed (a sign-in page is worth opening)
+      const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
+      if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
     if (msg.type === 'card_files' && run.doneMsg && !run.deleted) { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); } // (files listed after the run ended: kept too)
@@ -11335,6 +11360,25 @@ ipcMain.handle('agent:autocomplete', async (event, prefix) => {
   }
 });
 ipcMain.on('agent:autocomplete-cancel', (event) => { autocompleteRuns.get(event.sender.id)?.abort(); });
+// [reply suggestions] Follow-ups for the chips under the reply that just ended (agent.js replySuggestions). One request per view: a newer one stops
+// the one before. `chatId`: the chat the view shows; a view that has moved to another chat since gets nothing (its chips would be for the wrong chat).
+const replySuggestRuns = new Map(); // sender id -> AbortController
+ipcMain.handle('agent:reply-suggest', async (event, forChat) => {
+  if (readSettings().replySuggestions === false) return { ok: false, error: 'off', items: [] };
+  replySuggestRuns.get(event.sender.id)?.abort();
+  const ctrl = new AbortController();
+  replySuggestRuns.set(event.sender.id, ctrl);
+  const { messages, id } = readForSender(event, () => ({ messages: agent.messages, id: chatId }));
+  if (forChat != null && id != null && String(forChat) !== String(id)) return { ok: false, error: 'moved', items: [] };
+  try {
+    const r = await agent.replySuggestions({ messages, signal: ctrl.signal });
+    return { ok: r.ok, items: Array.isArray(r.items) ? r.items : [], error: r.error };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200), items: [] };
+  } finally {
+    if (replySuggestRuns.get(event.sender.id) === ctrl) replySuggestRuns.delete(event.sender.id);
+  }
+});
 // New chat; `temporary`: one that is never saved (chats:temporary).
 function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);

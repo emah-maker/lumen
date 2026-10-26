@@ -2104,6 +2104,9 @@ function finishTurn(event, { early }) {
   }
   // After Stop, or a reply that failed, the waiting messages are not sent on their own: they come back to the box (below).
   const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
+  // [reply suggestions] A reply that ended on its own, with nothing queued to go next: the chips under it (renderer/reply-suggest.js).
+  const clean = !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
+  document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean, text: turn.text?.source || '', bubble: turn.text || null, chatId: shownChatId } }));
   finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);

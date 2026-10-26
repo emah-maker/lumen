@@ -183,6 +183,7 @@ contextBridge.exposeInMainWorld('assistant', {
   onBtw: on('agent:btw-event'),
   autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''), // [autocomplete] a guess at the rest of the message being typed (renderer/chat-autocomplete.js)
   autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
+  replySuggest: (chatId) => ipcRenderer.invoke('agent:reply-suggest', typeof chatId === 'string' || typeof chatId === 'number' ? chatId : null), // [reply suggestions] follow-ups for the chips under the reply that just ended (renderer/reply-suggest.js)
   // The chat history list (renderer/chats.js)
   // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
   images: {
