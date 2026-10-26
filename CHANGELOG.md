@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.72 (2026-10-25)
+
 - **Sign in with Google works out of the box.** Release builds now include Lumen's own Google client, so Gmail, Google Drive and Google Sheets connect with one click and no Google Cloud setup. A client you pasted under Gmail → Advanced still wins over the built-in one. Google shows an "unverified app" notice on the consent page until the app is verified.
 
 ## 0.5.71 (2026-10-25)
