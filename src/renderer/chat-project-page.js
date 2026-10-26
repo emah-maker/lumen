@@ -225,8 +225,7 @@
         main = el('span', { className: 'pjp-row-main' }, field);
         queueMicrotask(() => { field.focus(); field.select(); });
       } else {
-        const text = [el('span', { className: 'pjp-row-name', textContent: nameOf(it), title: it.type === 'file' ? it.f.name : it.l.url }), el('span', { className: 'pjp-row-meta', textContent: metaOf(it) })];
-        if (it.type === 'file' && it.f.summary) text.push(el('span', { className: 'pjp-row-sum', textContent: it.f.summary }));
+        const text = [el('span', { className: 'pjp-row-name', textContent: nameOf(it), title: it.type === 'file' ? [it.f.name, it.f.summary].filter(Boolean).join('\n') : it.l.url }), el('span', { className: 'pjp-row-meta', textContent: metaOf(it) })];
         if (it.type === 'file') main = el('span', { className: 'pjp-row-main' }, ...text);
         else {
           main = el('button', { type: 'button', className: 'pjp-row-main pjp-row-open', title: it.l.url });

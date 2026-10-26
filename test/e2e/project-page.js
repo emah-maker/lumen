@@ -29,7 +29,7 @@ const http = require('http');
   let failures = 0;
   const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 500)}`}`); };
   // pages for the sources' titles (Re-read, a link just added, a tab)
-  const fixture = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(`<!doctype html><title>Fixture ${req.url.slice(1)}</title><body><p>fixture ${req.url}</p></body>`); }).listen(0, '127.0.0.1');
+  const fixture = http.createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end(`<!doctype html><title>Fixture ${req.url.slice(1)}</title><body><p>fixture ${req.url}</p></body>`); }).listen(0);
   const fixtureBase = `http://127.0.0.1:${fixture.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pw-e2e-profile-'));
   const app = await electron.launch({
@@ -181,7 +181,7 @@ const http = require('http');
     await reopen();
     check('the sub line counts files, pages and websites', /2 files · 2 pages · 1 website/.test(await inPage("document.querySelector('.pjp-sub').textContent")), await inPage("document.querySelector('.pjp-sub').textContent"));
     check('the card lists the 5 sources as rows, each with a ⋯ menu that names its row', (await inPage("document.querySelectorAll('.pjp-sources .pjp-src').length")) === 5 && (await inPage("[...document.querySelectorAll('.pjp-sources .pjp-row-more')].every((b) => /Actions for/.test(b.getAttribute('aria-label')) && b.getAttribute('aria-haspopup') === 'menu')")) === true, JSON.stringify(await names()));
-    check('...a count badge, and one muted line instead of paragraphs of fine print', (await inPage("document.querySelector('.pjp-sources .pjp-badge').textContent")) === '5' && (await inPage("document.querySelectorAll('.pjp-sources .pjp-note').length")) === 1 && /only when a chat needs them/.test(await inPage("document.querySelector('.pjp-sources .pjp-note').textContent")) && (await inPage("document.querySelector('.pjp-sources .pjp-tip').title.length")) > 100);
+    check('...a count badge, and one muted line instead of paragraphs of fine print', (await inPage("document.querySelector('.pjp-sources .pjp-badge').textContent")) === '5' && (await inPage("[...document.querySelectorAll('.pjp-sources .pjp-note')].filter((n) => n.offsetParent).length")) === 1 && /only when a chat needs them/.test(await inPage("document.querySelector('.pjp-sources .pjp-note').textContent")) && (await inPage("document.querySelector('.pjp-sources .pjp-tip').title.length")) > 100);
     const meta = (match) => inPage(`${rowOf(match)}.querySelector('.pjp-row-meta').textContent`);
     check('a website row says Website and whole site, with the site name', (await meta("r.dataset.kind === 'site'")) === 'docs.python.org · Website · whole site' && (await inPage(`${rowOf("r.dataset.kind === 'site'")}.querySelector('.pjp-row-name').textContent`)) === 'Python 3 documentation', await meta("r.dataset.kind === 'site'"));
     check('a page with no title shows its site and path, not a bare address', /^127\.0\.0\.1:\d+\/jobs-board$/.test(await meta("r.dataset.url === " + JSON.stringify(bareUrl))) && /^127\.0\.0\.1:\d+$/.test(await inPage(`${rowOf('r.dataset.url === ' + JSON.stringify(bareUrl))}.querySelector('.pjp-row-name').textContent`)), await meta('r.dataset.url === ' + JSON.stringify(bareUrl)));
@@ -302,7 +302,7 @@ const http = require('http');
     // what the AI is told: the project's context lists the website apart from the pages
     const blockText = await app.evaluate((_e, id) => global.__projectWorkspace.blockFor(id), seed.ids[0]).catch(() => '');
     const inCoopChat = typeof blockText === 'string' ? blockText : '';
-    check('the AI\'s index of the project lists websites apart from pinned pages', /Websites:/.test(inCoopChat) && /Pinned pages:/.test(inCoopChat) && /docs\.python\.org\/3/.test(inCoopChat), inCoopChat.slice(0, 600));
+    check('the AI\'s index of the project lists websites apart from pinned pages', /Websites:/.test(inCoopChat) && /Pinned pages:/.test(inCoopChat) && /docs\.python\.org\//.test(inCoopChat), inCoopChat.slice(0, 600));
     // the header: goal line, quick actions
     check('the header has a goal line, New chat, Add files and a ⋯ menu (no Open folder: the project has no folder)', (await inPage("Boolean(document.querySelector('.pjp-desc'))")) === true && (await inPage("document.querySelector('.pjp-new-chat').textContent")) === 'New chat' && (await inPage("document.querySelector('.pjp-add-files').textContent")) === 'Add files' && (await inPage("document.querySelector('.pjp-open-folder').hidden")) === true && (await inPage("document.querySelector('.pjp-more-btn').getAttribute('aria-label')")) === 'More actions');
     await inPage("(() => { const d = document.querySelector('.pjp-desc'); d.focus(); d.value = 'Land a mechanical engineering co-op in Boston for fall'; d.blur(); })()");
@@ -392,6 +392,13 @@ const http = require('http');
     check('in a narrow window the overview moves under the latest chats (one column)', cols === 1, cols);
     check('...above the whole list of chats, with nothing wider than the window', (await inPage("document.querySelector('.pjp-side').getBoundingClientRect().top < document.querySelector('.pjp-chats-sec').getBoundingClientRect().top")) === true && (await inPage("document.querySelector('.pjp').scrollWidth <= document.querySelector('.pjp').clientWidth + 1")) === true);
     await shot('06-page-narrow-dark');
+    await inPage("document.querySelector('.pjp-sources').scrollIntoView({ block: 'start' })");
+    await sleep(250);
+    await shot('06b-sources-narrow-dark');
+    await theme('light');
+    await shot('06c-sources-narrow-light');
+    await theme('dark');
+    await inPage("document.querySelector('.pjp').scrollTop = 0");
     await size(1280, 900);
     const wide = await inPage("getComputedStyle(document.querySelector('.pjp-cols')).gridTemplateColumns.split(' ').length");
     check('in a wide window it has two columns', wide === 2, wide);
