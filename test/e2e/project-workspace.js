@@ -173,8 +173,8 @@ function makePdf(pages) {
     check('the page opens', opened === true && (await inPage("Boolean(document.getElementById('cp-project-page'))")) === true);
     const text = await inPage("document.getElementById('cp-project-page').innerText");
     check('the page shows instructions, the three files, the pinned page, defaults and memory', (await inPage("document.querySelector('#cp-project-page .pjp-title').value")) === 'Biology thesis' && /budget\.md/.test(text) && /essay\.docx/.test(text) && /bio\.pdf/.test(text) && /Reference page/.test(text) && /Defaults/.test(text) && /kiwi/.test(text), JSON.stringify([/Biology thesis/.test(text), /budget.md/.test(text), /essay.docx/.test(text), /bio.pdf/.test(text), /Reference page/.test(text), /Defaults/.test(text), /kiwi/.test(text)]));
-    const instr = await inPage("document.querySelector('#cp-project-page .pjp-text').value");
-    check('the instructions are in their box', instr === 'Answer in a formal tone.', instr);
+    const instr = await inPage("document.querySelector('#cp-project-page .pjp-instr-text').textContent");
+    check('the instructions are shown as text', instr === 'Answer in a formal tone.', instr);
     await inPage("(async () => { const input = document.querySelector('.pjp-search-input'); input.value = 'dollars'; input.dispatchEvent(new Event('input')); })()");
     await waitFor(async () => /4,000 dollars/.test(await inPage("document.querySelector('.pjp-results').innerText") || ''), 6000);
     check('the page\'s search finds the file passage', /budget\.md/.test(await inPage("document.querySelector('.pjp-results').innerText")), await inPage("document.querySelector('.pjp-results').innerText"));

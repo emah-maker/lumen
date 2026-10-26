@@ -221,9 +221,19 @@ function create(deps) {
   function retarget(id) { runs.setTarget(id); pushTarget(); }
 
   // ---- opening and leaving the page
-  function open() {
+  // `project`: { id, focus? } (the sidebar's project rows): the page opens on that project's own page. A page already open is told; one
+  // opened now takes it with its first state call.
+  function open(project = null) {
+    const had = new Set(chatTabs().map((t) => t.id));
     const id = deps.managersOpen();
     deps.ui()?.send('chat:sidebar', false); // the sidebar folds away: the page has the whole conversation
+    const pid = typeof project?.id === 'string' && project.id.length <= 64 ? project.id : '';
+    if (pid && id != null) {
+      const show = { id: pid, focus: project.focus === 'instructions' ? 'instructions' : '' };
+      const tab = chatTabs().find((t) => t.id === id);
+      if (had.has(id) && tab) tab.view.webContents.send('chat:show-project', show);
+      else drafts.set(id, { text: '', send: false, images: [], project: show });
+    }
     return id;
   }
   // Back (the button, Ctrl+Shift+L, the toolbar's Back, Alt+Left): to the tab looked at last, before the page, and the page closes;
@@ -286,13 +296,13 @@ function create(deps) {
   function register() {
     const { ipcMain } = deps;
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
-    ipcMain.on('chat:open-page', (event) => { if (!deps.isPrivateSender(event)) open(); });
+    ipcMain.on('chat:open-page', (event, projectId, focus) => { if (!deps.isPrivateSender(event)) open(typeof projectId === 'string' ? { id: projectId, focus } : null); });
     ipcMain.handle('chatpage:state', (event) => {
       deps.followPage?.(event);
       const tab = chatTabs().find((t) => t.view.webContents === event.sender);
       const carried = tab ? drafts.get(tab.id) : null;
       if (tab) drafts.delete(tab.id);
-      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), fresh: Boolean(carried?.fresh), images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
+      return { view: deps.chatView(), run: runs.get(), target: targetInfo(), name: deps.userName?.() || '', draft: carried?.text || '', send: Boolean(carried?.send), fresh: Boolean(carried?.fresh), project: carried?.project || null, images: (carried?.images || []).map((i) => ({ type: i.type, name: i.name, data: i.data })) };
     });
     ipcMain.on('chatpage:back', () => back());
     ipcMain.on('chatpage:home', (event) => { if (isChatSender(event)) home(chatTabs().find((t) => t.view.webContents === event.sender)?.id); });

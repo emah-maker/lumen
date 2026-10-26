@@ -25,31 +25,7 @@ body.cp-temporary #cp-temp { color: var(--accent); }
 body.cp-temporary .sidebar-head { box-shadow: inset 0 -2px 0 var(--accent-soft); }
 body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 
-/* ---------- Projects in the rail ---------- */
-.cp-projects { flex: none; max-height: 34%; overflow-y: auto; margin: 0 0 var(--cp-2); padding: 0; }
-.cp-projects[hidden] { display: none; }
-.cp-pj-head { display: flex; align-items: center; justify-content: space-between; padding: var(--cp-1) var(--cp-1) 0 10px; }
-.cp-pj-title { font-size: 12px; font-weight: 500; color: var(--muted); }
-.cp-pj-add { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
-.cp-pj-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-.cp-pj { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; box-sizing: border-box; border: none; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
-.cp-pj:hover, .cp-pj.on { background: var(--cp-row); }
-.cp-pj-icon { flex: none; display: inline-flex; color: var(--muted); }
-.cp-pj-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
-.cp-pj-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.cp-pj-count { flex: none; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.cp-pj:focus-visible, .cp-pj-add:focus-visible, .cp-pj-tools .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* the editor */
-.cp-pj-dialog { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: rgb(0 0 0 / 0.32); animation: cp-fade var(--t-base) ease-out; }
-.cp-pj-box { width: min(480px, calc(100% - 32px)); box-sizing: border-box; display: flex; flex-direction: column; gap: var(--cp-2); padding: var(--cp-3); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--hairline), 0 24px 64px -16px rgb(0 0 0 / calc(1.2 * var(--shadow-k))); }
-.cp-pj-box h2 { margin: 0 0 var(--cp-1); font-size: 16px; font-weight: 600; }
-.cp-pj-input, .cp-pj-text { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 14px; }
-.cp-pj-text { resize: vertical; min-height: 120px; line-height: 1.45; }
-.cp-pj-input:focus, .cp-pj-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.cp-pj-note { margin: 0; font-size: 12px; color: var(--muted); }
-.cp-pj-buttons { display: flex; justify-content: flex-end; gap: var(--cp-2); margin-top: var(--cp-1); }
-.cp-pj-delete { margin-right: auto; color: var(--danger); }
 
 /* "Move to project" */
 .cp-pj-pick, .cp-retry-menu { position: fixed; z-index: 90; min-width: 200px; max-width: 280px; max-height: 300px; overflow-y: auto; padding: var(--cp-1); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
@@ -92,34 +68,6 @@ mark.cp-hit-word { background: var(--accent-soft); color: inherit; border-radius
 @media (prefers-reduced-motion: reduce) { .msg.cp-hit { animation: none; box-shadow: 0 0 0 3px var(--accent-soft); } .cp-pj-dialog { animation: none; } }
 
 /* ---------- drag chats into projects (renderer/chat-project-drag.js) ---------- */
-.cp-pj-item { position: relative; }
-.cp-pj-item .cp-pj { padding-left: 26px; }
-.cp-pj-chev { position: absolute; left: 4px; top: 6px; width: 20px; height: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer; }
-.cp-pj-chev svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--t-fast) ease-out; }
-.cp-pj-item.open .cp-pj-chev svg { transform: rotate(90deg); }
-.cp-pj-chev:hover { background: var(--hover); }
-.cp-pj-chev:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* the row's own actions: + (new chat here) and ⋯, over the count while the row is hovered, focused or has its menu open */
-.cp-pj-tools { position: absolute; right: 4px; top: 4px; display: flex; gap: 2px; opacity: 0; pointer-events: none; }
-.cp-pj-tools .icon-btn { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
-.cp-pj-tools .icon-btn:hover { background: var(--hover); color: var(--text); }
-.cp-pj-tools svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-.cp-pj-tools .cp-pj-more svg { fill: currentColor; stroke: none; }
-.cp-pj-item:hover .cp-pj-tools, .cp-pj-item:focus-within .cp-pj-tools, .cp-pj-item.menu-open .cp-pj-tools { opacity: 1; pointer-events: auto; }
-.cp-pj-item:hover .cp-pj-count, .cp-pj-item:focus-within .cp-pj-count, .cp-pj-item.menu-open .cp-pj-count { visibility: hidden; }
-.cp-pj-item:hover .cp-pj, .cp-pj-item:focus-within .cp-pj, .cp-pj-item.menu-open .cp-pj { background: var(--cp-row); }
-.cp-pj.on { background: color-mix(in srgb, var(--text) 11%, transparent); font-weight: 500; }
-.cp-pj-actions .cp-pj-pick-item { justify-content: flex-start; gap: 10px; }
-.cp-pj-actions .cp-pj-icon svg { width: 15px; height: 15px; }
-.cp-pj-pick-label { flex: 1; min-width: 0; }
-@media (hover: none) { .cp-pj-tools { opacity: 1; pointer-events: auto; } .cp-pj-count { visibility: hidden; } }
-.cp-pj-chats { display: flex; flex-direction: column; margin: 0 0 var(--cp-1) 26px; padding-left: var(--cp-1); border-left: 1px solid var(--hairline); border-radius: var(--r-sm); }
-.cp-pj-chat { display: flex; align-items: center; width: 100%; min-height: 28px; padding: 0 var(--cp-2); border: none; border-radius: var(--r-md); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
-.cp-pj-chat:hover { background: var(--cp-row); }
-.cp-pj-chat.current { background: var(--accent-soft); }
-.cp-pj-chat:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.cp-pj-chat-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.cp-pj-chats-empty { margin: 0; padding: 4px var(--cp-2); font-size: 12px; color: var(--muted); }
 
 /* a picked row (Ctrl/Shift+click) */
 .cp-list .chat-item.selected { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
@@ -143,16 +91,6 @@ body.cp-dragging, body.cp-dragging * { cursor: grabbing; user-select: none; }
 @media (prefers-reduced-motion: reduce) { .cp-pj-chev svg { transition: none; } }
 :root.pref-reduce-motion .cp-pj-chev svg { transition: none; }
 
-/* [project folders] the project editor's folder section (renderer/chat-projects.js) */
-.cp-pj-folder { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0; padding: 10px; border-radius: 10px; background: var(--hover); }
-.cp-pj-folder h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.cp-pj-path { margin: 0; font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 12px; overflow-wrap: anywhere; }
-.cp-pj-path.missing { color: var(--danger); }
-.cp-pj-folder .cp-pj-line { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.cp-pj-folder .btn.small { min-height: 26px; padding: 0 10px; font-size: 12px; }
-.cp-pj-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
-.cp-pj-check input { margin-top: 3px; }
-.cp-pj-warn { margin: 0; font-size: 12px; color: var(--text); }
 
 /* the project name in a project chat's header (chat-page.js); its page is chat-project-page.css */
 .cp-project-chip { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 9px; border: none; border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--field); cursor: pointer; }

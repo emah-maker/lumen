@@ -199,6 +199,15 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
+    currentProject: () => ipcRenderer.invoke('chats:current-project'), // [projects] the open chat's project, and how many projects there are
+    saveProject: (project) => ipcRenderer.invoke('chats:project-save', project), // [projects] the sidebar's project picker and editor (same calls as lumen://chat)
+    removeProject: (id) => ipcRenderer.invoke('chats:project-delete', id),
+    restoreProject: (id) => ipcRenderer.invoke('chats:project-undo', id),
+    moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
+    restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),
+    newInProject: (projectId) => ipcRenderer.invoke('chats:new-in-project', projectId),
+    pickProjectFolder: () => ipcRenderer.invoke('chats:project-pick-folder'),
+    projectFolder: (id, action, arg) => ipcRenderer.invoke('chats:project-folder', id, action, arg),
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
     share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
@@ -297,7 +306,7 @@ contextBridge.exposeInMainWorld('assistant', {
   focus: { state: () => ipcRenderer.invoke('focus:state'), start: (minutes) => ipcRenderer.invoke('focus:start', minutes), menu: (point) => ipcRenderer.send('focus:menu', point), onState: on('focus:changed') }, // Focus mode (features/focus.js): the toolbar button
   onHistory: on('agent:history'),
   // The chat as a full page (lumen://chat, features/chat-page.js): open it, and hear about the other view
-  openFullPage: () => ipcRenderer.send('chat:open-page'),
+  openFullPage: (projectId, focus) => ipcRenderer.send('chat:open-page', projectId, focus), // a project's id: the page opens on that project's own page
   onRunStart: on('chat:run-start'), // a turn started in the chat page
   onSync: on('chat:sync'), // the chat page switched chats, started a new one or deleted this one
   onAgentTarget: on('agent:target'), // the tab the running task works in ({ id, title, host, front }), or null

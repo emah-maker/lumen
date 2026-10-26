@@ -197,7 +197,7 @@
     });
     drag.refresh();
   }
-  async function newChatInProject(p, text = '') {
+  async function newChatInProject(p, text = '', { model = '', files = [] } = {}) {
     const next = await api.newInProject(p.id).catch(() => null);
     if (!next) return;
     closeProjectPage();
@@ -210,7 +210,10 @@
     await renderList();
     if (narrowQuery.matches && drawerOpen) toggleRail(false);
     prompt.focus();
-    if (text.trim()) { prompt.value = text; prompt.dispatchEvent(new Event('input')); $('composer').requestSubmit(); } // (typed in the project page's box)
+    // (the project page's box: a model picked there is for this chat only, files attached there go with its first message)
+    if (model && $('model').value !== model && await window.assistant.setModel(model).catch(() => false)) { $('model').value = model; $('model').pickerSync?.(); $('model').dispatchEvent(new Event('change')); }
+    if (files.length) await addFiles(files);
+    if (text.trim() || files.length) { prompt.value = text; prompt.dispatchEvent(new Event('input')); $('composer').requestSubmit(); } // (typed in the project page's box)
   }
   // ---- [project workspace] a project's own page (chat-project-page.js, loaded the first time), the name chip in a project chat's header, and
   // "Add this tab to the project" in the + menu
@@ -234,7 +237,7 @@
       api, id, focus,
       host: {
         chats: () => lastChats, projects: () => lastProjects,
-        openChat: (cid) => openChat(cid), newChat: (p, text) => newChatInProject(p, text), editFolder: (p) => editProject(p), moveChats: (ids, pid) => moveChats(ids, pid),
+        openChat: (cid) => openChat(cid), newChat: (p, text, opts) => newChatInProject(p, text, opts), currentModel: () => $('model').value, editFolder: (p) => editProject(p), moveChats: (ids, pid) => moveChats(ids, pid),
         moveToNewProject: (chat) => editProject(null, async (saved) => { await moveChats([chat.id], saved.id); }),
         undoToast: (text, ms, undo) => tools.undoToast(text, ms, undo), toast: (text) => toast(text),
         models: () => [...document.querySelectorAll('#model option')].map((o) => ({ value: o.value, label: o.textContent })),
@@ -371,6 +374,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
   }
   window.assistant.onTarget?.(showTarget);
   showTarget(null);
+  window.assistant.onShowProject?.((p) => { if (p?.id) openProjectPage(p.id, { focus: p.focus }); }); // the sidebar's project row, with this page already open
 
   // ---- the header: export, home, the ⋯ menu (Back to sidebar, AI settings)
   const toast = (text) => {
@@ -437,7 +441,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     if (!first?.fresh || !first.view?.items?.length) return first;
     $('new-chat').click(); // [ask ai new chat] Ask AI with nothing typed: the page opens on a new chat (a reply still running in the old one goes on, in History)
     return (await window.assistant.state().catch(() => null)) || first;
-  }).then(({ view: now, target, name, draft, send, images }) => {
+  }).then(({ view: now, target, name, draft, send, images, project }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
@@ -449,6 +453,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     // Opened mid-reply: the events that follow belong to it. `view.live` is the open chat's own run
     // (a chat left running elsewhere is not this one).
     resumeLive(now?.live);
+    if (project?.id) setTimeout(() => openProjectPage(project.id, { focus: project.focus }), 0); // (the sidebar's project row opened this page)
     // Text typed in the new-tab page's box before Ask AI: asked in a new chat (Enter there), or it waits here as a draft, after any
     // draft this chat already had (never sent).
     // Pictures from that box (newtab-ai:ask) join the same message, through the composer's own attach path.
