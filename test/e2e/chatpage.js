@@ -176,6 +176,14 @@ const fakeClient = (app) => app.evaluate(() => {
   await inPage("document.querySelector('.approval .btn.primary').click()");
   check('Allow on the page answers the agent', await waitFor(async () => JSON.stringify(await app.evaluate(() => global.__resolved)) === '[["a1",true]]'), JSON.stringify(await app.evaluate(() => global.__resolved)));
 
+  // An approval card while the full-page chat is in front stays on the page: the sidebar is not pulled open beside it (it showed the same card).
+  const wasOpen = !(await ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
+  if (wasOpen) await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
+  const hiddenBefore = await waitFor(() => ui.evaluate(() => document.body.classList.contains('sidebar-hidden')));
+  await ui.evaluate(() => window.chatHost.needSidebar());
+  await new Promise((r) => setTimeout(r, 600));
+  check('an approval card does not pull the sidebar open over the full-page chat', hiddenBefore && await ui.evaluate(() => document.body.classList.contains('sidebar-hidden')), `hidden before: ${hiddenBefore}`);
+  if (wasOpen) { await ui.evaluate(() => document.getElementById('toggle-sidebar').click()); await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden'))); }
   // ---- 8. Stop from the page
   await app.evaluate(() => { global.__fake.gate = new Promise((r) => { global.__fake.release = r; }); });
   await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'a long one'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);

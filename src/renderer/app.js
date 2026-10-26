@@ -3096,7 +3096,10 @@ window.assistant.onOpenChat?.(async ({ id } = {}) => {
   await window.chatList?.openChat?.(id);
 });
 window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install: the sidebar opens on its welcome (chat-core.js)
-chatHost.needSidebar = () => { if (document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
+// (not over the full-page chat in front: it shows the same card, and opening the sidebar beside it only repeated it)
+let frontPage = null;
+window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; });
+chatHost.needSidebar = () => { if (frontPage !== 'chat' && document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');
   const name = who.setup ? t('toolbar.aiSetup') : who.name; // nothing connected: the button says what it is for
