@@ -1,8 +1,9 @@
 // lumen://chat > Projects: named groups of chats that share instructions (like Claude Projects and ChatGPT Projects). Only the page
 // uses this file. The data lives in main (features/chat-store.js: `projects` and each chat's optional `project`); this draws the
 // rail's Projects block, the editor (name and instructions) and the "Move to project" picker, and calls the chat page's api.
-//   window.chatProjects.render({ host, projects, chats, active, expanded?, current?, onSelect(id|null), onToggle?(id), onOpen?(id), onAdd(), onEdit(project), onNewChat(project), onPage?(project) })
-//     onPage: the project's own page (chat-project-page.js: instructions, files, pinned pages, memory, defaults, chats)
+//   window.chatProjects.render({ host, projects, chats, active, expanded?, current?, onSelect(id|null), onToggle?(id), onOpen?(id), onAdd(), onEdit(project), onNewChat(project), onPage?(project), onInstructions?(project) })
+//     onPage: the project's own page (chat-project-page.js: instructions, files, pinned pages, memory, defaults, chats); a click on a row opens it
+//     onInstructions: the page with its instructions box in focus (the row's ⋯ menu)
 //     expanded: Set of project ids shown open (their chats listed under them: rows to open, and to drag out: chat-project-drag.js)
 //   window.chatProjects.editor({ api, project, onDone(result) })    result: { saved } or { removed }
 //   window.chatProjects.picker({ api, chat, projects, anchor, onPick?(projectId|null), onDone(), onNew(), onClose?() })
@@ -12,10 +13,15 @@
   const FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>';
   const PLUS = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9"/></svg>';
   const CHEVRON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg>';
+  const MORE = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>';
+  const NOTE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M3.5 6.5h9M3.5 9.5h9M3.5 12.5h5"/></svg>';
+  const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>';
+  const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
 
-  // ---- the rail's block: a heading with +, then one row per project; the chosen project's own actions sit under it
-  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null }) {
+  // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
+  // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder); the chevron lists its chats under it.
+  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null }) {
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const head = el('div', { className: 'cp-pj-head' });
@@ -33,9 +39,9 @@
       const row = el('button', { type: 'button', className: `cp-pj${on ? ' on' : ''}`, title: p.name });
       row.dataset.id = p.id;
       if (p.folderMissing) { row.title = `${p.name}: ${tr('chatpage.project.folder.missing', 'Folder missing')}`; row.classList.add('folder-missing'); } // [project folders] Locate… / Recreate are in the project's editor
-      row.setAttribute('aria-pressed', String(on));
+      if (on) row.setAttribute('aria-current', 'page');
       row.append(icon(FOLDER), el('span', { className: 'cp-pj-name', textContent: p.name }), el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
-      row.onclick = () => onSelect(on ? null : p.id);
+      row.onclick = () => (onPage ? onPage(p) : onSelect?.(on ? null : p.id));
       wrap.append(row);
       if (onToggle) {
         const chev = el('button', { type: 'button', className: 'cp-pj-chev', title: tr(open ? 'chatpage.project.collapse' : 'chatpage.project.expand', open ? 'Hide chats' : 'Show chats') });
@@ -45,44 +51,89 @@
         chev.onclick = (e) => { e.stopPropagation(); onToggle(p.id); };
         wrap.append(chev);
       }
+      // the hover actions, at the row's right (over its count)
+      const tools = el('div', { className: 'cp-pj-tools' });
+      const fresh = el('button', { type: 'button', className: 'icon-btn cp-pj-new', title: tr('chatpage.project.newChat', 'New chat here') });
+      fresh.setAttribute('aria-label', `${tr('chatpage.project.newChat', 'New chat here')}: ${p.name}`);
+      fresh.innerHTML = PLUS;
+      fresh.onclick = (e) => { e.stopPropagation(); onNewChat(p); };
+      const more = el('button', { type: 'button', className: 'icon-btn cp-pj-more', title: tr('chats.more', 'More actions') });
+      more.setAttribute('aria-label', `${tr('chats.more', 'More actions')}: ${p.name}`);
+      more.setAttribute('aria-haspopup', 'menu');
+      more.setAttribute('aria-expanded', 'false');
+      more.innerHTML = MORE;
+      more.onclick = (e) => {
+        e.stopPropagation();
+        const items = [];
+        if (onPage) items.push({ label: tr('projectws.open', 'Open project'), icon: FOLDER, run: () => onPage(p) });
+        items.push({ label: tr('chatpage.project.newChat', 'New chat here'), icon: PLUS, run: () => onNewChat(p) });
+        if (p.folderMissing) items.push({ label: tr('chatpage.project.folder.missingFix', 'Folder missing…'), icon: FOLDER, run: () => onEdit(p) });
+        items.push({ label: tr(p.instructions ? 'chatpage.project.instructions' : 'chatpage.project.addInstructions', p.instructions ? 'Instructions' : 'Add instructions'), icon: NOTE, run: () => (onInstructions ? onInstructions(p) : onEdit(p)) });
+        items.push({ label: tr('chatpage.project.renameFolder.menu', 'Rename and folder…'), icon: PENCIL, run: () => onEdit(p) });
+        wrap.classList.add('menu-open');
+        more.setAttribute('aria-expanded', 'true');
+        menu({ anchor: more, label: p.name, items, onClose: () => { wrap.classList.remove('menu-open'); more.setAttribute('aria-expanded', 'false'); if (!document.activeElement || document.activeElement === document.body) more.focus(); } });
+      };
+      tools.append(fresh, more);
+      wrap.append(tools);
       rows.push(wrap);
       if (open && onOpen) {
         const list = el('div', { className: 'cp-pj-chats' });
         list.dataset.project = p.id;
         const mine = chats.filter((c) => c.project === p.id && !c.archived);
-        for (const c of mine) {
+        for (const c of mine.slice(0, SHOWN_CHATS)) {
           const b = el('button', { type: 'button', className: `cp-pj-chat${c.id === current ? ' current' : ''}`, title: c.title || '' });
           b.dataset.id = c.id;
           b.append(el('span', { className: 'cp-pj-chat-title', textContent: c.title || tr('chats.untitled', 'Chat') }));
           b.onclick = () => onOpen(c.id);
           list.append(b);
         }
+        if (mine.length > SHOWN_CHATS && onPage) { // (the rest are on the project's page)
+          const all = el('button', { type: 'button', className: 'cp-pj-all', textContent: tr('projectws.rail.all', 'Show all ({n})', { n: mine.length }) });
+          all.setAttribute('aria-label', `${all.textContent}: ${p.name}`);
+          all.onclick = () => onPage(p);
+          list.append(all);
+        }
         if (!mine.length) list.append(el('p', { className: 'cp-pj-chats-empty', textContent: tr('chatpage.project.emptyShort', 'No chats yet. Drag one here.') }));
         rows.push(list);
-      }
-      if (on) {
-        const bar = el('div', { className: 'cp-pj-bar' });
-        if (p.folderMissing) {
-          const gone = el('button', { type: 'button', className: 'cp-pj-act', textContent: tr('chatpage.project.folder.missingFix', 'Folder missing…') });
-          gone.onclick = () => onEdit(p);
-          bar.append(gone);
-        }
-        const instr = el('button', { type: 'button', className: 'cp-pj-act', textContent: tr(p.instructions ? 'chatpage.project.instructions' : 'chatpage.project.addInstructions', p.instructions ? 'Instructions' : 'Add instructions') });
-        instr.onclick = () => onEdit(p);
-        const fresh = el('button', { type: 'button', className: 'cp-pj-act', textContent: tr('chatpage.project.newChat', 'New chat here') });
-        fresh.onclick = () => onNewChat(p);
-        if (onPage) {
-          const page = el('button', { type: 'button', className: 'cp-pj-act cp-pj-page', textContent: tr('projectws.open', 'Open project') });
-          page.onclick = () => onPage(p);
-          bar.append(page);
-        }
-        bar.append(fresh, instr);
-        rows.push(bar);
       }
     }
     host.hidden = false;
     host.classList.toggle('empty', !projects.length);
     host.replaceChildren(...rows);
+  }
+
+  // A small menu next to a button: items are { label, icon, run }. Arrow keys move, Escape closes (focus goes back), a click away closes.
+  function menu({ anchor, label, items, onClose = null }) {
+    document.querySelector('.cp-pj-pick.cp-pj-actions')?.remove();
+    const box = el('div', { className: 'cp-pj-pick cp-pj-actions' });
+    box.setAttribute('role', 'menu');
+    box.setAttribute('aria-label', label);
+    for (const it of items) {
+      const b = el('button', { type: 'button', className: 'cp-pj-pick-item' });
+      b.setAttribute('role', 'menuitem');
+      b.append(icon(it.icon), el('span', { className: 'cp-pj-pick-label', textContent: it.label }));
+      b.onclick = () => { close(); it.run(); };
+      box.append(b);
+    }
+    document.body.append(box);
+    const r = anchor.getBoundingClientRect();
+    const h = box.offsetHeight;
+    box.style.left = `${Math.max(8, Math.min(r.right - box.offsetWidth, window.innerWidth - box.offsetWidth - 8))}px`;
+    box.style.top = `${r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
+    const close = () => { const was = box.isConnected; box.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key, true); if (was) onClose?.(); };
+    const away = (e) => { if (!box.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+    const key = (e) => {
+      const list = [...box.querySelectorAll('button')];
+      const at = list.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); anchor.focus(); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); list[(at + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus(); }
+      else if (e.key === 'Tab') close();
+    };
+    setTimeout(() => document.addEventListener('pointerdown', away, true));
+    document.addEventListener('keydown', key, true);
+    box.querySelector('button')?.focus();
+    return close;
   }
 
   // ---- the editor: a small dialog over the page
@@ -319,5 +370,5 @@
     menu.querySelector('button')?.focus();
   }
 
-  window.chatProjects = { render, editor, picker };
+  window.chatProjects = { render, editor, picker, menu };
 })();
