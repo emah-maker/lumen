@@ -2848,6 +2848,7 @@
   "approval.once": "Allow once",
   "chat.queued.edit": "Edit",
   "chat.queued.cancel": "Don’t send",
+  "chat.queued.imagesLost": "A message that was waiting when Lumen closed came back without its pictures (they were too big to keep).",
   "chat.queued.sendNow": "Send now",
   "chat.runNow": "Run now",
   "chat.runNow.title": "Start this chat now, even though the limit on chats working at once is reached",
