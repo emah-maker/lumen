@@ -3423,6 +3423,7 @@ function clearChatView({ keepBox = false, ownRun = false } = {}) {
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId; // (kept while other chats are shown in between)
     saveDraft(); // (this chat's unsent text stays with it; the next chat gets its own, shown after the callers name it)
+    window.genImages?.closeAll?.(); // (a picture opened over this chat stays with it: not over the next one)
     stashView(shownChatId); // (and so do its pictures, chips, scroll position and open cards)
     pendingView = null;
     pendingOpen = null;
