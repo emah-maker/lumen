@@ -12,7 +12,7 @@ function errorOf(text) {
 }
 
 // The sentence for an answer that was not 2xx. `thing` names what was asked for ("that file"); `hint` is added to a 403/404 that
-// is likely the app's own permission (Drive's drive.file only reaches files Lumen made).
+// is likely the app's own permission (an older Drive sign-in's drive.file only reaches files Lumen made).
 function failure(ctx, res, { thing = 'that', hint = '' } = {}) {
   const { reason, message } = errorOf(res.text);
   const name = ctx.id === 'sheets' ? 'Google Sheets' : 'Google Drive';
