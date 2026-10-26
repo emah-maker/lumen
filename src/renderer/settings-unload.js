@@ -222,7 +222,7 @@ function buildUnloading(slot) {
   });
   const resetRow = row(un('resetLabel', 'Reset page unloading'), un('resetDesc', 'Puts every setting in this section back to its default. Your site lists are cleared too.'), reset, resetResult);
 
-  slot.append(master, after, how, freezeFirst, cap, recent);
+  slot.group(un('groupUnloading', 'Page unloading')).append(master, after, how, freezeFirst, cap, recent);
   slot.group(un('groupMemory', 'Memory pressure')).append(pressure, gb);
   slot.group(un('groupNever', 'Never unload these')).append(...exceptions);
   slot.group(un('groupSites', 'Sites')).append(keepSites, soonSites, soonTime);

@@ -57,7 +57,7 @@ const { openSettingsTab } = require('../helpers/settings-tab');
     // Quiet start: only what this test sets applies.
     await T(() => { global.__tabSleep.fakePressure(false); });
     await T(() => global.__patchSettings({ performanceMode: 'off' })); // (a hidden test window can have no GPU, which turns Performance mode on by itself)
-    const inSettings = await openSettingsTab(app, 'tabs');
+    const inSettings = await openSettingsTab(app, 'tabs-sleep');
     const settingsId = inSettings.id;
     const q = (expr) => inSettings(expr);
     const section = await waitFor(async () => (await q('Boolean(document.getElementById("pref-tabSleep") && document.getElementById("unload-status"))')) === true, 8000);
