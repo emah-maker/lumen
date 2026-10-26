@@ -3305,6 +3305,13 @@ else globalThis.screenIntent = api;
   const countsAsRead = (type) => READ_EVENTS.has(type);
 
 
+
+  const ownerNow = ({ shown = null, running = false, runOwner = null } = {}) => shown || (running ? runOwner : null) || null;
+
+
+  const otherChat = (id, state) => Boolean(id && id !== ownerNow(state) && id !== (state?.shown ?? null));
+
+
   function ordinal(n) {
     const v = Math.abs(Math.trunc(n)) % 100;
     const suffix = v >= 11 && v <= 13 ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[v % 10] || 'th');
@@ -3424,7 +3431,7 @@ else globalThis.screenIntent = api;
     return null;
   }
 
-  const api = { advance, countsAsRead, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4150,6 +4157,13 @@ let shownChatId = null;
 const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
 
 
+let runOwner = null;
+const queueOwner = () => window.chatQueue.ownerNow({ shown: shownChatId, running, runOwner });
+
+
+const queueOther = (id) => window.chatQueue.otherChat(id, { shown: shownChatId, running, runOwner });
+
+
 
 
 
@@ -4265,6 +4279,7 @@ function nameChat(id) {
   drafts?.rename(null, id);
   stashRename(null, id);
   shownChatId = id;
+  runOwner = null;
   line.claim(id);
 
   if (!prompt.value && !pastes.length) restoreDraft();
@@ -4833,7 +4848,7 @@ function queueUp(entry) {
 }
 
 function renderQueue() {
-  const mine = line.mine(forOtherChat);
+  const mine = line.mine(queueOther);
   mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
@@ -4881,7 +4896,7 @@ function sendNow(entry) {
 
 
 function sendAllNow() {
-  const merged = window.chatQueue.merge(line.mine(forOtherChat), MAX_ATTACH);
+  const merged = window.chatQueue.merge(line.mine(queueOther), MAX_ATTACH);
   if (!merged) return;
   for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
   const { text, images, tabs, screen, chatId } = merged;
@@ -4892,7 +4907,7 @@ function sendQueued() {
 
   if (!modelReady) { queuedToDraft(); return; }
 
-  const next = line.take(forOtherChat);
+  const next = line.take(queueOther);
   if (!next) return;
   next.bubble.remove();
   if (next.fresh) {
@@ -4900,7 +4915,7 @@ function sendQueued() {
     $('new-chat').click();
   }
   renderQueue();
-  ask(next.text, next.images, next.tabs, next.screen, next.opts);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts, next.chatId || null);
 }
 
 
@@ -4917,7 +4932,7 @@ async function askInNewChat(text, files = []) {
     attachments = aside;
     renderAttachments();
   }
-  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: shownChatId }); return; }
+  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: queueOwner() }); return; }
   $('new-chat').click();
   ask(text, images);
 }
@@ -4931,8 +4946,9 @@ function askInFreshChat(text) {
 
 
 
-function ask(text, images = [], tabs = null, screen, opts = null) {
-  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: shownChatId });
+
+function ask(text, images = [], tabs = null, screen, opts = null, forChat = null) {
+  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: queueOwner() });
 
   if (!modelReady) {
     pendingAsk = { text, images, tabs, screen, at: Date.now() };
@@ -4952,9 +4968,10 @@ function ask(text, images = [], tabs = null, screen, opts = null) {
   startTurn(text, images, tabs);
 
   runId = Math.max(runId + 1, Date.now());
+  runOwner = shownChatId;
   shownChatId = null;
   const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined;
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts, forChat || undefined);
 }
 
 
@@ -5745,7 +5762,7 @@ function finishTurn(event, { early }) {
   setRunning(false);
 
 
-  if (backToBox) { queuedToDraft(); if (line.mine(forOtherChat).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
+  if (backToBox) { queuedToDraft(); if (line.mine(queueOther).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
 }
 
 
@@ -5773,7 +5790,7 @@ function stopReply() {
 window.chatStopReply = stopReply;
 
 function queuedToDraft() {
-  const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
+  const mine = line.drain((q) => !q.fresh && !queueOther(q.chatId));
   for (const q of mine) q.bubble.remove();
   renderQueue();
   entriesToBox(mine);
@@ -6769,7 +6786,8 @@ function applySync(view) {
   const wasChat = shownChatId;
 
 
-  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
+
+  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !running && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   incomingChatId = view?.id || null;
   const ownRun = Boolean(view?.live && running && view.live.runId === runId);
@@ -6778,7 +6796,8 @@ function applySync(view) {
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null;
-  line.claim(shownChatId);
+  if (sameChat || ownRun) line.claim(shownChatId);
+  runOwner = null;
   window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
@@ -7014,6 +7033,7 @@ function clearChatView({ keepBox = false, ownRun = false } = {}) {
   }
   runId++;
   shownChatId = null;
+  runOwner = null;
   lastAsk = null;
   for (const id of [...approvals.keys()]) resolveApproval(id, false);
   approvals.clear();

@@ -568,7 +568,7 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts),
+  ask: (text, runId, images, tabIds, files, screen, opts, forChat) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts, forChat),
   dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
 
   uploads: {
