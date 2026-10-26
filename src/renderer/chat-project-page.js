@@ -7,7 +7,7 @@
 // What it shows, top to bottom: the header (name, a one-line goal, and the quick actions: New chat, Add files, Open folder, ⋯), the box that
 // starts a chat in the project (model, attach), "Continue where you left off" (the latest chats as cards: what was said last, when, and a mark
 // while one is working), the chats with a search that looks in them and in the files, and beside them an overview of what the AI works from:
-// instructions (read here, edited on request), files, pinned pages, the folder, the defaults a new chat starts with, and what the AI saved
+// instructions (read here, edited on request), the sources (files, web pages and whole websites, in one list), the folder, the defaults a new chat starts with, and what the AI saved
 // in the project's chats (memory). Nothing here is a form that is always open.
 (() => {
   const tr = (key, english, vars) => { const out = window.chatTr ? window.chatTr(key, english) : english; return vars ? out.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : out; };
@@ -16,11 +16,16 @@
   const KIND = { pdf: 'PDF', docx: 'Word', pptx: 'PowerPoint', eml: 'Email', text: 'Text', image: 'Picture' };
   const ACCEPT = '.pdf,.docx,.pptx,.eml,.txt,.md,.markdown,.csv,.tsv,.json,.log,.xml,.yaml,.yml,.html,.htm,.rtf,.tex,.bib,.py,.js,.ts,.java,.c,.cpp,.h,.cs,.go,.rs,.rb,.sql,.ini,.toml,.png,.jpg,.jpeg,.gif,.webp';
   const MAX_BYTES = 60 * 1024 * 1024;
-  const SHOWN_FILES = 5; // the Files card lists this many; "Show all" has the rest
+  const SHOWN_SOURCES = 6; // the Sources card lists this many; "Show all" has the rest
   const SHOWN_CHATS = 30; // the chat list shows this many; "Show all" has the rest
   const ICON = {
     folder: '<path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
     plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+    pencil: '<path d="M3 13l.7-2.8 7-7a1.4 1.4 0 0 1 2 2l-7 7z"/>',
+    trash: '<path d="M3.5 5h9M6.5 5V3.5h3V5M5 5l.5 8h5L11 5"/>',
+    refresh: '<path d="M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3"/>',
+    page: '<path d="M4 2.5h5l3 3v8H4zM9 2.5v3h3"/>',
+    tabs: '<path d="M2.5 6h11v6.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1zM2.5 6V4.5a1 1 0 0 1 1-1h3l1 1.5"/>',
     clip: '<path d="M10.5 5.5 6 10a1.5 1.5 0 0 0 2.1 2.1l4.6-4.6a3 3 0 0 0-4.2-4.2L3.8 8.2a4.5 4.5 0 0 0 6.4 6.4l3-3"/>',
     send: '<path d="M8 12.5v-9M4 7l4-4 4 4"/>',
     more: '<circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/>',
@@ -114,46 +119,180 @@
     return root;
   }
 
-  // ---- files: the first few, with a way to the rest; dropped on the card or added with its button
-  function filesCard(data) {
+  // ---- sources: the files, web pages and whole websites the AI can use in this project, in one list. One Add menu (upload files, a web page, a whole
+  // website, the pages open in your tabs), files and links dropped on the card, and a ⋯ menu on each row (Open, Re-read, Rename, Remove). Storage is
+  // what it was: files in the project's files store, pages and websites as the project's `links` ({ url, title, added, named?, site? }).
+  const svg = (name) => `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`;
+  const asUrl = (text) => {
+    let raw = String(text || '').trim();
+    if (!raw) return null;
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) raw = `https://${raw}`;
+    try { const u = new URL(raw); return /^https?:$/.test(u.protocol) && u.hostname.includes('.') ? u : null; } catch { return null; }
+  };
+  const looksLikeSite = (text) => { const u = asUrl(text); return Boolean(u) && (u.pathname === '/' || u.pathname.endsWith('/')); };
+  const hostShown = (url) => { try { return new URL(url).host.replace(/^www\./, ''); } catch { return url; } };
+  const pathShown = (url) => { try { const u = new URL(url); return u.pathname === '/' ? '' : `${u.pathname}${u.search}`; } catch { return ''; } };
+  const favicon = (src) => {
+    const fallback = () => icon('globe', 'pjp-row-ic');
+    if (!src) return fallback();
+    const img = el('img', { className: 'pjp-fav', src, alt: '', width: 18, height: 18 });
+    img.setAttribute('aria-hidden', 'true');
+    img.onerror = () => img.replaceWith(fallback());
+    return img;
+  };
+
+  function sourcesCard(data) {
     const say = status();
     const input = el('input', { type: 'file', multiple: true, accept: ACCEPT, hidden: true, tabIndex: -1 });
     input.setAttribute('aria-hidden', 'true');
-    const add = button(tr('projectws.addFiles', 'Add files…'), () => input.click());
-    const root = card(tr('projectws.files', 'Files'), { tip: tr('projectws.files.note', 'Read on this computer and kept as text, encrypted in your Lumen profile; never uploaded. The AI searches and reads them in every chat of this project, and only then does a passage go to your AI provider.'), actions: [add], className: 'pjp-files' });
+    const add = el('button', { type: 'button', className: 'btn small pjp-add-source' });
+    add.append(icon('plus'), document.createTextNode(tr('projectws.sources.add', 'Add')));
+    add.setAttribute('aria-haspopup', 'menu');
+    const tip = tr('projectws.sources.note', 'Files are read on this computer and kept as text, encrypted in your profile; they are never uploaded. A web page or website is fetched only when a chat needs it, and the AI asks first if it has read other pages. Only then does a passage go to your AI provider.');
+    const root = card(tr('projectws.sources', 'Sources'), { tip, actions: [add], className: 'pjp-sources' });
     const count = el('span', { className: 'pjp-badge' });
     root.head.querySelector('h2').after(count);
-    const list = el('ul', { className: 'pjp-list' });
-    list.setAttribute('aria-label', tr('projectws.files', 'Files'));
-    const foot = el('div', { className: 'pjp-line' });
+    const panel = el('div', { className: 'pjp-panel', hidden: true });
+    const list = el('ul', { className: 'pjp-list pjp-src-list' });
+    list.setAttribute('aria-label', tr('projectws.sources', 'Sources'));
+    const foot = el('div', { className: 'pjp-line pjp-foot' });
+    const empty = el('div', { className: 'pjp-drop' }, el('span', { className: 'pjp-drop-title', textContent: tr('projectws.sources.empty', 'Add files, web pages or websites') }), el('span', { className: 'pjp-note', textContent: tr('projectws.sources.empty.hint', 'Drop them here or use Add. The AI reads them only when a chat needs them.') }));
     let all = false;
-    const empty = el('div', { className: 'pjp-drop' }, el('span', { className: 'pjp-drop-title', textContent: tr('projectws.drop', 'Drop files here') }), el('span', { className: 'pjp-note', textContent: tr('projectws.empty.files.short', 'PDF, Word, PowerPoint, email, text, CSV or pictures. The AI can search and read them in every chat here.') }));
-    function draw(files = data.files) {
-      data.files = files;
-      count.textContent = files.length ? String(files.length) : '';
-      count.hidden = !files.length;
-      const shown = all ? files : files.slice(0, SHOWN_FILES);
-      list.replaceChildren(...shown.map((f) => {
-        const li = el('li', { className: 'pjp-row' });
-        li.dataset.file = f.id;
-        const info = el('div', { className: 'pjp-row-main' },
-          el('span', { className: 'pjp-row-name', textContent: f.name, title: f.name }),
-          el('span', { className: 'pjp-row-meta', textContent: [KIND[f.kind] || f.kind, kb(f.size || 0), f.chars ? tr('projectws.chars', '{n} characters', { n: f.chars.toLocaleString() }) : ''].filter(Boolean).join(' · ') + (f.cut ? ` · ${tr('projectws.cut', 'cut: very long')}` : '') }));
-        if (f.summary) info.append(el('span', { className: 'pjp-row-sum', textContent: f.summary }));
-        li.append(el('span', { className: 'pjp-kind', textContent: (KIND[f.kind] || f.kind || '').slice(0, 4) }), info, twoStep(tr('projectws.remove', 'Remove'), tr('projectws.removeAgain', 'Click again to remove'), async () => {
-          const out = await page.api.projectFileRemove(page.id, f.id).catch(() => null);
-          if (out) { draw(out.files); data.totals = out.totals; host().refresh(); } else { say.textContent = tr('projectws.removeFailed', 'Could not remove the file.'); li.querySelector('button').disabled = false; }
-        }, 'pjp-row-btn'));
+    let editing = ''; // the row being renamed (a file id or an address)
+    let removing = ''; // the file whose removal is being confirmed
+    const busy = new Set(); // addresses being read
+
+    const items = () => [
+      ...(data.files || []).map((f) => ({ type: 'file', key: `f:${f.id}`, added: f.added || 0, f })),
+      ...(data.project.links || []).map((l) => ({ type: l.site ? 'site' : 'page', key: `${l.site ? 's' : 'p'}:${l.url}`, added: l.added || 0, l })),
+    ].sort((a, b) => b.added - a.added);
+    const nameOf = (it) => (it.type === 'file' ? it.f.name : it.l.title || hostShown(it.l.url));
+    const metaOf = (it) => {
+      if (it.type === 'file') return [KIND[it.f.kind] || it.f.kind, kb(it.f.size || 0), it.f.chars ? tr('projectws.chars', '{n} characters', { n: it.f.chars.toLocaleString() }) : ''].filter(Boolean).join(' · ') + (it.f.cut ? ` · ${tr('projectws.cut', 'cut: very long')}` : '');
+      if (busy.has(it.l.url)) return tr('projectws.sources.reading', 'Reading the page…');
+      const host = hostShown(it.l.url);
+      const path = pathShown(it.l.url);
+      if (it.type === 'site') return path ? `${host}${path} · ${tr('projectws.sources.site', 'Website')}` : `${host} · ${tr('projectws.sources.site', 'Website')} · ${tr('projectws.sources.whole', 'whole site')}`;
+      return it.l.title ? `${host}${path && path.length < 28 ? path : ''}` : `${host}${path}`;
+    };
+    const closePanel = () => { panel.hidden = true; panel.replaceChildren(); };
+    const report = (text) => { say.textContent = text || ''; };
+    const changed = () => { draw(); host().refresh(); page.sub?.(); };
+    const setProject = (project) => { data.project = project; };
+
+    // ---- the rows
+    function row(it) {
+      const li = el('li', { className: `pjp-row pjp-src ${it.type}` });
+      if (it.type === 'file') li.dataset.file = it.f.id; else li.dataset.url = it.l.url;
+      li.dataset.kind = it.type;
+      const lead = it.type === 'file' ? el('span', { className: 'pjp-kind', textContent: (KIND[it.f.kind] || it.f.kind || '').slice(0, 4) }) : favicon(it.l.icon);
+      const key = it.type === 'file' ? it.f.id : it.l.url;
+      if (removing === key) {
+        const yes = button(tr('projectws.remove', 'Remove'), async () => {
+          yes.disabled = true;
+          const out = await page.api.projectFileRemove(page.id, it.f.id).catch(() => null);
+          removing = '';
+          if (out) { data.files = out.files; data.totals = out.totals; changed(); } else { report(tr('projectws.removeFailed', 'Could not remove the file.')); draw(); }
+        }, 'danger');
+        const no = button(tr('chatpage.project.cancel', 'Cancel'), () => { removing = ''; draw(); });
+        li.classList.add('confirm');
+        li.setAttribute('role', 'alert');
+        li.append(lead, el('span', { className: 'pjp-row-main' }, el('span', { className: 'pjp-row-name', textContent: tr('projectws.sources.removeAsk', 'Remove “{name}”?', { name: nameOf(it) }) }), el('span', { className: 'pjp-row-meta', textContent: tr('projectws.sources.removeNote', 'This cannot be undone.') })), no, yes);
+        queueMicrotask(() => no.focus());
         return li;
-      }));
-      list.hidden = !files.length;
-      empty.hidden = Boolean(files.length);
-      foot.replaceChildren(...(files.length > SHOWN_FILES ? [quiet(all ? tr('projectws.showLess', 'Show less') : tr('projectws.showAll', 'Show all {n}', { n: files.length }), () => { all = !all; draw(); })] : []), ...(files.length ? [el('span', { className: 'pjp-note', textContent: tr('projectws.totals.short', '{n} of {max} files', { n: files.length, max: data.limits.files }) })] : []));
+      }
+      let main;
+      if (editing === key) {
+        const field = el('input', { type: 'text', className: 'pjp-input pjp-rename', value: it.type === 'file' ? it.f.name : it.l.title || '', maxLength: 120, placeholder: it.type === 'file' ? '' : hostShown(it.l.url) });
+        field.setAttribute('aria-label', tr('projectws.sources.rename.label', 'Name for {name}', { name: nameOf(it) }));
+        let done = false;
+        const finish = async (save) => {
+          if (done) return;
+          done = true;
+          editing = '';
+          const next = field.value.trim();
+          if (save && it.type === 'file' && next && next !== it.f.name) {
+            const out = await page.api.projectFileRename(page.id, it.f.id, next).catch(() => null);
+            if (out?.ok) data.files = out.files; else report(out?.error || tr('projectws.sources.renameFailed', 'Could not rename it.'));
+          } else if (save && it.type !== 'file' && next !== (it.l.title || '')) {
+            const out = await page.api.projectLink(page.id, { rename: { url: it.l.url, title: next } }).catch(() => null);
+            if (out && !out.error) setProject(out); else report(tr('projectws.sources.renameFailed', 'Could not rename it.'));
+          }
+          changed();
+        };
+        field.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); finish(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); } });
+        field.addEventListener('blur', () => finish(true));
+        main = el('span', { className: 'pjp-row-main' }, field);
+        queueMicrotask(() => { field.focus(); field.select(); });
+      } else {
+        const text = [el('span', { className: 'pjp-row-name', textContent: nameOf(it), title: it.type === 'file' ? [it.f.name, it.f.summary].filter(Boolean).join('\n') : it.l.url }), el('span', { className: 'pjp-row-meta', textContent: metaOf(it) })];
+        if (it.type === 'file') main = el('span', { className: 'pjp-row-main' }, ...text);
+        else {
+          main = el('button', { type: 'button', className: 'pjp-row-main pjp-row-open', title: it.l.url });
+          main.append(...text);
+          main.onclick = () => window.assistant?.openLink?.(it.l.url);
+        }
+      }
+      const more = el('button', { type: 'button', className: 'icon-btn pjp-row-more', title: tr('chats.more', 'More actions') });
+      more.setAttribute('aria-label', tr('projectws.sources.actions', 'Actions for {name}', { name: nameOf(it) }));
+      more.setAttribute('aria-haspopup', 'menu');
+      more.append(icon('more'));
+      more.onclick = () => window.chatProjects.menu({ anchor: more, label: nameOf(it), items: rowMenu(it), onClose: () => { if (!document.activeElement || document.activeElement === document.body) more.focus(); } });
+      li.append(lead, main, more);
+      return li;
     }
-    async function addAll(fileList) {
+    function rowMenu(it) {
+      const rename = { label: tr('projectws.sources.rename', 'Rename'), icon: svg('pencil'), run: () => { editing = it.type === 'file' ? it.f.id : it.l.url; draw(); } };
+      if (it.type === 'file') return [rename, { label: tr('projectws.remove', 'Remove'), icon: svg('trash'), run: () => { removing = it.f.id; draw(); } }];
+      return [
+        { label: tr('projectws.sources.open', 'Open'), icon: svg('open'), run: () => window.assistant?.openLink?.(it.l.url) },
+        { label: tr('projectws.sources.reread', 'Re-read the page'), icon: svg('refresh'), run: () => reread(it.l.url) },
+        rename,
+        { label: tr('projectws.remove', 'Remove'), icon: svg('trash'), run: () => removeLink(it.l) },
+      ];
+    }
+    async function removeLink(l) {
+      const out = await page.api.projectLink(page.id, { remove: l.url }).catch(() => null);
+      if (!out || out.error) { report(tr('projectws.sources.removeFailed', 'Could not remove it.')); return; }
+      setProject(out);
+      changed();
+      host().undoToast(tr('projectws.sources.removed', 'Removed “{name}”', { name: l.title || hostShown(l.url) }), 8000, async () => {
+        const back = await page.api.projectLink(page.id, { add: { url: l.url, title: l.title || '', site: l.site === true } }).catch(() => null);
+        if (!back || back.error) return false;
+        setProject(back);
+        draw();
+        host().refresh();
+        return true;
+      });
+    }
+    // Re-read: the page's title (and icon), from a tab that has it open, else one request; only when asked (or just after a link is added).
+    async function reread(url, quiet = false) {
+      busy.add(url);
+      draw();
+      const out = await page.api.projectLink(page.id, { refresh: url }).catch(() => null);
+      busy.delete(url);
+      if (out && !out.error) setProject(out); else if (!quiet) report(out?.error === 'gone' ? '' : tr('projectws.sources.unreachable', 'Could not read that page right now.'));
+      draw();
+      host().refresh();
+    }
+
+    function draw() {
+      const rows = items();
+      count.textContent = rows.length ? String(rows.length) : '';
+      count.hidden = !rows.length;
+      const shown = all ? rows : rows.slice(0, SHOWN_SOURCES);
+      list.replaceChildren(...shown.map(row));
+      list.hidden = !rows.length;
+      empty.hidden = Boolean(rows.length) || !panel.hidden;
+      foot.hidden = !rows.length;
+      foot.replaceChildren(...(rows.length > SHOWN_SOURCES ? [quiet(all ? tr('projectws.showLess', 'Show less') : tr('projectws.showAll', 'Show all {n}', { n: rows.length }), () => { all = !all; draw(); })] : []), el('span', { className: 'pjp-note', textContent: tr('projectws.sources.line', 'The AI reads these only when a chat needs them.') }));
+    }
+
+    // ---- Add: files
+    async function addFiles(fileList) {
       const files = [...fileList];
       if (!files.length) return;
-      say.textContent = '';
+      report('');
       const problems = [];
       let done = 0;
       for (let i = 0; i < files.length; i += 2) {
@@ -162,81 +301,183 @@
           if (f.size > MAX_BYTES) { problems.push(`${f.name}: ${tr('projectws.tooBig', 'too large (over {n} MB)', { n: MAX_BYTES / 1048576 })}`); continue; }
           try { batch.push({ name: f.name, bytes: await f.arrayBuffer() }); } catch { problems.push(`${f.name}: ${tr('projectws.unreadable', 'could not be read')}`); }
         }
-        say.textContent = tr('projectws.reading', 'Reading {n} of {total}…', { n: Math.min(i + 1, files.length), total: files.length });
+        report(tr('projectws.reading', 'Reading {n} of {total}…', { n: Math.min(i + 1, files.length), total: files.length }));
         if (!batch.length) continue;
         const out = await page.api.projectFilesAdd(page.id, batch).catch(() => null);
         if (!out) { problems.push(tr('projectws.addFailed', 'Could not add the files.')); continue; }
         for (const r of out.results) if (r.ok) done++; else problems.push(`${r.name}: ${r.error}`);
         data.totals = out.totals;
-        draw(out.files);
+        data.files = out.files;
+        draw();
       }
-      say.textContent = [done ? tr('projectws.added', 'Added {n}.', { n: done }) : '', ...problems].filter(Boolean).join(' ');
-      host().refresh();
+      report([done ? tr('projectws.added', 'Added {n}.', { n: done }) : '', ...problems].filter(Boolean).join(' '));
+      changed();
     }
-    input.onchange = () => { const picked = [...input.files]; input.value = ''; addAll(picked); };
+    input.onchange = () => { const picked = [...input.files]; input.value = ''; addFiles(picked); };
+
+    // ---- Add: a web page or a whole website (one line: the address, and which it is)
+    function linkPanel(kind) {
+      let chosen = kind;
+      let touched = false;
+      const url = el('input', { type: 'text', className: 'pjp-input', placeholder: tr('projectws.sources.url.placeholder', 'docs.python.org/3/ or a page address'), inputMode: 'url', spellcheck: false });
+      url.setAttribute('aria-label', tr('projectws.sources.url.label', 'Web address'));
+      const seg = el('div', { className: 'pjp-seg' });
+      seg.setAttribute('role', 'group');
+      seg.setAttribute('aria-label', tr('projectws.sources.kind', 'What to add'));
+      const hint = el('p', { className: 'pjp-note' });
+      const buttons = {};
+      for (const [value, label] of [['page', tr('projectws.sources.kind.page', 'Just this page')], ['site', tr('projectws.sources.kind.site', 'The whole site')]]) {
+        const b = el('button', { type: 'button', className: 'pjp-seg-btn', textContent: label });
+        b.onclick = () => { chosen = value; touched = true; sync(); url.focus(); };
+        buttons[value] = b;
+        seg.append(b);
+      }
+      function sync() {
+        for (const [value, b] of Object.entries(buttons)) { b.setAttribute('aria-pressed', String(chosen === value)); b.classList.toggle('on', chosen === value); }
+        const u = asUrl(url.value);
+        const where = u ? `${hostShown(u.href)}${u.pathname === '/' ? '' : u.pathname}` : '';
+        hint.textContent = chosen === 'site'
+          ? tr('projectws.sources.hint.site', 'The AI can search and read pages under {where} when a chat needs them (a few at a time).', { where: where || tr('projectws.sources.hint.address', 'this address') })
+          : '';
+        hint.hidden = !hint.textContent;
+      }
+      url.addEventListener('input', () => { if (!touched) chosen = looksLikeSite(url.value) ? 'site' : 'page'; sync(); say.textContent = ''; });
+      const go = button(tr('projectws.sources.add.go', 'Add'), async () => {
+        const u = asUrl(url.value);
+        if (!u) { report(tr('projectws.pages.invalid', 'That is not a web address (http or https).')); url.focus(); return; }
+        go.disabled = true;
+        const site = chosen === 'site';
+        const out = await page.api.projectLink(page.id, { add: { url: u.href, title: '', site } }).catch(() => null);
+        go.disabled = false;
+        if (!out || out.error) { report(out?.error === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages and websites.') : tr('projectws.pages.invalid', 'That is not a web address (http or https).')); return; }
+        setProject(out);
+        closePanel();
+        report('');
+        changed();
+        const added = (out.links || []).find((l) => (l.site === true) === site && (site ? l.url.startsWith(`${u.origin}`) : l.url === u.href.replace(/#.*$/, '')) && !l.title);
+        if (added) reread(added.url, true);
+      }, 'primary');
+      const cancel = button(tr('chatpage.project.cancel', 'Cancel'), () => { closePanel(); draw(); add.focus(); });
+      url.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); go.click(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); } });
+      panel.hidden = false;
+      panel.replaceChildren(seg, el('div', { className: 'pjp-line pjp-nowrap' }, url, go, cancel), hint);
+      sync();
+      draw();
+      url.focus();
+    }
+
+    // ---- Add: pages that are open in your tabs (titles and icons, tick the ones to add)
+    async function tabsPanel() {
+      const tabs = await page.api.projectTabs(page.id).catch(() => null);
+      const choose = new Set();
+      const body = el('ul', { className: 'pjp-list pjp-tabs' });
+      body.setAttribute('aria-label', tr('projectws.sources.tabs', 'Open tabs'));
+      const go = button('', async () => {
+        go.disabled = true;
+        const out = await page.api.projectAddTab(page.id, [...choose]).catch(() => null);
+        if (out?.project) setProject(out.project);
+        closePanel();
+        report(out?.ok ? tr('projectws.sources.tabs.added', 'Added {n}.', { n: out.added }) + (out.already ? ` ${tr('projectws.sources.tabs.already', '{n} already here.', { n: out.already })}` : '') : out?.reason === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages and websites.') : tr('projectws.pages.notweb', 'That tab is not a web page.'));
+        changed();
+      }, 'primary');
+      const refreshGo = () => { go.textContent = choose.size > 1 ? tr('projectws.sources.tabs.addN', 'Add {n} tabs', { n: choose.size }) : tr('projectws.sources.tabs.add1', 'Add tab'); go.disabled = !choose.size; };
+      for (const t of tabs || []) {
+        const box = el('input', { type: 'checkbox', disabled: t.added });
+        box.onchange = () => { if (box.checked) choose.add(t.id); else choose.delete(t.id); refreshGo(); };
+        const li = el('li', { className: 'pjp-tab' });
+        const label = el('label', { className: 'pjp-tab-label' }, box, favicon(t.icon), el('span', { className: 'pjp-row-main' }, el('span', { className: 'pjp-row-name', textContent: t.title || hostShown(t.url), title: t.url }), el('span', { className: 'pjp-row-meta', textContent: t.added ? `${hostShown(t.url)} · ${tr('projectws.sources.tabs.in', 'already added')}` : hostShown(t.url) })));
+        li.append(label);
+        body.append(li);
+      }
+      const cancel = button(tr('chatpage.project.cancel', 'Cancel'), () => { closePanel(); draw(); add.focus(); });
+      panel.hidden = false;
+      panel.replaceChildren(el('p', { className: 'pjp-panel-title', textContent: tr('projectws.sources.tabs.title', 'Add open tabs') }), ...(tabs?.length ? [body] : [note(tr('projectws.sources.tabs.none', 'No web pages are open.'))]), el('div', { className: 'pjp-line pjp-end' }, cancel, ...(tabs?.length ? [go] : [])));
+      refreshGo();
+      panel.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); } });
+      draw();
+      (body.querySelector('input:not(:disabled)') || cancel).focus();
+    }
+
+    add.onclick = () => window.chatProjects.menu({
+      anchor: add, label: tr('projectws.sources.add', 'Add'),
+      items: [
+        { label: tr('projectws.sources.upload', 'Upload files…'), icon: svg('clip'), run: () => input.click() },
+        { label: tr('projectws.sources.menu.page', 'Add a web page…'), icon: svg('page'), run: () => linkPanel('page') },
+        { label: tr('projectws.sources.menu.site', 'Add a whole website…'), icon: svg('globe'), run: () => linkPanel('site') },
+        { label: tr('projectws.sources.menu.tabs', 'Add open tabs…'), icon: svg('tabs'), run: () => tabsPanel() },
+      ],
+      onClose: () => { if (!document.activeElement || document.activeElement === document.body) add.focus(); },
+    });
     root.pick = () => input.click();
-    root.body.append(empty, list, foot, say, input);
+    root.link = linkPanel;
+    root.body.append(panel, empty, list, foot, say, input);
     if (!data.keychain) root.body.prepend(note(tr('projectws.nokeychain', 'Files need your system’s secure storage (the keychain), which is not available here, so they cannot be kept.')));
-    for (const type of ['dragenter', 'dragover']) root.addEventListener(type, (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); root.classList.add('dropping'); } });
+    // files and links dropped on the card
+    const wants = (e) => { const types = [...(e.dataTransfer?.types || [])]; return types.includes('Files') || types.includes('text/uri-list'); };
+    for (const type of ['dragenter', 'dragover']) root.addEventListener(type, (e) => { if (wants(e)) { e.preventDefault(); root.classList.add('dropping'); } });
     root.addEventListener('dragleave', (e) => { if (!root.contains(e.relatedTarget)) root.classList.remove('dropping'); });
-    root.addEventListener('drop', (e) => { e.preventDefault(); root.classList.remove('dropping'); addAll(e.dataTransfer?.files || []); });
+    root.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      root.classList.remove('dropping');
+      if (e.dataTransfer?.files?.length) { addFiles(e.dataTransfer.files); return; }
+      const dropped = String(e.dataTransfer?.getData('text/uri-list') || '').split(/\r?\n/).filter((l) => l && !l.startsWith('#')).slice(0, 10);
+      for (const link of dropped) {
+        const u = asUrl(link);
+        if (!u) continue;
+        const out = await page.api.projectLink(page.id, { add: { url: u.href, title: '' } }).catch(() => null);
+        if (out && !out.error) { setProject(out); const l = out.links.find((x) => !x.site && x.url === u.href.replace(/#.*$/, '')); changed(); if (l && !l.title) reread(l.url, true); } else if (out?.error === 'full') { report(tr('projectws.pages.full', 'A project holds up to 25 pages and websites.')); break; }
+      }
+    });
     draw();
     return root;
   }
 
-  // ---- pinned pages
-  function linksCard(data) {
-    const list = el('ul', { className: 'pjp-list' });
-    list.setAttribute('aria-label', tr('projectws.pages', 'Pinned pages'));
-    const say = status();
-    const url = el('input', { type: 'url', className: 'pjp-input', placeholder: tr('projectws.pages.url', 'https://…') });
-    url.setAttribute('aria-label', tr('projectws.pages.url.label', 'Web address to pin'));
-    const form = el('div', { className: 'pjp-line pjp-pin-form', hidden: true });
-    const tab = button(tr('projectws.pages.tab', 'Add this tab'), async () => {
-      const out = await page.api.projectAddTab(page.id).catch(() => null);
-      if (out?.ok) { draw(out.project); say.textContent = out.already ? tr('projectws.pages.already', 'That page is already pinned.') : tr('projectws.pages.added', 'Pinned.'); host().refresh(); } else say.textContent = out?.reason === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages.') : tr('projectws.pages.notweb', 'The tab you are looking at is not a web page.');
-    });
-    const pin = button(tr('projectws.pages.new', 'Pin a page…'), () => { form.hidden = !form.hidden; if (!form.hidden) url.focus(); });
-    const root = card(tr('projectws.pages', 'Pinned pages'), { tip: tr('projectws.pages.note', 'The AI reads a pinned page when a chat needs it (it asks first if it has read other pages, as usual). Nothing is fetched until then.'), actions: [tab, pin], className: 'pjp-pages' });
-    const count = el('span', { className: 'pjp-badge' });
-    root.head.querySelector('h2').after(count);
-    function draw(project) {
-      data.project = project;
-      const links = project.links || [];
-      count.textContent = links.length ? String(links.length) : '';
-      count.hidden = !links.length;
-      list.replaceChildren(...links.map((l) => {
-        let shown = l.url;
-        try { shown = new URL(l.url).host; } catch { /* the address itself */ }
-        const li = el('li', { className: 'pjp-row' });
-        li.dataset.url = l.url;
-        const open = el('button', { type: 'button', className: 'pjp-row-open', title: l.url });
-        open.append(icon('globe', 'pjp-row-ic'), el('span', { className: 'pjp-row-main' }, el('span', { className: 'pjp-row-name', textContent: l.title || shown }), el('span', { className: 'pjp-row-meta', textContent: l.title ? shown : l.url })));
-        open.onclick = () => window.assistant?.openLink?.(l.url);
-        li.append(open, twoStep(tr('projectws.remove', 'Remove'), tr('projectws.removeAgain', 'Click again to remove'), async () => {
-          const out = await page.api.projectLink(page.id, { remove: l.url }).catch(() => null);
-          if (out && !out.error) { draw(out); host().refresh(); } else li.querySelector('button:last-child').disabled = false;
-        }, 'pjp-row-btn'));
-        return li;
-      }));
-      list.hidden = !links.length;
-      empty.hidden = Boolean(links.length);
-    }
-    const empty = note(tr('projectws.empty.pages', 'No pages yet. Pin a page and the AI can read it when a chat needs it.'));
-    const submit = async () => {
-      const value = url.value.trim();
-      if (!value) return;
-      const out = await page.api.projectLink(page.id, { add: { url: /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`, title: '' } }).catch(() => null);
-      if (out && !out.error) { url.value = ''; say.textContent = ''; form.hidden = true; draw(out); host().refresh(); } else say.textContent = out?.error === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages.') : tr('projectws.pages.invalid', 'That is not a web address (http or https).');
-    };
-    url.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); submit(); } else if (e.key === 'Escape') { e.preventDefault(); form.hidden = true; pin.focus(); } });
-    form.append(url, button(tr('projectws.pages.add', 'Pin'), submit, 'primary'));
-    root.body.append(empty, list, form, say);
-    draw(data.project);
-    return root;
-  }
-
   // ---- folder: where the project lives on this computer (set up and changed in the project's editor, host.editFolder)
+  const swapFolder = (old, data) => { const next = folderCard(data); old.replaceWith(next); return next; };
+  // The project's plain files (INSTRUCTIONS.md, AGENTS.md, sources.md, Sources/, project.json): on or off, and a way to look at the folder now.
+  function plainFiles(card, data) {
+    const p = data.project;
+    const box = el('div', { className: 'pjp-plain' });
+    const say = status();
+    if (p.portable) {
+      box.append(note(tr('projectws.portable.on', 'Plain files here: INSTRUCTIONS.md, AGENTS.md, sources.md and Sources/. Edits made elsewhere are picked up when you return to Lumen.')));
+      const check = button(tr('projectws.portable.check', 'Check the folder'), async () => {
+        check.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'sync').catch(() => null);
+        check.disabled = false;
+        let msg = out?.missing ? tr('chatpage.project.folder.missing', 'Folder missing') : out?.changed ? tr('projectws.portable.picked', 'Picked up changes from the folder.') : tr('projectws.portable.none', 'No changes in the folder.');
+        if (out?.conflicts?.length) msg += ` ${tr('projectws.portable.conflicts', 'Both sides changed: the other text is kept in {names}.', { names: out.conflicts.join(', ') })}`;
+        if (out?.changed) await reload(); // (the cards are drawn again: the line goes on the new one)
+        const live = page?.side.querySelector('.pjp-folder .pjp-status') || say;
+        live.textContent = msg;
+      });
+      const off = button(tr('projectws.portable.off', 'Stop'), async () => {
+        const out = await page.api.projectFolder(page.id, 'portable', false).catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(card, data); }
+      });
+      off.title = tr('projectws.portable.off.tip', 'Stop keeping plain files. The files in the folder stay where they are.');
+      box.append(el('div', { className: 'pjp-line' }, check, off), say);
+      return box;
+    }
+    const ask = el('div', { className: 'pjp-line' });
+    const on = button(tr('projectws.portable.turnOn', 'Keep as plain files…'), () => {
+      on.hidden = true;
+      const sure = note(tr('projectws.portable.note', 'INSTRUCTIONS.md and AGENTS.md (the name coding agents look for), sources.md, project.json and the files you add in Sources/. They are plain files and are not encrypted: anyone who can open the folder can read them. Lumen reads them again when you change them in another program. Files already added keep only their text, encrypted in Lumen; they are not copied out.'));
+      const go = button(tr('projectws.portable.write', 'Write the files'), async () => {
+        go.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'portable', true).catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(card, data); host().refresh(); await reload(); } else { go.disabled = false; say.textContent = tr('projectws.portable.failed', 'Could not write the files.'); }
+      }, 'primary');
+      const no = button(tr('chatpage.project.cancel', 'Cancel'), () => { sure.remove(); ask2.remove(); on.hidden = false; on.focus(); });
+      const ask2 = el('div', { className: 'pjp-line' }, no, go);
+      box.prepend(sure);
+      box.append(ask2);
+      go.focus();
+    });
+    ask.append(on);
+    box.append(ask, say);
+    return box;
+  }
   function folderCard(data) {
     const p = data.project;
     const root = card(tr('chatpage.project.folder', 'Folder'), { tip: p.folder ? tr('projectws.folder.note', 'Chats of this project are saved here as Markdown files unless you turn that off in the project’s settings.') : '', className: 'pjp-folder' });
@@ -245,9 +486,17 @@
       root.body.append(el('div', { className: 'pjp-line' },
         p.folderMissing ? button(tr('chatpage.project.folder.missingFix', 'Folder missing…'), () => host().editFolder(data.project), 'primary') : button(tr('chatpage.project.folder.open', 'Open folder'), () => page.api.projectFolder(page.id, 'open').catch(() => null)),
         button(tr('projectws.folder.change', 'Change…'), () => host().editFolder(data.project))));
+      if (!p.folderMissing) root.body.append(plainFiles(root, data));
     } else {
       root.body.append(note(tr('chatpage.project.folder.none', 'This project has no folder yet.')));
-      root.body.append(el('div', { className: 'pjp-line' }, button(tr('projectws.folder.add', 'Add a folder…'), () => host().editFolder(data.project))));
+      const say = status();
+      const make = button(tr('projectws.folder.save', 'Save project to a folder'), async () => {
+        make.disabled = true;
+        const out = await page.api.projectFolder(page.id, 'save-folder').catch(() => null);
+        if (out?.ok && out.project) { data.project = out.project; swapFolder(root, data); host().refresh(); page.sub?.(); host().toast(tr('projectws.folder.saved', 'Saved to {path}', { path: out.folder })); } else { make.disabled = false; say.textContent = tr('projectws.folder.saveFailed', 'Could not make the folder.'); }
+      });
+      root.body.append(el('div', { className: 'pjp-line' }, make, button(tr('projectws.folder.add', 'Add a folder…'), () => host().editFolder(data.project))), say);
+      root.body.append(note(tr('projectws.folder.saveNote', 'Makes a folder with the instructions and sources as plain files and the chats as Markdown.')));
     }
     return root;
   }
@@ -450,8 +699,8 @@
 
   // ---- search: the project's chats and files
   function searchBox() {
-    const input = el('input', { type: 'search', className: 'pjp-input pjp-search-input', placeholder: tr('projectws.search', 'Search this project’s chats and files') });
-    input.setAttribute('aria-label', tr('projectws.search', 'Search this project’s chats and files'));
+    const input = el('input', { type: 'search', className: 'pjp-input pjp-search-input', placeholder: tr('projectws.search', 'Search this project’s chats and sources') });
+    input.setAttribute('aria-label', tr('projectws.search', 'Search this project’s chats and sources'));
     const out = el('div', { className: 'pjp-results', hidden: true });
     out.setAttribute('aria-live', 'polite');
     let timer = null;
@@ -481,9 +730,16 @@
           rows.push(b);
         }
       }
-      if (fileHits.length) {
-        rows.push(el('h3', { className: 'pjp-h3', textContent: tr('projectws.files', 'Files') }));
+      const pageHits = (page.data.project.links || []).filter((l) => (l.title || '').toLowerCase().includes(lower) || l.url.toLowerCase().includes(lower)).slice(0, 10);
+      if (fileHits.length || pageHits.length) {
+        rows.push(el('h3', { className: 'pjp-h3', textContent: tr('projectws.sources', 'Sources') }));
         for (const h of fileHits) rows.push(el('div', { className: 'pjp-hit file' }, el('span', { className: 'pjp-row-name', textContent: h.file }), el('span', { className: 'pjp-row-sum', textContent: h.snippet })));
+        for (const l of pageHits) {
+          const b = el('button', { type: 'button', className: 'pjp-hit page' }, el('span', { className: 'pjp-row-name', textContent: l.title || hostShown(l.url) }), el('span', { className: 'pjp-row-sum', textContent: `${hostShown(l.url)}${pathShown(l.url)}${l.site ? ` · ${tr('projectws.sources.site', 'Website')}` : ''}` }));
+          b.dataset.url = l.url;
+          b.onclick = () => window.assistant?.openLink?.(l.url);
+          rows.push(b);
+        }
       }
       if (!rows.length) rows.push(el('p', { className: 'pjp-note', textContent: tr('projectws.search.none', 'Nothing in this project matches.') }));
       out.replaceChildren(...rows);
@@ -589,9 +845,10 @@
     page.sub = () => {
       const n = mine().length;
       const f = (page.data.files || []).length;
-      const l = (page.data.project.links || []).length;
+      const l = (page.data.project.links || []).filter((x) => !x.site).length;
+      const w = (page.data.project.links || []).filter((x) => x.site).length;
       const part = (count, one, many) => (count ? tr(count === 1 ? one[0] : many[0], count === 1 ? one[1] : many[1], { n: count }) : '');
-      sub.textContent = [part(n, ['projectws.count.chat', '{n} chat'], ['projectws.count.chats', '{n} chats']) || tr('projectws.count.none', 'No chats yet'), part(f, ['projectws.count.file', '{n} file'], ['projectws.count.files', '{n} files']), part(l, ['projectws.count.page', '{n} pinned page'], ['projectws.count.pages', '{n} pinned pages'])].filter(Boolean).join(' · ');
+      sub.textContent = [part(n, ['projectws.count.chat', '{n} chat'], ['projectws.count.chats', '{n} chats']) || tr('projectws.count.none', 'No chats yet'), part(f, ['projectws.count.file', '{n} file'], ['projectws.count.files', '{n} files']), part(l, ['projectws.count.page', '{n} page'], ['projectws.count.pages', '{n} pages']), part(w, ['projectws.count.site', '{n} website'], ['projectws.count.sites', '{n} websites'])].filter(Boolean).join(' · ');
     };
     // quick actions
     const fresh = el('button', { type: 'button', className: 'btn small primary pjp-new-chat' });
@@ -599,7 +856,7 @@
     fresh.onclick = () => { fresh.disabled = true; h.newChat(page.data.project, ''); };
     const addFiles = el('button', { type: 'button', className: 'btn small pjp-add-files' });
     addFiles.append(icon('clip'), document.createTextNode(tr('projectws.addFiles.short', 'Add files')));
-    addFiles.onclick = () => { page.side.querySelector('.pjp-files').pick(); };
+    addFiles.onclick = () => { page.side.querySelector('.pjp-sources').pick(); };
     const folder = el('button', { type: 'button', className: 'btn small pjp-open-folder', hidden: !data.project.folder });
     folder.append(icon('open'), document.createTextNode(tr('chatpage.project.folder.open', 'Open folder')));
     folder.onclick = () => { if (page.data.project.folderMissing) h.editFolder(page.data.project); else api.projectFolder(id, 'open').catch(() => null); };
@@ -633,6 +890,7 @@
         anchor: more, label: data.project.name,
         items: [
           { label: tr('projectws.folder', 'Folder and more…'), icon: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>', run: () => h.editFolder(page.data.project) },
+          { label: tr('projectws.export', 'Export project…'), icon: svg('open'), run: async () => { const out = await api.projectFolder(id, 'export').catch(() => null); if (out?.ok) h.toast(tr('projectws.export.done', 'Exported {n} files to {path}', { n: out.count, path: out.path })); else if (out && out.reason !== 'canceled') h.toast(tr('projectws.export.failed', 'Could not export the project.')); } },
           { label: tr('chatpage.project.delete', 'Delete project'), icon: '<svg viewBox="0 0 16 16"><path d="M3.5 5h9M6.5 5V3.5h3V5M5 5l.5 8h5L11 5"/></svg>', run: askDelete },
         ],
         onClose: () => { if (!document.activeElement || document.activeElement === document.body) more.focus(); },
@@ -649,7 +907,7 @@
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, instructions, filesCard(data), linksCard(data), folderCard(data), defaultsCard(data), memoryCard(data));
+    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), memoryCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -659,6 +917,7 @@
     document.getElementById('chat-root').hidden = true;
     mount.append(root);
     document.body.classList.add('cp-project-open');
+    window.addEventListener('focus', onFocus);
     page.instructions = instructions;
     if (focus === 'instructions') { instructions.scrollIntoView({ block: 'nearest' }); instructions.start(); } else page.composerText.focus();
     return true;
@@ -667,6 +926,7 @@
     if (!page) return;
     const { root, host: h } = page;
     page = null;
+    window.removeEventListener('focus', onFocus);
     root.remove();
     const chat = document.getElementById('chat-root');
     if (chat) chat.hidden = false;
@@ -675,6 +935,16 @@
   }
   // The chats changed (a run started, a reply came, a chat moved) or the project did, in this view or in the sidebar: the lists redraw, and the
   // header and the overview follow an edit made elsewhere (never while something here is being edited).
+  // Everything the overview shows, read again (the project's folder was changed outside, a source was added elsewhere). Not while something is being edited here.
+  async function reload() {
+    if (!page || page.editing.size || page.syncing) return;
+    page.syncing = true;
+    const me = page;
+    const fresh = await me.api.project(me.id).catch(() => null);
+    me.syncing = false;
+    if (!fresh || me !== page || me.editing.size) return;
+    applyFresh(me, fresh);
+  }
   async function refresh() {
     if (!page) return;
     page.redraw?.();
@@ -689,6 +959,9 @@
     if (!me || me !== page || !fresh) { if (me) me.syncing = false; return; }
     me.syncing = false;
     if (me.editing.size) return;
+    applyFresh(me, fresh);
+  }
+  function applyFresh(me, fresh) {
     me.data.project = fresh.project;
     me.data.files = fresh.files;
     me.data.totals = fresh.totals;
@@ -701,11 +974,13 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [instructionsCard(me.data), filesCard(me.data), linksCard(me.data), folderCard(me.data), defaultsCard(me.data), memoryCard(me.data)];
+    const next = [instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), memoryCard(me.data)];
     me.side.replaceChildren(...next);
     me.syncModel?.();
     me.sub?.();
   }
+  // Coming back to Lumen after editing the project's files in another program: the page looks again (main reads the folder first).
+  const onFocus = () => { if (page?.data.project.portable) reload(); };
 
   window.chatProjectPage = { open, close, isOpen: () => Boolean(page), refresh, id: () => page?.id || null };
 })();

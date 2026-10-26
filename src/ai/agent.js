@@ -617,8 +617,8 @@ const MEMORY_TOOL = { ...memoryLib.TOOL, eager_input_streaming: true };
 // runTools); never to an outside MCP client. Defined here so the module itself stays out of startup; the text is short on purpose.
 const PROJECT_TOOL = {
   name: 'project_files',
-  description: 'Files and pinned pages of this chat\'s project. list; search query; read name (offset: next chunk); links (read a page with read_urls).',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'links'] }, query: { type: 'string' }, name: { type: 'string' }, offset: { type: 'integer' } }, required: ['action'] },
+  description: 'Files, pinned pages and websites of this chat\'s project. list; search query; read name (offset: next chunk); links (read a page with read_urls); sites, site_search query site, site_read urls (pages under a website).',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'links', 'sites', 'site_search', 'site_read'] }, query: { type: 'string' }, name: { type: 'string' }, offset: { type: 'integer' }, site: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['action'] },
   eager_input_streaming: true,
 };
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
@@ -4522,7 +4522,23 @@ ${prompt}` : prompt), historyImages: [] };
     if (!scope?.chat || scope.gate?.external || !p?.files || !this.projectOffered(scope.chat)) throw new Error('This chat has no project files.');
     const got = await p.files(scope.chat);
     if (!got) throw new Error('This chat is not in a project.');
-    return projectCtx.runTool(input, got);
+    // A website of the project (site_search, site_read): the web search and the page reads the AI has anyway, cut to the website's address by project-context.js;
+    // ensureAllowed asked for the same OK as web_search / read_urls before this ran.
+    const deps = { ...got, searchSite: (query, site) => this.projectSiteSearch(query, site), readPages: (urls) => this.runTool('read_urls', { urls }) };
+    return projectCtx.runTool(input, deps);
+  }
+  async projectSiteSearch(query, site) {
+    const sources = require('../features/project-sources');
+    const u = new URL(site.url);
+    const base = u.pathname.replace(/\/$/, '');
+    for (const scope of base ? [`${u.hostname}${base}`, u.hostname] : [u.hostname]) {
+      const q = `site:${scope} ${query}`;
+      const shown = this.showResearch({ query: q });
+      let results;
+      try { results = await searchWeb(q); } finally { shown(); }
+      if (results.some((r) => sources.inSite(r.url, site.url))) return results;
+    }
+    return [];
   }
   // The user's connectors and MCP servers can be turned off for a project (its settings): its chats then get neither the tools nor the calls.
   projectAllows(what) {
@@ -4982,9 +4998,12 @@ ${prompt}` : prompt), historyImages: [] };
       const ok = await pdfText.requirePdfPermission(taintHolder(run), pdf.fileUrl, (fileName) => (noAsk ? true : this.askApproval(fileName, emit, signal, { action: 'pdf', who, title: `Allow the AI to open and read ${fileName}?` })));
       if (!ok) throw new Error(`The user did not allow opening ${pdf.name}. Ask them what to do instead.`);
     }
-    if (DESTINATION_TOOLS.has(name) && taintHolder(run)?.tainted) {
-      const search = searchCard(name, input, who);
-      for (const host of destinationHosts(name, input)) {
+    // [project workspace] a project website's search and reads go out like web_search and read_urls: the same cards, the same approved hosts
+    const siteGate = name === 'project_files' ? ({ site_search: 'web_search', site_read: 'read_urls' })[input?.action] : '';
+    const goes = siteGate || name;
+    if (DESTINATION_TOOLS.has(goes) && taintHolder(run)?.tainted) {
+      const search = searchCard(goes, input, who);
+      for (const host of destinationHosts(goes, input)) {
         if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search out. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
@@ -4996,7 +5015,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     if (name === 'memory') await this.allowMemory(input, gate); // [memory]
-    if (name === 'project_files' && (input?.action === 'read' || input?.action === 'search')) this.markTainted(run); // [project workspace] a file's text came from somewhere: it counts as content read, like a local file's
+    if (name === 'project_files' && (input?.action === 'read' || input?.action === 'search' || input?.action === 'site_read')) this.markTainted(run); // [project workspace] a file's text came from somewhere: it counts as content read, like a local file's
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (name === 'word' && WORD_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // [word] a document's words taint web actions, but not the word tool's own edits to a document that was read (src/word tracks its sources)
     if (name === 'desktop' && DESKTOP_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // app text taints web actions, but not the desktop tool's own acting calls on the same app (src/desktop tracks its sources)
