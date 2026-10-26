@@ -179,8 +179,11 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await waitFor(async () => { state = await tabState(); return state?.tabs[0].id === last; });
   check('tabs can be reordered', state.tabs[0].id === last, JSON.stringify(state.tabs.map((t) => t.id)));
 
-  // Downloads save to the Downloads folder without a dialog.
+  // Downloads save to the Downloads folder without a dialog. The fixture tab is brought to the front as the user would: the AI's
+  // switch_tab no longer fronts a tab unless the user's own message asks to see it (#742), and the new tab above is in front.
   await run('switch_tab', { tab_id: 1, show: true });
+  await ui.evaluate(() => window.browser.switchTab(1));
+  await waitFor(async () => (await app.evaluate(() => global.__agent.browser.activeTab().id)) === 1);
   const dlDir = await app.evaluate(({ app: a }) => a.getPath('downloads'));
   const existing = new Set(fs.readdirSync(dlDir));
   await pageEval("document.getElementById('dl').click()");
