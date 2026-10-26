@@ -8921,6 +8921,9 @@ const connectorsFacade = {
   isWrite: (input) => connectorsSvc().isWrite(input),
   describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
+  pageTarget: (input) => connectorsSvc().pageTarget(input), // [canvas pages] Canvas is read from its pages in a tab (agent.js runCanvasPages): where, that the sign-in is good, or that it ended
+  pageOk: (id) => connectorsSvc().pageOk(id),
+  pageSignedOut: (id) => connectorsSvc().pageSignedOut(id),
   list: () => connectorsSvc().list(),
 };
 ipcMain.handle('connectors:list', () => connectorsSvc().list());
@@ -10926,7 +10929,7 @@ function noteThumbs(run, msg, push) {
   if (msg.type === 'tool' || msg.type === 'tool_done' || msg.type === 'done') thumbAiTabs.at = 0; // (a step may have opened or closed a tab: the next frame asks again)
   if (msg.type === 'tool') {
     const name = String(msg.name || '');
-    if (msg.id && stepLabelsLib.surfaceOf(name) === 'browser') {
+    if (msg.id && stepLabelsLib.surfaceOf(name, msg.input) === 'browser') {
       (run.toolNames ||= new Map()).set(msg.id, name);
       (run.toolInputs ||= new Map()).set(msg.id, msg.input);
       if (/(^|__)close_tab$/.test(name) && Number.isInteger(msg.input?.tab_id)) run.thumbHold = msg.input.tab_id; // (held until the step is done)
@@ -10950,7 +10953,7 @@ function noteThumbs(run, msg, push) {
   } else if (msg.type === 'tool_done') {
     const name = run.toolNames?.get(msg.id);
     if (name && /(^|__)close_tab$/.test(name)) run.thumbHold = null;
-    if (name && /(^|__)open_tab$/.test(name) && msg.ok !== false && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now
+    if (name && (/(^|__)open_tab$/.test(name) ? msg.ok !== false : name === 'connector') && Number.isInteger(msg.tabId) && run.thumbTarget?.tabId !== msg.tabId) { // the tab it made is the one shown now (a Canvas read: the tab it read in)
       run.thumbTarget = { kind: 'tab', tabId: msg.tabId };
       const ev = thumbTargetEvent(run);
       if (ev) push(ev);
@@ -11109,6 +11112,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && /^(mcp__lumen__)?open_tab$/.test(String(tool.name))) msg = { ...msg, tabId: run.tabId };
+    }
+    if (msg.type === 'tool_done' && Number.isInteger(run.tabId)) { // [canvas pages] a Canvas read works in a background tab of its own: the step names it, ended or failed (a sign-in page is worth opening)
+      const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
+      if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
     if (msg.type === 'card_files' && run.doneMsg && !run.deleted) { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); } // (files listed after the run ended: kept too)
