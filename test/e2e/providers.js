@@ -156,6 +156,8 @@ const path = require('path');
   const parsedList = await app.evaluate(() => global.__providers.parseOpenRouterModels({ data: [{ id: 'a/b', supported_parameters: ['tools'] }, { id: 'a/b:free' }, { id: 'c/d' }] }));
   check('openrouter: models list parse (tools flag, :free variants kept and flagged)', JSON.stringify(parsedList.map((m) => [m.id, m.tools, m.free])) === '[["a/b",true,false],["a/b:free",false,true],["c/d",false,false]]', JSON.stringify(parsedList));
   await app.evaluate(() => global.__agent.reset());
+  // Reply suggestions ask the cheaper model once after each reply, which the stub would count as a turn; they have their own tests.
+  await app.evaluate(() => global.__patchSettings({ replySuggestions: false }));
   await ui.evaluate(() => document.getElementById('new-chat').click());
   const badKey = await ui.evaluate(() => window.assistant.setProviderKey('openrouter', 'sk-or-nope').then(() => 'saved', (e) => e.message));
   check('a rejected key is refused when saving, not on the first message', /didn't accept that key/.test(badKey), badKey);

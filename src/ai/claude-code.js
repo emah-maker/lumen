@@ -25,7 +25,7 @@ const { isSignedOutText } = require('./auth-sync');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 const aiFiles = require('../features/ai-files'); // [ai files] files the CLI's own tools wrote (noteWritten)
-const { HelperTracker } = require('./cc-helpers'); // [background helpers] subagents and tasks the CLI runs on after its reply
+const ccHelpers = () => require('./cc-helpers'); // [background helpers] subagents and tasks the CLI runs on after its reply (lazy: not at startup)
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -477,7 +477,7 @@ class ClaudeCodeEngine {
     // process's messages, so a capped chat gets a fresh (pre-started) process per message instead.
     // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
     // leftover output is being read off (take() waits for it).
-    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null, helpers: new HelperTracker(), watch: null, sink: null };
+    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null, helpers: new (ccHelpers().HelperTracker)(), watch: null, sink: null };
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
     proc.cwd = workDir || (fullAccess ? os.homedir() : dir); // (a relative path in a file step is from here)
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)

@@ -245,6 +245,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close().catch(() => {});
+  try { if (app.process().exitCode === null) app.process().kill(); } catch { /* gone */ } // (the agent window the test used stays as the user's own, so Lumen keeps running: never leave it behind)
   server.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
