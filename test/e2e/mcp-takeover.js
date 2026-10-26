@@ -180,6 +180,15 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
   check('...and the agent\'s again once the hold has passed', !r.result.isError, A.text(r));
 
+  // "<client> is working" in the user's own window, clicked: the agent's window comes forward, where it is working.
+  const userWin = (await windows()).find((w) => !w.agent);
+  await app.evaluate(({ BrowserWindow }, id) => { BrowserWindow.fromId(id)?.focus(); }, userWin.windowId);
+  const busy = A.call('wait', { seconds: 5 });
+  check('the user\'s window shows the agent working, as something to click', Boolean(await waitFor(() => ui.$('#external-pills .external-pill.external-show'), 6000)));
+  await ui.click('#external-pills .external-pill-text');
+  check('...and a click brings the agent\'s window forward', await waitFor(() => app.evaluate((_e, id) => global.__agentWindows.recOf(id).win.isFocused(), aw.windowId), 4000));
+  await busy;
+
   // A new tab of its own is still the agent's to work in.
   r = await A.call('open_tab', { url: `${base}/other` });
   check('the agent can still open a new tab of its own', !r.result.isError, A.text(r));

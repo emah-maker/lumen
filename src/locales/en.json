@@ -715,6 +715,7 @@
   "external.takeOver": "Take over",
   "external.resume": "Resume",
   "external.working": "{client} is working",
+  "external.showTitle": "Show where {client} is working",
   "external.pausedYou": "Paused: you're in control",
   "external.takeOverTitle": "Pause {client} and take control of its window",
   "external.resumeTitle": "Let {client} carry on",
