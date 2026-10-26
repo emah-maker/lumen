@@ -18,7 +18,10 @@
   const FOLDER = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>';
   const CHEVRON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg>';
   const OPEN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/></svg>';
-  const expanded = new Set(); // projects shown open in the history panel
+  const KEY = 'lumen.sidebar.projects.open';
+  const saved = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const expanded = new Set(saved()); // projects shown open in the history panel: shut to begin with, and kept as the user left them
+  const remember = () => { try { localStorage.setItem(KEY, JSON.stringify([...expanded])); } catch { /* not kept */ } };
   let state = { id: null, project: null, count: 0 };
   let projects = []; // the last list the panel or a picker was given
   let strip = null;
@@ -107,7 +110,7 @@
   function newProject(then) {
     pj.editor({ api, project: null, onDone: async (r) => {
       await refresh();
-      if (r.saved) { expanded.add(r.saved.id); then?.(r.saved); }
+      if (r.saved) { expanded.add(r.saved.id); remember(); then?.(r.saved); }
       window.chatList?.refreshOpen?.();
     } });
   }
@@ -118,7 +121,7 @@
     const host = el('div', { className: 'cp-projects sbp-projects' });
     pj.render({
       host, projects: list, chats, active: null, expanded, current,
-      onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); rerender(); },
+      onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); remember(); rerender(); },
       onOpen: (id) => openChat(id),
       onAdd: () => newProject(),
       onEdit: (p) => pj.editor({ api, project: p, onDone: async () => { await refresh(); rerender(); } }),

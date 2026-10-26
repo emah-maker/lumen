@@ -20,7 +20,11 @@
 .sbp-pick:focus-visible, .sbp-open:focus-visible, .chat-project-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* the history panel's Projects block */
-.sbp-projects { flex: none; max-height: 38%; overflow-y: auto; margin: 0 8px var(--cp-1); padding: 0 0 var(--cp-1); border-bottom: 1px solid var(--hairline); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+/* one scroll for the whole panel: the project block and the list do not scroll on their own */
+#chat-list { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+#chat-list > * { flex-shrink: 0; }
+#chat-list .chat-items { flex: none; overflow: visible; }
+.sbp-projects { flex: none; margin: 0 8px var(--cp-1); padding: 0 0 var(--cp-1); border-bottom: 1px solid var(--hairline); max-height: none; overflow: visible; }
 .sbp-projects .cp-pj-head { padding-left: 12px; }
 .chat-project-hint { flex: none; align-self: flex-start; height: 26px; margin: 0 12px 6px 16px; padding: 0 10px; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .chat-project-hint:hover { color: var(--text); background: var(--hover); }

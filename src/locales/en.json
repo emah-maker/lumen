@@ -310,6 +310,7 @@
   "projectws.folder.add": "Add a folder…",
   "projectws.folder.note": "Chats of this project are saved here as Markdown files unless you turn that off in the project’s settings.",
   "projectws.edit": "Edit",
+  "projectws.rail.all": "Show all ({n})",
   "projectws.done": "Done",
   "projectws.instructions.add": "Add",
   "projectws.instructions.empty": "No instructions yet. Say how the AI should work here: the tone, who it is for, what to avoid.",

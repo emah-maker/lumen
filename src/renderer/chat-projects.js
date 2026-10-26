@@ -16,6 +16,7 @@
   const MORE = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>';
   const NOTE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M3.5 6.5h9M3.5 9.5h9M3.5 12.5h5"/></svg>';
   const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>';
+  const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
 
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
@@ -80,12 +81,18 @@
         const list = el('div', { className: 'cp-pj-chats' });
         list.dataset.project = p.id;
         const mine = chats.filter((c) => c.project === p.id && !c.archived);
-        for (const c of mine) {
+        for (const c of mine.slice(0, SHOWN_CHATS)) {
           const b = el('button', { type: 'button', className: `cp-pj-chat${c.id === current ? ' current' : ''}`, title: c.title || '' });
           b.dataset.id = c.id;
           b.append(el('span', { className: 'cp-pj-chat-title', textContent: c.title || tr('chats.untitled', 'Chat') }));
           b.onclick = () => onOpen(c.id);
           list.append(b);
+        }
+        if (mine.length > SHOWN_CHATS && onPage) { // (the rest are on the project's page)
+          const all = el('button', { type: 'button', className: 'cp-pj-all', textContent: tr('projectws.rail.all', 'Show all ({n})', { n: mine.length }) });
+          all.setAttribute('aria-label', `${all.textContent}: ${p.name}`);
+          all.onclick = () => onPage(p);
+          list.append(all);
         }
         if (!mine.length) list.append(el('p', { className: 'cp-pj-chats-empty', textContent: tr('chatpage.project.emptyShort', 'No chats yet. Drag one here.') }));
         rows.push(list);
