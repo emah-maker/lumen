@@ -21,7 +21,7 @@
 
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
   // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder); the chevron lists its chats under it.
-  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null }) {
+  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null }) {
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const head = el('div', { className: 'cp-pj-head' });
@@ -29,7 +29,16 @@
     add.setAttribute('aria-label', tr('chatpage.project.new', 'New project'));
     add.innerHTML = PLUS;
     add.onclick = onAdd;
-    head.append(el('span', { className: 'cp-pj-title', textContent: tr('chatpage.projects', 'Projects') }), add);
+    const tools = el('span', { className: 'cp-pj-head-tools' });
+    if (onImport) {
+      const imp = el('button', { type: 'button', className: 'icon-btn cp-pj-add cp-pj-import', title: tr('projectws.import', 'Open folder as project…') });
+      imp.setAttribute('aria-label', tr('projectws.import', 'Open folder as project…'));
+      imp.innerHTML = FOLDER;
+      imp.onclick = onImport;
+      tools.append(imp);
+    }
+    tools.append(add);
+    head.append(el('span', { className: 'cp-pj-title', textContent: tr('chatpage.projects', 'Projects') }), tools);
     const rows = [head];
     for (const p of projects) {
       const on = p.id === active;
@@ -162,6 +171,7 @@
     let pickedFolder = null; // a folder picked in this dialog, saved with Save (new project: instead of making one; edit: instead of the current one)
     let confirmed = false; // the home folder or a drive was named: the next Save uses it
     let mirrorOn = project ? project.mirror !== false : true;
+    let portableOn = project ? project.portable === true : true; // (a new project's folder keeps its instructions and sources as plain files)
     const small = (label, run, props = {}) => { const b = el('button', { type: 'button', className: 'btn small', textContent: label, ...props }); b.onclick = run; return b; };
 
     // ---- the folder section
@@ -222,6 +232,13 @@
       input.onchange = () => { mirrorOn = input.checked; };
       check.append(input, el('span', { textContent: tr('chatpage.project.mirror', 'Save chats as Markdown files in this folder') }));
       parts.push(check);
+      // instructions, sources and settings as plain files (INSTRUCTIONS.md, AGENTS.md, sources.md, Sources/, project.json)
+      const plain = el('label', { className: 'cp-pj-check cp-pj-portable' });
+      const plainInput = el('input', { type: 'checkbox', checked: portableOn });
+      plainInput.onchange = () => { portableOn = plainInput.checked; plainNote.hidden = !portableOn; };
+      plain.append(plainInput, el('span', { textContent: tr('projectws.portable', 'Keep instructions and sources as plain files in this folder') }));
+      const plainNote = el('p', { className: 'cp-pj-note', hidden: !portableOn, textContent: tr('projectws.portable.note', 'INSTRUCTIONS.md and AGENTS.md (the name coding agents look for), sources.md, project.json and the files you add in Sources/. They are plain files and are not encrypted: anyone who can open the folder can read them. Lumen reads them again when you change them in another program. Files already added keep only their text, encrypted in Lumen; they are not copied out.') });
+      parts.push(plain, plainNote);
       parts.push(el('p', { className: 'cp-pj-note', textContent: tr('chatpage.project.mirror.note', 'These files are plain text and are not encrypted: anyone who can open the folder can read them. Chats outside projects are never saved this way. They go in a Chats folder; a chat moved out of the project goes to Chats/Removed, a deleted one to Chats/Deleted.') }));
       if (current?.folder && !pickedFolder) {
         const status = el('span', { className: 'cp-pj-note' });
@@ -315,7 +332,7 @@
       e.preventDefault();
       if (!name.value.trim()) { name.focus(); return; }
       save.disabled = true;
-      const payload = { id: project?.id, name: name.value, instructions: text.value, mirror: mirrorOn };
+      const payload = { id: project?.id, name: name.value, instructions: text.value, mirror: mirrorOn, portable: portableOn };
       if (!project) { if (pickedFolder) { payload.folderMode = 'existing'; payload.folder = pickedFolder; payload.confirmed = confirmed; } }
       else if (pickedFolder) { payload.folder = pickedFolder; payload.confirmed = confirmed; }
       else if (makeFolder && !project.folder) payload.folderMode = 'new';

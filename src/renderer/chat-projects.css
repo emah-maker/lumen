@@ -8,6 +8,7 @@
 .cp-projects[hidden] { display: none; }
 .cp-pj-head { display: flex; align-items: center; justify-content: space-between; padding: var(--cp-1) var(--cp-1) 0 10px; }
 .cp-pj-title { font-size: 12px; font-weight: 500; color: var(--muted); }
+.cp-pj-head-tools { display: inline-flex; align-items: center; gap: 2px; }
 .cp-pj-add { width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
 .cp-pj-add svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .cp-pj { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; box-sizing: border-box; border: none; border-radius: 10px; background: transparent; color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }

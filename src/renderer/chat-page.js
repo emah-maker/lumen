@@ -190,6 +190,7 @@
       onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); drawProjects(); },
       onOpen: (id) => openChat(id),
       onAdd: () => editProject(null),
+      onImport: () => importProject(),
       onEdit: (p) => editProject(p),
       onPage: (p) => { view = 'chats'; openProjectPage(p.id); },
       onInstructions: (p) => { view = 'chats'; openProjectPage(p.id, { focus: 'instructions' }); },
@@ -271,6 +272,17 @@
     toast(out?.ok ? (out.already ? tr('projectws.pages.already', 'That page is already pinned.') : trv('projectws.tabAdded', 'Added to {name}', { name: chipProject.name })) : out?.reason === 'full' ? tr('projectws.pages.full', 'A project holds up to 25 pages.') : tr('projectws.pages.notweb', 'The tab you are looking at is not a web page.'));
     window.chatProjectPage?.isOpen() && openProjectPage(window.chatProjectPage.id());
   };
+  // "Open folder as project": any folder (made by Lumen or by hand, or just files); an existing project of that folder opens instead.
+  async function importProject() {
+    const out = await api.projectImport().catch(() => null);
+    if (!out || out.reason === 'canceled') return;
+    if (!out.ok) { toast(out.reason === 'limit' ? trv('projectws.import.limit', 'Lumen holds up to 60 projects.') : out.reason === 'home' || out.reason === 'root' ? trv('projectws.import.broad', 'Pick a folder for the project, not your home folder or a whole drive.') : trv('projectws.import.failed', 'Could not open that folder.')); return; }
+    await renderList();
+    view = 'chats';
+    expanded.add(out.project.id);
+    await openProjectPage(out.project.id);
+    toast(out.existing ? trv('projectws.import.existing', 'That folder is already the project “{name}”.', { name: out.project.name }) : out.plain ? trv('projectws.import.done', 'Opened “{name}”: {n} files added.', { name: out.project.name, n: out.files || 0 }) : trv('projectws.import.loose', 'Opened “{name}” with {n} files as sources. Nothing was written to the folder.', { name: out.project.name, n: out.files || 0 }));
+  }
   function editProject(project, then) {
     pj.editor({ api, project, onDone: async (r) => {
       if (r.removed) {

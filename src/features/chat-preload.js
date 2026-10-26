@@ -84,6 +84,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectSearch: (id, query) => ipcRenderer.invoke('chats:project-search', id, query),
       projectLink: (id, change) => ipcRenderer.invoke('chats:project-link', id, change), // { add: { url, title, site? } } | { remove: url } | { rename: { url, title } } | { refresh: url }
       projectAddTab: (id, tabIds) => ipcRenderer.invoke('chats:project-add-tab', id, tabIds), // the tab the chat works with, or the tabs picked in the page's list
+      projectImport: () => ipcRenderer.invoke('chats:project-import'), // "Open folder as project": asks for the folder
       projectTabs: (id) => ipcRenderer.invoke('chats:project-tabs', id), // the web pages open in your windows
       projectFileRename: (id, fileId, name) => ipcRenderer.invoke('chats:project-file-rename', id, fileId, name),
       projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),

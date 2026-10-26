@@ -302,7 +302,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -11576,6 +11576,8 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
       if (project.folder) { fields.folder = await use(project.folder, project.confirmed); fields.folderCreated = false; } else fields.folder = '';
     }
     if (typeof project?.mirror === 'boolean') fields.mirror = project.mirror;
+    if (typeof project?.portable === 'boolean') fields.portable = project.portable;
+    else if (!fields.id && made) fields.portable = true; // [portable projects] a project made with a folder keeps its instructions and sources there as plain files
     if (project?.workFolder !== undefined) fields.workFolder = project.workFolder ? await use(project.workFolder, project.confirmedWork) : '';
   } catch (err) {
     if (made) fs.promises.rmdir(made).catch(() => {});
@@ -11585,6 +11587,7 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
   if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
   syncProjectInstructions();
   pushAttention();
+  if (out.portable && out.folder) portableSoon(out.id);
   return projectPage(out);
 });
 // [project workspace] Deleting a project can be undone for a while (the page's toast): the project, its chats' membership, its memory and its
@@ -11742,6 +11745,38 @@ ipcMain.handle('chats:project-folder', async (event, id, action, arg) => {
         syncProjectInstructions(); pushAttention();
         return { ok: Boolean(out), project: out && projectPage(out) };
       }
+      case 'portable': { // keep instructions, sources and settings as plain files in the folder (arg: on or off)
+        if (!p.folder) return { ok: false, reason: 'none' };
+        const out = chats().saveProject({ id: p.id, name: p.name, portable: arg === true });
+        if (!out) return { ok: false, reason: 'error' };
+        const result = out.portable ? await syncPortable(p.id) : null;
+        syncProjectInstructions(); pushAttention();
+        return { ok: true, project: projectPage(chats().projects().find((x) => x.id === p.id) || out), wrote: result?.wrote || [], conflicts: result?.conflicts || [] };
+      }
+      case 'sync': { // look at the folder now
+        if (!p.portable || !p.folder) return { ok: false, reason: 'none' };
+        const result = await syncPortable(p.id);
+        return { ok: Boolean(result), missing: result?.missing === true, changed: Boolean(result && (result.changed || result.adopted.length)), adopted: result?.adopted || [], files: result?.files || null, conflicts: result?.conflicts || [] };
+      }
+      case 'save-folder': { // a project with no folder: make one, keep everything in it as plain files
+        if (p.folder) return { ok: false, reason: 'has-folder' };
+        const made = await projectFolders.createProjectFolder({ parent: projectsParent(), name: p.name });
+        const out = chats().saveProject({ id: p.id, name: p.name, folder: made, folderCreated: true, portable: true });
+        if (!out) return { ok: false, reason: 'error' };
+        folderState.delete(p.id);
+        const result = await syncPortable(p.id);
+        const ids = chats().list().filter((c) => c.project === p.id && !c.missing).map((c) => c.id);
+        serial(() => mirror().writeAll(ids)).catch(() => {});
+        syncProjectInstructions(); pushAttention();
+        return { ok: true, folder: made, project: projectPage(chats().projects().find((x) => x.id === p.id) || out), wrote: result?.wrote || [] };
+      }
+      case 'export': {
+        const picked = await electronDialog.showSaveDialog(dialogParent(event), { title: 'Export project', defaultPath: path.join(documentsDir(), `${projectFolders.safeFolderName(p.name)}.zip`), filters: [{ name: 'Zip', extensions: ['zip'] }] });
+        if (picked.canceled || !picked.filePath) return { ok: false, reason: 'canceled' };
+        const entries = await buildProjectExport(p);
+        await fs.promises.writeFile(picked.filePath, require('./features/zip-write').create(entries));
+        return { ok: true, path: picked.filePath, count: entries.length };
+      }
       case 'write-all': {
         if (!p.folder) return { ok: false, reason: 'none' };
         const ids = chats().list().filter((c) => c.project === p.id && !c.missing).map((c) => c.id);
@@ -11768,9 +11803,10 @@ function projectFiles() {
   return projectFilesStore;
 }
 const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
-const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); };
+const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); portableSoon(); };
 // Everything the project page shows about one project.
 ipcMain.handle('chats:project-get', async (_e, id) => {
+  if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
   const p = projectById(String(id));
   if (!p) return null;
   const store = projectFiles();
@@ -11794,7 +11830,9 @@ ipcMain.handle('chats:project-files-add', async (_e, id, list) => {
     const bytes = item?.bytes ? Buffer.from(item.bytes) : null;
     total += bytes ? bytes.length : 0;
     if (!bytes || total > 200 * 1024 * 1024) { results.push({ ok: false, name: String(item?.name || 'file').slice(0, 120), error: 'This file could not be read.' }); continue; }
-    results.push(await store.add(p.id, { name: String(item.name || 'file'), bytes }));
+    const added = await store.add(p.id, { name: String(item.name || 'file'), bytes });
+    results.push(added);
+    if (added.ok && projectById(p.id)?.portable) await portableUpload(projectById(p.id), added.file.name, bytes, added.file.id); // [portable projects] kept as the real file too
     await new Promise((resolve) => setImmediate(resolve)); // (a PDF is read on this thread: the window gets a turn between files)
   }
   projectChanged();
@@ -11803,7 +11841,9 @@ ipcMain.handle('chats:project-files-add', async (_e, id, list) => {
 ipcMain.handle('chats:project-file-remove', async (_e, id, fileId) => {
   const p = projectById(String(id));
   if (!p) return null;
+  const gone = projectFiles().list(p.id).find((f) => f.id === String(fileId));
   try { await projectFiles().remove(p.id, String(fileId)); } catch { return null; }
+  if (gone && p.portable) await portableRemoved(p, gone.name);
   projectChanged();
   return { files: projectFiles().list(p.id), totals: projectFiles().totals(p.id) };
 });
@@ -11910,11 +11950,133 @@ ipcMain.handle('chats:project-add-tab', (event, projectId, tabIds) => {
   const tab = tabs.find((t) => t.id === (chatPageRt.isChatSender(event) ? chatPageRt.pick() : activeId));
   return addTabToProject(tab, pid);
 });
+// ---------- [portable projects] a project with a folder keeps INSTRUCTIONS.md (and its copy AGENTS.md), sources.md, Sources/ and project.json there as plain files,
+// and reads them again when they change (features/project-portable.js; docs/projects.md "Your project is just a folder"). The switch is the project's `portable`
+// (on for a new project whose folder Lumen made; off until the user turns it on for any other). These files are not encrypted: the editor says so.
+// What each side knew at the last sync is in <profile>/project-sync/<project id>.json, so the folder stays clean and a lost record only makes the next pass careful.
+const portableLib = () => require('./features/project-portable');
+const portableStates = new Map();
+const portableStateFile = (id) => path.join(app.getPath('userData'), 'project-sync', `${id}.json`);
+async function portableStateOf(id) {
+  if (portableStates.has(id)) return portableStates.get(id);
+  const s = await fs.promises.readFile(portableStateFile(id), 'utf8').then((t) => JSON.parse(t) || {}, () => ({}));
+  portableStates.set(id, s);
+  return s;
+}
+async function portableSave(id) {
+  try { await fs.promises.mkdir(path.dirname(portableStateFile(id)), { recursive: true }); await fs.promises.writeFile(portableStateFile(id), JSON.stringify(portableStates.get(id) || {})); } catch { /* the next pass is careful instead */ }
+}
+let portableChain = Promise.resolve();
+const portableSerial = (fn) => { const run = portableChain.then(fn, fn); portableChain = run.catch(() => {}); return run; };
+async function portableCtx(p) {
+  const store = projectFiles();
+  const kinds = require('./features/project-files');
+  return {
+    folder: p.folder, state: await portableStateOf(p.id),
+    get: () => { const q = projectById(p.id) || p; return { instructions: q.instructions || '', links: q.links || [], description: q.description || '', defaults: q.defaults || {}, updated: q.updated || 0 }; },
+    apply: (patch) => { const q = projectById(p.id); if (q) chats().saveProject({ id: q.id, name: q.name, ...patch }); },
+    files: { kindOf: kinds.kindOf, list: () => store.list(p.id), add: (input) => store.add(p.id, input), remove: (fileId) => store.remove(p.id, fileId) },
+  };
+}
+// One pass over a project's folder; null when the project does not keep plain files. A change made in the folder shows in Lumen at once.
+function syncPortable(id) {
+  return portableSerial(async () => {
+    const p = projectById(id);
+    if (!p || !p.portable || !p.folder) return null;
+    try {
+      const out = await portableLib().sync(await portableCtx(p));
+      await portableSave(id);
+      if (out.changed || out.adopted.length) { syncProjectInstructions(); pushAttention(); syncTouch('chats'); } // (not projectChanged: that would ask for another pass)
+      return out;
+    } catch (err) { console.error('Portable project:', err?.message || err); return null; }
+  });
+}
+let portableTimer = null;
+function portableSoon(id, ms = 500) {
+  clearTimeout(portableTimer);
+  portableTimer = setTimeout(() => { try { for (const p of chats().projects()) if (p.portable && p.folder && (!id || p.id === id)) syncPortable(p.id); } catch { /* next time */ } }, ms);
+  portableTimer.unref?.();
+}
+// The window getting focus is when an edit made in an editor is looked for (no folder watching: nothing runs while Lumen is in the background).
+app.on('browser-window-focus', () => { if (chatStore) portableSoon(null, 700); });
+const portableUpload = (p, name, bytes, fileId) => portableSerial(async () => { try { await portableLib().writeUpload(await portableCtx(p), name, bytes, fileId); await portableSave(p.id); } catch (err) { console.error('Portable project:', err?.message || err); } });
+const portableRemoved = (p, name) => portableSerial(async () => { try { await portableLib().removeFile(await portableCtx(p), name); await portableSave(p.id); } catch { /* the file stays where it is */ } });
+const portableRenamed = (p, from, to) => portableSerial(async () => { try { await portableLib().renameFile(await portableCtx(p), from, to); await portableSave(p.id); } catch { /* the file keeps its name there */ } });
+
+// "Export project": a zip with the project's instructions, sources, chats and settings in plain formats (docs/projects.md). A file added to Lumen
+// is exported as the real file when the folder has it, else as its text (Lumen keeps the text of what it reads, not the original).
+async function buildProjectExport(p0) {
+  const lib = portableLib();
+  if (p0.portable) await syncPortable(p0.id);
+  const p = projectById(p0.id) || p0;
+  const store = projectFiles();
+  const entries = [];
+  const add = (name, data) => entries.push({ name, data: Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8') });
+  const text = lib.canon(p.instructions);
+  add(lib.INSTRUCTIONS, text ? `${text}\n` : '');
+  add(lib.AGENTS, text ? `${text}\n` : '');
+  add(lib.SOURCES_MD, lib.renderSources(p.links || []));
+  add(lib.SETTINGS, lib.settingsText({ name: p.name, description: p.description, defaults: p.defaults }, { withName: true }));
+  const taken = new Set();
+  const unique = (name) => { let n = name; for (let i = 2; taken.has(n.toLowerCase()); i++) n = name.replace(/(\.[^.]*)?$/, ` (${i})$1`); taken.add(n.toLowerCase()); return n; };
+  for (const f of store.list(p.id)) {
+    try {
+      let bytes = null;
+      if (p.folder) bytes = await fs.promises.readFile(path.join(p.folder, lib.SOURCES_DIR, f.name)).catch(() => null);
+      if (bytes) { add(`${lib.SOURCES_DIR}/${unique(f.name)}`, bytes); continue; }
+      if (f.kind === 'image') { const img = await store.readImage(p.id, f.id); if (img) add(`${lib.SOURCES_DIR}/${unique(f.name)}`, Buffer.from(img.data, 'base64')); continue; }
+      add(`${lib.SOURCES_DIR}/${unique(/\.(txt|md|markdown|csv|tsv|json|log|xml|ya?ml|html?)$/i.test(f.name) ? f.name : `${f.name}.txt`)}`, await store.readText(p.id, f.id));
+    } catch { /* a file that cannot be read is left out */ }
+  }
+  let n = 0;
+  for (const c of chats().list().filter((x) => x.project === p.id && !x.missing && !x.archived).slice(0, 500)) {
+    await nextTurn();
+    try {
+      const md = chatMarkdown(c.id);
+      if (md) add(`Chats/${unique(projectFolders.chatFileName(md.title, md.created))}`, projectFolders.chatDocument({ id: md.id, title: md.title, created: md.created, updated: md.updated, model: md.model }, md.markdown));
+      n++;
+    } catch { /* skipped */ }
+  }
+  try {
+    const notes = memory().list().filter((e) => e.project === p.id).sort((a, b) => b.updated - a.updated);
+    if (notes.length) add('Memory.md', `# Memory\n\nWhat the AI saved in this project's chats.\n\n${notes.map((e) => `- ${String(e.text).replace(/\s+/g, ' ').trim()}`).join('\n')}\n`);
+  } catch { /* memory unreadable */ }
+  add('README.md', `# ${p.name}\n\nA Lumen project, exported ${new Date().toISOString().slice(0, 10)}. Everything here is plain text or the original files.\n\n- INSTRUCTIONS.md (and AGENTS.md, the same text): how the AI should work in this project. Coding agents (Claude Code, Codex, Gemini CLI) read AGENTS.md from their working directory.\n- sources.md: web pages and websites, one per line: - [Title](address); a website ends with " — whole site".\n- Sources/: the files added to the project.\n- Chats/: the project's chats as Markdown (${n} here).\n- project.json: the name, goal line and defaults (model, plan first, connectors, MCP tools).\n- Memory.md: what the AI saved in the project's chats (when there is any).\n\nTo use it again in Lumen: unzip it, then Projects > Open folder as project. Any other tool can read the files as they are.\n`);
+  return entries;
+}
+
+// "Open folder as project": any folder works. One made by Lumen or by hand (INSTRUCTIONS.md or AGENTS.md or CLAUDE.md, sources.md, Sources/, project.json) gives
+// the project its instructions, sources and settings and keeps them as plain files from then on; a plain folder of files makes them the sources and writes nothing to it.
+ipcMain.handle('chats:project-import', async (event) => {
+  const dir = await pickFolder(event, 'Open a folder as a project', documentsDir());
+  if (!dir) return { ok: false, reason: 'canceled' };
+  const chk = await projectFolders.checkWorkFolder(dir, { confirmed: false });
+  if (!chk.ok) return { ok: false, reason: chk.reason, path: dir };
+  const same = (a, b) => (process.platform === 'win32' ? String(a).toLowerCase() === String(b).toLowerCase() : a === b);
+  const existing = chats().projects().find((x) => x.folder && same(x.folder, chk.real));
+  if (existing) return { ok: true, existing: true, project: projectPage(existing) };
+  const lib = portableLib();
+  const kinds = require('./features/project-files');
+  const found = await lib.readFolder(chk.real, { kindOf: kinds.kindOf });
+  const name = found.name || path.basename(chk.real) || 'Project';
+  const plain = !found.loose;
+  const out = chats().saveProject({ name, folder: chk.real, folderCreated: false, ...(plain ? { portable: true, instructions: found.instructions, links: found.links, description: found.description, defaults: found.defaults } : {}) });
+  if (!out) return { ok: false, reason: 'limit' };
+  let files = 0;
+  if (plain) { const r = await syncPortable(out.id); files = (r?.files.added.length || 0); }
+  else for (const f of found.files) { const r = await projectFiles().add(out.id, { name: f.name, bytes: f.bytes }); if (r.ok) files++; }
+  syncProjectInstructions(); pushAttention(); syncTouch('chats');
+  return { ok: true, files, plain, project: projectPage(chats().projects().find((x) => x.id === out.id) || out) };
+});
+if (TEST) global.__projectPortable = { sync: (id) => syncPortable(id), state: (id) => portableStateOf(id), export: (id) => buildProjectExport(projectById(id)), soon: (id) => portableSoon(id, 10) };
+
 // A file's new name (the project page's ⋯ menu): { ok, files } or { ok: false, error }.
 ipcMain.handle('chats:project-file-rename', async (_e, id, fileId, name) => {
   const p = projectById(String(id));
   if (!p) return null;
+  const before = projectFiles().list(p.id).find((f) => f.id === String(fileId))?.name;
   const r = await projectFiles().rename(p.id, String(fileId), String(name ?? '')).catch(() => ({ ok: false, error: 'Could not rename the file.' }));
+  if (r.ok && p.portable && before) await portableRenamed(p, before, r.file.name);
   if (r.ok) projectChanged();
   return { ...r, files: projectFiles().list(p.id) };
 });
