@@ -210,7 +210,7 @@
   };
   window.chatTr = tr;
   // `menu`: the row's actions live in a "⋯" menu (lumen://chat's list) instead of a strip of icon buttons.
-  // `extra(chat)`: more buttons for the row's menu (the chat page's "Move to project").
+  // `extra(chat)`: more buttons for the row (in the menu on the chat page, in the strip in the sidebar): "Move to project".
   window.createChatItems = ({ api, open: onOpen, share: onShare = null, rerender, cleared, jump = true, menu = false, extra = null }) => {
     function startRename(li, chat) {
       const openBtn = li.querySelector('.chat-open');
@@ -456,7 +456,7 @@
         tabActions.push(closeTabs);
       }
       if (menu) actions.append(rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, ...tabActions, del);
-      else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
+      else actions.append(...tabActions, rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);

@@ -24,24 +24,87 @@
     return `${n}${suffix}`;
   }
 
-  // A line of entries { text, images, tabs, screen, opts, chatId, fresh }.
-  function create() {
+  // A line of entries { text, images, tabs, screen, opts, chatId, fresh }. `onChange(list)` runs after every change (chat-core.js keeps a copy in
+  // localStorage with it: a waiting message must outlive a reload of the UI).
+  let nextUid = 0;
+  function create(onChange = null) {
     const list = [];
+    const changed = () => { if (onChange) { try { onChange(list); } catch { /* the copy is a convenience: the line still works */ } } };
     return {
       list,
       get length() { return list.length; },
-      add(entry) { list.push(entry); return entry; },
+      add(entry) { if (!entry.uid) entry.uid = `${Date.now().toString(36)}-${(nextUid++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`; list.push(entry); changed(); return entry; },
       has(entry) { return list.includes(entry); },
-      remove(entry) { const i = list.indexOf(entry); if (i === -1) return false; list.splice(i, 1); return true; },
+      remove(entry) { const i = list.indexOf(entry); if (i === -1) return false; list.splice(i, 1); changed(); return true; },
       // Entries for the chat shown now (`other(id)`: true when an id is another chat's), in the order they were typed.
       mine(other) { return list.filter((q) => !other(q.chatId)); },
       // The next one to send: the first of this chat's (a message queued in another chat belongs to that chat's run).
-      take(other) { const i = list.findIndex((q) => !other(q.chatId)); return i === -1 ? null : list.splice(i, 1)[0]; },
+      take(other) { const i = list.findIndex((q) => !other(q.chatId)); if (i === -1) return null; const [entry] = list.splice(i, 1); changed(); return entry; },
       // Send now: the entry goes first in the line.
-      promote(entry) { const i = list.indexOf(entry); if (i === -1) return false; if (i > 0) { list.splice(i, 1); list.unshift(entry); } return true; },
+      promote(entry) { const i = list.indexOf(entry); if (i === -1) return false; if (i > 0) { list.splice(i, 1); list.unshift(entry); changed(); } return true; },
       // 1-based place among this chat's waiting messages (0 when it is not waiting).
       place(entry, other) { const i = this.mine(other).indexOf(entry); return i + 1; },
-      drain(pred = () => true) { const out = list.filter(pred); for (const q of out) list.splice(list.indexOf(q), 1); return out; },
+      drain(pred = () => true) { const out = list.filter(pred); for (const q of out) list.splice(list.indexOf(q), 1); if (out.length) changed(); return out; },
+      // A message typed before its chat was named (a new chat's first event names it) belongs to that chat once it is: with no owner it was
+      // taken for whichever chat was shown next, and dropped by the redraw that names the chat.
+      claim(id) { if (!id) return 0; let n = 0; for (const q of list) if (q.chatId == null) { q.chatId = id; n++; } if (n) changed(); return n; },
+    };
+  }
+
+  // ---- the copy of the line kept on this machine, so a waiting message survives a reload of the UI, a crash or a restart
+  // { uid: { session, beat, chatId, text, images, tabs, screen, opts, fresh, at, imagesLost } } in one localStorage entry. A live view rewrites its own
+  // entries (and their `beat`) while it has any; the entries of a view that is gone (its `beat` is old, or it left on purpose: beat 0) are
+  // "carried": the next view that shows their chat takes them back (claim), as bubbles when that chat is still running, else into the box.
+  const STORE_KEY = 'lumen.chatQueue';
+  const STALE_MS = 12000; // a live view beats every BEAT_MS; this long without one and its entries are carried
+  const BEAT_MS = 4000;
+  const MAX_STORED = 60; // entries, all views together
+  const MAX_BYTES = 1500000; // one saved entry with its pictures; past this the pictures are left out (and the entry says so: imagesLost)
+  const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
+  const plain = (q) => ({ chatId: q.chatId ?? null, text: String(q.text || ''), images: Array.isArray(q.images) ? q.images.map(({ url, bubble, ...rest }) => rest) : [], tabs: q.tabs || null, screen: q.screen || undefined, opts: q.opts || null, fresh: Boolean(q.fresh) });
+  const hasContent = (e) => Boolean(e && (String(e.text || '').trim() || (e.images || []).length));
+  function createStore(storage, { key = STORE_KEY, session = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, now = Date.now } = {}) {
+    const load = () => {
+      try {
+        const parsed = JSON.parse(storage.getItem(key) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch { return {}; }
+    };
+    const write = (all) => {
+      const uids = Object.keys(all);
+      if (uids.length > MAX_STORED) for (const u of uids.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, uids.length - MAX_STORED)) delete all[u];
+      try { if (Object.keys(all).length) storage.setItem(key, JSON.stringify(all)); else storage.removeItem(key); return true; } catch { return false; }
+    };
+    return {
+      session,
+      // The live entries of this view replace the ones it saved before; other views' entries are left alone. `beat`: the time stamped on them (0: leaving).
+      save(list, beat = now()) {
+        const all = load();
+        const was = new Map(Object.keys(all).filter((u) => all[u].session === session).map((u) => [u, all[u].at]));
+        for (const u of was.keys()) delete all[u];
+        for (const q of list) {
+          if (!hasContent(q) || !q.uid) continue;
+          const e = { ...plain(q), session, beat, at: was.get(q.uid) || now() };
+          if (JSON.stringify(e).length > MAX_BYTES) { e.images = []; e.imagesLost = (q.images || []).length || undefined; }
+          all[q.uid] = e;
+        }
+        if (write(all)) return true;
+        // (storage full) once more with no pictures: the words matter most
+        for (const u of Object.keys(all)) if (all[u].session === session && all[u].images?.length) { all[u].imagesLost = all[u].images.length; all[u].images = []; }
+        return write(all);
+      },
+      // The entries a gone view left, of one chat (`chatId`), oldest first: nothing of a view that still beats. `take`: also removes them from the copy
+      // (returns only what this call really took: two views starting together never both get one).
+      carried(chatId, { take = false } = {}) {
+        const all = load();
+        const t = now();
+        const got = Object.keys(all)
+          .filter((u) => all[u].session !== session && all[u].chatId === chatId && hasContent(all[u]) && t - (all[u].beat || 0) > STALE_MS && t - (all[u].at || 0) < MAX_AGE_MS)
+          .map((u) => ({ uid: u, ...all[u] }))
+          .sort((a, b) => (a.at || 0) - (b.at || 0));
+        if (take && got.length) { for (const e of got) delete all[e.uid]; write(all); }
+        return got;
+      },
     };
   }
 
@@ -74,7 +137,7 @@
     return null;
   }
 
-  const api = { advance, countsAsRead, ordinal, create, merge, mergeable, pillSide, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);

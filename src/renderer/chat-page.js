@@ -112,7 +112,6 @@
   });
   const tools = window.chatListTools;
   let view = 'chats'; // or 'archived'
-  let projectView = null; // a project's id: the list shows only its chats (Projects, in the rail)
   let lastProjects = [];
   let searchBox = null;
   const search = tools.searcher(api, () => drawItems());
@@ -124,7 +123,6 @@
   const drag = window.chatProjectDrag.create({
     items, host: $('cp-projects'),
     chats: () => lastChats, projects: () => lastProjects,
-    inProjectView: () => Boolean(projectView),
     isExpanded: (id) => expanded.has(id),
     expand: (id) => { expanded.add(id); drawProjects(); },
     announce: (text) => window.announce?.(text),
@@ -136,13 +134,12 @@
     const query = search.query;
     const play = live.flip();
     let shown = tools.pick(live.order(lastChats), { query, view, hits: search.hits });
-    if (projectView && !query && view !== 'archived') shown = shown.filter((c) => c.project === projectView);
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
     drag.selection.paint();
     play();
-    if (!shown.length && (query || view === 'archived' || projectView)) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : projectView ? tr('chatpage.project.empty', 'No chats in this project yet. Start one here, or move a chat in from its ⋯ menu.') : tr('chats.noArchived', 'No archived chats') }));
+    if (!shown.length && (query || view === 'archived')) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : tr('chats.noArchived', 'No archived chats') }));
   }
   // The tab's title is the chat's.
   function showTitle() {
@@ -160,7 +157,6 @@
     lastProjects = Array.isArray(projects) ? projects : [];
     for (const id of [...expanded]) if (!lastProjects.some((p) => p.id === id)) expanded.delete(id);
     drag.selection.prune();
-    if (projectView && !lastProjects.some((p) => p.id === projectView)) projectView = null;
     lastCurrent = current;
     if (!searchBox) { searchBox = tools.search((q) => search.set(q)); items.before(searchBox); }
     searchBox.hidden = !chats.length;
@@ -190,18 +186,18 @@
     const host = $('cp-projects');
     if (!lastProjects.length && !lastChats.length) { host.hidden = true; return; }
     pj.render({
-      host, projects: lastProjects, chats: lastChats, active: projectView, expanded, current: lastCurrent,
+      host, projects: lastProjects, chats: lastChats, active: window.chatProjectPage?.id() || null, expanded, current: lastCurrent,
       onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); drawProjects(); },
       onOpen: (id) => openChat(id),
-      onSelect: (id) => { projectView = id; if (id) view = 'chats'; renderList(); },
       onAdd: () => editProject(null),
       onEdit: (p) => editProject(p),
-      onPage: (p) => openProjectPage(p.id),
+      onPage: (p) => { view = 'chats'; openProjectPage(p.id); },
+      onInstructions: (p) => { view = 'chats'; openProjectPage(p.id, { focus: 'instructions' }); },
       onNewChat: (p) => newChatInProject(p),
     });
     drag.refresh();
   }
-  async function newChatInProject(p) {
+  async function newChatInProject(p, text = '', { model = '', files = [] } = {}) {
     const next = await api.newInProject(p.id).catch(() => null);
     if (!next) return;
     closeProjectPage();
@@ -214,6 +210,10 @@
     await renderList();
     if (narrowQuery.matches && drawerOpen) toggleRail(false);
     prompt.focus();
+    // (the project page's box: a model picked there is for this chat only, files attached there go with its first message)
+    if (model && $('model').value !== model && await window.assistant.setModel(model).catch(() => false)) { $('model').value = model; $('model').pickerSync?.(); $('model').dispatchEvent(new Event('change')); }
+    if (files.length) await addFiles(files);
+    if (text.trim() || files.length) { prompt.value = text; prompt.dispatchEvent(new Event('input')); $('composer').requestSubmit(); } // (typed in the project page's box)
   }
   // ---- [project workspace] a project's own page (chat-project-page.js, loaded the first time), the name chip in a project chat's header, and
   // "Add this tab to the project" in the + menu
@@ -230,19 +230,21 @@
     }));
   }
   const closeProjectPage = () => window.chatProjectPage?.close(false);
-  async function openProjectPage(id) {
+  async function openProjectPage(id, { focus = '' } = {}) {
     try { await loadProjectPage(); } catch { toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
     if (narrowQuery.matches && drawerOpen) toggleRail(false);
-    await window.chatProjectPage.open({
-      api, id,
+    const shown = await window.chatProjectPage.open({
+      api, id, focus,
       host: {
         chats: () => lastChats, projects: () => lastProjects,
-        openChat: (cid) => openChat(cid), newChat: (p) => newChatInProject(p), editFolder: (p) => editProject(p), moveChats: (ids, pid) => moveChats(ids, pid),
+        openChat: (cid) => openChat(cid), newChat: (p, text, opts) => newChatInProject(p, text, opts), currentModel: () => $('model').value, editFolder: (p) => editProject(p), moveChats: (ids, pid) => moveChats(ids, pid),
+        moveToNewProject: (chat) => editProject(null, async (saved) => { await moveChats([chat.id], saved.id); }),
         undoToast: (text, ms, undo) => tools.undoToast(text, ms, undo), toast: (text) => toast(text),
         models: () => [...document.querySelectorAll('#model option')].map((o) => ({ value: o.value, label: o.textContent })),
-        closed: () => prompt.focus(), refresh: () => renderList(),
+        cleared: () => { clearChatView(); refreshUsage(''); }, closed: () => { prompt.focus(); drawProjects(); }, refresh: () => renderList(),
       },
     });
+    if (shown) drawProjects(); // (the row of the project on show is marked)
   }
   const projectChip = $('cp-project-chip');
   const addTabItem = Object.assign(document.createElement('button'), { type: 'button', className: 'cm-item', id: 'add-tab-to-project', hidden: true });
@@ -276,8 +278,7 @@
         if (window.chatProjectPage?.id() === r.removed) closeProjectPage();
         if (gone) tools.undoToast(trv('projectws.deleted', 'Deleted “{name}”', { name: gone.name }), 10000, async () => { const back = await api.restoreProject(gone.id).catch(() => null); await renderList(); return Boolean(back); });
       }
-      if (r.removed && projectView === r.removed) projectView = null;
-      if (r.saved && !project && !then) projectView = r.saved.id; // (made with +: its list opens; made from a chat's menu: the list stays)
+      if (r.saved && !project && !then) { expanded.add(r.saved.id); view = 'chats'; } // (made with +: it opens in the rail; made from a chat's menu: it stays shut)
       await renderList();
       if (r.saved && then) then(r.saved);
     } });
@@ -373,6 +374,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
   }
   window.assistant.onTarget?.(showTarget);
   showTarget(null);
+  window.assistant.onShowProject?.((p) => { if (p?.id) openProjectPage(p.id, { focus: p.focus }); }); // the sidebar's project row, with this page already open
 
   // ---- the header: export, home, the ⋯ menu (Back to sidebar, AI settings)
   const toast = (text) => {
@@ -439,7 +441,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     if (!first?.fresh || !first.view?.items?.length) return first;
     $('new-chat').click(); // [ask ai new chat] Ask AI with nothing typed: the page opens on a new chat (a reply still running in the old one goes on, in History)
     return (await window.assistant.state().catch(() => null)) || first;
-  }).then(({ view: now, target, name, draft, send, images }) => {
+  }).then(({ view: now, target, name, draft, send, images, project }) => {
     userName = typeof name === 'string' ? name.trim() : '';
     greet();
     shownChatId = now?.id || null;
@@ -451,6 +453,7 @@ ${info.url}` : label; // the full name, when the pill shows it cut short
     // Opened mid-reply: the events that follow belong to it. `view.live` is the open chat's own run
     // (a chat left running elsewhere is not this one).
     resumeLive(now?.live);
+    if (project?.id) setTimeout(() => openProjectPage(project.id, { focus: project.focus }), 0); // (the sidebar's project row opened this page)
     // Text typed in the new-tab page's box before Ask AI: asked in a new chat (Enter there), or it waits here as a draft, after any
     // draft this chat already had (never sent).
     // Pictures from that box (newtab-ai:ask) join the same message, through the composer's own attach path.

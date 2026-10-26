@@ -1,0 +1,30 @@
+/* Projects in the browser's AI sidebar (renderer/sidebar-projects.js; the rows, editor and menus are chat-projects.css). Loaded the first time a
+   project exists, so it is not in the startup bundle. Theme tokens only. */
+
+/* the strip under the header: which project the open chat is in, and a way to pick another */
+.sbp-strip { display: flex; align-items: center; gap: 2px; padding: 0 12px 6px 16px; min-width: 0; }
+.sbp-strip[hidden] { display: none; }
+.sbp-pick { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; height: 26px; padding: 0 8px 0 8px; border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.sbp-pick:hover { background: var(--hover); color: var(--text); }
+.sbp-strip.in .sbp-pick { background: var(--accent-soft); color: var(--text); }
+.sbp-strip.in .sbp-pick:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sbp-icon, .sbp-caret { flex: none; display: inline-flex; }
+.sbp-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.sbp-strip.in .sbp-icon { color: var(--accent); }
+.sbp-caret svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: 0.7; }
+.sbp-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbp-open { flex: none; width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
+.sbp-open[hidden] { display: none; }
+.sbp-open svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.sbp-open:hover { background: var(--hover); color: var(--text); }
+.sbp-pick:focus-visible, .sbp-open:focus-visible, .chat-project-hint:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* the history panel's Projects block */
+/* one scroll for the whole panel: the project block and the list do not scroll on their own */
+#chat-list { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+#chat-list > * { flex-shrink: 0; }
+#chat-list .chat-items { flex: none; overflow: visible; }
+.sbp-projects { flex: none; margin: 0 8px var(--cp-1); padding: 0 0 var(--cp-1); border-bottom: 1px solid var(--hairline); max-height: none; overflow: visible; }
+.sbp-projects .cp-pj-head { padding-left: 12px; }
+.chat-project-hint { flex: none; align-self: flex-start; height: 26px; margin: 0 12px 6px 16px; padding: 0 10px; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.chat-project-hint:hover { color: var(--text); background: var(--hover); }

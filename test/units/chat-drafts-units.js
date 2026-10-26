@@ -63,7 +63,7 @@ check('a message with no pastes is just its text', drafts.withPastes('  hi  ', [
   const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', f), 'utf8');
   const core = src('chat-core.js');
   check('the sidebar and the full page keep their drafts in separate entries, so one saving cannot overwrite the other', core.includes("classList.contains('chat-page') ? `${window.chatDrafts.KEY}.page`"));
-  check('a sync of the chat already shown leaves its box alone (keepBox)', core.includes('clearChatView({ keepBox: sameChat })'));
+  check('a sync of the chat already shown leaves its box alone (keepBox)', core.includes('clearChatView({ keepBox: sameChat, ownRun })'));
   check('the box is saved on blur, pagehide and beforeunload as well', core.includes("prompt.addEventListener('blur', () => saveDraft())") && core.includes("'pagehide'") && core.includes("'beforeunload'"));
 {
   const store = new Map();
@@ -75,7 +75,7 @@ check('a message with no pastes is just its text', drafts.withPastes('  hi  ', [
   page.set('c1', null);
   check('two surfaces with their own entry do not overwrite one another', side.get('c1')?.text === 'side' && page.get('c1') === null);
 }
-  check('chat-core saves the draft when the box changes and puts it away on a chat switch', core.includes('const saveDraft = ') && core.includes('function clearChatView({ keepBox = false } = {}) {') && core.includes('queueMicrotask(restoreDraft)') && core.includes('saveDraft(); // (this chat'));
+  check('chat-core saves the draft when the box changes and puts it away on a chat switch', core.includes('const saveDraft = ') && core.includes('function clearChatView({ keepBox = false, ownRun = false } = {}) {') && core.includes('queueMicrotask(restoreDraft)') && core.includes('saveDraft(); // (this chat'));
   check('a draft is restored at start (a restart)', /function startChat\(\) \{\s*restoreDraft\(\)/.test(core));
   check('Up in an empty box edits the last message', /e\.key === 'ArrowUp' && !prompt\.value && !running/.test(core) && /editLast\(\)/.test(core));
   for (const page of ['chat-page.html', 'index.src.html']) {

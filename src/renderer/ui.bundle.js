@@ -3312,23 +3312,86 @@ else globalThis.screenIntent = api;
   }
 
 
-  function create() {
+
+  let nextUid = 0;
+  function create(onChange = null) {
     const list = [];
+    const changed = () => { if (onChange) { try { onChange(list); } catch {  } } };
     return {
       list,
       get length() { return list.length; },
-      add(entry) { list.push(entry); return entry; },
+      add(entry) { if (!entry.uid) entry.uid = `${Date.now().toString(36)}-${(nextUid++).toString(36)}-${Math.random().toString(36).slice(2, 8)}`; list.push(entry); changed(); return entry; },
       has(entry) { return list.includes(entry); },
-      remove(entry) { const i = list.indexOf(entry); if (i === -1) return false; list.splice(i, 1); return true; },
+      remove(entry) { const i = list.indexOf(entry); if (i === -1) return false; list.splice(i, 1); changed(); return true; },
 
       mine(other) { return list.filter((q) => !other(q.chatId)); },
 
-      take(other) { const i = list.findIndex((q) => !other(q.chatId)); return i === -1 ? null : list.splice(i, 1)[0]; },
+      take(other) { const i = list.findIndex((q) => !other(q.chatId)); if (i === -1) return null; const [entry] = list.splice(i, 1); changed(); return entry; },
 
-      promote(entry) { const i = list.indexOf(entry); if (i === -1) return false; if (i > 0) { list.splice(i, 1); list.unshift(entry); } return true; },
+      promote(entry) { const i = list.indexOf(entry); if (i === -1) return false; if (i > 0) { list.splice(i, 1); list.unshift(entry); changed(); } return true; },
 
       place(entry, other) { const i = this.mine(other).indexOf(entry); return i + 1; },
-      drain(pred = () => true) { const out = list.filter(pred); for (const q of out) list.splice(list.indexOf(q), 1); return out; },
+      drain(pred = () => true) { const out = list.filter(pred); for (const q of out) list.splice(list.indexOf(q), 1); if (out.length) changed(); return out; },
+
+
+      claim(id) { if (!id) return 0; let n = 0; for (const q of list) if (q.chatId == null) { q.chatId = id; n++; } if (n) changed(); return n; },
+    };
+  }
+
+
+
+
+
+  const STORE_KEY = 'lumen.chatQueue';
+  const STALE_MS = 12000;
+  const BEAT_MS = 4000;
+  const MAX_STORED = 60;
+  const MAX_BYTES = 1500000;
+  const MAX_AGE_MS = 30 * 24 * 3600 * 1000;
+  const plain = (q) => ({ chatId: q.chatId ?? null, text: String(q.text || ''), images: Array.isArray(q.images) ? q.images.map(({ url, bubble, ...rest }) => rest) : [], tabs: q.tabs || null, screen: q.screen || undefined, opts: q.opts || null, fresh: Boolean(q.fresh) });
+  const hasContent = (e) => Boolean(e && (String(e.text || '').trim() || (e.images || []).length));
+  function createStore(storage, { key = STORE_KEY, session = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, now = Date.now } = {}) {
+    const load = () => {
+      try {
+        const parsed = JSON.parse(storage.getItem(key) || '{}');
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+      } catch { return {}; }
+    };
+    const write = (all) => {
+      const uids = Object.keys(all);
+      if (uids.length > MAX_STORED) for (const u of uids.sort((a, b) => (all[a].at || 0) - (all[b].at || 0)).slice(0, uids.length - MAX_STORED)) delete all[u];
+      try { if (Object.keys(all).length) storage.setItem(key, JSON.stringify(all)); else storage.removeItem(key); return true; } catch { return false; }
+    };
+    return {
+      session,
+
+      save(list, beat = now()) {
+        const all = load();
+        const was = new Map(Object.keys(all).filter((u) => all[u].session === session).map((u) => [u, all[u].at]));
+        for (const u of was.keys()) delete all[u];
+        for (const q of list) {
+          if (!hasContent(q) || !q.uid) continue;
+          const e = { ...plain(q), session, beat, at: was.get(q.uid) || now() };
+          if (JSON.stringify(e).length > MAX_BYTES) { e.images = []; e.imagesLost = (q.images || []).length || undefined; }
+          all[q.uid] = e;
+        }
+        if (write(all)) return true;
+
+        for (const u of Object.keys(all)) if (all[u].session === session && all[u].images?.length) { all[u].imagesLost = all[u].images.length; all[u].images = []; }
+        return write(all);
+      },
+
+
+      carried(chatId, { take = false } = {}) {
+        const all = load();
+        const t = now();
+        const got = Object.keys(all)
+          .filter((u) => all[u].session !== session && all[u].chatId === chatId && hasContent(all[u]) && t - (all[u].beat || 0) > STALE_MS && t - (all[u].at || 0) < MAX_AGE_MS)
+          .map((u) => ({ uid: u, ...all[u] }))
+          .sort((a, b) => (a.at || 0) - (b.at || 0));
+        if (take && got.length) { for (const e of got) delete all[e.uid]; write(all); }
+        return got;
+      },
     };
   }
 
@@ -3361,7 +3424,7 @@ else globalThis.screenIntent = api;
     return null;
   }
 
-  const api = { advance, countsAsRead, ordinal, create, merge, mergeable, pillSide, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4065,7 +4128,18 @@ const prompt = $('prompt');
 const send = $('send');
 let running = false;
 
-const line = window.chatQueue.create();
+
+
+const queueStore = (() => { try { return window.chatQueue.createStore(window.localStorage, document.body.classList.contains('chat-page') ? { key: `${window.chatQueue.STORE_KEY}.page` } : {}); } catch { return null; } })();
+let queueBeat = 0;
+function mirrorLine(list) {
+  queueStore?.save(tempChatShown() ? [] : list);
+  if (list.length && !queueBeat) queueBeat = setInterval(() => { if (!line.length) { clearInterval(queueBeat); queueBeat = 0; return; } mirrorLine(line.list); }, window.chatQueue.BEAT_MS);
+  else if (!list.length && queueBeat) { clearInterval(queueBeat); queueBeat = 0; }
+}
+const line = window.chatQueue.create(mirrorLine);
+
+window.addEventListener('pagehide', () => { if (line.length && !tempChatShown()) queueStore?.save(line.list, 0); });
 const queued = line.list;
 const QUEUED = ':scope > .queued';
 let queueBar = null;
@@ -4182,6 +4256,7 @@ function restoreDraft() {
   autosize();
   renderAttachments();
   renderScreenBtn();
+  restoreCarried();
   if (pendingView && !lazyItems) applyView();
 }
 
@@ -4190,8 +4265,10 @@ function nameChat(id) {
   drafts?.rename(null, id);
   stashRename(null, id);
   shownChatId = id;
+  line.claim(id);
 
   if (!prompt.value && !pastes.length) restoreDraft();
+  restoreCarried();
 }
 let turn = null;
 let runId = 0;
@@ -4812,6 +4889,8 @@ function sendAllNow() {
 }
 function sendQueued() {
   if (running) return;
+
+  if (!modelReady) { queuedToDraft(); return; }
 
   const next = line.take(forOtherChat);
   if (!next) return;
@@ -5694,14 +5773,35 @@ function queuedToDraft() {
   const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
   for (const q of mine) q.bubble.remove();
   renderQueue();
-  if (!mine.some((q) => q.text || q.images?.length)) return;
-  const texts = mine.map((q) => q.text).filter(Boolean);
+  entriesToBox(mine);
+}
+
+function entriesToBox(list) {
+  if (!list.some((q) => q.text || q.images?.length)) return;
+  const texts = list.map((q) => q.text).filter(Boolean);
   if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
-  const images = mine.flatMap((q) => q.images || []);
+  const images = list.flatMap((q) => q.images || []);
   if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
   autosize();
   updateSend();
 }
+
+
+function restoreCarried() {
+  if (!queueStore || !shownChatId || draftHold || tempChatShown()) return;
+  const got = queueStore.carried(shownChatId, { take: true });
+  if (!got.length) return;
+  const entries = got.map((e) => ({ ...e, images: (e.images || []).map((a) => (a.media_type && a.data ? { ...a, url: `data:${a.media_type};base64,${a.data}` } : a)) }));
+  const rest = [];
+  for (const e of entries) {
+    if (running && !e.fresh) queueUp({ text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId });
+    else rest.push(e);
+  }
+  entriesToBox(rest);
+  if (entries.some((e) => e.imagesLost)) append(Object.assign(document.createElement('div'), { className: 'notice', textContent: t('chat.queued.imagesLost') }));
+  if (!running && line.length) setTimeout(sendQueued);
+}
+setTimeout(() => restoreCarried(), window.chatQueue.STALE_MS + 1000);
 
 
 
@@ -6669,11 +6769,13 @@ function applySync(view) {
   const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   incomingChatId = view?.id || null;
-  clearChatView({ keepBox: sameChat });
+  const ownRun = Boolean(view?.live && running && view.live.runId === runId);
+  clearChatView({ keepBox: sameChat, ownRun });
   incomingChatId = null;
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null;
+  line.claim(shownChatId);
   window.planModeUI?.chatShown(view, sameChat);
   if (sameChat) saveDraft();
 
@@ -6689,6 +6791,7 @@ function applySync(view) {
   } else showHistory(view?.items);
   resumeLive(view?.live);
   if (!running && line.length) setTimeout(sendQueued);
+  restoreCarried();
   window.chatList?.refreshUsage(view?.usage || '');
   chatHost.synced?.(view);
   if ((view?.id || null) !== wasChat) window.chatList?.refreshOpen?.();
@@ -6859,7 +6962,9 @@ async function askOnNewTopic(text, images, tabs) {
   if (!window.chatTopic.isNewTopic(text, said)) return false;
   const previous = await window.assistant.chats?.list().then((r) => r.current).catch(() => null);
   if (!previous || running) return false;
+  const here = await window.assistant.chats?.currentProject?.().catch(() => null);
   $('new-chat').click();
+  if (here?.project) { const view = await window.assistant.chats.newInProject(here.project.id).catch(() => null); if (view) applySync(view); }
   const notice = append(Object.assign(document.createElement('div'), { className: 'notice topic-split' }));
   const back = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('chat.newTopic.back') });
   notice.append(Object.assign(document.createElement('span'), { textContent: t('chat.newTopic') }), ' ', back);
@@ -6883,7 +6988,12 @@ document.querySelectorAll('.chip').forEach((chip) => {
 
 
 
-function clearChatView({ keepBox = false } = {}) {
+function clearChatView({ keepBox = false, ownRun = false } = {}) {
+
+
+  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId) || (ownRun && q.chatId == null));
+
+  if (!keepBox) queuedToDraft();
   if (!keepBox) {
     if (!lazyItems && !messages.querySelector('.msg') && prompt.value.trim()) emptyOwner = shownChatId;
     saveDraft();
@@ -6904,20 +7014,11 @@ function clearChatView({ keepBox = false } = {}) {
   lastAsk = null;
   for (const id of [...approvals.keys()]) resolveApproval(id, false);
   approvals.clear();
-
-  const staying = line.drain((q) => keepBox || Boolean(incomingChatId && q.chatId === incomingChatId));
   const unsent = line.drain();
   for (const q of unsent) q.bubble.remove();
   queueBar = null;
 
-  if (unsent.some((q) => q.text || q.images?.length)) {
-    const texts = unsent.map((q) => q.text).filter(Boolean);
-    if (texts.length) prompt.value = [prompt.value.replace(/\s+$/, ''), ...texts].filter(Boolean).join('\n');
-    const images = unsent.flatMap((q) => q.images || []);
-    if (images.length) { attachments = [...attachments, ...images].slice(0, MAX_ATTACH); renderAttachments(); }
-    autosize();
-    updateSend();
-  }
+  entriesToBox(unsent);
   lazyItems = null;
   historyDrawing++;
   messages.querySelectorAll(':scope > :not(#empty)').forEach((el) => el.remove());
@@ -8001,7 +8102,7 @@ function startChat() {
         tabActions.push(closeTabs);
       }
       if (menu) actions.append(rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, ...tabActions, del);
-      else actions.append(...tabActions, rename, pinBtn, archiveBtn, exportBtn, del);
+      else actions.append(...tabActions, rename, pinBtn, archiveBtn, ...(extra ? extra(chat) : []), exportBtn, del);
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`);
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`);
       li.append(openBtn);
@@ -11353,6 +11454,7 @@ function applyStill(visible, { fade = false } = {}) {
 
 
 
+
 let toggleSeq = 0;
 async function toggleSidebarByHand() {
 
@@ -11362,7 +11464,7 @@ async function toggleSidebarByHand() {
   const mine = ++toggleSeq;
   if (opening) {
     let target = null;
-    try { target = await window.assistant.sidebarTarget?.({ approvalOnly: true }); } catch {  }
+    try { target = await window.assistant.sidebarTarget?.({ liveOnly: true }); } catch {  }
     if (mine !== toggleSeq || sidebarWanted !== opening) return;
     if (target?.view) window.chatTakeView?.(target.view);
     const plan = window.sidebarOpenPlan({
@@ -11988,13 +12090,33 @@ $('agent-stop')?.addEventListener('click', () => {
   }
 
   const iconButton = window.chatIconButton;
+  let knownProjects = [];
   const item = window.createChatItems({
     api,
     open: (id) => openChat(id),
     share: (id) => openChat(id, { share: true }),
     rerender: () => render(),
     cleared: () => { clearChatView(); refreshUsage(''); },
+    extra: (chat) => (window.sidebarProjects && knownProjects.length ? [window.sidebarProjects.moveButton(chat, { projects: knownProjects, rerender: render })] : []),
   });
+
+
+
+  let projectsLoad = null;
+  const loadProjects = () => (projectsLoad ||= new Promise((resolve) => {
+    const add = (el) => new Promise((ok, fail) => { el.onload = ok; el.onerror = fail; (el.rel ? document.head : document.body).append(el); });
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'sidebar-projects.css' });
+    const projectCss = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-projects.css' });
+    Promise.all([add(projectCss), add(css), add(Object.assign(document.createElement('script'), { src: 'chat-projects.js' }))])
+      .then(() => add(Object.assign(document.createElement('script'), { src: 'sidebar-projects.js' }))).then(resolve, () => { projectsLoad = null; resolve(); });
+  }));
+  let projectAsk = 0;
+  async function checkProject() {
+    const mine = ++projectAsk;
+    const r = await api.currentProject?.().catch(() => null);
+    if (!r || mine !== projectAsk) return;
+    if (r.count || r.project) { await loadProjects(); window.sidebarProjects?.set(r); } else window.sidebarProjects?.set(r);
+  }
 
   const tools = window.chatListTools;
   let view = 'chats';
@@ -12007,6 +12129,8 @@ $('agent-stop')?.addEventListener('click', () => {
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats: fresh, projects } = await api.list();
+    knownProjects = projects || [];
+    if (knownProjects.length) await loadProjects();
     const names = new Map((projects || []).map((p) => [p.id, p.name]));
     const chats = live.order(fresh).map((c) => (c.project && names.has(c.project) ? { ...c, projectName: names.get(c.project) } : c));
     const play = live.flip();
@@ -12037,7 +12161,10 @@ $('agent-stop')?.addEventListener('click', () => {
     }
     redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    const block = window.sidebarProjects && knownProjects.length ? window.sidebarProjects.block({ projects: knownProjects, chats, current, open: openChat, rerender: render, close: () => closePanel(false) }) : null;
+    const first = !knownProjects.length ? Object.assign(document.createElement('button'), { type: 'button', className: 'chat-project-hint', textContent: window.chatTr('chatpage.project.new', 'New project') }) : null;
+    if (first) first.onclick = async () => { await loadProjects(); window.sidebarProjects?.newProject(); };
+    panel.replaceChildren(head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) {
@@ -12088,7 +12215,8 @@ $('agent-stop')?.addEventListener('click', () => {
   api.onUsage(refreshUsage);
   api.list().then((r) => refreshUsage(r.currentUsage)).catch(() => {});
 
-  api.onChanged?.(() => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  api.onChanged?.(() => { checkProject(); if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  checkProject();
 
 
 

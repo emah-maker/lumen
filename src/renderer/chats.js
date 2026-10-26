@@ -20,13 +20,33 @@
   }
 
   const iconButton = window.chatIconButton;
+  let knownProjects = []; // (the list's projects, for each row's "Move to project")
   const item = window.createChatItems({
     api,
     open: (id) => openChat(id),
     share: (id) => openChat(id, { share: true }), // "Also show in this tab"
     rerender: () => render(),
     cleared: () => { clearChatView(); refreshUsage(''); },
+    extra: (chat) => (window.sidebarProjects && knownProjects.length ? [window.sidebarProjects.moveButton(chat, { projects: knownProjects, rerender: render })] : []),
   });
+
+  // [projects] The open chat's project strip, the Projects block in the list and "Move to project" are sidebar-projects.js: it loads (with
+  // chat-projects.js and sidebar-projects.css) the first time a project exists, so none of it is in the startup bundle.
+  let projectsLoad = null;
+  const loadProjects = () => (projectsLoad ||= new Promise((resolve) => {
+    const add = (el) => new Promise((ok, fail) => { el.onload = ok; el.onerror = fail; (el.rel ? document.head : document.body).append(el); });
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'sidebar-projects.css' });
+    const projectCss = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-projects.css' });
+    Promise.all([add(projectCss), add(css), add(Object.assign(document.createElement('script'), { src: 'chat-projects.js' }))])
+      .then(() => add(Object.assign(document.createElement('script'), { src: 'sidebar-projects.js' }))).then(resolve, () => { projectsLoad = null; resolve(); });
+  }));
+  let projectAsk = 0;
+  async function checkProject() { // the open chat's project, and whether there are projects at all
+    const mine = ++projectAsk;
+    const r = await api.currentProject?.().catch(() => null);
+    if (!r || mine !== projectAsk) return;
+    if (r.count || r.project) { await loadProjects(); window.sidebarProjects?.set(r); } else window.sidebarProjects?.set(r);
+  }
 
   const tools = window.chatListTools;
   let view = 'chats'; // or 'archived'
@@ -39,6 +59,8 @@
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
     const { current, chats: fresh, projects } = await api.list();
+    knownProjects = projects || [];
+    if (knownProjects.length) await loadProjects();
     const names = new Map((projects || []).map((p) => [p.id, p.name]));
     const chats = live.order(fresh).map((c) => (c.project && names.has(c.project) ? { ...c, projectName: names.get(c.project) } : c)); // (a row says which project it is in)
     const play = live.flip();
@@ -69,7 +91,10 @@
     }
     redraw = drawList;
     drawList();
-    panel.replaceChildren(head, ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    const block = window.sidebarProjects && knownProjects.length ? window.sidebarProjects.block({ projects: knownProjects, chats, current, open: openChat, rerender: render, close: () => closePanel(false) }) : null;
+    const first = !knownProjects.length ? Object.assign(document.createElement('button'), { type: 'button', className: 'chat-project-hint', textContent: window.chatTr('chatpage.project.new', 'New project') }) : null; // (the first project is made from here)
+    if (first) first.onclick = async () => { await loadProjects(); window.sidebarProjects?.newProject(); };
+    panel.replaceChildren(head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
     play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place
@@ -120,7 +145,8 @@
   api.onUsage(refreshUsage);
   api.list().then((r) => refreshUsage(r.currentUsage)).catch(() => {});
   // A chat started or stopped running, needs an OK, or finished unseen: its row's mark changes.
-  api.onChanged?.(() => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  api.onChanged?.(() => { checkProject(); if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
+  checkProject();
 
   // openChat(id): a notification was clicked (app.js), or a message moves back to the last chat
   // (chat-core.js askOnNewTopic). The chat already open stays as it is. True when that chat is open.

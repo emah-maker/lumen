@@ -102,6 +102,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onEvent: on('agent:event'),
     onRunStart: on('chat:run-start'),
     onSync: on('chat:sync'),
+    onShowProject: on('chat:show-project'), // the sidebar's project rows: open that project's page
     onTarget: on('chat:target'),
     approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
     sendUndo: (id) => ipcRenderer.send('agent:send-undo', id), // Gmail send: Undo within the 10 seconds
