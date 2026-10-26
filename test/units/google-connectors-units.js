@@ -266,6 +266,10 @@ async function main() {
   const own = mk(g3, { builtin: () => null, own: () => ({ clientId: '987654321-ownownown.apps.googleusercontent.com', clientSecret: 'GOCSPX-ownownownown', refresh: '' }) });
   await own.connect('drive');
   check('a Google Cloud client typed for the Gmail widget is used when the build has none', g3.opened[0].params.client_id === '987654321-ownownown.apps.googleusercontent.com', JSON.stringify(g3.opened[0]?.params));
+  const gTwice = fakeGoogle();
+  const twice = mk(gTwice);
+  const [c1, c2] = await Promise.allSettled([twice.connect('drive'), twice.connect('drive')]);
+  check('Sign in pressed twice at once opens one browser tab, and both presses end connected (the second joins the first instead of cancelling it)', gTwice.opened.length === 1 && c1.status === 'fulfilled' && c2.status === 'fulfilled', JSON.stringify({ opened: gTwice.opened.length, c1: c1.status, c2: c2.reason?.message || c2.status }));
   const refusing = mk(fakeGoogle(), { openExternal: () => { throw new Error('Refusing to open that address.'); } });
   check('a browser that cannot be opened is an error, not a hang', /Refusing/.test(await fails(() => refusing.connect('drive'))), '');
 
