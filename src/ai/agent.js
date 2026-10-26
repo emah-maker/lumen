@@ -5079,18 +5079,23 @@ ${prompt}` : prompt), historyImages: [] };
   // an acting tool that names a tab (close_tab, group_tabs, ungroup_tabs). The refusal is the same text everywhere.
   offTabCheck(name, input = {}) {
     const off = this.browser.tabOff;
-    if (!off || !manners.isActionTool(name) || this.userRun()) return;
-    const refuse = () => { throw new Error(manners.offTabRefusal()); };
+    const held = this.browser.tabHeld; // [agent window] a tab of the agent's own window that the user took over (clicked or typed in)
+    if ((!off && !held) || !manners.isActionTool(name) || this.userRun()) return;
+    const refuseIf = (id) => {
+      if (id === undefined || id === null) return;
+      if (off?.(id)) throw new Error(manners.offTabRefusal());
+      if (held?.(id)) throw new Error(manners.userTookOverRefusal());
+    };
     const named = name === 'close_tab' ? [input.tab_id]
       : name === 'group_tabs' || name === 'ungroup_tabs' ? (Array.isArray(input.tab_ids) ? input.tab_ids : []) : [];
-    for (const id of named) if (id !== undefined && id !== null && off(id)) refuse();
+    for (const id of named) refuseIf(id);
     if (TAB_FREE_TOOLS.has(name) || (name === 'handle_dialog' && input.tab_id !== undefined)) { // (a dialog answer names its own tab)
-      if (name === 'handle_dialog' && off(input.tab_id)) refuse();
+      if (name === 'handle_dialog') refuseIf(input.tab_id);
       return;
     }
     let id = null;
     try { id = this.taskTab()?.id ?? null; } catch {}
-    if (id !== null && off(id)) refuse();
+    refuseIf(id);
   }
 
   // ---- [close guard] close_tab never asks and never pauses the run. A tab the user owns (hands-off mode) is refused (handsOffCheck); a tab

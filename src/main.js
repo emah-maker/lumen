@@ -3937,7 +3937,7 @@ function onTabGone(id, fn) {
 // [ai manners] The user clicked or typed in a tab, or navigated, pinned or moved it: if the AI had opened it, it is theirs now
 // and "close the tabs the AI opened" leaves it alone. It also leaves the folded "AI tabs" group, back among the user's tabs.
 function userTookOver(tab) {
-  if (tab?.rec?.agent) tab.rec.agent.used = true; // [agent window] the user clicked or typed in the agent's window: it is theirs to keep
+  if (tab?.rec?.agent) { tab.rec.agent.used = true; tab.userHeld = true; } // [agent window] the user clicked or typed in the agent's window: it is theirs to keep, and this tab is theirs until they resume the agent (its acting calls on it are refused with a clear reason: ai-manners userTookOverRefusal)
   if (!manners.handOver(tab)) return;
   const rec = tab.rec;
   if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
@@ -9099,7 +9099,7 @@ const agent = new Agent({
   recordGap: (info) => gapLog().record(info), // [no handoff]
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
-  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
+  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabHeld: (id) => Boolean(tabAnywhere(id)?.t?.userHeld), // [agent window] tabHeld: the user took the tab over tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls]
   autoApprove: () => TEST || readSettings().askBeforeActing === false,
   bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
@@ -12797,6 +12797,12 @@ const aiAgents = setupAiAgents({
   userTabs: () => tabs.filter((t) => alive(t) && !t.settings).map((t) => ({ id: t.id, webContents: t.view.webContents })),
   // [agent window] each outside MCP session's own window (features/agent-windows.js); its steps and approval cards go to the user's window.
   agentWindows: { windows: agentWindows, activeTabId: (rec) => activeIdOf(rec) },
+  // Take over (the toolbar's pause) hands the agent's window to the user: it is theirs to keep; Resume hands its tabs back to the agent.
+  handAgentWindow: (rec, to) => {
+    if (!rec || !rcAlive(rec) || !rec.agent) return;
+    if (to === 'user') { rec.agent.used = true; return; }
+    for (const x of tabsOf(rec)) delete x.userHeld;
+  },
   showAgentWindow: (rec) => { if (rec && rcAlive(rec) && rec.agent) { if (rec.win.isMinimized()) rec.win.restore(); rec.win.focus(); } }, // the toolbar badge, clicked by the user
   approvalsChanged: () => missionSoon(), // [mission control] an outside agent's card came or went
   userUi: () => {

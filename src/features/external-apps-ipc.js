@@ -34,11 +34,13 @@ function setupExternalApps(deps) {
     if (!ext) return;
     const state = ext.state();
     send(deps.userWc(), state);
-    for (const a of state.active) {
-      for (const s of ext.sessionsOf(a.id)) {
+    // (every app with a window gets its state, an empty one too: when an app goes idle or is resumed its own window's pill must go, not stay "paused")
+    for (const known of ext.list()) {
+      const mine = state.active.find((x) => x.id === known.id);
+      for (const s of ext.sessionsOf(known.id)) {
         const rec = deps.agentWindows?.windows.get(s);
         const wc = rec?.win?.webContents;
-        if (wc && wc !== deps.userWc()) send(wc, { active: [a], prompts: [] });
+        if (wc && wc !== deps.userWc()) send(wc, { active: mine ? [mine] : [], prompts: [] });
       }
     }
   }
@@ -112,9 +114,9 @@ function setupExternalApps(deps) {
   send_.stop = (id) => { ext.stop(String(id)); };
   send_.takeover = (id) => {
     ext.takeOver(String(id));
-    for (const s of ext.sessionsOf(String(id))) { try { deps.showAgentWindow?.(deps.agentWindows?.windows.get(s)); } catch {} } // (its window comes forward: now it is the user's to use)
+    for (const s of ext.sessionsOf(String(id))) { const w = deps.agentWindows?.windows.get(s); try { deps.handAgentWindow?.(w, 'user'); deps.showAgentWindow?.(w); } catch {} } // (its window comes forward: now it is the user's to use, and stays theirs when the session ends)
   };
-  send_.resume = (id) => { ext.resume(String(id)); };
+  send_.resume = (id) => { ext.resume(String(id)); for (const s of ext.sessionsOf(String(id))) { try { deps.handAgentWindow?.(deps.agentWindows?.windows.get(s), 'agent'); } catch {} } }; // (the tabs the user held go back to the agent)
   invoke.state = () => ext.state();
 
   return { ext, invoke, send: send_, test: { ext, notes, info, answer: (id, d) => ext.answer(id, d), tokenFile: (id) => ext.tokenFileOf(id) } };

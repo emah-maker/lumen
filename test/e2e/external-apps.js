@@ -5,7 +5,7 @@
 //   - unknown / wrong token refused; the right one connects
 //   - an app without a token: refused when tokens are required (the default from this page); else asked as an unverified app, per session
 //   - the name-claim attack, a replayed proof, two apps at once, and the environment of a Lumen the bridge starts
-//   - the toolbar pill "<app> is using Lumen" with Stop and Take over; Stop cuts it off, Take over pauses it, Resume lets it on
+//   - the toolbar pill "<app> is working" with Stop and Take over; Stop cuts it off, Take over pauses it, Resume lets it on
 //   - a quiet "<app> finished in Lumen" after a run
 //   - Revoke (in Settings) closes its connection at once and refuses the token afterwards
 //   - Lumen's own engine sessions are not asked about
@@ -60,7 +60,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     const init = (c, name) => c.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name } });
     const wait = (c, seconds) => c.request('tools/call', { name: 'wait', arguments: { seconds } });
     const textOf = (r) => (r.result?.content || []).map((x) => x.text).join(' ');
-    const pills = () => ui.$$eval('#external-pills .external-pill', (els) => els.map((e) => ({ text: e.querySelector('.external-pill-text')?.textContent, buttons: [...e.querySelectorAll('button')].map((b) => b.textContent) })));
+    const pills = () => ui.$$eval('#external-pills .external-pill', (els) => els.map((e) => ({ text: e.querySelector('.external-pill-text')?.textContent, buttons: [...e.querySelectorAll('button')].map((b) => b.textContent.replace(/^[^A-Za-z]+/, '')) })));
 
     // ---- Settings page: off by default
     const fresh = await info();
@@ -135,9 +135,9 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     // ---- the pill, Take over, Resume, Stop
     check('no pill while it is idle', (await pills()).length === 0);
     const longCall = wait(good, 8);
-    check('the pill says "Fake App is using Lumen", with Stop and Take over', await waitFor(async () => { const p = await pills(); return p[0]?.text === 'Fake App is using Lumen' && p[0].buttons.join() === 'Take over,Stop'; }), JSON.stringify(await pills()));
+    check('the pill says "Fake App is working", with Stop and Take over', await waitFor(async () => { const p = await pills(); return p[0]?.text === 'Fake App is working' && p[0].buttons.join() === 'Take over,Stop'; }), JSON.stringify(await pills()));
     await ui.click('#external-pills .external-takeover');
-    check('Take over pauses it: the pill says paused, with Resume', await waitFor(async () => { const p = await pills(); return p[0]?.text === 'Fake App is paused' && p[0].buttons.includes('Resume'); }), JSON.stringify(await pills()));
+    check('Take over pauses it: the pill says paused, with Resume', await waitFor(async () => { const p = await pills(); return p[0]?.text === "Paused: you're in control" && p[0].buttons.includes('Resume'); }), JSON.stringify(await pills()));
     const cut = await longCall;
     check('the call in flight ends, saying it was stopped', cut.result?.isError === true && /Stopped by the user/.test(textOf(cut)), JSON.stringify(cut));
     const refused = await wait(good, 1);
@@ -145,6 +145,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('its connection stays open while paused', !good.isClosed());
     await ui.click('#external-pills .external-resume');
     check('Resume lets it on again', await waitFor(async () => (await pills()).length === 0));
+    check('...and a short toast says it resumed', await waitFor(async () => /Resumed: Fake App is working again/.test(await ui.$eval('.external-toast', (e) => e.textContent).catch(() => '')), 4000), 'no toast');
     const resumed = await wait(good, 1);
     check('a call after Resume runs', resumed.result?.isError === false && /Done waiting/.test(textOf(resumed)), JSON.stringify(resumed));
     check('a quiet "Fake App finished in Lumen" follows the run', await waitFor(async () => (await app.evaluate(() => global.__externalApps.notes)).some((n) => n.body === 'Fake App finished in Lumen'), 12000), JSON.stringify(await app.evaluate(() => global.__externalApps.notes)));
@@ -168,7 +169,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     check('an OS notification names it as unverified', (await app.evaluate(() => global.__externalApps.notes)).some((n) => /Unverified app “Legacy App” wants to use Lumen/.test(n.body)));
     await ui.click('#external-bar button.primary');
     check('the handshake was answered before any Allow, and Allow lets the call run; the bar goes', li.result?.serverInfo?.name === 'lumen' && (await waitFor(() => ui.$eval('#external-bar', (e) => e.hidden))), JSON.stringify(li));
-    check('it shows a pill like any app, and the list says unverified and always asks before it acts', await waitFor(async () => (await pills()).some((p) => p.text === 'Legacy App is using Lumen') && /Unverified/.test(await inSettings("document.querySelector('.ea-app[data-app=\"Legacy App\"]')?.textContent || ''")) && (await app.evaluate(() => global.__externalApps.ext.list().find((a) => a.name === 'Legacy App')?.ask)) === true, 10000), JSON.stringify(await pills()));
+    check('it shows a pill like any app, and the list says unverified and always asks before it acts', await waitFor(async () => (await pills()).some((p) => p.text === 'Legacy App is working') && /Unverified/.test(await inSettings("document.querySelector('.ea-app[data-app=\"Legacy App\"]')?.textContent || ''")) && (await app.evaluate(() => global.__externalApps.ext.list().find((a) => a.name === 'Legacy App')?.ask)) === true, 10000), JSON.stringify(await pills()));
     await ui.click('#external-pills .external-stop');
     await legacyCall;
     check('Allow is not remembered: nothing about it is on disk', !fs.readFileSync(path.join(profile, 'external-apps.json'), 'utf8').includes('Legacy App'));
