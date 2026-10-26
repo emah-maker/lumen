@@ -890,6 +890,11 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .composer .autocomplete-layer[hidden] { display: none; }
 .composer .autocomplete-ghost { color: var(--muted); }
 .composer .autocomplete-hint { margin-left: 6px; padding: 0 5px; border-radius: var(--r-sm); font-size: 0.75em; color: var(--muted); box-shadow: 0 0 0 1px var(--hairline); vertical-align: 1px; }
+
+.reply-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0 6px; }
+.reply-suggest .reply-chip { font: inherit; font-size: 0.92em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-suggest .reply-chip.yes, .reply-suggest .reply-chip.no { min-width: 52px; text-align: center; color: var(--text); font-weight: 500; }
+.reply-suggest .reply-chip.yes { border-color: var(--accent); }
 .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k))); }
 .send {
   position: relative; width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: none; border-radius: 50%;
@@ -1422,6 +1427,8 @@ body.split-dragging { user-select: none; cursor: col-resize; }
 .tab.split-left, .tab.split-right { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--accent) 70%, transparent); }
 .tab.split-left:has(+ .tab.split-right) { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
 .tab.split-left + .tab.split-right { margin-left: -3px; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+
+body:is(.mcp-active, .agent-away):not(.agent-window) .agent-pill { cursor: pointer; }
 /* ---- picker.css */
 .picker-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
@@ -2540,6 +2547,9 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; padding: 8px 14px; border-radius: var(--r-xl);
   background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 6px 20px rgba(0, 0, 0, .25); font-size: 13px; font-weight: 500;
 }
+
+.external-pill.external-show { cursor: pointer; }
+.external-pill.external-show:hover .external-pill-text { text-decoration: underline; text-underline-offset: 2px; }
 /* ---- focus.css */
 .focus-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .focus-btn .dot { fill: currentColor; stroke: none; }

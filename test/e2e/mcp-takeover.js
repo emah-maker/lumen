@@ -21,6 +21,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_AGENT_WINDOW_GRACE_MS: '1500', LUMEN_AGENT_HOLD_MS: '1500', ANTHROPIC_API_KEY: 'sk-ant-test' };
 
   const server = http.createServer((req, res) => {
+    if ((req.url || '').startsWith('/dl/')) { res.setHeader('Content-Type', 'application/octet-stream'); res.setHeader('Content-Disposition', `attachment; filename="${req.url.slice(4).split('?')[0]}"`); res.end('agent file'); return; } // a download
     const name = (req.url || '/').replace(/^\//, '').split('?')[0].toUpperCase() || 'HOME';
     res.setHeader('Content-Type', 'text/html');
     res.end(`<!doctype html><title>Page ${name}</title><body style="margin:0"><h1>PAGE-${name}</h1><input id="code" aria-label="code ${name}" style="position:absolute;left:40px;top:120px;width:300px;height:40px"><button id="b" style="position:absolute;left:40px;top:200px;width:200px;height:40px" onclick="document.title='clicked ${name}'">Press ${name}</button></body>`);
@@ -179,23 +180,58 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   r = await A.call('click', { text: 'Press SIGNIN', tab_id: tab.id });
   check('...and the agent\'s again once the hold has passed', !r.result.isError, A.text(r));
 
+  // "<client> is working" in the user's own window, clicked: the agent's window comes forward, where it is working.
+  const userWin = (await windows()).find((w) => !w.agent);
+  await app.evaluate(({ BrowserWindow }, id) => { BrowserWindow.fromId(id)?.focus(); }, userWin.windowId);
+  const busy = A.call('wait', { seconds: 5 });
+  check('the user\'s window shows the agent working, as something to click', Boolean(await waitFor(() => ui.$('#external-pills .external-pill.external-show'), 6000)));
+  await ui.click('#external-pills .external-pill-text');
+  check('...and a click brings the agent\'s window forward', await waitFor(() => app.evaluate((_e, id) => global.__agentWindows.recOf(id).win.isFocused(), aw.windowId), 4000));
+  await busy;
+
   // A new tab of its own is still the agent's to work in.
   r = await A.call('open_tab', { url: `${base}/other` });
   check('the agent can still open a new tab of its own', !r.result.isError, A.text(r));
   r = await A.call('read_page');
   check('...and read it', !r.result.isError && /PAGE-OTHER/.test(A.text(r)), A.text(r).slice(0, 300));
 
+  // A download the agent starts waits for the user's yes, asked in the user's own window; nothing reaches the folder before.
+  const dlDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agent-dl-'));
+  await app.evaluate((_e, dir) => global.__patchSettings({ downloadDir: dir }), dlDir);
+  const asked = () => app.evaluate(() => global.__dialogs.currentId());
+  r = await A.call('navigate', { url: `${base}/dl/report.txt` });
+  check('a download in the agent\'s window asks the user first', await waitFor(async () => (await asked()) !== null, 8000), A.text(r).slice(0, 200));
+  await sleep(400);
+  check('...and nothing reaches the folder while unanswered', fs.readdirSync(dlDir).length === 0, fs.readdirSync(dlDir).join(','));
+  await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 1 }));
+  check('after Download it is saved in the Downloads folder', await waitFor(() => fs.existsSync(path.join(dlDir, 'report.txt')) && fs.readFileSync(path.join(dlDir, 'report.txt'), 'utf8') === 'agent file', 8000), fs.readdirSync(dlDir).join(','));
+  r = await A.call('navigate', { url: `${base}/dl/other.txt` });
+  await waitFor(async () => (await asked()) !== null, 8000);
+  await app.evaluate(() => global.__dialogs.respond({ id: global.__dialogs.currentId(), response: 0 }));
+  await sleep(800);
+  check('after Cancel nothing is saved', !fs.existsSync(path.join(dlDir, 'other.txt')), fs.readdirSync(dlDir).join(','));
+
   // The user's own tabs stay out of reach (#352).
   const user = (await windows()).find((w) => !w.agent);
   r = await A.call('read_tabs', { tab_ids: [user.tabs[0].id] });
   check('the user\'s own tabs are still off limits', !/PAGE-HOME/.test(A.text(r)), A.text(r).slice(0, 200));
 
+  // The user closes their own window while the agent still works: the agent's window stays open (and Lumen with it) until its session ends.
+  const mine = (await windows()).find((w) => !w.agent);
+  await app.evaluate(({ BrowserWindow }, id) => { BrowserWindow.fromId(id)?.close(); }, mine.windowId);
+  await sleep(1000);
+  check('closing the user\'s last window leaves the window of an agent still at work open', (await app.evaluate(() => global.__agentWindows.count()).catch(() => 0)) === 1);
+  r = await A.call('read_page');
+  check('...and the agent goes on working in it', !r.result.isError, A.text(r).slice(0, 200));
   approving = false;
   await approver;
-  A.end();
   check('no UI errors', errors.length === 0, errors.join('; '));
+  A.end();
+  // Its session ends (the grace period is 1.5 s here). The user used this window above (took a tab over), so it is theirs to keep: an ordinary
+  // window now, and Lumen keeps running in it. (An unused one closes, and Lumen quits with its last window.)
+  check('once the agent\'s session ends, the window the user used stays, as their own', await waitFor(async () => (await app.evaluate(() => global.__agentWindows.count())) === 0 && (await windows()).length === 1, 15000), JSON.stringify(await windows().catch(() => null)));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
-  await app.close();
+  await app.close().catch(() => {});
   server.close();
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

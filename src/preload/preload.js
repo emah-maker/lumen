@@ -158,7 +158,7 @@ const testOnly = process.argv.includes('--lumen-test-mode') ? {
   setProviderKey: (provider, key) => ipcRenderer.invoke('settings:set-provider-key', provider, key),
 } : {};
 contextBridge.exposeInMainWorld('assistant', {
-  ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts), // screen: 'on' | 'off' (the camera button), else the words decide; opts: [plan mode] { plan } or { approvedPlan }
+  ask: (text, runId, images, tabIds, files, screen, opts, forChat) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts, forChat), // screen: 'on' | 'off' (the camera button), else the words decide; opts: [plan mode] { plan } or { approvedPlan }
   dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id), // the screenshot chip's x
   // Files attached to a message (renderer/chat-core.js): kept by main until it is sent, named to the AI by ref only; and the
   // "Choose file…" card's picker. See features/upload-files.js.
@@ -183,6 +183,7 @@ contextBridge.exposeInMainWorld('assistant', {
   onBtw: on('agent:btw-event'),
   autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''), // [autocomplete] a guess at the rest of the message being typed (renderer/chat-autocomplete.js)
   autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
+  replySuggest: (chatId) => ipcRenderer.invoke('agent:reply-suggest', typeof chatId === 'string' || typeof chatId === 'number' ? chatId : null), // [reply suggestions] follow-ups for the chips under the reply that just ended (renderer/reply-suggest.js)
   // The chat history list (renderer/chats.js)
   // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
   images: {

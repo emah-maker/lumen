@@ -20,7 +20,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
 
   // The same shape the sidebar's window.assistant has, cut down to what a conversation needs.
   contextBridge.exposeInMainWorld('assistant', {
-    ask: (text, runId, images, tabIds, files, screen, opts) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts),
+    ask: (text, runId, images, tabIds, files, screen, opts, forChat) => ipcRenderer.send('agent:ask', text, runId, images, tabIds, files, screen, opts, forChat),
     dropScreen: (id) => ipcRenderer.invoke('agent:screen-drop', id),
     uploads: {
       stash: (file) => ipcRenderer.invoke('uploads:stash', file),
@@ -41,6 +41,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     onBtw: on('agent:btw-event'),
     autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''), // [autocomplete] (as the sidebar's)
     autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
+    replySuggest: (chatId) => ipcRenderer.invoke('agent:reply-suggest', typeof chatId === 'string' || typeof chatId === 'number' ? chatId : null), // [reply suggestions] (as the sidebar's)
     // Pictures the AI made (renderer/gen-images.js): the picture as a data URL, Save image, Copy image, and a web picture the user clicked.
     images: {
       data: (id) => ipcRenderer.invoke('images:data', id),

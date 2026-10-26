@@ -624,9 +624,9 @@
   }
   // The surface a step works on: 'browser', 'shell' (commands and files), 'app' (another program on the PC), or null (no card).
   const bareName = (n) => String(n || '').replace(/^mcp__lumen__/, '');
-  function surfaceFor(name) {
+  function surfaceFor(name, input) {
     if (bareName(name) === 'desktop' || bareName(name) === 'word') return 'app'; // (the word tool works in Word: the same card, with the document as its preview)
-    return window.stepLabels.surfaceOf(name);
+    return window.stepLabels.surfaceOf(name, input);
   }
   const isNote = (name) => bareName(name) === 'auto_allowed'; // "Allowed automatically: …": a small row in the card, never a line of its own
   const WRITES = /^(Write|Edit|MultiEdit|NotebookEdit)$/;
@@ -671,7 +671,7 @@
     const running = Boolean(event.id);
     const data = { name: event.name, input: event.input && typeof event.input === 'object' ? event.input : null, label, baseLabel: label, hasOutputSlot: running };
     const row = makeRow(label, running, data);
-    const own = isNote(event.name) ? null : surfaceFor(event.name);
+    const own = isNote(event.name) ? null : surfaceFor(event.name, data.input);
     // The first step of a turn starts its card whatever it is (a web search, a page read, any tool); a step with no surface of its own after that joins the card.
     const surface = own || (isNote(event.name) || turn.card?.el.isConnected ? null : window.stepLabels.weakSurfaceOf(event.name));
     const info = SL().groupInfo(event.name, data.input, label);
@@ -837,7 +837,7 @@
       let input = tool.input && typeof tool.input === 'object' ? tool.input : null;
       if (!input && /^(Bash|PowerShell)$/.test(name) && /^Running /.test(tool.label || '')) input = { command: String(tool.label).replace(/^Running /, '') };
       const label = (window.stepLabels && SL().label(name, input || {})) || tool.label || name;
-      const surface = !name || isNote(name) ? null : surfaceFor(name) || (turn.card ? null : window.stepLabels.weakSurfaceOf(name));
+      const surface = !name || isNote(name) ? null : surfaceFor(name, input) || (turn.card ? null : window.stepLabels.weakSurfaceOf(name));
       const data = { name, input, label, baseLabel: label, done: true };
       const row = makeRow(label, false, data);
       if (tool.ok === false) { row.className = 'step failed restored'; } else row.className = 'step done restored';

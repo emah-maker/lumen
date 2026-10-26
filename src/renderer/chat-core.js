@@ -506,6 +506,13 @@ let incomingChatId = null; // while applySync redraws: the chat it draws (what w
 // are that chat's alone: an event or a queued message for another chat never touches them.
 let shownChatId = null;
 const forOtherChat = (id) => Boolean(id && shownChatId && id !== shownChatId);
+// The chat a message typed now belongs to: the chat shown; while a run of this view has not named its chat yet (ask() clears shownChatId until the first
+// event does), the chat that run continues (runOwner; null for a new chat, whose first event names it, and then what waits is claimed).
+let runOwner = null;
+const queueOwner = () => window.chatQueue.ownerNow({ shown: shownChatId, running, runOwner });
+// Whose line entry is not for this view's chat: an entry with an owner is another chat's unless it is the chat shown (or being run) here. Unlike
+// forOtherChat this is also true while no chat is shown: a new empty chat must never take a message queued in another chat.
+const queueOther = (id) => window.chatQueue.otherChat(id, { shown: shownChatId, running, runOwner });
 // ---------- drafts: each chat keeps its own unsent text ----------
 // What is typed (and the long pasted blocks waiting as chips) is saved per chat on every change (renderer/chat-drafts.js, localStorage), put
 // away when another chat opens and back when this one does, also after a restart. 'draftHold' keeps the box from saving while it is empty
@@ -623,6 +630,7 @@ function nameChat(id) {
   drafts?.rename(null, id);
   stashRename(null, id);
   shownChatId = id;
+  runOwner = null;
   line.claim(id); // (what was typed before the chat had a name is its own)
   // The chat this view comes back to (start-up, a reload) is named here too: an empty box shows the draft it was left with.
   if (!prompt.value && !pastes.length) restoreDraft();
@@ -1191,7 +1199,7 @@ function queueUp(entry) {
 }
 // "Queued", "Queued · 2nd", ...: the places in this chat's line; and the bar that sends several as one turn.
 function renderQueue() {
-  const mine = line.mine(forOtherChat);
+  const mine = line.mine(queueOther);
   mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
@@ -1239,7 +1247,7 @@ function sendNow(entry) {
 // "Send all as one": the messages waiting in this chat become ONE message (their texts one after the other, all their pictures and files),
 // which stops the reply and goes next, like Send now. One that carries a plan to run, or opens a new chat, keeps its own turn.
 function sendAllNow() {
-  const merged = window.chatQueue.merge(line.mine(forOtherChat), MAX_ATTACH);
+  const merged = window.chatQueue.merge(line.mine(queueOther), MAX_ATTACH);
   if (!merged) return;
   for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
   const { text, images, tabs, screen, chatId } = merged;
@@ -1250,7 +1258,7 @@ function sendQueued() {
   // No AI connected (signed out, or its key gone while the reply ran): ask() would only park the text where nothing shows it. It is unsent text in the box instead.
   if (!modelReady) { queuedToDraft(); return; }
   // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
-  const next = line.take(forOtherChat);
+  const next = line.take(queueOther);
   if (!next) return;
   next.bubble.remove();
   if (next.fresh) {
@@ -1258,7 +1266,7 @@ function sendQueued() {
     $('new-chat').click();
   }
   renderQueue();
-  ask(next.text, next.images, next.tabs, next.screen, next.opts);
+  ask(next.text, next.images, next.tabs, next.screen, next.opts, next.chatId || null); // (into the chat it waited in, whichever tab is in front by now)
 }
 
 // Ask AI from the new-tab page: the question starts a new chat instead of joining the open one (the
@@ -1275,7 +1283,7 @@ async function askInNewChat(text, files = []) {
     attachments = aside;
     renderAttachments();
   }
-  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: shownChatId }); return; }
+  if (running) { queueUp({ text, images, tabs: null, fresh: true, chatId: queueOwner() }); return; }
   $('new-chat').click();
   ask(text, images);
 }
@@ -1289,8 +1297,9 @@ function askInFreshChat(text) {
 
 // `tabs` (renderer/tabs-ask.js take()): the tabs picked with "@" — { ids, names, gone } — whose text goes along.
 // `opts` [plan mode]: { approvedPlan } when Run plan sends a plan (renderer/plan-mode.js); otherwise the "Plan first" chip decides.
-function ask(text, images = [], tabs = null, screen, opts = null) {
-  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: shownChatId }); // (for Send now)
+// `forChat`: the chat a message that waited in the line goes to (main opens it, not the chat of the tab in front); none: the tab in front's chat.
+function ask(text, images = [], tabs = null, screen, opts = null, forChat = null) {
+  if (running) return queueUp({ text, images, tabs, screen, opts, chatId: queueOwner() }); // (for Send now)
   // Nothing connected: the question is kept (back in the box) and sent as soon as an AI is connected.
   if (!modelReady) {
     pendingAsk = { text, images, tabs, screen, at: Date.now() };
@@ -1310,9 +1319,10 @@ function ask(text, images = [], tabs = null, screen, opts = null) {
   startTurn(text, images, tabs);
   // Run ids stay unique across chats: a chat left running still sends events under its own id.
   runId = Math.max(runId + 1, Date.now());
+  runOwner = shownChatId; // (the chat this run continues: what is typed before its first event names the chat belongs to it)
   shownChatId = null; // (main may switch to this window's tab's chat as the message arrives: the first event names the chat)
   const planOpts = opts?.approvedPlan ? { approvedPlan: opts.approvedPlan } : opts?.plan === true || window.planModeUI?.forSend() ? { plan: true } : undefined; // [plan mode] (/plan sends opts.plan)
-  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts);
+  window.assistant.ask(text, runId, imageItems(images).map(({ media_type, data }) => ({ media_type, data })), tabs?.ids?.length ? tabs.ids : undefined, refsOf(images), screen, planOpts, forChat || undefined);
 }
 
 // Tools that change something (a click, typing, opening or closing tabs): running them again isn't harmless.
@@ -2094,13 +2104,16 @@ function finishTurn(event, { early }) {
   }
   // After Stop, or a reply that failed, the waiting messages are not sent on their own: they come back to the box (below).
   const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
+  // [reply suggestions] A reply that ended on its own, with nothing queued to go next: the chips under it (renderer/reply-suggest.js).
+  const clean = !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
+  document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean, text: turn.text?.source || '', bubble: turn.text || null, chatId: shownChatId } }));
   finishedRun = { runId, turn };
   turn = null;
   clearTimeout(stopTimer);
   setRunning(false);
   // They come back as a draft, to send or edit (the user just said stop, or the engine just failed: the next ones would likely fail too).
   // A question from the new-tab page that waits for a new chat of its own still goes.
-  if (backToBox) { queuedToDraft(); if (line.mine(forOtherChat).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
+  if (backToBox) { queuedToDraft(); if (line.mine(queueOther).some((q) => q.fresh)) setTimeout(sendQueued); } else setTimeout(sendQueued);
 }
 
 // [stop always works] The Stop button, Esc and Stop in the toolbar all come here. Main aborts the run (agent.js stop: the engine, its tools and
@@ -2128,7 +2141,7 @@ function stopReply() {
 window.chatStopReply = stopReply;
 // The messages waiting for a reply that was stopped come back to the box (as clearChatView does for a chat that was left).
 function queuedToDraft() {
-  const mine = line.drain((q) => !q.fresh && !forOtherChat(q.chatId));
+  const mine = line.drain((q) => !q.fresh && !queueOther(q.chatId));
   for (const q of mine) q.bubble.remove();
   renderQueue();
   entriesToBox(mine);
@@ -3124,7 +3137,8 @@ function applySync(view) {
   const wasChat = shownChatId;
   // The chat this view already shows (or the one not started yet, which main has given an id): the box, its attachments and its pasted blocks are
   // left exactly as they are; only the messages are drawn again. Emptying and refilling it from storage lost the text typed in the meantime.
-  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !view.live && !view.items?.length));
+  // (An unnamed view that is running has started a message whose chat is not named yet: an empty chat that is not live is another one, never it.)
+  const sameChat = Boolean(view?.id) && (view.id === shownChatId || (!shownChatId && !running && !view.live && !view.items?.length));
   const unnamed = sameChat && !shownChatId;
   incomingChatId = view?.id || null;
   const ownRun = Boolean(view?.live && running && view.live.runId === runId); // (this view's own run, drawn again: before its first event named the chat, this view had no id for it)
@@ -3133,7 +3147,8 @@ function applySync(view) {
   if (sameChat && unnamed) { drafts?.rename(null, view.id); stashRename(null, view.id); }
   shownTemporary = Boolean(view?.temporary);
   shownChatId = view?.id || null; // running/turn start over from this chat's own run (view.live), never the previous chat's
-  line.claim(shownChatId);
+  if (sameChat || ownRun) line.claim(shownChatId); // (what was typed before the chat had a name is the chat of the run being drawn, not of any chat shown next)
+  runOwner = null;
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
@@ -3369,6 +3384,7 @@ function clearChatView({ keepBox = false, ownRun = false } = {}) {
   }
   runId++;
   shownChatId = null; // (whoever opens a chat names it next; until then its first event does)
+  runOwner = null;
   lastAsk = null; // another chat: its last message isn't known here
   for (const id of [...approvals.keys()]) resolveApproval(id, false); // clears the toolbar badge too
   approvals.clear();

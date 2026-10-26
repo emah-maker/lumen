@@ -3,7 +3,7 @@
 //
 //   label(name, input)           the line: the tool's own `description` first, else a humanized label per tool, else a summary of the shell command
 //   summarizeCommand(command)    "cd X && powershell -File pdf2png.ps1" -> "Running pdf2png.ps1"; never the raw command, at most ~70 characters
-//   surfaceOf(name)              'browser' | 'shell' | null: which activity card a step belongs to (chat step-ui.js)
+//   surfaceOf(name, input)       'browser' | 'shell' | null: which activity card a step belongs to (chat step-ui.js)
 //   groupInfo(name, input, label) what makes consecutive steps one row ("Read 4 pages", "Used PowerShell 3 times")
 //   failure(name, input, error)  { text: "Couldn't read p2.png", why: "the file was empty" }
 //   taskName(text)               the user's request in about four words, for a card's subtitle
@@ -47,8 +47,9 @@
   const FILES = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'LS', 'list_files']);
   const BROWSER = new Set(['navigate', 'open_tab', 'click', 'click_at', 'type_text', 'press_key', 'scroll', 'hover', 'drag', 'fill_form', 'read_page', 'find', 'screenshot', 'go_back', 'go_forward', 'reload', 'switch_tab', 'close_tab', 'list_tabs', 'read_tabs', 'wait', 'wait_for', 'upload_file', 'handle_dialog', 'run_script', 'get_console', 'get_network', 'annotate', 'group_tabs', 'ungroup_tabs', 'batch', 'run_macro', 'verify_changes', 'read_urls', 'read_pdf', 'video_overview', 'video_frames', 'analyze_posts']);
   const bare = (name) => String(name || '').replace(/^mcp__lumen__/, '');
-  const surfaceOf = (name) => {
+  const surfaceOf = (name, input) => {
     const n = String(name || '');
+    if (n === 'connector') return input && input.app === 'canvas' && input.action !== 'help' ? 'browser' : null; // Canvas is read in a background tab (features/connectors/canvas-pages.js): a Browser card the user can open
     if (SHELL.has(n)) return 'shell';
     if (FILES.has(n)) return 'shell';
     if (/^mcp__lumen__/.test(n)) return BROWSER.has(bare(n)) ? 'browser' : null;
@@ -313,6 +314,7 @@
       if (typeof v === 'string' && v) { const r = redact(v); out[k] = r.length > (k === 'command' ? 600 : 240) ? `${r.slice(0, k === 'command' ? 599 : 239)}…` : r; }
       else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
     }
+    if (name === 'connector' && typeof input.app === 'string') out.app = input.app.slice(0, 40); // (which service: Canvas is a Browser card)
     for (const k of ['ids', 'tab_ids']) if (Array.isArray(input[k])) { const list = input[k].filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9).slice(0, 8); if (list.length) out[k] = list; } // (tabs a step names: shown as chips)
     return Object.keys(out).length ? out : null;
   }
