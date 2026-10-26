@@ -223,13 +223,26 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('closing the user\'s last window leaves the window of an agent still at work open', (await app.evaluate(() => global.__agentWindows.count()).catch(() => 0)) === 1);
   r = await A.call('read_page');
   check('...and the agent goes on working in it', !r.result.isError, A.text(r).slice(0, 200));
-  approving = false;
-  await approver;
-  check('no UI errors', errors.length === 0, errors.join('; '));
   A.end();
   // Its session ends (the grace period is 1.5 s here). The user used this window above (took a tab over), so it is theirs to keep: an ordinary
   // window now, and Lumen keeps running in it. (An unused one closes, and Lumen quits with its last window.)
   check('once the agent\'s session ends, the window the user used stays, as their own', await waitFor(async () => (await app.evaluate(() => global.__agentWindows.count())) === 0 && (await windows()).length === 1, 15000), JSON.stringify(await windows().catch(() => null)));
+  // A window the user only brought up to look at (no click or key in it) is kept too: they may still be reading it, or about to type.
+  const B = await connect('Claude Code'); // (a new session of the same app)
+  const bFirst = B.call('navigate', { url: `${base}/home` });
+  const bPrompt = await waitFor(async () => (await app.evaluate(() => global.__externalApps.ext.state().prompts))[0], 8000);
+  if (bPrompt) await app.evaluate((_e, id) => global.__externalApps.answer(id, 'allow'), bPrompt.id);
+  r = await bFirst;
+  const bw = (await agentWins())[0];
+  check('a second agent gets a window of its own', !r.result.isError && Boolean(bw), B.text(r).slice(0, 200));
+  await app.evaluate((_e, id) => global.__agentWindows.recOf(id).win.emit('focus'), bw.windowId);
+  B.end();
+  await sleep(3000); // past the 1.5 s grace
+  const bKept = (await windows()).find((w) => w.windowId === bw.windowId);
+  check('once its session ends, a window the user brought up to look at stays, as their own', Boolean(bKept) && !bKept.agent, JSON.stringify(await windows()));
+  approving = false;
+  await approver;
+  check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close().catch(() => {});
   server.close();
