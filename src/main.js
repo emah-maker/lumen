@@ -8856,6 +8856,16 @@ const connectorsGoogleReal = {
 };
 const connectorsGoogle = Object.fromEntries(Object.keys(connectorsGoogleReal).map((k) => [k, (...args) => ((TEST && global.__connectorsGoogle) || connectorsGoogleReal)[k](...args)]));
 let connectorsLive = null;
+// [connectors] The Google and Microsoft sign-ins' own requests (the code traded for a token, a refresh): Chromium's network first (the profile's
+// proxy), then Node's own when that one could not send the request at all. Something in the default session (an ad-block list, an extension, a
+// proxy setting) left "Sign in with Google" at "Couldn't reach Google" right after the user signed in, with the network fine. Only the sign-in
+// addresses take this path; a connector's own calls never go twice (a write must not be repeated).
+async function signInFetch(url, options = {}) {
+  try { return await net.fetch(url, { ...options, credentials: 'omit' }); } catch (err) {
+    if (options.signal?.aborted) throw err;
+    try { return await globalThis.fetch(url, options); } catch (again) { again.firstTry = err; throw again; }
+  }
+}
 const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
   userData: app.getPath('userData'),
   secrets: {
@@ -8879,6 +8889,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Google Drive and Sheets: one Google sign-in in the user's own browser (features/connectors/google-auth.js). Lumen's built-in Google
   // client, unless the user typed their own for the Gmail widget (that one wins, as it does there). Tests point it at 127.0.0.1.
   workspace: {
+    fetch: signInFetch,
     builtin: () => require('./features/google-client').builtinClient(),
     own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
     openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
@@ -8888,6 +8899,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
   // Outlook, OneDrive and Outlook Calendar: one Microsoft sign-in in the user's own browser (features/connectors/microsoft-auth.js), Lumen's built-in
   // Microsoft app unless the user typed their own client ID on a card. Tests point it at 127.0.0.1.
   microsoft: {
+    fetch: signInFetch,
     builtin: () => require('./features/microsoft-client').builtinClient(),
     openExternal: (url) => { if (!/^https:\/\/login\.microsoftonline\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
     canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
