@@ -609,6 +609,35 @@ function create({
     return out;
   }
 
+  // [canvas pages] Canvas is read from its normal pages in a tab (agent.js, canvas-pages.js), not its JSON API. The same checks call() makes
+  // (valid action, connected, not switched off for the AI), then the address those pages are on. A test's `endpoints` can point it at a local server.
+  function pageTarget(input) {
+    const problem = validate(input);
+    if (problem) throw new Error(problem);
+    const def = registry.get(input.app);
+    const entry = connected[def.id];
+    if (!entry) throw new Error(`${def.name} isn’t connected.`);
+    if (entry.config?.paused) throw new Error(`${def.name} is switched off for the AI (Settings → Apps and connections). Nothing was done.`);
+    const base = baseOf(def, entry);
+    let u;
+    try { u = new URL(base); } catch { throw new Error(`${def.name} needs an https:// address.`); }
+    if (u.protocol !== 'https:' && !loopback(u)) throw new Error(`${def.name} needs an https:// address.`);
+    return { base: u.origin, name: def.name };
+  }
+  // A page of the service's own was read: the sign-in is good (a card that said Needs sign-in is Connected again).
+  function pageOk(id) {
+    if (!connected[id] || runtime.get(id) === 'ok') return;
+    runtime.set(id, 'ok');
+    changed();
+  }
+  // The page a read landed on was the sign-in: the card turns to Needs sign-in, and this is what the AI is told.
+  function pageSignedOut(id) {
+    const def = registry.get(id);
+    const entry = connected[id];
+    if (!def || !entry) return 'Canvas isn’t signed in. Ask the user to sign in to Canvas in a Lumen tab (Settings → Apps and connections has a button), then try again.';
+    return makeCtx(def, entry).authError().message;
+  }
+
   // Where "Sign in" on a card sends the user: the service's own sign-in page, opened as a normal tab (null when there is none).
   function signInUrl(id) {
     if (id === 'gmail') return GOOGLE_SIGN_IN;
@@ -617,7 +646,7 @@ function create({
   }
 
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
-  return { setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

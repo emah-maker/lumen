@@ -8,6 +8,7 @@ const docTool = lazy(() => require('./document-tool')); // [document tool] move 
 const docEdit = lazy(() => require('./doc-edit'));
 const sendLib = lazy(() => require('../features/gmail-send')); // [connectors] Gmail sending's rules (typed permission, undo window, limits); loaded when a send is asked for
 const projectCtx = lazy(() => require('./project-context')); // [project workspace] the project_files tool's rules (a project's files and pinned pages); loaded when a project chat uses them
+const canvasPages = lazy(() => require('../features/connectors/canvas-pages')); // [connectors] Canvas read from its normal pages (the addresses, the course ids, the sign-in check)
 const connectors = lazy(() => require('../features/connectors/registry')); // [connectors] the one `connector` tool for the services the user connected (features/connectors/); loaded on first use
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
@@ -4910,7 +4911,8 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.isExternalTool(name)) { const f = this.browser.externalTools.lookupTool(name); return `Using ${f.tool} from ${f.server}`; } // [mcp client]
       if (name === 'desktop') { const p = require('../desktop/policy'); return p.stepLabel(String(input?.action || ''), input?.args && typeof input.args === 'object' ? input.args : {}); } // [desktop apps]
       if (name === 'word') { const w = require('../word/spec'); return w.stepLabel(input && typeof input === 'object' ? input : {}); } // [word]
-      if (name === 'connector') return connectors.stepLabel(input); // [connectors] "Using Canvas · Upcoming assignments"
+      if (name === 'connector' && input?.app === 'canvas' && input.action !== 'help') return connectors.stepLabel(input).replace(/^Using /, 'Reading '); // [canvas pages] Canvas is read in a tab: "Reading Canvas · Upcoming assignments"
+      if (name === 'connector') return connectors.stepLabel(input); // [connectors] "Using Todoist · Add a task"
       if (name === 'navigate') return `Opening ${hostOf(input.url)}`;
       if (name === 'open_tab') return `Opening ${hostOf(input.url)} in a new tab`;
       if (name === 'click' && input.text) return `Clicking ${quote(input.text)}`;
@@ -5804,6 +5806,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   async runConnector(input) {
     if (!this.connectorGrants?.delete(input)) throw new Error('Unknown tool: connector');
+    if (input?.app === 'canvas' && input.action !== 'help') return this.runCanvasPages(input); // [canvas pages] its normal pages in a background tab, not its API
     const emit = this.connectorEmits?.get(input);
     this.connectorEmits?.delete(input);
     const onWritten = emit ? ({ label, link }) => emit({ type: 'tool', name: 'connector_done', label, ...(link ? { link } : {}) }) : null; // a done step: "GitHub · Opened ada/x#7" with Open
@@ -5813,6 +5816,65 @@ ${prompt}` : prompt), historyImages: [] };
     this.connectorFiles?.delete(input);
     return this.browser.connectors.call(input, { readOnly: Boolean(this.browser.background), onWritten, ...(sendVia ? { sendVia } : {}), ...(file ? { file } : {}) });
   }
+
+  // ---- [canvas pages] The Canvas actions read what a person sees: Canvas's own pages, loaded in a background AI tab (the same kind open_tab
+  // makes: behind the user's tab, in the folded AI tabs group) and read as text the way read_page does. Nothing is clicked or submitted and
+  // the JSON API is never called. The step shows as a Browser card for that tab (renderer/step-labels.js surfaceOf), so the user can open it.
+  // One tab per run: the first Canvas read opens it, later ones load their page in it. Landing on the school's sign-in turns the card to
+  // Needs sign-in and says so (the tab stays on that page, for the user to sign in there). A background task or routine reads in its work tab.
+  async canvasTab() {
+    const scope = taskScope.getStore();
+    const live = (id) => id != null && Boolean(this.browser.tabById?.(id)) && (this.browser.background === true || Boolean(this.browser.isAiTab?.(id)));
+    let id = scope?.canvasTabId;
+    if (!live(id)) {
+      if (this.browser.background) id = this.browser.activeTab()?.id;
+      else {
+        const tab = this.browser.openTab(undefined, { ai: true, show: false }); // behind the user's tab, marked as the AI's
+        id = tab.id;
+        this.noteOwnTab(id, {}); // (the sidebar chat's own tab: its later navigate steps load there too)
+      }
+      if (id == null) throw new Error(this.browser.noTabReason?.() || 'There is no tab to read Canvas in.');
+      if (scope) scope.canvasTabId = id;
+    }
+    this.pinTab(id);
+    return id;
+  }
+
+  async runCanvasPages(input) {
+    const svc = this.browser.connectors;
+    const { base } = svc.pageTarget(input);
+    const pages = canvasPages;
+    const plan = pages.plan(input.action, input.args || {}, base);
+    await this.canvasTab();
+    const scope = taskScope.getStore();
+    const gate = scope?.gate;
+    if (scope) scope.gate = null; // (the school's own sign-in may be on another address: it is the user's own Canvas, so no redirect card; the page it lands on is checked below)
+    try {
+      const read = async (url) => {
+        this.stopCheck();
+        await this.execute('navigate', { url, wait: 'networkidle', read: false });
+        const wc = this.requireTab();
+        const landed = wc.getURL();
+        if (pages.isLoginPage(landed, base)) throw new Error(svc.pageSignedOut('canvas'));
+        return { url: landed, text: pages.pageText(await this.execute('read_page', { mode: 'full' })) };
+      };
+      let urls = plan.urls;
+      const out = [];
+      if (plan.discover) {
+        const list = await read(`${base}/courses`);
+        const ids = pages.parseCourseIds(await runScript(this.requireTab(), pages.COURSE_LINKS_SCRIPT, 8000).catch(() => ''));
+        if (!ids.length) return pages.assemble(`connector:canvas/${input.action}`, [{ ...list, text: `No current courses were found on this page.
+${list.text}` }]);
+        urls = pages.announcementPages(base, ids);
+      }
+      for (const url of urls) out.push(await read(url));
+      svc.pageOk?.('canvas'); // (the sign-in is good: a card that said Needs sign-in is Connected again)
+      return pages.assemble(`connector:canvas/${input.action}`, out);
+    } finally {
+      if (scope) scope.gate = gate;
+    }
+  }
+  // ---- [/canvas pages]
 
   // [drive] The local file a Google Drive upload sends: a chat attachment by ref (the same store as upload_file) or, only with "Let the AI
   // use files on this computer", a path, through the same checks (no credentials folders, no Lumen profile, a regular file under the size
