@@ -625,9 +625,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const l of Array.isArray(list) ? list : []) {
       let url;
       try { const u = new URL(String(l?.url ?? '').trim()); if (!/^https?:$/.test(u.protocol)) continue; u.hash = ''; url = u.href; } catch { continue; }
-      if (url.length > 2000 || seen.has(url)) continue;
-      seen.add(url);
-      out.push({ url, title: cleanText(l?.title, 120).replace(/\s+/g, ' '), added: Number(l?.added) || now() });
+      const site = l?.site === true; // a whole website: its address is a prefix (features/project-sources.js), kept apart from a page at the same address
+      if (url.length > 2000 || seen.has(`${site ? 's' : 'p'}:${url}`)) continue;
+      seen.add(`${site ? 's' : 'p'}:${url}`);
+      const title = cleanText(l?.title, 120).replace(/\s+/g, ' ');
+      out.push({ url, title, added: Number(l?.added) || now(), ...(l?.named === true && title ? { named: true } : {}), ...(site ? { site: true } : {}) }); // `named`: the user's own name for the page, which Re-read leaves alone
       if (out.length >= MAX_LINKS) break;
     }
     return out;

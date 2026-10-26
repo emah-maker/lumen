@@ -162,6 +162,18 @@ function createProjectFilesStore({ dir, encrypt, decrypt, available = () => true
     await fs.promises.rm(fileOf(pid, id), { force: true }).catch(() => {});
     return true;
   }
+  // Another name for a file (what the list and the AI call it). -> { ok: true, file } | { ok: false, error }
+  async function rename(pid, id, name) {
+    const metaList = readIndex(pid);
+    const m = metaList.find((x) => x.id === id);
+    const clean = cleanName(name);
+    if (!m) return { ok: false, error: 'No such file.' };
+    if (metaList.some((x) => x.id !== id && x.name.toLowerCase() === clean.toLowerCase())) return { ok: false, error: 'Another file here has that name.' };
+    const before = m.name;
+    m.name = clean;
+    try { await writeIndex(pid); } catch (err) { m.name = before; return { ok: false, error: String(err?.message || err).slice(0, 240) }; }
+    return { ok: true, file: copy(m) };
+  }
   async function readText(pid, id) {
     const data = await readBlob(pid, id);
     return typeof data.text === 'string' ? data.text : '';
@@ -193,7 +205,7 @@ function createProjectFilesStore({ dir, encrypt, decrypt, available = () => true
   const forget = (pid) => { metas.delete(pid); unreadable.delete(pid); }; // read again next time (the folder changed elsewhere)
   async function setSynced(pid, id, on) { const m = readIndex(pid).find((x) => x.id === id); if (m) { if (on) m.synced = true; else delete m.synced; await writeIndex(pid); } }
 
-  return { list, add, remove, readText, readImage, texts, removeProject, purgeOrphans, totals, forget, setSynced, get unreadableProjects() { return [...unreadable]; } };
+  return { list, add, remove, rename, readText, readImage, texts, removeProject, purgeOrphans, totals, forget, setSynced, get unreadableProjects() { return [...unreadable]; } };
 }
 
 module.exports = { extract, kindOf, cleanName, createProjectFilesStore, SUPPORTED_TEXT, MAX_FILES, MAX_TEXT_CHARS, MAX_TOTAL_CHARS, MAX_IMAGES, MAX_INPUT_BYTES, SYNC_FILE_CHARS };
