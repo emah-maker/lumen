@@ -25,6 +25,7 @@ const { isSignedOutText } = require('./auth-sync');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 const aiFiles = require('../features/ai-files'); // [ai files] files the CLI's own tools wrote (noteWritten)
+const { HelperTracker } = require('./cc-helpers'); // [background helpers] subagents and tasks the CLI runs on after its reply
 
 const INSTALL_HINT = process.platform === 'win32'
   ? 'Install it in PowerShell with: irm https://claude.ai/install.ps1 | iex  (or: npm install -g @anthropic-ai/claude-code), then run `claude` once and type /login.'
@@ -207,6 +208,11 @@ const RETRY_DELAY_MS = 2500;
 // Stop first asks the kept CLI to interrupt (a stream-json control_request); it is kept when the
 // interrupted turn's `result` comes within this long, else the process tree is killed as before.
 const INTERRUPT_MS = 1500;
+// [background helpers] A process that has helpers working in the background is kept for them (no idle timeout, no kill by the next message),
+// at most this long: a helper the CLI never reports as ended (an older CLI, a dev server) must not hold a process for ever.
+const HELPER_MAX_MS = 3 * 60 * 60 * 1000;
+// When the last helper ends, the CLI starts its own turn on the helper's result almost at once; this long with nothing from it, the process goes back to idle.
+const FOLLOWUP_GRACE_MS = 20 * 1000;
 
 // The --mcp-config for one CLI process. Preferred: Lumen's already-listening local HTTP MCP server
 // (mcp-http.js, as Grok Build uses) with this process's own bearer token: no bridge process, pipe or
@@ -281,6 +287,7 @@ function builtinLabel(name, input = {}) {
   return stepLabels.defaults.generic(n, input); // (the name in plain words and its main argument)
 }
 const isLumenTool = (name) => /^mcp__lumen__/.test(String(name || ''));
+const ccStepId = (id) => `cc-${String(id).replace(/[^\w-]/g, '').slice(0, 60)}`; // the row id of one of the CLI's own tool calls (turn's tool / tool_done events)
 // [full access] The message as typed when it is a slash command ("/goal ship it", "/context"), else null.
 const slashCommand = (text) => (typeof text === 'string' && /^\/[A-Za-z][\w:.-]*(\s|$)/.test(text.trim()) ? text.trim() : null);
 
@@ -355,7 +362,7 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, startWait = undefined, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, startWait = undefined, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, helperMaxMs = HELPER_MAX_MS, followUpGraceMs = FOLLOWUP_GRACE_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
     this.prewarmIdleMs = prewarmIdleMs;
     this.warmBackoffMs = warmBackoffMs;
@@ -368,6 +375,10 @@ class ClaudeCodeEngine {
     this.startWait = startWait; // the pauses between start retries (cli-utils startChild); tests pass one that does not wait
     this.finalIdleMs = finalIdleMs;
     this.interruptMs = interruptMs;
+    this.helperMaxMs = helperMaxMs;
+    this.followUpGraceMs = followUpGraceMs;
+    this.watched = new Set(); // [background helpers] processes kept for helpers still working (holdForHelpers)
+    this.afterHelpers = null; // [background helpers] what to do once none are (a side engine's end: features/ai-agents.js leaseEngine)
     this.onFresh = onFresh;
     this.gen = 0; // bumped by release(): a warm() started before it disposes its process when it lands
     this.spawn = spawnChild;
@@ -415,9 +426,22 @@ class ClaudeCodeEngine {
   // A kept process owns its tag between messages too, so its MCP handshake is accepted before the
   // message starts; tool calls still need a message in progress (mcpCallTool refuses them otherwise).
   owns(tag) {
+    const same = (live) => Boolean(tag && live && tag.length === live.length && crypto.timingSafeEqual(Buffer.from(tag), Buffer.from(live)));
     const live = this.active?.tag || (this.proc && !this.proc.exited ? this.proc.tag : null);
-    return Boolean(tag && live && tag.length === live.length && crypto.timingSafeEqual(Buffer.from(tag), Buffer.from(live)));
+    return same(live) || [...this.watched].some((p) => !p.exited && same(p.tag)); // [background helpers] a process kept for its helpers still serves their Lumen calls
   }
+
+  // The message in progress that a Lumen tool call from the process with this tag belongs to (features/ai-agents.js mcpCallTool). A process
+  // kept for its helpers (holdForHelpers) answers with the message that started them, even while another message runs on another process.
+  activeOf(tag) {
+    if (this.active && this.active.tag === tag) return this.active;
+    for (const p of this.watched) if (p.tag === tag) return p.watch?.active || null;
+    return this.active;
+  }
+
+  // True while a process is kept for helpers that work in the background: nothing may end it (the idle timers of warm-chats.js, a side
+  // engine's release in features/ai-agents.js leaseEngine) until they are done.
+  helping() { return this.watched.size > 0 || this.busy; }
 
   // Starts one CLI process: its own tag, its own MCP token (revoked when it ends), its own empty folder.
   async spawnProc({ bin, key, sessionId, resume, systemPrompt, model, maxTurns, fullAccess = false, userSettings = false, effort = '', workDir = '' }, { emit = null } = {}) {
@@ -453,7 +477,7 @@ class ClaudeCodeEngine {
     // process's messages, so a capped chat gets a fresh (pre-started) process per message instead.
     // usage: perTurnResult's state (cumulative-or-per-turn totals); drain: set while an interrupted turn's
     // leftover output is being read off (take() waits for it).
-    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null };
+    const proc = { key, tag, http, dir, child: null, single: !this.keepAlive || maxTurns > 0, spent: false, turns: 0, exited: false, code: null, stderr: '', raw: '', turn: null, idle: null, usage: { last: null, perTurn: false }, drain: null, helpers: new HelperTracker(), watch: null, sink: null };
     proc.fresh = { sessionId, resume }; // onFresh's args, run when a message takes this process (turn)
     proc.cwd = workDir || (fullAccess ? os.homedir() : dir); // (a relative path in a file step is from here)
     proc.fullAccess = Boolean(fullAccess); // [full access] its own tools run (turn: their step rows, the watchdog)
@@ -470,7 +494,7 @@ class ClaudeCodeEngine {
       if (proc.warmed && !proc.turns && !proc.disposed) this.warmFailed(); // a pre-warmed process died on its own, unused
       try { http?.server.close(tag); } catch {}
       removeDir(dir, () => this.workDirs?.delete(dir)); // (its mcp.json holds the token; the folder is its cwd, so it can only go once the process has)
-      proc.turn?.exit(code);
+      if (proc.turn) proc.turn.exit(code); else proc.watch?.exit(code); // (a process kept for its helpers: they are over)
     };
     try {
       // [start retry] startChild: an exe being replaced by an update is waited for and looked up again (the argv never holds its path).
@@ -487,7 +511,8 @@ class ClaudeCodeEngine {
       if (process.env.LUMEN_CC_DEBUG) fs.appendFileSync(process.env.LUMEN_CC_DEBUG, `${line}\n`);
       let msg;
       try { msg = JSON.parse(line); } catch { proc.raw = `${proc.raw}${line}\n`.slice(-2000); return; } // (a sign-in or update prompt the CLI prints as plain text: kept for the stall message)
-      proc.turn?.handle(msg); // between messages there is no turn: nothing to show it on
+      if (this.helperLine(proc, msg)) return; // a background helper's own line: shown on its card, never part of a turn
+      if (proc.turn) proc.turn.handle(msg); else proc.watch?.handle(msg); // between messages there is no turn: only a process kept for its helpers listens
     }));
     child.stderr.on('data', (d) => { proc.stderr = (proc.stderr + d).slice(-4000); });
     child.stdin.on('error', () => {}); // the CLI exiting early closes the pipe
@@ -509,7 +534,8 @@ class ClaudeCodeEngine {
       if (p?.drain) { emit?.({ type: 'status', text: 'Finishing the stopped step…' }); await p.drain; p = this.proc; } // a stopped turn's leftover lines are read off first (said on screen: up to interruptMs)
       if (!fresh && p && !p.exited && !p.spent && !p.turn && p.key === key) { clearTimeout(p.idle); return p; }
       if (!fresh && p && !p.exited && !p.spent && !p.turn && modelOnlyDiff(p.key, key) && this.switchModel(p, opts.model, key)) { clearTimeout(p.idle); return p; } // [model switch]
-      if (p && !p.turn) this.dispose(p);
+      if (p && !p.turn && p.watch) { if (this.proc === p) this.proc = null; } // [background helpers] a process kept for its helpers goes on in the background; this message gets its own
+      else if (p && !p.turn) this.dispose(p);
       const proc = await this.spawnProc({ bin, key, ...opts }, { emit });
       if (!proc.exited) this.proc = proc;
       return proc;
@@ -583,6 +609,7 @@ class ClaudeCodeEngine {
   // Ends a process (default: the kept one) with its whole tree (the stdio bridge is its child); its
   // MCP token stops working at once.
   dispose(proc = this.proc) {
+    if (arguments.length === 0) for (const p of [...this.watched]) if (p !== proc) this.dispose(p); // (ending the engine: the processes kept for helpers too)
     if (!proc) return;
     clearTimeout(proc.idle);
     proc.disposed = true; // ended by us: not a warm failure
@@ -603,7 +630,7 @@ class ClaudeCodeEngine {
   // the process warm() started for it doesn't idle for the full timeout.
   release() {
     this.gen++;
-    if (this.proc && !this.proc.turn && !this.proc.spent) this.dispose();
+    if (this.proc && !this.proc.turn && !this.proc.spent && !this.proc.watch) this.dispose(); // (one kept for its helpers stays until they are done)
   }
 
   // A Lumen tool call from this CLI starts / ends (features/ai-agents.js mcpCallTool): counted for the
@@ -622,6 +649,133 @@ class ClaudeCodeEngine {
     if (!a) return;
     a.inflight = Math.max(0, a.inflight - 1);
     a.arm?.();
+  }
+
+  // ---- [background helpers]
+  // With full access Claude Code can start a helper in the background (a subagent with run_in_background, or a background shell task) and
+  // end its reply at once; the helper works on, and when it ends the CLI starts a turn of its own on its result. The chat shows all of it:
+  //  - helperLine: every line, first. It counts the helpers (cc-helpers.js), says on the message's card when one starts, progresses or
+  //    ends ({ type: 'helper', id, state: 'working' | 'progress' | 'done' | 'failed' | 'stopped', label, count }), and draws a helper's own
+  //    tool calls as steps of that card (flagged `helper: true`). Its Lumen tool calls reach Lumen over MCP and show through the message
+  //    that is current (activeOf); a helper's lines never reach a turn.
+  //  - holdForHelpers: the reply is over but helpers work: the process is kept (no idle timer, not replaced by the next message), and
+  //    its `active` stays, so a helper's Lumen calls still find the chat's tab and approvals.
+  //  - watchLine: the CLI's own turn (nothing sent to it) is held back and handed to onFollowUp, which asks for a turn to read it
+  //    (run({ adopt: proc }), agent.js followUp), so it lands in the same chat as a follow-up.
+  sayHelper(helper, state, tracker) {
+    try {
+      if (state !== 'working') { // its steps still shown as running end with it
+        for (const id of helper.open || []) helper.emit?.({ type: 'tool_done', id: ccStepId(id), ok: state === 'done', ...(state === 'done' ? {} : { stopped: true }), helper: true });
+        helper.open?.clear();
+      }
+      helper.emit?.({ type: 'helper', id: helper.id, state, label: helper.desc || '', count: tracker ? tracker.count() : 0 });
+    } catch { /* the chat is gone */ }
+  }
+
+  helperLine(proc, msg) {
+    const tracker = proc.helpers;
+    const fed = tracker.feed(msg);
+    for (const h of fed.started) { h.emit = proc.sink?.emit || proc.watch?.active?.emit || null; this.sayHelper(h, 'working', tracker); }
+    for (const h of fed.progress) { try { h.emit?.({ type: 'helper', id: h.id, state: 'progress', label: h.latest, count: tracker.count() }); } catch { /* gone */ } }
+    for (const { helper: h, status } of fed.ended) { proc.helperEnded = true; this.sayHelper(h, status === 'completed' ? 'done' : status, tracker); }
+    if (fed.ended.length && !tracker.count()) this.armGrace(proc);
+    const own = tracker.helperOf(msg);
+    if (!own) return false;
+    if ((msg.type === 'assistant' || msg.type === 'user') && own.emit) {
+      own.open ||= new Set();
+      for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
+        if (msg.type === 'assistant' && b.type === 'tool_use' && b.id && !isLumenTool(b.name) && !own.open.has(b.id)) {
+          own.open.add(b.id);
+          own.emit({ type: 'tool', id: ccStepId(b.id), name: String(b.name), input: b.input || {}, label: `Helper · ${builtinLabel(b.name, b.input || {})}`, helper: true });
+        } else if (msg.type === 'user' && b.type === 'tool_result' && own.open.delete(b.tool_use_id)) {
+          const raw = Array.isArray(b.content) ? b.content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : typeof b.content === 'string' ? b.content : '';
+          const err = b.is_error ? raw.replace(/\s+/g, ' ').trim().slice(0, 600) : '';
+          own.emit({ type: 'tool_done', id: ccStepId(b.tool_use_id), ok: !b.is_error, ...(err ? { error: err } : {}), ...(!b.is_error && raw ? { output: raw.slice(0, 4000) } : {}), helper: true });
+        }
+      }
+    }
+    return true;
+  }
+
+  holdForHelpers(proc, { active, onFollowUp }) {
+    let w = proc.watch;
+    if (!w) {
+      w = proc.watch = { buffer: [], started: false, grace: null, cap: null, active, onFollowUp };
+      w.handle = (msg) => this.watchLine(proc, w, msg);
+      w.exit = () => this.watchExit(proc, w);
+      this.watched.add(proc);
+      clearTimeout(proc.idle);
+      proc.idle = null;
+      w.cap = setTimeout(() => this.dispose(proc), this.helperMaxMs); // (a helper the CLI never reports as ended)
+      w.cap.unref?.();
+    }
+    w.active = active;
+    w.onFollowUp = onFollowUp;
+    w.started = false;
+    w.buffer = [];
+    this.active = active; // (a helper's Lumen calls act for this message's chat)
+    this.armGrace(proc);
+  }
+
+  // No helper is working and the CLI has not begun its own turn: wait a moment for it, then the process is idle again.
+  armGrace(proc) {
+    const w = proc.watch;
+    if (!w || w.started || proc.turn || proc.helpers.count() > 0) return;
+    clearTimeout(w.grace);
+    w.grace = setTimeout(() => { if (!w.started && proc.watch === w && !proc.turn) this.endWatch(proc); }, this.followUpGraceMs);
+    w.grace.unref?.();
+  }
+
+  // A line from a process nobody has a turn on. The CLI beginning a turn of its own (a helper's result) is held back and handed on.
+  watchLine(proc, w, msg) {
+    if (w.started) { w.buffer.push(msg); return; } // (the follow-up is being set up: its turn reads these)
+    if (msg.type === 'result' || !/^(assistant|user|stream_event)$/.test(String(msg.type)) || !w.onFollowUp) return; // (the first message's late result, a system or rate-limit line)
+    w.started = true;
+    w.buffer.push(msg);
+    clearTimeout(w.grace);
+    for (const { helper } of proc.helpers.endFallback()) this.sayHelper(helper, 'done', proc.helpers); // (a CLI that does not say when a helper ends: its own turn on the result does)
+    const go = w.onFollowUp;
+    Promise.resolve().then(() => go({ proc })).catch(() => {}).finally(() => { if (proc.watch === w) this.endWatch(proc); });
+  }
+
+  // The turn that adopts the process takes over: the lines held for it, and the watch is gone (it holds again when that turn ends with helpers still working).
+  releaseWatch(proc) {
+    const w = proc.watch;
+    if (!w) return [];
+    proc.watch = null;
+    clearTimeout(w.grace);
+    clearTimeout(w.cap);
+    this.watched.delete(proc);
+    return w.buffer.splice(0);
+  }
+
+  endWatch(proc) {
+    const w = proc.watch;
+    if (!w) return;
+    proc.watch = null;
+    clearTimeout(w.grace);
+    clearTimeout(w.cap);
+    this.watched.delete(proc);
+    if (this.active === w.active) this.active = null;
+    if (!proc.exited && !proc.turn) { if (proc.single) this.dispose(proc); else this.idleLater(proc); }
+    this.helpersOver();
+  }
+
+  // The process ended (or was ended) while it was kept for helpers: whatever still showed as working is over.
+  watchExit(proc, w) {
+    clearTimeout(w.grace);
+    clearTimeout(w.cap);
+    this.watched.delete(proc);
+    if (proc.watch === w) proc.watch = null;
+    if (this.active === w.active) this.active = null;
+    for (const { helper } of proc.helpers.endAll('stopped')) this.sayHelper(helper, 'stopped', proc.helpers);
+    this.helpersOver();
+  }
+
+  // Nothing is kept for helpers any more: a side engine whose message ended meanwhile goes now (features/ai-agents.js leaseEngine).
+  helpersOver() {
+    const cb = this.afterHelpers;
+    if (cb && !this.watched.size) { this.afterHelpers = null; try { cb(); } catch { /* already gone */ } }
   }
 
   // Stop on a kept process: ask the CLI to interrupt and read off the rest of the turn (up to its
@@ -714,14 +868,15 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '', workDir = '' }, { fresh = false, attempt = 0 } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '', workDir = '', adopt = null, onFollowUp = null }, { fresh = false, attempt = 0 } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
     };
-    if (!await this.ensureBin()) return notInstalled();
+    // adopt: the process kept for its helpers (holdForHelpers), whose turn the CLI began by itself: this message reads it, and sends nothing.
+    if (!adopt && !await this.ensureBin()) return notInstalled();
     userSettings = userSettings || Boolean(this.needUserSettings);
-    const proc = await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir }, { fresh, emit });
+    const proc = adopt || await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
     // pre-started one that no message takes must not wipe the chat's reads.
@@ -738,9 +893,12 @@ class ClaudeCodeEngine {
     // shell command prints nothing until it ends, and must not look hung).
     const active = { tag, emit, signal, child: proc.child, agent: runAgent, scope, tools: 0, inflight: 0, dog: null, arm: null, builtin: new Set() };
     this.active = active;
+    proc.sink = active; // [background helpers] where the helpers this message starts report (helperLine)
+    proc.helperEnded = false;
+    if (proc.watch) clearTimeout(proc.watch.grace); // (a message on a process kept for helpers: it is a turn again, not a quiet wait)
 
     // The same message once more on a fresh process (attempt 1: no further automatic retry).
-    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, ...over }, { fresh: true, attempt: 1 });
+    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, onFollowUp, ...over }, { fresh: true, attempt: 1 });
     let text = '';
     let finalText = '';
     let result = null;
@@ -889,6 +1047,10 @@ class ClaudeCodeEngine {
     const current = { handle, exit: (code) => settle({ code }) };
     proc.turn = current;
     if (proc.exited) settle({ code: proc.code });
+    if (adopt) { // the lines the CLI printed when it began this turn, held back until now (watchLine)
+      const held = this.releaseWatch(proc);
+      for (const m of held) handle(m);
+    }
     // Stop: the reply ends now. A kept process that has the message is asked to interrupt and keeps
     // running if it answers in time (interrupt); any other (one-shot, nothing sent yet) goes with its
     // whole tree (the stdio bridge is the CLI's child).
@@ -901,8 +1063,10 @@ class ClaudeCodeEngine {
     if (signal.aborted) onAbort();
     if (!proc.exited && !signal.aborted) {
       sent = true;
-      proc.child.stdin.write(`${JSON.stringify(stdinMessage(prompt, images))}\n`);
-      if (proc.single) { proc.spent = true; proc.child.stdin.end(); }
+      if (!adopt) {
+        proc.child.stdin.write(`${JSON.stringify(stdinMessage(prompt, images))}\n`);
+        if (proc.single) { proc.spent = true; proc.child.stdin.end(); }
+      }
       active.arm();
     }
 
@@ -914,10 +1078,17 @@ class ClaudeCodeEngine {
     signal.removeEventListener('abort', onAbort);
     if (proc.turn === current) proc.turn = null; // (not an interrupt's drain, which clears itself)
     this.clearEarly(emit);
-    if (this.active?.tag === tag) this.active = null;
     const ok = Boolean(result && !result.is_error && result.subtype === 'success');
+    // [background helpers] Helpers still working after the reply (or one that ended while it was written: the CLI goes on with its result by itself): the
+    // process is kept for them, and what they do goes on this message's card. Anything else that ends the turn ends them too.
+    const hold = ok && !signal.aborted && !proc.exited && !stalled && !mcpDown && (proc.helpers.count() > 0 || proc.helperEnded === true);
+    proc.helpers.dropForeground();
+    if (!hold) for (const { helper } of proc.helpers.endAll('stopped')) this.sayHelper(helper, 'stopped', proc.helpers);
+    if (hold) this.holdForHelpers(proc, { active, onFollowUp });
+    else { if (this.active?.tag === tag) this.active = null; this.helpersOver(); }
     if (ok) this.warmBlock = { until: 0, delay: 0 }; // a working CLI: pre-warming is worth trying again
-    if (!proc.single) {
+    if (hold) { if (!proc.single && newSession) proc.rekey(newSession); } // (no idle timer: the helpers keep it)
+    else if (!proc.single) {
       if (ok && !signal.aborted && !proc.exited && !forced) { if (newSession) proc.rekey(newSession); this.idleLater(proc); } // kept for the chat's next message
       else if (!proc.drain) this.dispose(proc); // a failed, stalled or capped turn: the next message starts clean (--resume); a stopped one is draining
     } else if (ok && this.keepAlive && !signal.aborted && prestart) {
@@ -980,7 +1151,7 @@ class ClaudeCodeEngine {
       // Retried once with them; this engine keeps them from then on (needUserSettings), and the user is told which setting that is.
       if (!userSettings && !fullAccess && !expired && !text && !finalText && active.tools === 0 && settingsRetryable(failure)) {
         this.needUserSettings = true;
-        const again = await this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings: true, effort, workDir }, { fresh: true });
+        const again = await this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings: true, effort, workDir, onFollowUp }, { fresh: true });
         if (again.failed) this.needUserSettings = false; // it did not help: the next message tries the lean start again
         else if (!settingsNoticeShown) {
           settingsNoticeShown = true;
@@ -992,12 +1163,12 @@ class ClaudeCodeEngine {
       if (!attempt && !expired && !text && !finalText && active.tools === 0 && !signal.aborted && transientFailure(failure, code) && !startFailure(failure)) { // (a failed start was already tried again, 1 s / 2 s / 3 s, by startChild)
         emit({ type: 'status', text: 'Claude Code is busy, trying again…' });
         await new Promise((resolve) => { const t = setTimeout(resolve, this.retryDelayMs); signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true }); });
-        if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir }, { fresh: true, attempt: 1 });
+        if (!signal.aborted) return this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, onFollowUp }, { fresh: true, attempt: 1 });
       }
       emit({ type: 'error', ...describeFailure(failure, code) });
       return { text, sessionId: expired ? null : newSession, failed: true, usage, rateLimit, context, compacted };
     }
-    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0, imagePaths: [...(this.runImagePaths || [])], writtenPaths: [...(this.runWrittenPaths || [])] };
+    return { text: text || finalText || String(result.result || ''), sessionId: newSession, cost: counted.total_cost_usd, usage, rateLimit, context, compacted, window: usage?.contextWindow || 0, imagePaths: [...(this.runImagePaths || [])], writtenPaths: [...(this.runWrittenPaths || [])], helpers: hold ? proc.helpers.working().map((h) => ({ id: h.id, label: h.desc })) : [] };
   }
 }
 

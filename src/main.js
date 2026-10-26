@@ -11123,6 +11123,21 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   };
   const out = createCoalescer(sendOut);
   const emit = (msg) => {
+    if (msg.type === 'followup_start') { // [background helpers] Claude Code began a turn of its own (a helper ended): this run is the chat's running one again, with a reply of its own
+      run.startLen = run.messages.length;
+      run.details = { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] };
+      run.thumbs?.stop();
+      run.thumbs = null;
+      run.thumbTarget = null;
+      run.reply = '';
+      run.error = null;
+      run.errorSummary = '';
+      run.stopped = false;
+      run.doneMsg = null;
+      run.followUp = true;
+      if (!run.deleted && !chatRuns.has(runChat)) { chatRuns.set(runChat, run); unreadChats.delete(runChat); pushAttention(); }
+    }
+    if (run.doneMsg && msg.type === 'tool' && run.thumbs) { run.thumbs = null; run.thumbTarget = null; } // (see below: a helper's step after 'done')
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
     if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone (a live picture of an app window changes neither)
@@ -11136,6 +11151,13 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
     }
     trackRunDetails(run, msg);
+    // [background helpers] A helper Claude Code ran in the background reports on the card of the run that started it, after that run's 'done': its steps
+    // are kept with the reply once it ends, and its live picture (the run's own stopped with 'done') is made again for its first browser step.
+    if (msg.type === 'helper' && msg.state !== 'working' && msg.state !== 'progress' && run.doneMsg && !run.deleted) {
+      run.thumbs?.stop();
+      stampRun(run, run.doneMsg);
+      if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages);
+    }
     if (msg.type === 'card_files' && run.doneMsg && !run.deleted) { stampRun(run, run.doneMsg); if (isOpen()) saveChatSoon(chatGeneration); else saveChatOfSoon(runChat, run.messages); } // (files listed after the run ended: kept too)
     const afterMsg = []; // (the card's tab / site, said right after the step that named it: the chat has drawn the step's card by then)
     const pushThumb = (ev) => {

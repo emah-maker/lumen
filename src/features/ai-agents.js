@@ -376,7 +376,7 @@ function setupAiAgents(deps) {
   const runTools = (session) => {
     if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
     const owner = engineForSession(session);
-    const chat = owner?.active?.scope?.chat || null;
+    const chat = (owner?.activeOf ? owner.activeOf(session.engine) : owner?.active)?.scope?.chat || null;
     return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || [])];
   };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
@@ -421,8 +421,9 @@ function setupAiAgents(deps) {
       release: () => {
         if (done) return;
         done = true;
-        sideEngines.delete(engine);
-        try { engine.dispose?.(); } catch { /* already gone */ }
+        const end = () => { sideEngines.delete(engine); try { engine.dispose?.(); } catch { /* already gone */ } };
+        if (engine.helping?.() && 'afterHelpers' in engine) engine.afterHelpers = end; // [background helpers] its process is kept until they are done
+        else end();
       },
     };
   }
@@ -465,7 +466,7 @@ function setupAiAgents(deps) {
     // A call from the sidebar's own Claude Code or Grok Build run shows as a step of that reply and
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
-    const engineRun = owner ? owner.active : null;
+    const engineRun = owner ? (owner.activeOf ? owner.activeOf(session.engine) : owner.active) : null; // (a Claude Code process kept for its helpers: the message that started them)
     // A kept Claude Code process between messages owns its session, but no message is running to act for.
     if (owner && !engineRun) return { content: [{ type: 'text', text: 'No message is in progress in Lumen for this call.' }], isError: true };
     // Claude Code may already show this call's row, from while its input was still streaming (claude-code.js claimStep).
