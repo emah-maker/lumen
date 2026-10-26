@@ -336,11 +336,11 @@ const CATEGORIES = [
     ['macros', 'Macros', { page: 'ai-tools', more: 'automation record replay steps shortcut script' }],
     ['usage', 'Usage', { page: 'ai-tools', more: 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate' }]] },
   { id: 'apps', title: 'Apps and connections', slots: [['apps', 'Services'], ['apps-links', ''],
-    ['widgets', 'Cards without an account', { page: 'apps-links', more: 'widgets cards new tab weather clock world feed headlines notes countdown timer pomodoro stocks crypto tradingview custom web page files routines ai status' }],
     ['mcp-servers', 'Custom MCP servers', { page: 'apps-links', more: 'mcp tools servers custom model context protocol add' }]] },
   { id: 'home', title: 'New tab page', slots: [['home-links', ''], ['home-page', 'On the page'], ['home',  ''],
     ['home-background', 'Background', { page: 'home-links', more: 'background wallpaper picture gradient shuffle daily' }],
-    ['home-effect', 'Animated effect', { page: 'home-links', more: 'animated effect particles stars snow bubbles music reactive' }]] },
+    ['home-effect', 'Animated effect', { page: 'home-links', more: 'animated effect particles stars snow bubbles music reactive' }],
+    ['widgets', 'Widgets', { page: 'home-links', more: 'widgets cards add weather clock world feed headlines notes countdown timer pomodoro stocks crypto tradingview custom web page files routines ai status gmail calendar todoist github spotify slack muse' }]] },
   { id: 'tabs', title: 'Tabs and browsing', slots: [['tabs-strip', ''], ['tabs-links', ''],
     ['tabs-groups', 'Group tabs automatically', { page: 'tabs-links', more: 'group tabs organize site topic idle' }],
     ['tabs-sleep', 'Sleeping tabs', { page: 'tabs-links', more: 'sleep unload memory freeze performance discard' }]] },
@@ -1438,35 +1438,65 @@ function widgetIcon(type) {
 async function buildWidgets(card) {
   let ws = await S.widgets.state();
   const WS = window.WidgetSummary;
+  // Widgets only say how a service shows; the account is a connector (Apps and connections). A card of a service is offered once that service is connected.
+  let conns = (await S.ai.connectors.list().catch(() => ({ connectors: [] }))).connectors;
+  const serviceFor = (type) => {
+    const id = APP_OF_TYPE[type];
+    if (!id) return null;
+    const c = conns.find((x) => x.id === id);
+    const only = APP_CARD_ONLY.find((x) => x.id === id);
+    const on = c ? c.status === 'connected' : id === 'slack' ? Boolean(ws.slack?.connected && !ws.slack?.reconnect) : id === 'muse' ? Boolean(ws.secrets?.muse) : true; // (Spotify and Apple Music play in Lumen without an account; logging in is optional)
+    return { id, name: (c?.name || only?.name || id).replace(/\s*\(.*\)$/, ''), on, status: c?.status || '' }; // ("Calendar (secret address)" is the Calendar a widget uses)
+  };
   const list = h('div', { class: 'card widget-list', id: 'widget-list' });
   const formHost = h('div', { class: 'widget-form-host' });
-  const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
+  const catalog = h('div', { class: 'card widget-catalog', id: 'widget-catalog' });
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   let formReturn = null; // the page an editor was opened from (a service's page): Back and Save go there
-  // One row per card without an account: icon, name, what it is set to, and a chevron to its editor. (A card that belongs to a service is on that service's page.)
+  // The widgets on the page: icon, name, what it shows, and a chevron to its editor (display only). One whose service was disconnected is greyed and says Reconnect.
   const renderList = () => {
     const open = Boolean(formHost.firstChild);
     home.hidden = open;
-    const mine = ws.widgets.filter((w) => !SERVICE_TYPES.has(w.type));
-    add.disabled = ws.widgets.length >= ws.max;
-    add.title = add.disabled ? `The page holds up to ${ws.max} widgets. Remove one to add another.` : '';
-    if (!mine.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No cards yet' }), h('span', { class: 'desc', text: 'Add the weather, a clock, headlines, notes and more. They appear as cards on the new tab page.' })))); return; }
+    const mine = ws.widgets;
+    renderCatalog();
+    if (!mine.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No widgets yet' }), h('span', { class: 'desc', text: 'Add one below. Widgets appear as cards on the new tab page.' })))); return; }
     list.replaceChildren(...mine.map((w, i) => {
       const acct = WS.accountStatus(w, ws);
+      const svc = serviceFor(w.type);
+      const off = svc && !svc.on;
       const move = (dir) => (e) => { e.stopPropagation(); S.widgets.move(w.id, dir).then((next) => { ws = next; renderList(); }); };
-      const item = h('div', { class: 'row link widget-item', 'data-id': w.id, 'data-type': w.type, tabindex: '0', role: 'link', 'aria-label': `${w.title}. ${WS.widgetSummary(w, ws)}. Open its settings` },
+      const summary = off ? `${svc.name} isn’t connected. Reconnect` : WS.widgetSummary(w, ws);
+      const item = h('div', { class: `row link widget-item${off ? ' off' : ''}`, 'data-id': w.id, 'data-type': w.type, tabindex: '0', role: 'link', 'aria-label': `${w.title}. ${summary}. ${off ? 'Open its connection' : 'Open its settings'}` },
         widgetIcon(w.type),
-        h('div', { class: 'text widget-text' }, h('span', { class: 'label widget-title', text: w.title }), h('span', { class: `desc${acct && !acct.connected ? ' needs' : ''}`, text: WS.widgetSummary(w, ws) })),
+        h('div', { class: 'text widget-text' }, h('span', { class: 'label widget-title', text: w.title }), h('span', { class: `desc${(acct && !acct.connected) || off ? ' needs' : ''}`, text: summary })),
         h('div', { class: 'widget-actions' },
           h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: move(-1) }),
           h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === mine.length - 1, onclick: move(1) }),
           h('span', { class: 'chev', 'aria-hidden': 'true' })));
-      item.addEventListener('click', () => openForm(w));
-      item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openForm(w); } });
+      const go = () => { if (off) location.hash = `#app-${svc.id}`; else openForm(w); };
+      item.addEventListener('click', go);
+      item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } });
       return item;
     }));
   };
+  // What can be added: a row per kind. One that needs an account is offered when its service is connected; else it says Connect it first and goes to that service.
+  function renderCatalog() {
+    const full = ws.widgets.length >= ws.max;
+    catalog.replaceChildren(...[...ws.types].sort((a, b) => WS.ORDER.indexOf(a.type) - WS.ORDER.indexOf(b.type)).map((t) => {
+      const svc = serviceFor(t.type);
+      const need = svc && !svc.on;
+      const control = need
+        ? h('button', { type: 'button', class: 'plain connect-first', id: `widget-connect-${t.type}`, text: `Connect ${svc.name} first`, onclick: () => { location.hash = `#app-${svc.id}`; } }, h('span', { class: 'chev', 'aria-hidden': 'true' }))
+        : h('button', { type: 'button', class: 'primary', id: `widget-add-${t.type}`, text: 'Add', 'aria-label': `Add ${WS.kindName(t.type)}`, disabled: full, title: full ? `The page holds up to ${ws.max} widgets. Remove one to add another.` : '', onclick: () => openForm(null, t.type) });
+      const r = h('div', { class: 'row widget-kind', 'data-type': t.type },
+        widgetIcon(t.type),
+        h('div', { class: 'text' }, h('div', { class: 'head' }, h('span', { class: 'label', text: WS.kindName(t.type) })), h('span', { class: 'desc', text: svc && svc.on && svc.status === 'connected' ? `${WS.kindHint(t.type)} · ${svc.name} is connected` : WS.kindHint(t.type) })),
+        h('div', { class: 'controls' }, control));
+      r.dataset.search = `${WS.kindName(t.type)} ${WS.kindHint(t.type)} widget add`.toLowerCase();
+      return r;
+    }));
+  }
   const closeForm = () => {
     formGuard = null; formHost.replaceChildren(); renderList();
     const back = formReturn; formReturn = null;
@@ -1510,7 +1540,7 @@ async function buildWidgets(card) {
   const chk = (id, label, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked: Boolean(checked) }), label);
 
   // Add or edit: a type, its fields, and Check before Save.
-  function openForm(existing = null, initialType = null) {
+  function openForm(existing = null, initialType = null, opts = {}) {
     let type = existing?.type || initialType || 'weather';
     const note = h('span', { class: 'note', role: 'status', id: 'widget-note' });
     const fields = h('div', { class: 'widget-fields' });
@@ -1766,7 +1796,7 @@ async function buildWidgets(card) {
     // ---- gmail: your Google sign-in in Lumen (default), or your own Google Cloud client (Advanced) ----
     function gmailFields(same) {
       const g = same || {};
-      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], g.mode === 'oauth' ? 'oauth' : 'google');
+      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], same ? (g.mode === 'oauth' ? 'oauth' : 'google') : (ws.connections?.gmail ? 'oauth' : 'google')); // (a new card uses the connector's sign-in when it has one)
       inputs.account = h('select', { id: 'widget-gmail-account', 'aria-label': tr('settings.gmail.accountPick', 'Google account') });
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
       inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
@@ -2415,8 +2445,8 @@ async function buildWidgets(card) {
       closeForm();
       flash(listNote, `${existing.title} removed.`, 'ok');
     } }) : null;
-    const fromService = Boolean(formReturn) && type !== 'slack'; // (opened from a service's page: its sign-in is there, not repeated here; Slack's guided setup is only here)
-    const backName = formReturn ? WS.kindName(type) : 'Cards';
+    const fromService = SERVICE_TYPES.has(type); // (a service's card: how it looks and what it shows; its sign-in is in Apps and connections)
+    const backName = formReturn ? WS.kindName(type) : 'Widgets';
     const back = h('button', { class: 'back', type: 'button', 'aria-label': `Back to ${backName}`, onclick: () => requestClose() }, h('span', { class: 'chev', 'aria-hidden': 'true' }), backName);
     const leave = h('div', { class: 'leave-bar', role: 'alertdialog', 'aria-label': 'Unsaved changes', hidden: '' },
       h('span', { class: 'grow', text: existing ? 'These changes couldn’t be saved yet.' : 'This widget isn’t on your page yet.' }),
@@ -2430,8 +2460,8 @@ async function buildWidgets(card) {
         h('span', { class: 'note', text: existing ? `${WS.kindName(existing.type)} · ${WS.widgetSummary(existing, ws)}` : 'Pick what to show, then set it up.' }))),
       // The new-tab page's Add widget sent us here for a kind that needs a key or a sign-in: say what to paste, and where to get it.
       !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
-      existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
-      fromService ? h('p', { class: 'note wf-service-note', text: 'Signing in and out is on this service’s page in Apps and connections. This is how the card looks and what it shows.' }) : null,
+      existing || initialType ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
+      fromService ? h('p', { class: 'note wf-service-note' }, 'This is how the card looks and what it shows. The account is on ', h('button', { type: 'button', class: 'linkish', id: 'widget-open-service', text: `${APP_OF_TYPE[type] ? (serviceFor(type)?.name || type) : type} in Apps and connections`, onclick: () => { location.hash = `#app-${APP_OF_TYPE[type]}`; } }), '.') : null,
       fields,
       section('Card', [
         setting('Title', title, 'Shown at the top of the card. Leave empty to use the widget’s name.'),
@@ -2440,6 +2470,10 @@ async function buildWidgets(card) {
       ]),
       removeBtn ? section(null, [h('div', { class: 'row' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'Remove this widget' }), h('span', { class: 'desc', text: 'Takes it off the new-tab page. Any saved token stays until you sign out of the service.' })), removeBtn)]) : null,
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: () => requestClose() }), check, save), leave);
+    if (opts.accountOnly) { // the sign-in part of a card's editor, shown by its service's page in Apps and connections (Slack's guided setup)
+      renderFields();
+      return { nodes: [...fields.querySelectorAll(':scope > .wf-account, :scope > .wf-advanced')], note };
+    }
     formHost.replaceChildren(form);
     renderFields();
     syncWidth();
@@ -2488,11 +2522,9 @@ async function buildWidgets(card) {
   }
 
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the center', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  const addRow = row('Add a card', 'Weather, a clock, headlines, notes, timers, stocks and more. Cards for Gmail, Calendar, Todoist, GitHub, Spotify and Slack are under Services.', add);
-  addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list),
-    h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list, h('p', { class: 'group-foot' }, listNote)),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Add a widget' }), catalog, h('p', { class: 'group-foot', text: 'Widgets show a service; they never hold its sign-in. Connect a service under Apps and connections first.' })),
     h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
@@ -2501,9 +2533,9 @@ async function buildWidgets(card) {
   const applyEdit = (state) => {
     const target = state.edit && state.widgets.find((w) => w.id === state.edit);
     let goto = 'widgets';
-    if (target) { formReturn = SERVICE_TYPES.has(target.type) ? `#app-${APP_OF_TYPE[target.type]}` : null; openForm(target); } // (a service's card: its options, and Back to its page)
+    if (target) { formReturn = null; openForm(target); }
     else if (state.create && state.types.some((t) => t.type === state.create)) {
-      if (SERVICE_TYPES.has(state.create)) goto = `app-${APP_OF_TYPE[state.create]}`; // (a service: its page has Connect and the "Show on new tab page" switch)
+      if (serviceFor(state.create) && !serviceFor(state.create).on) goto = `app-${APP_OF_TYPE[state.create]}`; // (a service that is not connected: its page first)
       else openForm(null, state.create);
     } else return false;
     forceRoute = goto;
@@ -2514,6 +2546,7 @@ async function buildWidgets(card) {
   window.__cards = {
     edit: (w, returnHash) => { formReturn = returnHash || null; openForm(w); location.hash = '#widgets'; },
     create: (type, returnHash) => { formReturn = returnHash || null; openForm(null, type); location.hash = '#widgets'; },
+    accountPanel: (type) => openForm(null, type, { accountOnly: true }), // (settings-apps.js shows it on the service's page)
   };
   applyEdit(ws);
   // Settings already open: the new-tab page's gear sends this instead of reloading the tab (and the tab is reused, never duplicated).
@@ -3849,7 +3882,7 @@ async function init() {
   }
   for (const [slot, opts] of pages) slots.get(opts.page).attachPage(slot, slot.title, opts.desc, opts.more);
   const BUILDS = [
-    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps],
+    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps], ['widgets', buildWidgets],
     ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -3857,11 +3890,11 @@ async function init() {
   // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
   // once when a link, the sidebar or a search needs it). FOOT says which topics a builder puts rows in; SUBS are builders of one page each.
   const FOOT = {
-    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'],
+    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'], widgets: ['home'],
     privacy: ['privacy'], downloads: ['downloads'], files: ['downloads'], languages: ['general'], accessibility: ['accessibility'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates', 'advanced'], internals: ['advanced'],
   };
-  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus']);
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus', 'widgets']);
   const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
   const started = new Map(); // builder id -> promise
   const finished = new Set();

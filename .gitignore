@@ -22,5 +22,6 @@ userData/
 lumen-profile*/
 # Lumen's built-in Google OAuth client, written by scripts/build/build.js from LUMEN_GOOGLE_CLIENT_ID / _SECRET
 src/features/google-client.json
+src/features/microsoft-client.json
 docs/ux-audit/**/*.png
 docs/ux-audit/shots/

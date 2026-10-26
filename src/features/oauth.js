@@ -159,7 +159,10 @@ const sameText = (a, b) => {
 // A request with the wrong state, a different path or a different Host header (DNS rebinding) is
 // answered and ignored: it can neither finish nor break the sign-in.
 // `port`: a port to try (0, the default: the OS picks); when it is taken this rejects, so the caller can fall back to any port.
-function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messages = {}, port: wantPort = 0 } = {}) {
+// `redirectHost`: the host name the redirect address names ('localhost' for Microsoft, whose app registrations take http://localhost, not 127.0.0.1);
+// the listener is on 127.0.0.1 either way and accepts a Host header of either name. `path` (beginSignIn's redirectPath): '/' for Microsoft, whose registered
+// redirect address is plain http://localhost (the port is ignored when matching, the path is not).
+function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messages = {}, port: wantPort = 0, redirectHost = '127.0.0.1' } = {}) {
   const msg = { title: 'Lumen', done: 'You can close this tab and go back to Lumen.', denied: 'Sign-in was canceled. You can close this tab.', ...messages };
   return new Promise((resolve, reject) => {
     let finish;
@@ -193,16 +196,16 @@ function startLoopback({ state, timeoutMs = 5 * 60e3, path = '/callback', messag
       const port = server.address().port;
       timer = setTimeout(() => { fail(new OAuthError('Sign-in timed out. Try again.', { kind: 'timeout' })); close(); }, timeoutMs);
       timer.unref?.();
-      resolve({ port, redirectUri: `http://127.0.0.1:${port}${path}`, wait, close: () => { fail(new OAuthError('Sign-in was canceled.', { kind: 'cancelled' })); close(); } });
+      resolve({ port, redirectUri: `http://${redirectHost}:${port}${path}`, wait, close: () => { fail(new OAuthError('Sign-in was canceled.', { kind: 'cancelled' })); close(); } });
     });
   });
 }
 
 // The whole round trip: listen, open the consent page in the user's browser, wait for the redirect,
 // trade the code for tokens. -> { url, done, cancel }; `done` resolves { access, refresh, exp }.
-async function beginSignIn({ authorizeBase, tokenUrl, clientId, clientSecret, scope, extra, post, openExternal, now = Date.now, timeoutMs, messages }) {
+async function beginSignIn({ authorizeBase, tokenUrl, clientId, clientSecret, scope, extra, post, openExternal, now = Date.now, timeoutMs, messages, provider = 'Google', redirectHost, redirectPath }) {
   const p = pkce();
-  const lb = await startLoopback({ state: p.state, timeoutMs, messages });
+  const lb = await startLoopback({ state: p.state, timeoutMs, messages, ...(redirectHost ? { redirectHost } : {}), ...(redirectPath ? { path: redirectPath } : {}) });
   const url = authorizeUrl(authorizeBase, { clientId, redirectUri: lb.redirectUri, scope, challenge: p.challenge, state: p.state, extra });
   const done = (async () => {
     try {
@@ -211,7 +214,7 @@ async function beginSignIn({ authorizeBase, tokenUrl, clientId, clientSecret, sc
       const res = await post(tokenUrl, tokenForm('code', { clientId, clientSecret, code, verifier: p.verifier, redirectUri: lb.redirectUri }));
       if (!res.ok) {
         const f = classifyTokenFailure(res.status, res.body, res.retryAfter);
-        throw new OAuthError(f.kind === 'client' ? 'Google doesn’t accept that Client ID or secret. Check them in Settings.' : f.kind === 'rate' ? 'The sign-in service asked Lumen to slow down. Try again in a minute.' : `The sign-in service refused the code${f.description ? ` (${f.description})` : ''}.`, { kind: f.kind });
+        throw new OAuthError(f.kind === 'client' ? `${provider} doesn’t accept that Client ID or secret. Check them in Settings.` : f.kind === 'rate' ? 'The sign-in service asked Lumen to slow down. Try again in a minute.' : `The sign-in service refused the code${f.description ? ` (${f.description})` : ''}.`, { kind: f.kind });
       }
       return parseToken(res.body, now());
     } finally {
@@ -227,9 +230,9 @@ async function beginSignIn({ authorizeBase, tokenUrl, clientId, clientSecret, sc
 // access() returns a usable access token, refreshing when it is missing or old. Calls made while a
 // refresh is running share it. A revoked grant clears the stored refresh token and throws an
 // OAuthError with reconnect: true, so callers show "Reconnect" instead of failing every time.
-function createSession({ tokenUrl, post, load, save, now = Date.now, messages = {} }) {
+function createSession({ tokenUrl, post, load, save, now = Date.now, messages = {}, provider = 'Google' }) {
   // messages may be a function, read each time (the built-in client and an own one need different advice).
-  const base = { reconnect: 'Google signed Lumen out. Connect again in Settings.', client: 'Google doesn’t accept that Client ID or secret. Check them in Settings, then connect again.', rate: 'Google asked Lumen to slow down. It will try again shortly.' };
+  const base = { reconnect: 'Google signed Lumen out. Connect again in Settings.', client: 'Google doesn’t accept that Client ID or secret. Check them in Settings, then connect again.', rate: `${provider} asked Lumen to slow down. It will try again shortly.` };
   const msgNow = () => ({ ...base, ...(typeof messages === 'function' ? messages() : messages) });
   const msg = new Proxy({}, { get: (_t, k) => msgNow()[k] });
   let token = null; // { access, exp }: never stored, never sent to a page
@@ -264,7 +267,7 @@ function createSession({ tokenUrl, post, load, save, now = Date.now, messages = 
       throw new OAuthError(f.kind === 'client' ? msg.client : msg.reconnect, { reconnect: true, kind: f.kind });
     }
     if (f.kind === 'rate') throw new OAuthError(msg.rate, { kind: 'rate', retryAfter: f.retryAfter });
-    throw new OAuthError(f.kind === 'server' ? 'Google is having trouble. Lumen will try again shortly.' : `Google answered ${res.status}.`, { kind: f.kind });
+    throw new OAuthError(f.kind === 'server' ? `${provider} is having trouble. Lumen will try again shortly.` : `${provider} answered ${res.status}.`, { kind: f.kind });
   }
   async function access({ force = false } = {}) {
     if (!force && token && now() < token.exp) return token.access;

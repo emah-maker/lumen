@@ -1,19 +1,17 @@
-// Settings → Apps and connections: ONE list of the services Lumen can connect to. It used to be two: Connectors (what the AI can use) and Widgets (cards on
-// the new tab page), with separate sign-ins for the same Gmail, Calendar and Todoist. A service is now a row with its icon, its name and how it stands
-// (Connected · name / Not connected); its page has one Connect (or Disconnect), then two switches, "Show on new tab page" (the card) and "Let the AI use it"
-// (the connector), then that service's own options. The list is made from the connector registry (features/connectors/registry.js), so a connector added
-// there shows up here by itself, plus the services that only have a card (Spotify, Apple Music, Slack, Meta Muse). Cards that need no account (weather,
-// notes, headlines, a clock...) are the "Cards without an account" page (buildWidgets, below in settings.js).
+// Settings → Apps and connections: ONE list of the services Lumen can connect to, and the only place an account is connected. A service is a row with its icon,
+// its name and how it stands (Connected · name / Not connected); its page has the sign-in (Connect or Disconnect), "Let the AI use it" (the connector), then
+// that service's own options. The list is made from the connector registry (features/connectors/registry.js), so a connector added there shows up here by
+// itself, plus the services that only had a widget sign-in (Spotify, Apple Music, Slack, Meta Muse), wrapped so their row shows and controls it.
+// Widgets (Settings → New tab page → Widgets) only say how a service shows: they are offered once the service is connected here and never hold a credential.
 //
-// One sign-in, where the code allows it:
-//   Gmail      the card and the AI share Lumen's Google sign-in (the card's OAuth store); Connect makes it, both use it.
-//   GitHub     one sign-in (the device flow) serves the card and the AI (features/github-auth.js, as before).
-//   Todoist    one token: saved for the card, and the connector reads it from there (main.js shared.todoist).
-//   Calendar   the card's calendar link and the connector's secret address are separate stores; Connect here saves the connector's, and the card's calendar
-//              is made from the same link while it is still in this page.
-//   Drive, Sheets   their own Google grant (features/connectors/google-auth.js), asked for when they are connected; the Google client you may type under
-//              Advanced is the one both use.
-// The AI switch keeps a sign-in when it is turned off (connectors:set-paused); the card switch only hides the card (widgets.remove keepSecret).
+// One sign-in serves the AI and the widget:
+//   Gmail      the widget and the AI share Lumen's Google sign-in (the widget OAuth store); Connect makes it.
+//   GitHub     one sign-in (the device flow) serves both (features/github-auth.js).
+//   Todoist    one token: saved for the widget, and the connector reads it from there (main.js shared.todoist).
+//   Slack, Spotify, Muse   widget-only services: their sign-in is here (Slack's guided setup is the widget editor's own code, mounted on this page).
+//   Calendar   the widget's calendar links and the connector's secret address are separate stores (an address can't be read back); the widget keeps its link list.
+//   Drive, Sheets, Docs, Calendar, Tasks, Contacts   one Google grant (features/connectors/google-auth.js); the Google client under Advanced is the one Gmail and these use.
+// The AI switch keeps a sign-in when it is turned off (connectors:set-paused).
 
 const APP_WIDGET_OF = { gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' }; // connector id -> the new-tab card of the same service
 const APP_CARD_ONLY = [
@@ -108,7 +106,6 @@ async function buildApps(card) {
       inputs[i].addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); connectBtn.click(); } });
       return r;
     });
-    let lastLink = ''; // the calendar link typed in this page: the card is made from it
 
     // GitHub: one sign-in (the device flow) for the card and the AI.
     let ghRows = [];
@@ -161,7 +158,6 @@ async function buildApps(card) {
           break;
         }
         case 'gcal': {
-          lastLink = vals.secret.trim();
           data = await C.connect('gcal', vals);
           break;
         }
@@ -175,7 +171,6 @@ async function buildApps(card) {
           await W.setSecret('muse', vals.key.trim());
           break;
         }
-        case 'slack': { openCardEditor(); return; } // (the guided setup is in the card's editor)
         default:
           if (c0()) data = await C.connect(svc.id, vals);
       }
@@ -220,30 +215,16 @@ async function buildApps(card) {
       });
       return { row: r, input };
     };
-    const showSw = svc.type ? sw('show', tr('settings.apps.show', 'Show on new tab page'), tr('settings.apps.showDesc', 'Adds a card to the new tab page.'), async (on) => {
-      if (on) {
-        const extra = { gmail: { mode: ws.connections?.gmail ? 'oauth' : 'google' }, spotify: { mode: 'status' }, applemusic: { mode: 'status' }, calendar: { cals: [{ name: '', url: lastLink, color: '', enabled: true }] } }[svc.type] || {};
-        if (svc.type === 'calendar' && !lastLink) { openCardEditor(null); return; } // (the connector's address can't be read back: the card asks for the link itself)
-        const r = await W.save({ type: svc.type, title: '', colors: 'calendar', ...extra });
-        ws = r.state;
-        say(r.message && !/^Saved/i.test(r.message) ? r.message : 'Added to the new tab page.', 'ok');
-      } else {
-        const mine = cardsOf(svc);
-        if (mine.length > 1 && !confirm(`Take all ${mine.length} ${svc.name} cards off the new tab page? You stay signed in.`)) throw new Error('Kept.');
-        for (const w of mine) ws = await W.remove(w.id, { keepSecret: true });
-        say('Taken off the new tab page. You stay signed in.', 'ok');
-      }
-    }) : null;
     const aiSw = svc.connector ? sw('ai', tr('settings.apps.ai', 'Let the AI use it'), tr('settings.apps.aiDesc', 'Lets the AI work with it when you ask.'), async (on) => {
       data = await C.setPaused(svc.id, !on);
       say(on ? `The AI can use ${svc.name}.` : `The AI can’t use ${svc.name} now. You stay signed in.`, 'ok');
     }) : null;
     const needNote = h('span', { class: 'note', text: tr('settings.apps.connectFirst', 'Connect it first.') });
-    for (const s of [showSw, aiSw]) if (s) s.row.querySelector('.text').append(needNote.cloneNode(true));
+    for (const s of [aiSw]) if (s) s.row.querySelector('.text').append(needNote.cloneNode(true));
 
     // ---- the service's own options
     const options = [];
-    const cardLink = svc.type ? linkRow(tr('settings.apps.cardOptions', 'New tab card'), { onOpen: () => openCardEditor(cardsOf(svc)[0]), more: 'card options title width colors places units' }) : null;
+    const cardLink = svc.type ? linkRow(tr('settings.apps.widgets', 'Widgets on the new tab page'), { href: '#widgets', more: 'widget card new tab page show hide add' }) : null; // (a card only shows the service: how it looks is on the Widgets page, the sign-in is here)
     if (cardLink) { cardLink.id = id('card'); options.push(cardLink); }
     if (svc.connector && c0()) options.push(row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())));
     let gmailRows = [];
@@ -280,8 +261,7 @@ async function buildApps(card) {
     if (ownRows.length) advanced.push(...ownRows);
 
     // ---- put it together
-    page.append(accountRow, ...fieldRows, ...ghRows);
-    if (showSw) page.append(showSw.row);
+    page.append(...(svc.id === 'slack' ? [] : [accountRow]), ...fieldRows, ...ghRows);
     if (aiSw) page.append(aiSw.row);
     if (options.length) page.group(tr('settings.apps.options', 'Options')).append(...options);
     if (advanced.length) page.append(collapsible(tr('settings.apps.advanced', 'Advanced'), advanced));
@@ -332,10 +312,13 @@ async function buildApps(card) {
       ];
     }
 
-    // ---- the card's editor: Back comes back here
-    function openCardEditor(w = null) {
-      if (w) window.__cards?.edit(w, `#app-${svc.id}`);
-      else window.__cards?.create(svc.type, `#app-${svc.id}`);
+
+    // ---- Slack: the guided setup is the card editor's own code (settings.js slackFields), shown here so the sign-in is on the service's page
+    let slackBox = null;
+    if (svc.id === 'slack') {
+      slackBox = h('div', { class: 'slack-setup', id: 'app-slack-setup' });
+      buildOne('widgets').then(() => { const r = window.__cards?.accountPanel('slack'); if (r) slackBox.replaceChildren(...r.nodes, r.note); }).catch(() => {});
+      accountRow.hidden = true;
     }
 
     // ---- redraw from the state
@@ -343,7 +326,7 @@ async function buildApps(card) {
       const st = st0();
       const cc = c0();
       const accountless = Boolean(st.noAccount);
-      accountRow.hidden = accountless;
+      accountRow.hidden = accountless || svc.id === 'slack';
       statusNote.textContent = st.text;
       statusNote.className = `note ${st.cls}`;
       const needsFields = fieldRows.length > 0 && (!st.on || st.again);
@@ -356,14 +339,6 @@ async function buildApps(card) {
       ghSync(st.on && !st.again);
       const pending = svc.id === 'github' && ws.github?.pending;
       connectBtn.hidden = connectBtn.hidden || Boolean(pending);
-      if (showSw) {
-        const ready = st.on || svc.id === 'spotify' || svc.id === 'applemusic' || (svc.id === 'gmail' && ws.gmailGoogle?.signedIn);
-        showSw.input.checked = cardsOf(svc).length > 0;
-        showSw.input.disabled = !ready && !showSw.input.checked;
-        const open = ready || showSw.input.checked;
-        showSw.row.querySelector('.text > .note').hidden = open;
-        showSw.row.querySelector('.text > .desc').hidden = !open;
-      }
       if (aiSw) {
         aiSw.input.checked = Boolean(cc) && cc.status !== 'off' && !cc.paused;
         aiSw.input.disabled = !cc || cc.status === 'off';
@@ -372,9 +347,9 @@ async function buildApps(card) {
         aiSw.row.querySelector('.text > .desc').hidden = !open;
       }
       if (cardLink) {
-        const mine = cardsOf(svc);
-        cardLink.hidden = !mine.length;
-        cardLink.setValue(mine.length ? window.WidgetSummary?.widgetSummary(mine[0], ws) || '' : '');
+        const n = cardsOf(svc).length;
+        cardLink.setValue(n ? `${n} on the page` : 'None yet');
+        cardLink.hidden = Boolean(st.noAccount === false && !st.on); // (a service that is not connected has nothing to show yet)
       }
       if (gmailRows.length) {
         const [draftsSw, sendSw, logRow] = gmailRows;
@@ -390,6 +365,7 @@ async function buildApps(card) {
       const link = page.link;
       if (link) { link.dataset.state = st.cls || ''; link.dataset.on = st.on ? '1' : ''; }
     };
+    if (slackBox) page.el.prepend(slackBox);
     pages.set(svc.id, { sync });
     sync();
   }
@@ -401,8 +377,5 @@ async function buildApps(card) {
   // ---- Custom MCP servers (a page of its own; anything with an MCP server, beyond the services above)
   const mcpEl = buildMcpServers(); // settings-mcp-servers.js
   slots.get('mcp-servers').append(mcpEl);
-
-  // ---- Cards without an account (weather, a clock, headlines, notes...)
-  try { await buildWidgets(slots.get('widgets')); } catch (err) { slots.get('widgets').append(row('Cards', String(err?.message || err))); }
   syncAll();
 }

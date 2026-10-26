@@ -2751,8 +2751,6 @@ function connDetectChips(c, input, C) {
 
 
 
-
-
 const APP_WIDGET_OF = { gmail: 'gmail', gcal: 'calendar', todoist: 'todoist', github: 'github' };
 const APP_CARD_ONLY = [
   { id: 'spotify', name: 'Spotify', category: 'music', icon: { text: 'S', color: '#1db954' }, type: 'spotify', summary: 'Music that plays in Lumen, with what is playing on the new tab page.' },
@@ -2846,7 +2844,6 @@ async function buildApps(card) {
       inputs[i].addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); connectBtn.click(); } });
       return r;
     });
-    let lastLink = '';
 
 
     let ghRows = [];
@@ -2899,7 +2896,6 @@ async function buildApps(card) {
           break;
         }
         case 'gcal': {
-          lastLink = vals.secret.trim();
           data = await C.connect('gcal', vals);
           break;
         }
@@ -2913,7 +2909,6 @@ async function buildApps(card) {
           await W.setSecret('muse', vals.key.trim());
           break;
         }
-        case 'slack': { openCardEditor(); return; }
         default:
           if (c0()) data = await C.connect(svc.id, vals);
       }
@@ -2958,30 +2953,16 @@ async function buildApps(card) {
       });
       return { row: r, input };
     };
-    const showSw = svc.type ? sw('show', tr('settings.apps.show', 'Show on new tab page'), tr('settings.apps.showDesc', 'Adds a card to the new tab page.'), async (on) => {
-      if (on) {
-        const extra = { gmail: { mode: ws.connections?.gmail ? 'oauth' : 'google' }, spotify: { mode: 'status' }, applemusic: { mode: 'status' }, calendar: { cals: [{ name: '', url: lastLink, color: '', enabled: true }] } }[svc.type] || {};
-        if (svc.type === 'calendar' && !lastLink) { openCardEditor(null); return; }
-        const r = await W.save({ type: svc.type, title: '', colors: 'calendar', ...extra });
-        ws = r.state;
-        say(r.message && !/^Saved/i.test(r.message) ? r.message : 'Added to the new tab page.', 'ok');
-      } else {
-        const mine = cardsOf(svc);
-        if (mine.length > 1 && !confirm(`Take all ${mine.length} ${svc.name} cards off the new tab page? You stay signed in.`)) throw new Error('Kept.');
-        for (const w of mine) ws = await W.remove(w.id, { keepSecret: true });
-        say('Taken off the new tab page. You stay signed in.', 'ok');
-      }
-    }) : null;
     const aiSw = svc.connector ? sw('ai', tr('settings.apps.ai', 'Let the AI use it'), tr('settings.apps.aiDesc', 'Lets the AI work with it when you ask.'), async (on) => {
       data = await C.setPaused(svc.id, !on);
       say(on ? `The AI can use ${svc.name}.` : `The AI can’t use ${svc.name} now. You stay signed in.`, 'ok');
     }) : null;
     const needNote = h('span', { class: 'note', text: tr('settings.apps.connectFirst', 'Connect it first.') });
-    for (const s of [showSw, aiSw]) if (s) s.row.querySelector('.text').append(needNote.cloneNode(true));
+    for (const s of [aiSw]) if (s) s.row.querySelector('.text').append(needNote.cloneNode(true));
 
 
     const options = [];
-    const cardLink = svc.type ? linkRow(tr('settings.apps.cardOptions', 'New tab card'), { onOpen: () => openCardEditor(cardsOf(svc)[0]), more: 'card options title width colors places units' }) : null;
+    const cardLink = svc.type ? linkRow(tr('settings.apps.widgets', 'Widgets on the new tab page'), { href: '#widgets', more: 'widget card new tab page show hide add' }) : null;
     if (cardLink) { cardLink.id = id('card'); options.push(cardLink); }
     if (svc.connector && c0()) options.push(row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())));
     let gmailRows = [];
@@ -3018,8 +2999,7 @@ async function buildApps(card) {
     if (ownRows.length) advanced.push(...ownRows);
 
 
-    page.append(accountRow, ...fieldRows, ...ghRows);
-    if (showSw) page.append(showSw.row);
+    page.append(...(svc.id === 'slack' ? [] : [accountRow]), ...fieldRows, ...ghRows);
     if (aiSw) page.append(aiSw.row);
     if (options.length) page.group(tr('settings.apps.options', 'Options')).append(...options);
     if (advanced.length) page.append(collapsible(tr('settings.apps.advanced', 'Advanced'), advanced));
@@ -3071,9 +3051,12 @@ async function buildApps(card) {
     }
 
 
-    function openCardEditor(w = null) {
-      if (w) window.__cards?.edit(w, `#app-${svc.id}`);
-      else window.__cards?.create(svc.type, `#app-${svc.id}`);
+
+    let slackBox = null;
+    if (svc.id === 'slack') {
+      slackBox = h('div', { class: 'slack-setup', id: 'app-slack-setup' });
+      buildOne('widgets').then(() => { const r = window.__cards?.accountPanel('slack'); if (r) slackBox.replaceChildren(...r.nodes, r.note); }).catch(() => {});
+      accountRow.hidden = true;
     }
 
 
@@ -3081,7 +3064,7 @@ async function buildApps(card) {
       const st = st0();
       const cc = c0();
       const accountless = Boolean(st.noAccount);
-      accountRow.hidden = accountless;
+      accountRow.hidden = accountless || svc.id === 'slack';
       statusNote.textContent = st.text;
       statusNote.className = `note ${st.cls}`;
       const needsFields = fieldRows.length > 0 && (!st.on || st.again);
@@ -3094,14 +3077,6 @@ async function buildApps(card) {
       ghSync(st.on && !st.again);
       const pending = svc.id === 'github' && ws.github?.pending;
       connectBtn.hidden = connectBtn.hidden || Boolean(pending);
-      if (showSw) {
-        const ready = st.on || svc.id === 'spotify' || svc.id === 'applemusic' || (svc.id === 'gmail' && ws.gmailGoogle?.signedIn);
-        showSw.input.checked = cardsOf(svc).length > 0;
-        showSw.input.disabled = !ready && !showSw.input.checked;
-        const open = ready || showSw.input.checked;
-        showSw.row.querySelector('.text > .note').hidden = open;
-        showSw.row.querySelector('.text > .desc').hidden = !open;
-      }
       if (aiSw) {
         aiSw.input.checked = Boolean(cc) && cc.status !== 'off' && !cc.paused;
         aiSw.input.disabled = !cc || cc.status === 'off';
@@ -3110,9 +3085,9 @@ async function buildApps(card) {
         aiSw.row.querySelector('.text > .desc').hidden = !open;
       }
       if (cardLink) {
-        const mine = cardsOf(svc);
-        cardLink.hidden = !mine.length;
-        cardLink.setValue(mine.length ? window.WidgetSummary?.widgetSummary(mine[0], ws) || '' : '');
+        const n = cardsOf(svc).length;
+        cardLink.setValue(n ? `${n} on the page` : 'None yet');
+        cardLink.hidden = Boolean(st.noAccount === false && !st.on);
       }
       if (gmailRows.length) {
         const [draftsSw, sendSw, logRow] = gmailRows;
@@ -3128,6 +3103,7 @@ async function buildApps(card) {
       const link = page.link;
       if (link) { link.dataset.state = st.cls || ''; link.dataset.on = st.on ? '1' : ''; }
     };
+    if (slackBox) page.el.prepend(slackBox);
     pages.set(svc.id, { sync });
     sync();
   }
@@ -3139,9 +3115,6 @@ async function buildApps(card) {
 
   const mcpEl = buildMcpServers();
   slots.get('mcp-servers').append(mcpEl);
-
-
-  try { await buildWidgets(slots.get('widgets')); } catch (err) { slots.get('widgets').append(row('Cards', String(err?.message || err))); }
   syncAll();
 }
 ;
@@ -4511,6 +4484,7 @@ function highlight(words) {
 
 
 const INLINE_DESC = 64;
+const INLINE_WARN = /only turn this on|trust it|trick|can[’']t be undone|cannot be undone/i;
 let infoPop = null;
 let infoBtn = null;
 function closeInfo(restoreFocus) {
@@ -4549,7 +4523,7 @@ function infoButton(label, text) {
   return b;
 }
 function row(label, desc, ...controls) {
-  const long = typeof desc === 'string' && desc.length > INLINE_DESC && !KEEP_WHOLE.test(desc);
+  const long = typeof desc === 'string' && desc.length > INLINE_DESC && !INLINE_WARN.test(desc);
   const el = h('div', { class: 'row' },
     h('div', { class: 'text' },
       h('div', { class: 'head' }, h('span', { class: 'label', text: label }), long ? infoButton(label, desc) : null),
@@ -4712,11 +4686,11 @@ const CATEGORIES = [
     ['macros', 'Macros', { page: 'ai-tools', more: 'automation record replay steps shortcut script' }],
     ['usage', 'Usage', { page: 'ai-tools', more: 'plan limits tokens claude grok codex antigravity openai gemini openrouter cost budget rate' }]] },
   { id: 'apps', title: 'Apps and connections', slots: [['apps', 'Services'], ['apps-links', ''],
-    ['widgets', 'Cards without an account', { page: 'apps-links', more: 'widgets cards new tab weather clock world feed headlines notes countdown timer pomodoro stocks crypto tradingview custom web page files routines ai status' }],
     ['mcp-servers', 'Custom MCP servers', { page: 'apps-links', more: 'mcp tools servers custom model context protocol add' }]] },
   { id: 'home', title: 'New tab page', slots: [['home-links', ''], ['home-page', 'On the page'], ['home',  ''],
     ['home-background', 'Background', { page: 'home-links', more: 'background wallpaper picture gradient shuffle daily' }],
-    ['home-effect', 'Animated effect', { page: 'home-links', more: 'animated effect particles stars snow bubbles music reactive' }]] },
+    ['home-effect', 'Animated effect', { page: 'home-links', more: 'animated effect particles stars snow bubbles music reactive' }],
+    ['widgets', 'Widgets', { page: 'home-links', more: 'widgets cards add weather clock world feed headlines notes countdown timer pomodoro stocks crypto tradingview custom web page files routines ai status gmail calendar todoist github spotify slack muse' }]] },
   { id: 'tabs', title: 'Tabs and browsing', slots: [['tabs-strip', ''], ['tabs-links', ''],
     ['tabs-groups', 'Group tabs automatically', { page: 'tabs-links', more: 'group tabs organize site topic idle' }],
     ['tabs-sleep', 'Sleeping tabs', { page: 'tabs-links', more: 'sleep unload memory freeze performance discard' }]] },
@@ -5814,9 +5788,19 @@ function widgetIcon(type) {
 async function buildWidgets(card) {
   let ws = await S.widgets.state();
   const WS = window.WidgetSummary;
+
+  let conns = (await S.ai.connectors.list().catch(() => ({ connectors: [] }))).connectors;
+  const serviceFor = (type) => {
+    const id = APP_OF_TYPE[type];
+    if (!id) return null;
+    const c = conns.find((x) => x.id === id);
+    const only = APP_CARD_ONLY.find((x) => x.id === id);
+    const on = c ? c.status === 'connected' : id === 'slack' ? Boolean(ws.slack?.connected && !ws.slack?.reconnect) : id === 'muse' ? Boolean(ws.secrets?.muse) : true;
+    return { id, name: (c?.name || only?.name || id).replace(/\s*\(.*\)$/, ''), on, status: c?.status || '' };
+  };
   const list = h('div', { class: 'card widget-list', id: 'widget-list' });
   const formHost = h('div', { class: 'widget-form-host' });
-  const add = h('button', { class: 'primary', id: 'widget-add', text: 'Add widget…', onclick: () => openForm() });
+  const catalog = h('div', { class: 'card widget-catalog', id: 'widget-catalog' });
   const listNote = h('span', { class: 'note', role: 'status', id: 'widget-list-note' });
   const clean = (err) => String(err?.message || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
   let formReturn = null;
@@ -5824,25 +5808,45 @@ async function buildWidgets(card) {
   const renderList = () => {
     const open = Boolean(formHost.firstChild);
     home.hidden = open;
-    const mine = ws.widgets.filter((w) => !SERVICE_TYPES.has(w.type));
-    add.disabled = ws.widgets.length >= ws.max;
-    add.title = add.disabled ? `The page holds up to ${ws.max} widgets. Remove one to add another.` : '';
-    if (!mine.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No cards yet' }), h('span', { class: 'desc', text: 'Add the weather, a clock, headlines, notes and more. They appear as cards on the new tab page.' })))); return; }
+    const mine = ws.widgets;
+    renderCatalog();
+    if (!mine.length) { list.replaceChildren(h('div', { class: 'row widget-empty' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'No widgets yet' }), h('span', { class: 'desc', text: 'Add one below. Widgets appear as cards on the new tab page.' })))); return; }
     list.replaceChildren(...mine.map((w, i) => {
       const acct = WS.accountStatus(w, ws);
+      const svc = serviceFor(w.type);
+      const off = svc && !svc.on;
       const move = (dir) => (e) => { e.stopPropagation(); S.widgets.move(w.id, dir).then((next) => { ws = next; renderList(); }); };
-      const item = h('div', { class: 'row link widget-item', 'data-id': w.id, 'data-type': w.type, tabindex: '0', role: 'link', 'aria-label': `${w.title}. ${WS.widgetSummary(w, ws)}. Open its settings` },
+      const summary = off ? `${svc.name} isn’t connected. Reconnect` : WS.widgetSummary(w, ws);
+      const item = h('div', { class: `row link widget-item${off ? ' off' : ''}`, 'data-id': w.id, 'data-type': w.type, tabindex: '0', role: 'link', 'aria-label': `${w.title}. ${summary}. ${off ? 'Open its connection' : 'Open its settings'}` },
         widgetIcon(w.type),
-        h('div', { class: 'text widget-text' }, h('span', { class: 'label widget-title', text: w.title }), h('span', { class: `desc${acct && !acct.connected ? ' needs' : ''}`, text: WS.widgetSummary(w, ws) })),
+        h('div', { class: 'text widget-text' }, h('span', { class: 'label widget-title', text: w.title }), h('span', { class: `desc${(acct && !acct.connected) || off ? ' needs' : ''}`, text: summary })),
         h('div', { class: 'widget-actions' },
           h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: move(-1) }),
           h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === mine.length - 1, onclick: move(1) }),
           h('span', { class: 'chev', 'aria-hidden': 'true' })));
-      item.addEventListener('click', () => openForm(w));
-      item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openForm(w); } });
+      const go = () => { if (off) location.hash = `#app-${svc.id}`; else openForm(w); };
+      item.addEventListener('click', go);
+      item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } });
       return item;
     }));
   };
+
+  function renderCatalog() {
+    const full = ws.widgets.length >= ws.max;
+    catalog.replaceChildren(...[...ws.types].sort((a, b) => WS.ORDER.indexOf(a.type) - WS.ORDER.indexOf(b.type)).map((t) => {
+      const svc = serviceFor(t.type);
+      const need = svc && !svc.on;
+      const control = need
+        ? h('button', { type: 'button', class: 'plain connect-first', id: `widget-connect-${t.type}`, text: `Connect ${svc.name} first`, onclick: () => { location.hash = `#app-${svc.id}`; } }, h('span', { class: 'chev', 'aria-hidden': 'true' }))
+        : h('button', { type: 'button', class: 'primary', id: `widget-add-${t.type}`, text: 'Add', 'aria-label': `Add ${WS.kindName(t.type)}`, disabled: full, title: full ? `The page holds up to ${ws.max} widgets. Remove one to add another.` : '', onclick: () => openForm(null, t.type) });
+      const r = h('div', { class: 'row widget-kind', 'data-type': t.type },
+        widgetIcon(t.type),
+        h('div', { class: 'text' }, h('div', { class: 'head' }, h('span', { class: 'label', text: WS.kindName(t.type) })), h('span', { class: 'desc', text: svc && svc.on && svc.status === 'connected' ? `${WS.kindHint(t.type)} · ${svc.name} is connected` : WS.kindHint(t.type) })),
+        h('div', { class: 'controls' }, control));
+      r.dataset.search = `${WS.kindName(t.type)} ${WS.kindHint(t.type)} widget add`.toLowerCase();
+      return r;
+    }));
+  }
   const closeForm = () => {
     formGuard = null; formHost.replaceChildren(); renderList();
     const back = formReturn; formReturn = null;
@@ -5886,7 +5890,7 @@ async function buildWidgets(card) {
   const chk = (id, label, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked: Boolean(checked) }), label);
 
 
-  function openForm(existing = null, initialType = null) {
+  function openForm(existing = null, initialType = null, opts = {}) {
     let type = existing?.type || initialType || 'weather';
     const note = h('span', { class: 'note', role: 'status', id: 'widget-note' });
     const fields = h('div', { class: 'widget-fields' });
@@ -6142,7 +6146,7 @@ async function buildWidgets(card) {
 
     function gmailFields(same) {
       const g = same || {};
-      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], g.mode === 'oauth' ? 'oauth' : 'google');
+      inputs.mode = segment('widget-gmail-mode', tr('settings.gmail.mode', 'How Lumen reads Gmail'), [['google', tr('settings.gmail.modeGoogle', 'My Google sign-in in Lumen')], ['oauth', tr('settings.gmail.modeOauth', 'Advanced: my own Google Cloud client')]], same ? (g.mode === 'oauth' ? 'oauth' : 'google') : (ws.connections?.gmail ? 'oauth' : 'google'));
       inputs.account = h('select', { id: 'widget-gmail-account', 'aria-label': tr('settings.gmail.accountPick', 'Google account') });
       inputs.clientId = h('input', { type: 'text', id: 'widget-clientid', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: '1234567890-abc.apps.googleusercontent.com', 'aria-label': tr('settings.gmail.clientId', 'Google OAuth Client ID'), value: g.clientId || '' });
       inputs.clientSecret = h('input', { type: 'password', id: 'widget-clientsecret', autocomplete: 'off', spellcheck: 'false', maxlength: '300', placeholder: ws.secrets?.gmail ? tr('settings.gmail.secretSaved', 'Saved. Paste a new secret to replace it.') : tr('settings.gmail.secretHint', 'Client secret'), 'aria-label': tr('settings.gmail.clientSecret', 'Google OAuth client secret') });
@@ -6791,8 +6795,8 @@ async function buildWidgets(card) {
       closeForm();
       flash(listNote, `${existing.title} removed.`, 'ok');
     } }) : null;
-    const fromService = Boolean(formReturn) && type !== 'slack';
-    const backName = formReturn ? WS.kindName(type) : 'Cards';
+    const fromService = SERVICE_TYPES.has(type);
+    const backName = formReturn ? WS.kindName(type) : 'Widgets';
     const back = h('button', { class: 'back', type: 'button', 'aria-label': `Back to ${backName}`, onclick: () => requestClose() }, h('span', { class: 'chev', 'aria-hidden': 'true' }), backName);
     const leave = h('div', { class: 'leave-bar', role: 'alertdialog', 'aria-label': 'Unsaved changes', hidden: '' },
       h('span', { class: 'grow', text: existing ? 'These changes couldn’t be saved yet.' : 'This widget isn’t on your page yet.' }),
@@ -6806,8 +6810,8 @@ async function buildWidgets(card) {
         h('span', { class: 'note', text: existing ? `${WS.kindName(existing.type)} · ${WS.widgetSummary(existing, ws)}` : 'Pick what to show, then set it up.' }))),
 
       !existing && initialType && WS.setupNote(initialType) ? h('p', { class: 'note wf-setup-note', id: 'widget-setup-note', role: 'status', text: `Setting up ${WS.kindName(initialType)}. ${WS.setupNote(initialType)}` }) : null,
-      existing ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
-      fromService ? h('p', { class: 'note wf-service-note', text: 'Signing in and out is on this service’s page in Apps and connections. This is how the card looks and what it shows.' }) : null,
+      existing || initialType ? null : section('Choose a widget', [h('div', { class: 'row stack' }, types)]),
+      fromService ? h('p', { class: 'note wf-service-note' }, 'This is how the card looks and what it shows. The account is on ', h('button', { type: 'button', class: 'linkish', id: 'widget-open-service', text: `${APP_OF_TYPE[type] ? (serviceFor(type)?.name || type) : type} in Apps and connections`, onclick: () => { location.hash = `#app-${APP_OF_TYPE[type]}`; } }), '.') : null,
       fields,
       section('Card', [
         setting('Title', title, 'Shown at the top of the card. Leave empty to use the widget’s name.'),
@@ -6816,6 +6820,10 @@ async function buildWidgets(card) {
       ]),
       removeBtn ? section(null, [h('div', { class: 'row' }, h('div', { class: 'text' }, h('span', { class: 'label', text: 'Remove this widget' }), h('span', { class: 'desc', text: 'Takes it off the new-tab page. Any saved token stays until you sign out of the service.' })), removeBtn)]) : null,
       h('div', { class: 'widget-buttons' }, note, h('span', { class: 'grow' }), h('button', { text: 'Cancel', onclick: () => requestClose() }), check, save), leave);
+    if (opts.accountOnly) {
+      renderFields();
+      return { nodes: [...fields.querySelectorAll(':scope > .wf-account, :scope > .wf-advanced')], note };
+    }
     formHost.replaceChildren(form);
     renderFields();
     syncWidth();
@@ -6864,11 +6872,9 @@ async function buildWidgets(card) {
   }
 
   const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Every widget its default size, packed in order, and every section back in the center', onclick: async () => { ws = await S.widgets.resetLayout(); renderList(); flash(listNote, 'Layout reset.', 'ok'); } });
-  const addRow = row('Add a card', 'Weather, a clock, headlines, notes, timers, stocks and more. Cards for Gmail, Calendar, Todoist, GitHub, Spotify and Slack are under Services.', add);
-  addRow.querySelector('.text').append(listNote);
   const home = h('div', { class: 'widget-home' },
-    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list),
-    h('div', { class: 'group' }, h('div', { class: 'card' }, addRow)),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list, h('p', { class: 'group-foot' }, listNote)),
+    h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Add a widget' }), catalog, h('p', { class: 'group-foot', text: 'Widgets show a service; they never hold its sign-in. Connect a service under Apps and connections first.' })),
     h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
   card.el.append(home, formHost);
   renderList();
@@ -6877,9 +6883,9 @@ async function buildWidgets(card) {
   const applyEdit = (state) => {
     const target = state.edit && state.widgets.find((w) => w.id === state.edit);
     let goto = 'widgets';
-    if (target) { formReturn = SERVICE_TYPES.has(target.type) ? `#app-${APP_OF_TYPE[target.type]}` : null; openForm(target); }
+    if (target) { formReturn = null; openForm(target); }
     else if (state.create && state.types.some((t) => t.type === state.create)) {
-      if (SERVICE_TYPES.has(state.create)) goto = `app-${APP_OF_TYPE[state.create]}`;
+      if (serviceFor(state.create) && !serviceFor(state.create).on) goto = `app-${APP_OF_TYPE[state.create]}`;
       else openForm(null, state.create);
     } else return false;
     forceRoute = goto;
@@ -6890,6 +6896,7 @@ async function buildWidgets(card) {
   window.__cards = {
     edit: (w, returnHash) => { formReturn = returnHash || null; openForm(w); location.hash = '#widgets'; },
     create: (type, returnHash) => { formReturn = returnHash || null; openForm(null, type); location.hash = '#widgets'; },
+    accountPanel: (type) => openForm(null, type, { accountOnly: true }),
   };
   applyEdit(ws);
 
@@ -7008,7 +7015,7 @@ async function buildPrivacy(card) {
 
   card.group(tr('settings.files.group', 'Files')).append(
     withKeywords(row(tr('settings.files.privacyRef', 'Recent files'), tr('settings.files.privacyRefDesc', 'Files you open are listed on the new-tab page and in the Ctrl+Shift+F picker, on this computer only. Turn that off or clear the list in Downloads and files > Files.'),
-      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened history pdf documents pinned folder remember clear'),
+      h('button', { id: 'files-privacy-link', text: tr('settings.files.privacyRefGo', 'Open Files settings'), onclick: () => { location.hash = '#files'; } })), 'files recent opened pdf documents pinned folder remember'),
   );
 
 
@@ -8225,7 +8232,7 @@ async function init() {
   }
   for (const [slot, opts] of pages) slots.get(opts.page).attachPage(slot, slot.title, opts.desc, opts.more);
   const BUILDS = [
-    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps],
+    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps], ['widgets', buildWidgets],
     ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -8233,11 +8240,11 @@ async function init() {
 
 
   const FOOT = {
-    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'],
+    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'], widgets: ['home'],
     privacy: ['privacy'], downloads: ['downloads'], files: ['downloads'], languages: ['general'], accessibility: ['accessibility'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'],
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates', 'advanced'], internals: ['advanced'],
   };
-  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus']);
+  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus', 'widgets']);
   const SUB_BUILDER = { 'task-manager': 'about' };
   const started = new Map();
   const finished = new Set();

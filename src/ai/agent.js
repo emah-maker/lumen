@@ -5725,7 +5725,9 @@ ${prompt}` : prompt), historyImages: [] };
       if (noAsk) throw new Error('This changes something in a connected service, so it needs the user to say yes, and nobody is here to ask. Tell the user what you would have done.');
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
       const upload = input.app === 'drive' && input.action === 'upload' ? this.connectorUploadFile(input) : null; // [drive] the one local file this upload would send, checked like upload_file's
-      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload });
+      const updating = input.app === 'drive' && input.action === 'update' ? this.connectorUpdateFiles(input) : null; // [drive] the local files an update would send, each checked the same way
+      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload || updating });
+      const sendFile = updating ? this.connectorUpdatePairs(updating, names?.plan) : upload; // an update sends only the files the card paired with a Drive file
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
@@ -5746,7 +5748,7 @@ ${prompt}` : prompt), historyImages: [] };
       }
       if (sending) (this.sendVias ||= new WeakMap()).set(input, via); // call() sends only with this
       (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
-      if (upload) (this.connectorFiles ||= new WeakMap()).set(input, upload); // the file the user allowed on the card, and only that one
+      if (sendFile) (this.connectorFiles ||= new WeakMap()).set(input, sendFile); // the file(s) the user allowed on the card, and only those
     }
     if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
@@ -5768,21 +5770,57 @@ ${prompt}` : prompt), historyImages: [] };
   // use files on this computer", a path, through the same checks (no credentials folders, no Lumen profile, a regular file under the size
   // cap). One file per call, so each file gets its own card. -> { name, type, size, path, mtimeMs }. The model never gets to name another file later:
   // the card names this one and the upload is of exactly it (the provider looks again that it has not changed).
-  connectorUploadFile(input) {
-    const a = input.args || {};
-    if (Boolean(a.file) === Boolean(a.path)) throw new Error('Give exactly one of file (the ref of a file the user attached to this chat) or path (a file on this computer). Nothing was uploaded.');
+  connectorLocalFile({ file, path }) {
     let f;
-    if (a.file) {
+    if (file) {
       if (!this.uploads) throw new Error('Attached files aren’t available here.');
-      try { [f] = this.uploads.resolve(taskScope.getStore()?.chatId, [a.file]); } catch (err) { throw new Error(String(err.message).replace(/upload_file only takes the refs/, 'file takes only the refs').replace(/Call upload_file without files and the user will be asked to choose one\./, 'Ask the user to attach the file, or to allow files on this computer and use path.')); }
+      try { [f] = this.uploads.resolve(taskScope.getStore()?.chatId, [file]); } catch (err) { throw new Error(String(err.message).replace(/upload_file only takes the refs/, 'file takes only the refs').replace(/Call upload_file without files and the user will be asked to choose one\./, 'Ask the user to attach the file, or to allow files on this computer and use path.')); }
       try { f = { ...uploadFiles.describePicked(f.path), name: f.name }; } catch (err) { throw new Error(`${f.name}: ${err.message}`); }
     } else {
-      [f] = this.localFiles([a.path]);
+      [f] = this.localFiles([path]);
     }
     let mtimeMs = 0;
     try { mtimeMs = require('fs').statSync(f.path).mtimeMs; } catch { /* the provider says it can't be read */ }
-    if (!a.name) input.args.name = f.name; // (the card shows the name it will have in Drive, which the user can change)
     return { name: f.name, type: f.type, size: f.size, path: f.path, mtimeMs };
+  }
+
+  connectorUploadFile(input) {
+    const a = input.args || {};
+    if (Boolean(a.file) === Boolean(a.path)) throw new Error('Give exactly one of file (the ref of a file the user attached to this chat) or path (a file on this computer). Nothing was uploaded.');
+    const f = this.connectorLocalFile(a);
+    if (!a.name) input.args.name = f.name; // (the card shows the name it will have in Drive, which the user can change)
+    return f;
+  }
+
+  // [drive] The local files a Drive update sends: id with exactly ONE file or path (that Drive file's new content), or folder_id with files / paths
+  // (up to 25 refs or paths, each replacing the file of exactly the same name in that folder). Every one goes through the same checks as an
+  // upload; the whole set is on one card. -> [{ name, type, size, path, mtimeMs }] in the order given.
+  connectorUpdateFiles(input) {
+    const a = input.args || {};
+    const MAX = 25;
+    const refs = String(a.files || '').split(/[\s,]+/).filter(Boolean);
+    const paths = String(a.paths || '').split(/\r?\n/).map((p) => p.trim()).filter(Boolean);
+    const sources = [...(a.file ? [{ file: a.file }] : []), ...refs.map((file) => ({ file })), ...(a.path ? [{ path: a.path }] : []), ...paths.map((path) => ({ path }))];
+    if (Boolean(a.id) === Boolean(a.folder_id)) throw new Error('Give exactly one of id (the Drive file to replace, with ONE file or path) or folder_id (the folder whose same-named files are replaced, with files or paths). Nothing was updated.');
+    if (!sources.length) throw new Error('Give the local file(s): file or path for one Drive file (id), or files or paths for a folder (folder_id). Nothing was updated.');
+    if (a.id && sources.length !== 1) throw new Error('One id takes exactly ONE file. To replace several files, give folder_id and the files or paths (matched by exact name). Nothing was updated.');
+    if (sources.length > MAX) throw new Error(`At most ${MAX} files in one update; call it again for the rest. Nothing was updated.`);
+    const out = sources.map((src) => this.connectorLocalFile(src));
+    const names = new Set();
+    for (const f of out) {
+      if (a.folder_id && names.has(f.name)) throw new Error(`Two of the files are both named “${f.name}”, so it is unclear which belongs to which Drive file. Nothing was updated.`);
+      names.add(f.name);
+    }
+    if (out.reduce((n, f) => n + f.size, 0) > 500 * 1048576) throw new Error('Those files add up to more than 500 MB. Update fewer at a time. Nothing was updated.');
+    return out;
+  }
+
+  // [drive] What the update card showed: the local files paired with the Drive file each replaces (plan.targets, from the lookups made for the
+  // card). Only those are sent, each with its Drive file's id and name. None paired: no card, and the reasons.
+  connectorUpdatePairs(local, plan) {
+    if (!plan || plan.error) throw new Error(`${plan?.error || 'Lumen couldn’t look those files up in Drive.'} Nothing was updated.`);
+    if (!plan.targets.length) throw new Error(`None of the files can be updated: ${plan.skipped.map((x) => `${x.name} (${x.why})`).join('; ') || 'nothing matched'}. Nothing was updated. Tell the user.`);
+    return plan.targets.map((t) => ({ ...local[t.i], target: { id: t.id, name: t.name } }));
   }
 
   // [connectors] Gmail sending. recordTyped keeps what the user typed in this chat (never page, email or tool text: the only text a

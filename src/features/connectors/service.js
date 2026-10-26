@@ -18,6 +18,10 @@
 //    connectors.json like any other secret ('google'), asked for in the user's own browser only when Connect is pressed, with each
 //    connector's own scopes (incremental). Every request gets a fresh access token; the last Google connector to be disconnected
 //    gives the grant back to Google.
+//  - Google Docs, Calendar, Tasks and Contacts are more of the same Google sign-in (kind 'google').
+//  - Outlook, OneDrive and Outlook Calendar (kind 'microsoft') share ONE Microsoft sign-in (microsoft-auth.js), kept the same way ('microsoft' in
+//    connectors.json), asked for only when Connect is pressed. A file's bytes (OneDrive) come from the download address Graph gives, fetched with no
+//    sign-in header and only from a Microsoft file host (ctx.download).
 //  - Answers are cached for 30 seconds in memory only, so asking twice in a row is one request.
 //  - Presets (kind 'mcp'): a service's official MCP server, added to the MCP client (features/mcp-client.js) by its card (none ships today: see the
 //    note in registry.js). Whether a card is connected is read from that server (tagged `preset`), never kept here.
@@ -41,16 +45,28 @@ const BASES = {
   notion: 'https://api.notion.com/v1',
   drive: 'https://www.googleapis.com/drive/v3',
   sheets: 'https://sheets.googleapis.com/v4',
+  docs: 'https://docs.googleapis.com/v1',
+  calendar: 'https://www.googleapis.com/calendar/v3',
+  gtasks: 'https://tasks.googleapis.com/tasks/v1',
+  contacts: 'https://people.googleapis.com/v1',
+  zotero: 'https://api.zotero.org',
+  outlook: 'https://graph.microsoft.com/v1.0',
+  onedrive: 'https://graph.microsoft.com/v1.0',
+  mscal: 'https://graph.microsoft.com/v1.0',
 };
+// Where a OneDrive file's short-lived download address may point (https only, never with a sign-in header).
+const MS_FILE_HOSTS = /(^|\.)(sharepoint\.com|sharepoint\.us|sharepoint\.cn|1drv\.com|1drv\.ms|onedrive\.live\.com|microsoftpersonalcontent\.com)$/i;
+const DOWNLOAD_MS = 60e3;
 const GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F';
 const provider = (id) => require(`./providers/${id}`); // loaded when a connector is first used (not at startup)
 
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
-  google = null, workspace = {}, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
+  google = null, workspace = {}, microsoft = {}, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
-  let googleSealed = ''; // the shared Google sign-in (Drive, Sheets), sealed
+  let googleSealed = ''; // the shared Google sign-in (Drive, Sheets, Docs, Calendar, Tasks, Contacts), sealed
+  let microsoftSealed = ''; // the shared Microsoft sign-in (Outlook, OneDrive, Outlook Calendar), sealed
   let unreadable = false; // connectors.json exists but could not be read: a copy was kept, and only the user's own change may replace it
   let connected = load();
   const runtime = new Map(); // id -> 'ok' | 'needs-signin' | 'bad-token' (what the last request found)
@@ -64,6 +80,7 @@ function create({
       const out = {};
       for (const [id, e] of Object.entries(data?.connected || {})) if (registry.get(id) && e && typeof e === 'object') out[id] = e;
       googleSealed = typeof data?.google?.secret === 'string' ? data.google.secret : '';
+      microsoftSealed = typeof data?.microsoft?.secret === 'string' ? data.microsoft.secret : '';
       return out;
     } catch { return {}; }
   }
@@ -71,7 +88,7 @@ function create({
   // connect) never writes over a file that could not be read.
   function persist(deliberate = true) {
     if (unreadable && !deliberate) return;
-    writeJsonAtomic(file, { version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}) }, 2, 0o600); // (tmp + rename: never a half-written file)
+    writeJsonAtomic(file, { version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}), ...(microsoftSealed ? { microsoft: { secret: microsoftSealed } } : {}) }, 2, 0o600); // (tmp + rename: never a half-written file)
     unreadable = false; // (a copy of the old file was set aside when it failed)
   }
   // Gmail sending: the switch is on, with the full sign-in and drafts still allowed (take the permission back at Google and it is off).
@@ -99,6 +116,15 @@ function create({
     fetch, endpoints, now, ...workspace,
   }));
   const googleIds = () => Object.keys(connected).filter((id) => registry.get(id)?.kind === 'google');
+  // The shared Microsoft sign-in, made on first use. A test hands in its own as microsoft.auth.
+  let msStore = null;
+  const microsoftAuth = () => (msStore ||= microsoft.auth || require('./microsoft-auth').create({
+    getBlob: () => open(microsoftSealed),
+    setBlob: (value) => { microsoftSealed = value ? seal(value) : ''; persist(); },
+    fetch, endpoints, now, ...microsoft,
+  }));
+  const microsoftIds = () => Object.keys(connected).filter((id) => registry.get(id)?.kind === 'microsoft');
+  const oauthOf = (def) => (def.kind === 'google' ? googleAuth : def.kind === 'microsoft' ? microsoftAuth : null); // (the shared sign-in a connector's requests use)
 
   // ---- requests
   const baseOf = (def, entry) => {
@@ -114,19 +140,20 @@ function create({
     const secret = entry.config?.shared ? String(shared[def.id]?.info?.()?.token || '') : open(entry.secret);
     const state = (s) => { if (runtime.get(def.id) !== s) { runtime.set(def.id, s); try { onChange(); } catch { /* ignore */ } } };
     const authFail = () => {
-      const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google';
+      const signIn = def.kind === 'session' || def.id === 'gmail' || def.kind === 'google' || def.kind === 'microsoft';
       state(signIn ? 'needs-signin' : 'bad-token');
-      return new ConnectorError(def.kind === 'google'
-        ? `Google ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → Apps and connections.`
+      return new ConnectorError(def.kind === 'google' || def.kind === 'microsoft'
+        ? `${def.kind === 'google' ? 'Google' : 'Microsoft'} ended the ${def.name} sign-in (it was revoked or ran out). Ask the user to connect ${def.name} again in Settings → Apps and connections.`
         : signIn
         ? `${def.name} isn’t signed in. Ask the user to sign in to ${def.name} in a Lumen tab (Settings → Apps and connections has a button), then try again.`
         : entry.config?.shared ? `${def.name} signed Lumen out (the sign-in was revoked or ran out). Ask the user to sign in to ${def.name} again, from its card on the new-tab page or in Settings → Apps and connections.`
         : `${def.name} refused the saved token. Ask the user to connect ${def.name} again with a new one.`, 'auth');
     };
     const ctx = {
-      id: def.id, base, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
+      id: def.id, name: def.name, base, config: entry.config || {}, secret, signal, now, authError: authFail, // (a provider that finds its sign-in ended says so: the card turns to Needs sign-in)
       google: def.id === 'gmail' ? google : null,
-      email: def.kind === 'google' ? entry.account || '' : '', // (the account a Google connector is signed in as)
+      email: def.kind === 'google' || def.kind === 'microsoft' ? entry.account || '' : '', // (the account a Google or Microsoft connector is signed in as)
+      hasScopes: def.kind === 'google' ? () => { try { return googleAuth().has(def.google.scopes); } catch { return false; } } : null, // (does the sign-in cover everything this connector asks for now? Drive's edits need the full scope an older sign-in lacks)
       async http(target, { method = 'GET', query, json, body, headers = {}, accept = 'application/json', max = MAX_BODY, allowAuth = false, timeout = TIMEOUT_MS } = {}) {
         let url;
         try { url = /^https?:\/\//i.test(target) ? new URL(target) : new URL(`${base}${target}`); } catch { throw new ConnectorError('That address isn’t valid.', 'args'); }
@@ -148,8 +175,9 @@ function create({
         try {
           const payload = json !== undefined ? JSON.stringify(json) : body;
           const send = () => (def.kind === 'session' ? sessionFetch || fetch : fetch)(url.href, { method, headers: h, body: payload, redirect: 'manual', signal: controller.signal });
-          if (def.kind === 'google') { // a Google connector: the shared sign-in's access token; one 401 (the token was refused: nothing was done) is tried again with a new one
-            const auth = googleAuth();
+          const oauth = oauthOf(def);
+          if (oauth) { // a Google or Microsoft connector: the shared sign-in's access token; one 401 (the token was refused: nothing was done) is tried again with a new one
+            const auth = oauth();
             for (let attempt = 0; ; attempt++) {
               try { h.Authorization = `Bearer ${await auth.access({ force: attempt > 0 })}`; } catch (err) {
                 if (err?.reconnect) throw authFail();
@@ -177,9 +205,35 @@ function create({
         if (redirected) res = { status: 302, headers: new Headers() };
         const status = res.type === 'opaqueredirect' ? 302 : res.status;
         if (def.kind === 'session' && !allowAuth && (status === 401 || status === 0 || (status >= 300 && status < 400))) throw authFail();
-        if (!allowAuth && (def.kind === 'token' || def.kind === 'google') && status === 401) throw authFail();
+        if (!allowAuth && (def.kind === 'token' || def.kind === 'google' || def.kind === 'microsoft') && status === 401) throw authFail();
         if (status >= 200 && status < 300) state('ok');
         return { status, ok: status >= 200 && status < 300, headers: res.headers, text };
+      },
+      // A file's bytes from the short-lived download address the service gave (OneDrive). https, a Microsoft file host only, no sign-in header,
+      // no redirect followed, at most `max` bytes. -> a Buffer.
+      async download(target, { max = MAX_BODY } = {}) {
+        let url;
+        try { url = new URL(String(target)); } catch { throw new ConnectorError('That address isn’t valid.', 'args'); }
+        if (def.kind !== 'microsoft' || (!(MS_FILE_HOSTS.test(url.hostname) && url.protocol === 'https:') && !loopback(url))) throw new ConnectorError(`${def.name} sent Lumen to another address, which it won’t follow.`, 'other');
+        if (signal?.aborted) throw new ConnectorError('Stopped.', 'other');
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), DOWNLOAD_MS);
+        const onAbort = () => controller.abort();
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+        try {
+          const res = await fetch(url.href, { method: 'GET', headers: { Accept: '*/*' }, redirect: 'manual', signal: controller.signal });
+          if (res.status < 200 || res.status >= 300) throw new ConnectorError(`${def.name} didn’t give the file (${res.status}). Try again in a moment.`, 'other');
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (buf.length > max) throw new ConnectorError('That file is bigger than Lumen reads.', 'other');
+          return buf;
+        } catch (err) {
+          if (err instanceof ConnectorError) throw err;
+          if (signal?.aborted) throw new ConnectorError('Stopped.', 'other');
+          throw new ConnectorError(controller.signal.aborted ? `${def.name} took too long to give the file.` : `Couldn’t reach ${def.name}. Check the connection.`, 'other');
+        } finally {
+          clearTimeout(timer);
+          signal?.removeEventListener?.('abort', onAbort);
+        }
       },
     };
     return ctx;
@@ -212,13 +266,16 @@ function create({
     if (live === 'needs-signin' || live === 'bad-token') status = live;
     const e = connected[def.id];
     const account = e?.account || '';
+    let upgrade = false; // a Google sign-in made before the connector asked for what it asks now (Drive's full access): Connect again adds it
+    if (entry && def.kind === 'google' && status === 'connected') { try { upgrade = !googleAuth().has(def.google.scopes); } catch { upgrade = false; } }
+    if (upgrade) status = 'needs-signin';
     // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
     let drafts = null;
     if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
     const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
-      status, paused: Boolean(e?.config?.paused), statusText: status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
+      status, paused: Boolean(e?.config?.paused), statusText: upgrade ? `Reconnect to let the AI change all your files${account ? ` · ${account}` : ''}` : status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
@@ -242,6 +299,7 @@ function create({
     if (def.kind === 'mcp') return connectMcp(def, input);
     if (def.id === 'gmail') return connectGmail(def);
     if (def.kind === 'google') return connectGoogle(def);
+    if (def.kind === 'microsoft') return connectMicrosoft(def, input);
     let entry;
     if (def.kind === 'session') {
       let domain = registry.cleanDomain(input.domain);
@@ -317,6 +375,31 @@ function create({
     try { probe = await provider(def.id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }); } catch (err) { await giveBack(); throw new Error(err.message); }
     if (probe.status === 401 || probe.status === 403) { await giveBack(); throw new Error(probe.message || `Google refused the request for ${def.name}. Press Connect again and allow everything it asks.`); }
     if (probe.status !== 200) { await giveBack(); throw new Error(`${def.name} answered ${probe.status}. Try again in a moment.`); }
+    connected[def.id] = entry;
+    runtime.set(def.id, 'ok');
+    cache.clear();
+    persist();
+    changed();
+    return list();
+  }
+
+  // Outlook, OneDrive and Outlook Calendar: the shared Microsoft sign-in, with this connector's permission. A client ID typed on the card (an app the user
+  // registered) is used for the sign-in; with none typed, the grant's own client or Lumen's built-in one. The browser isn't opened again when the grant
+  // already covers the scope. Then one request (Graph's /me) proves it works.
+  async function connectMicrosoft(def, input = {}) {
+    const auth = microsoftAuth();
+    const scopes = def.microsoft.scopes;
+    const typed = String(input.clientId ?? '').trim();
+    const newClient = typed && require('../microsoft-client').cleanClientId(typed) !== auth.status().clientId;
+    if (newClient || !auth.has(scopes)) await auth.signIn(scopes, { clientId: typed });
+    const entry = { at: now(), account: flat(auth.status().email, 80), config: {} };
+    const ctx = makeCtx(def, entry, null);
+    let probe;
+    const giveBack = async () => { if (!microsoftIds().length) { try { await auth.revoke(); } catch { /* forgotten here either way */ } } };
+    try { probe = await provider(def.id).verify({ ...ctx, http: (t, o) => ctx.http(t, { ...o, allowAuth: true }) }); } catch (err) { await giveBack(); throw new Error(err.message); }
+    if (probe.status === 401 || probe.status === 403) { await giveBack(); throw new Error(probe.message || `Microsoft refused the request for ${def.name}. Press Connect again and accept everything it asks (a school account may need its administrator to allow it).`); }
+    if (probe.status !== 200) { await giveBack(); throw new Error(`${def.name} answered ${probe.status}. Try again in a moment.`); }
+    if (!entry.account && probe.account) entry.account = flat(probe.account, 80);
     connected[def.id] = entry;
     runtime.set(def.id, 'ok');
     cache.clear();
@@ -412,6 +495,7 @@ function create({
     if (entry.config?.shared) { try { shared[id]?.signOut?.(); } catch { /* the sign-in stays until the card signs out */ } } // one sign-in: disconnecting here signs the card out too
     if (def.id === 'gmail' && entry.config?.owned) { try { await google?.disconnect(); } catch { /* the sign-in stays until Google's side forgets it */ } }
     if (def.kind === 'google' && !googleIds().length) { try { await googleAuth().revoke(); } catch { /* the sign-in is forgotten here either way */ } } // the last Google connector: the grant goes back to Google
+    if (def.kind === 'microsoft' && !microsoftIds().length) { try { await microsoftAuth().revoke(); } catch { /* the sign-in is forgotten here either way */ } } // the last Microsoft connector: the sign-in is forgotten here (the user can take it back in their Microsoft account)
     changed();
     return list();
   }
@@ -458,12 +542,14 @@ function create({
     const args = input.args || {};
     const p = provider(def.id);
     const entry = connected[def.id];
+    const cardCtx = entry ? makeCtx(def, entry, signal) : null;
+    if (cardCtx && file) cardCtx.file = file; // (a Drive update looks up the files it would replace for the card)
     if (entry && p.beforeCard) { // a write that can't happen yet says why, and no card is shown for it
-      try { await p.beforeCard(makeCtx(def, entry, signal), input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
+      try { await p.beforeCard(cardCtx, input.action, args); } catch (err) { if (err instanceof ConnectorError) { const e = new Error(err.message); e.kind = err.kind; throw e; } throw err; }
     }
     let names = {};
-    if (entry && p.cardNames) { try { names = (await p.cardNames(makeCtx(def, entry, signal), input.action, args)) || {}; } catch { names = {}; } }
-    if (file) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
+    if (entry && p.cardNames) { try { names = (await p.cardNames(cardCtx, input.action, args)) || {}; } catch { names = {}; } }
+    if (file && !Array.isArray(file)) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
     if (input.action === 'send') { try { sendLog().room(); } catch (err) { const e = new Error(err.message); e.kind = 'other'; throw e; } } // (a send that can't go gets no card)
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);

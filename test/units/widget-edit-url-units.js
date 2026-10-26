@@ -22,7 +22,7 @@ function check(label, ok, detail = '') {
   check('settings backend: "widgets" is a deep-link id', require('../../src/settings/settings-backend').SECTION_LINKS.includes('widgets'));
   check('settings backend: lumen://settings/widgets parses to widgets', /widgets/.test(JSON.stringify(parse('lumen://settings/widgets'))));
   function parse(t) { const m = /^(?:lumen|chrome):\/\/settings\/?([a-z-]*)\/?$/i.exec(t); return m ? { section: m[1] } : null; }
-  check('settings.js: widgets is a page of Apps and connections', /\['widgets', 'Cards without an account', \{ page: 'apps-links'/.test(settingsJs));
+  check('settings.js: widgets is a page of the New tab page', /\['widgets', 'Widgets', \{ page: 'home-links'/.test(settingsJs));
   check('settings.js: route() selects a sub-page id from the hash', /if \(sub\?\.isSub\) view = \{ cat: sub\.cat, sub: id, root: false \}/.test(settingsJs));
   check('settings.js: hashchange re-routes (an open tab follows a new hash)', /addEventListener\('hashchange', route\)/.test(settingsJs));
 
