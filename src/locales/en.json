@@ -4318,6 +4318,7 @@
   "desktopcard.app": "App",
   "desktopcard.thumbAlt": "Live view of {app}",
   "card.word": "Word",
+  "wordcard.show": "Show in Word",
   "wordcard.chip.title": "Show {doc} in Word, where the AI is working",
   "desktopcard.show": "Show in {app}",
   "wordcard.pageAlt": "Preview of {doc}: the paragraphs around the last change",
