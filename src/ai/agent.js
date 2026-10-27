@@ -6252,8 +6252,9 @@ ${out.text}${note}
   // with <host>?".
   askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
-    // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
-    if (action !== 'upload-pick' && action !== 'app' && !noBypass && this.bypassOn()) { // ('app': which program the AI may use is always the user's to answer, even with Bypass on)
+    // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks. ('app' cards, the Word and other-app
+    // cards, read, change and save too: Bypass is the user's choice to skip them, and the step names each one.)
+    if (action !== 'upload-pick' && !noBypass && this.bypassOn()) {
       const id = `auto-allow-${++this.approvalSeq}`;
       try {
         emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });
@@ -6713,7 +6714,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
       emit: gate.emit, signal: gate.signal,
       tainted: () => { const h = taintHolder(gate.run); return Boolean(h?.tainted && !h.appOnly); }, // read a page, an email or a connector's answer: edits ask every time (document text is tracked per document, in src/word)
       once: { has: (key) => hosts.has(`app:${key}`), add: (key) => hosts.add(`app:${key}`) }, // Once: for this chat (the chat's approved set; never saved)
-      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } }), // ('app' cards are the user's to answer even with Bypass on; Always only where src/word offers it: one saved document's changes)
+      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } }), // ('app' cards: answered by Bypass permissions, with a step; Always only where src/word offers it: one saved document)
     };
     return this.wordCtl().run(input, ctx);
   }

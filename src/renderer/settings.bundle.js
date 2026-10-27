@@ -5138,13 +5138,14 @@ async function buildAi(card) {
   const renderDocs = async (docs) => {
     docs ||= await S.ai.wordAlways();
     clearDocs.hidden = !docs.length;
-    docList.replaceChildren(...(docs.length ? docs.map(({ key, name, added }) => h('div', { class: 'item', 'data-doc': key },
+    docList.replaceChildren(...(docs.length ? docs.map(({ key, name, added, kind }) => h('div', { class: 'item', 'data-doc': key },
       h('span', { class: 'grow', text: name || key, title: key }),
+      h('span', { class: 'note', text: kind === 'read' ? 'Reading' : 'Reading and changes' }),
       added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateString()}` }) : null,
       h('button', { text: 'Remove', 'aria-label': `Remove ${name || key}`, onclick: async () => renderDocs(await S.ai.removeWordAlways(key)) })))
-      : [h('span', { class: 'note', text: 'None. The AI asks before it changes a Word document.' })]));
+      : [h('span', { class: 'note', text: 'None. The AI asks before it changes a Word document, and before it reads one after reading a page or an email.' })]));
   };
-  card.at('ai-privacy').append(stackRow(tr('settings.ai.wordAlways', 'Word documents the AI can change'), tr('settings.ai.wordAlwaysDesc', 'Documents you chose Always allow changes for: the AI edits them without asking, in every chat, even after it read a page or an email. Saving to disk still asks. Remove one to be asked again.'), docList,
+  card.at('ai-privacy').append(stackRow(tr('settings.ai.wordAlways', 'Word documents the AI can read or change'), tr('settings.ai.wordAlwaysDesc', 'Documents you chose Always allow for: the AI reads them (Reading) or reads and edits them (Reading and changes) without asking, in every chat, even after it read a page or an email. Saving to disk still asks. Remove one to be asked again.'), docList,
     h('div', { class: 'controls' }, clearDocs)));
   renderDocs();
 

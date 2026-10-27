@@ -140,7 +140,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('tool: not listed to MCP clients or the CLI engines', !EXTERNAL_TOOLS.some((t) => t.name === 'desktop'));
     const ag = read('src/ai/agent.js');
     check('lists: tab-free (it works on no tab); the read actions taint the run (what an app shows is untrusted), click / type / press_keys do not by themselves', /TAB_FREE_TOOLS = new Set\([^)]*'desktop'/.test(ag) && !/READING_TOOLS = new Set\([^)]*'desktop'/.test(ag) && /DESKTOP_READS = new Set\(\['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app'\]\)/.test(ag) && /DESKTOP_READS\.has\(String\(input\?\.action/.test(ag));
-    check('approval: an app card is never auto-answered by Bypass permissions', /action !== 'app' && !noBypass && this\.bypassOn\(\)/.test(ag));
+    check('approval: Bypass permissions answers an app card too (only the file picker still asks)', /if \(action !== 'upload-pick' && !noBypass && this\.bypassOn\(\)\)/.test(ag));
     check('connectors + desktop: connector data taints the whole run (clears the app-only mark), and both tools are tab-free and offered side by side', /holder\.tainted = true; holder\.appOnly = false; holder\.onlyFrom = null;/.test(ag) && /TAB_FREE_TOOLS = new Set\([^)]*'desktop', 'connector'/.test(ag) && /if \(name === 'connector'\) return connectors\.stepLabel/.test(ag) && /if \(name === 'desktop'\) \{ const p = require/.test(ag));
     const agent = new Agent({ desktopAccess: () => false });
     const offered = (text) => agent.desktopOffered([{ role: 'user', content: text }]);
