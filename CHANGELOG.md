@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Old chats can delete themselves.** Settings → AI → Chat box and voice → **Delete chats not in a project after** (Never by default; 1, 7, 14, 30, 60 or 90 days, 6 months or 1 year). A saved chat that is not in a project and that you haven't used for that long is deleted for good, with its pictures and attached files, as if you had deleted it yourself. Counted from the chat's last message, not from when it was started. Chats in a project, pinned chats, and chats open in a tab or still working are never deleted; archived chats count like the rest. Checked a few minutes after Lumen starts and every hour (`chatAutoDeleteDays`; tests in `test/units/chat-auto-delete-units.js`).
+
 ## 0.5.77 (2026-10-26)
 
 - **An approval card no longer pulls the sidebar open over the full-page chat.** The page shows the same card with Allow, so the sidebar stays folded away; a card for another chat still shows its notice.

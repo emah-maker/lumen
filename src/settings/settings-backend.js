@@ -220,6 +220,7 @@ const DEFAULTS = {
   sidebarNewChat: true, // [ai] the AI button (and Ctrl+J) opens the sidebar on a new empty chat (an empty open chat is reused); off: it reopens the chat it had (renderer/sidebar-open.js)
   replySuggestions: true, // [reply suggestions] chips under a finished reply: Yes / No for a yes/no question, and follow-ups from the chat's own provider's cheaper model (renderer/reply-suggest.js, ai/reply-suggest.js)
   chatAutocomplete: true, // [autocomplete] the chat box shows a guess at the rest of the message being typed; Tab takes it (renderer/chat-autocomplete.js, ai/autocomplete.js)
+  chatAutoDeleteDays: 0, // [auto-delete chats] a saved chat in no project, not pinned and unused this many days is deleted (features/chat-auto-delete.js; main.js autoDeleteSweep); 0: never
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] INVERTED in Settings (switch "Bring tabs the AI opened to the front" is on when this is false): true = the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'always', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js). Always by default: a tab the user needs stays (the one in front, typed text, sound, keep:true)
@@ -303,6 +304,7 @@ function validate(key, value) {
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null);
     case 'maxChatRuns': return pick(Number(value), [0, 1, 2, 3, 4, 6, 8], null);
+    case 'chatAutoDeleteDays': return require('../features/chat-auto-delete').cleanDays(value);
     case 'grokKeepIdleMinutes': return pick(Number(value), [5, 15, 30, 60, 0], null);
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
     case 'aiInstructionsAbout': case 'aiInstructionsStyle': return typeof value === 'string' ? require('../ai/custom-instructions').clean(value) : null;
