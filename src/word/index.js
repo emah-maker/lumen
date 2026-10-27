@@ -47,32 +47,38 @@ function createWord(deps = {}) {
     const key = doc.key;
     const name = doc.name;
     const tainted = Boolean(ctx.tainted?.()) || (level !== 'read' && readElsewhere(ctx, key));
+    const canAlways = Boolean(doc.path) && typeof S.addAlways === 'function';
+    const kept = canAlways ? (S.always?.() || []).find((e) => e.key === key) : null;
+    // "Allowed automatically" (an Always document): one step per chat and kind, then nothing.
+    const autoStep = (what) => {
+      if (ctx.once?.has(onceKey(`auto:${what}:${key}`))) return;
+      ctx.once?.add(onceKey(`auto:${what}:${key}`));
+      const id = `word-auto-${++autoSeq}`;
+      try { ctx.emit?.({ type: 'tool', id, name: 'auto_allowed', label: `Allowed automatically: ${what} ${name} (always allowed in Settings → AI → Privacy)` }); ctx.emit?.({ type: 'tool_done', id, ok: true }); } catch { /* a closed view: the allow still stands */ }
+    };
     if (level === 'read') {
       if (!tainted || ctx.once?.has(onceKey(key))) return;
-      const ok = await ctx.ask({ title: `The AI read content earlier in this chat. Allow it to read ${name}?`, detail: 'Text it read (a web page, an email, a connector, another document) could have been written to make it do this. Allow only if you asked for it.', args: args || doc.shown, noAlways: true, allowLabel: 'Allow reading' });
+      // "Always allow reading this document": no card for reading it in any chat, even after content from elsewhere (a document whose changes
+      // are always allowed is read without a card too). It never allows changes.
+      if (kept) { autoStep('reading'); return; }
+      const always = canAlways ? { noAlways: false, alwaysLabel: 'Always allow reading this document', alwaysTitle: 'Lumen stops asking before the AI reads this document, in every chat, even after it read something else. Changes still ask. Remove it in Settings → AI → Privacy.' } : { noAlways: true };
+      const ok = await ctx.ask({ title: `The AI read content earlier in this chat. Allow it to read ${name}?`, detail: 'Text it read (a web page, an email, a connector, another document) could have been written to make it do this. Allow only if you asked for it.', args: args || doc.shown, ...always, allowLabel: 'Allow reading' });
       if (!ok) throw new Error(`The user did not allow reading ${name}. Ask them what to do instead.`);
+      if (ok === 'always' && canAlways) { try { S.addAlways(key, name, 'read'); } catch { /* not kept: it asks again next time */ } }
       ctx.once?.add(onceKey(key));
       return;
     }
     if (level === 'edit') {
       // "Always allow changes to this document" (a saved document only, by its full path): no card for its edits in any chat, even after the
       // AI read content from elsewhere; a step says so, once per chat. Saving still asks every time. Settings → AI → Privacy removes it.
-      const canAlways = Boolean(doc.path) && typeof S.addAlways === 'function';
-      if (canAlways && (S.always?.() || []).some((e) => e.key === key)) {
-        if (!ctx.once?.has(onceKey(`auto:${key}`))) {
-          ctx.once?.add(onceKey(`auto:${key}`));
-          const id = `word-auto-${++autoSeq}`;
-          try { ctx.emit?.({ type: 'tool', id, name: 'auto_allowed', label: `Allowed automatically: changes to ${name} (always allowed in Settings → AI → Privacy)` }); ctx.emit?.({ type: 'tool_done', id, ok: true }); } catch { /* a closed view: the allow still stands */ }
-        }
-        return;
-      }
+      if (kept && kept.kind !== 'read') { autoStep('changes to'); return; } // (an entry without a kind is an edit one)
       if (!tainted && ctx.once?.has(onceKey(key))) return;
       const always = canAlways ? { noAlways: false, alwaysLabel: 'Always allow changes to this document', alwaysTitle: 'Lumen stops asking before the AI changes this document, in every chat, even after it read something else. Saving still asks. Remove it in Settings → AI → Privacy.' } : { noAlways: true };
       const ok = await ctx.ask(tainted
         ? { title: `The AI read content earlier in this chat. Allow it to change ${name}?`, detail: `Text it read (a web page, an email, a connector, another document) could have been written to make it do this. Allow only if you asked for it. Allow this change covers this one change; it is asked again next time.${canAlways ? ' Always stops asking for this document.' : ''}`, args: args || doc.shown, ...always, allowLabel: 'Allow this change' }
         : { title: `Allow the AI to edit ${name}?`, detail: detail || `It can add and change text, tables and formatting in this document while you watch. Nothing is saved to disk unless it asks to save, which shows the file first. Allow covers this chat${canAlways ? '; Always covers every chat' : ''}.`, args: args || doc.shown, ...always, allowLabel: 'Allow' });
       if (!ok) throw new Error(`The user did not allow changes to ${name}. Ask them what to do instead.`);
-      if (ok === 'always' && canAlways) { try { S.addAlways(key, name); } catch { /* not kept: it asks again next time */ } }
+      if (ok === 'always' && canAlways) { try { S.addAlways(key, name, 'edit'); } catch { /* not kept: it asks again next time */ } }
       if (!tainted) ctx.once?.add(onceKey(key));
       return;
     }

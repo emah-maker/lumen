@@ -81,7 +81,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     let msg2;
     try { new Agent({ handsOff: () => true }).handsOffCheck('word', { action: 'read' }); msg2 = null; } catch (e) { msg2 = e.message; }
     check('hands-off: insert is refused with the reason, read goes through', /Hands-off mode/.test(msg) && msg2 === null, J([msg, msg2]));
-    check('approval: Word cards are "app" cards, which Bypass permissions never answers (Always only where src/word offers it)', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: card\.noAlways !== false/.test(ag) && /action !== 'app' && !noBypass && this\.bypassOn\(\)/.test(ag));
+    check('approval: Word cards are "app" cards, which Bypass permissions answers like any other card (Always only where src/word offers it)', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: card\.noAlways !== false/.test(ag) && /if \(action !== 'upload-pick' && !noBypass && this\.bypassOn\(\)\)/.test(ag));
     check('hands: the tool is refused for outside agents and background runs (nobody to ask)', /gate\.external \|\| gate\.noAsk\) throw new Error\('Using Word needs the user/.test(ag));
     check('plan mode: only list and read run while planning', planMode.planToolError('word', { action: 'read' }) === null && planMode.planToolError('word', { action: 'list' }) === null && planMode.planToolError('word', { action: 'insert' }) !== null && planMode.planToolError('word', { action: 'save_as' }) !== null);
     check('step label: the agent describes a Word step in words', await agent.describeStep('word', { action: 'insert', doc: 'Report.docx', at: 'after', heading: 'Results', text: 'a\nb\nc' }) === 'Writing in Report.docx: adding 3 paragraphs after “Results”');
@@ -127,7 +127,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       ask: async (card) => { store.cards.push(card); return queue.length ? queue.shift() : true; },
     };
     const files = { exists: new Set() };
-    const word = createWord({ settings: { enabled: () => state.enabled, filesInApps: () => mode, ...(alwaysDocs ? { always: () => alwaysDocs, addAlways: (key, name) => alwaysDocs.push({ key, name, added: 1 }) } : {}) }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
+    const word = createWord({ settings: { enabled: () => state.enabled, filesInApps: () => mode, ...(alwaysDocs ? { always: () => alwaysDocs, addAlways: (key, name, kind) => alwaysDocs.push({ key, name, added: 1, kind }) } : {}) }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
     return { word, store, ctx, state, once, files };
   };
 
@@ -203,6 +203,35 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const unsaved = makeRig({ tainted: true, alwaysDocs: [], docs: [{ name: 'Document1', path: '', active: true, saved: false, tracking: false, paragraphs: 1, text: 'x' }] });
     await unsaved.word.run({ action: 'insert', text: 'x' }, unsaved.ctx);
     check('always: never offered for a document that isn’t saved (no path to keep it by)', unsaved.store.cards[0]?.noAlways === true && !unsaved.store.cards[0]?.alwaysLabel, J(unsaved.store.cards));
+  }
+  {
+    // "Always allow reading this document": on the read card after content from elsewhere; reading only, never changes
+    const kept = [];
+    const r = makeRig({ tainted: true, alwaysDocs: kept, answers: ['always', true] });
+    const steps = [];
+    r.ctx.emit = (e) => steps.push(e);
+    await r.word.run({ action: 'read' }, r.ctx);
+    const c = r.store.cards[0];
+    check('always read: the read card of a saved document offers "Always allow reading this document"', c && c.noAlways === false && c.alwaysLabel === 'Always allow reading this document' && /Changes still ask/.test(c.alwaysTitle) && c.allowLabel === 'Allow reading', J(c));
+    check('always read: choosing it keeps the document as reading only', kept.length === 1 && kept[0].kind === 'read' && kept[0].name === 'Report.docx', J(kept));
+    const other = makeRig({ tainted: true, alwaysDocs: kept, answers: [true] });
+    const steps2 = [];
+    other.ctx.emit = (e) => steps2.push(e);
+    await other.word.run({ action: 'read' }, other.ctx);
+    check('always read: a new chat, after reading a page, reads it with no card and one "Allowed automatically" step', other.store.cards.length === 0 && steps2.filter((e) => e.type === 'tool' && /Allowed automatically: reading Report.docx/.test(e.label)).length === 1, J(steps2));
+    await other.word.run({ action: 'insert', text: 'x' }, other.ctx);
+    check('always read: changing it still asks', other.store.cards.length === 1 && /change Report.docx/.test(other.store.cards[0].title), J(other.store.cards));
+    const edit = makeRig({ tainted: true, alwaysDocs: [{ key: kept[0].key, name: 'Report.docx', added: 1 }] });
+    await edit.word.run({ action: 'read' }, edit.ctx);
+    check('always read: a document whose changes are always allowed (an old entry, no kind) is read with no card too', edit.store.cards.length === 0);
+    const store = require('../../src/word/always').createWordAlways({ readSettings: () => state, writeSettings: (s) => { state = s; } });
+    let state = { aiWordAlways: [] };
+    store.add('k', 'A.docx', 'edit');
+    store.add('k', 'A.docx', 'read');
+    check('always read: reading only never narrows a document already allowed to be changed', store.list()[0].kind === 'edit', J(store.list()));
+    store.add('j', 'B.docx', 'read');
+    store.add('j', 'B.docx', 'edit');
+    check('always read: allowing changes later widens a reading-only one', store.list().find((e) => e.key === 'j').kind === 'edit', J(store.list()));
   }
 
   {

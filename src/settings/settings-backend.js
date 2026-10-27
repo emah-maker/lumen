@@ -184,7 +184,7 @@ const DEFAULTS = {
   aiFilesInApps: 'auto', // [ai] app: the AI opens a file in the app that owns it (Word, Excel, PowerPoint...) and reads and edits it there; auto: it chooses; file: it reads and edits the file's own data and does not open apps (agent.js filesInApps, src/word/)
   aiWordControl: true, // [ai] the AI may work with Microsoft Word documents directly (src/word/): Word's own automation on Windows, .docx files without Word; every edit and save still asks first, and nothing starts until the AI first uses it
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
-  aiWordAlways: [], // [word] saved documents whose changes the AI makes without asking: [{ key, name, added }] (src/word/always.js clean); added only from the edit card (Always)
+  aiWordAlways: [], // [word] saved documents the AI changes (kind 'edit') or reads (kind 'read') without asking: [{ key, name, added, kind }] (src/word/always.js clean); added only from the cards (Always)
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
   routineWebhookPort: 47821, // [routines] the port it listens on (1024-65535)

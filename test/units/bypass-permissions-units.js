@@ -154,6 +154,15 @@ const CASES = [
     check('bypass on: and a Cancel on it is a no', (await pick) === false);
   }
 
+  // The Word and other-app cards (reading, changes, saving) are answered too, each with a step naming it
+  {
+    reset();
+    state.bypass = true;
+    const title = 'Allow the AI to save changes over C:\\Docs\\Resume.docx?';
+    const ok = await agent.askApproval(title, emit, signal, { action: 'app', who: 'Claude', title, args: 'File: C:\\Docs\\Resume.docx', noAlways: true, upload: { allowLabel: 'Allow this save' } });
+    check('bypass on: a Word save card is allowed with no card, and a step says what was allowed', ok === true && cards().length === 0 && autoSteps().length === 1 && /Resume\.docx/.test(autoSteps()[0].label), JSON.stringify(autoSteps()));
+  }
+
   // Outside agents (MCP) are covered too, in or out of their own window
   {
     reset();

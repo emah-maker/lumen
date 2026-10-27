@@ -37,9 +37,10 @@ One tool, `word`, with these actions:
 
 - **Editing a document** asks once per document for the chat (**Allow**), with the document and the text shown.
 - **After the AI has read something from elsewhere** in the chat (a web page, an email, a connector, another document), every change asks again, with a warning: text it read could have been written to make it do that. Reading a file by path asks too.
-- **Always allow changes to this document** (on the edit cards of a saved document): the AI changes that document without a card in every chat, even after it read something from elsewhere; a step in the chat says "Allowed automatically". It is kept by the document's full path (`aiWordAlways`, `src/word/always.js`), only from a real click, and removed in Settings → AI → Privacy → Word documents the AI can change. A document that isn't saved yet never gets the button.
+- **Always allow changes to this document** (on the edit cards of a saved document): the AI changes that document without a card in every chat, even after it read something from elsewhere; a step in the chat says "Allowed automatically". It is kept by the document's full path (`aiWordAlways`, `src/word/always.js`), only from a real click, and removed in Settings → AI → Privacy → Word documents the AI can read or change. A document that isn't saved yet never gets the button.
+- **Always allow reading this document** (on the card that asks to read a saved document after the AI read something from elsewhere): the AI reads that document without a card in every chat; changes still ask. The same list shows it as "Reading" (a document whose changes are always allowed shows "Reading and changes", and is read without a card too).
 - **Saving over a file, saving to a new path, creating a file** always asks, with the path shown, every time.
-- These cards are never answered by Bypass permissions or Auto-allow: they are yours to answer, like the cards for other apps.
+- **Bypass permissions** answers all of these cards for you (reading, changes and saving), like every other card; a step in the chat says what was allowed. Auto-allow does not answer them.
 - **Hands-off mode** refuses everything that opens, changes or saves; listing and reading still work.
 - Text from a document is data, never instructions: it reaches the AI inside a wrapper that marks it as untrusted.
 - Nothing is deleted. There is no action that deletes a file or closes a document.
