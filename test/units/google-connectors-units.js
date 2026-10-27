@@ -524,6 +524,33 @@ async function main() {
   check('Connect again asks Google for the full drive scope together with what was already granted (incremental)', g5.opened.length === 2 && reAsked.includes(SCOPES.drive[0]) && SCOPES.driveOld.every((s) => reAsked.includes(s)) && g5.opened[1].params.include_granted_scopes === 'true' && g5.opened[1].params.login_hint === 'ada@example.com', JSON.stringify(g5.opened[1]?.params));
   check('after that the card is Connected again and an edit gets its card', upCard.status === 'connected' && /^Connected/.test(upCard.statusText) && /Moves “budget\.xlsx” to the Trash/.test((await svc5.describeWrite({ app: 'drive', action: 'trash', args: { id: 'f2' } })).detail), JSON.stringify(upCard));
 
+  console.log('--- Chromium cannot make the request: Node’s network takes it');
+  // (the user's report: Google Drive's card said "Couldn't reach Google Drive" and Sign in did nothing, with the network fine: the sign-in
+  // requests already went again by Node's network, Drive's own did not)
+  const g6 = fakeGoogle();
+  const chromium = { mode: '', seen: [] };
+  const viaChromium = async (url, o) => {
+    chromium.seen.push({ url, method: o?.method || 'GET' });
+    if (chromium.mode && new URL(url).host !== 'oauth2.googleapis.com' && new URL(url).host !== 'openidconnect.googleapis.com') throw new Error(chromium.mode);
+    return g6.fetch(url, o);
+  };
+  const mk6 = (fallback) => service.create({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-google-conn6-')), secrets: fakeSecrets, fetch: viaChromium, fallbackFetch: fallback, workspace: { builtin: () => BUILTIN, own: () => null, openExternal: g6.openExternal, signInMs: 5000 } });
+  chromium.mode = 'net::ERR_BLOCKED_BY_CLIENT';
+  const noFallback = mk6(null);
+  const lost = await fails(() => noFallback.connect('drive'));
+  check('without the other route, Connect says it could not reach Drive and gives the network’s reason', /Couldn’t reach Google Drive\. Check the connection\. \(net::ERR_BLOCKED_BY_CLIENT\)/.test(lost), lost);
+  const svc6 = mk6(g6.fetch);
+  await svc6.connect('drive');
+  check('with it, Connect works: the Drive check went again by Node’s network', svc6.list().connectors.find((c) => c.id === 'drive').status === 'connected' && g6.seen.some((r) => r.path === '/drive/v3/about' && r.method === 'GET'), JSON.stringify(svc6.list().connectors.find((c) => c.id === 'drive')));
+  check('a read goes again whatever Chromium said', await (async () => { chromium.mode = 'net::ERR_CONNECTION_RESET'; return /Lab notes/.test(await svc6.call({ app: 'drive', action: 'files', args: { query: 'lab' } })); })(), '');
+  const before6 = g6.seen.filter((r) => r.method === 'POST' && r.path === '/drive/v3/files').length;
+  const reset = await fails(() => svc6.call({ app: 'drive', action: 'create_folder', args: { name: 'Twice?' } }));
+  check('a write Chromium may have sent (connection reset) is not sent again, and the AI is told to look before trying again', g6.seen.filter((r) => r.method === 'POST' && r.path === '/drive/v3/files').length === before6 && /may have been made; check Drive/.test(reset), reset);
+  chromium.mode = 'net::ERR_PROXY_CONNECTION_FAILED';
+  const made6 = await svc6.call({ app: 'drive', action: 'create_folder', args: { name: 'Once' } });
+  check('a write Chromium never sent (the proxy refused) goes by Node’s network, once', g6.seen.filter((r) => r.method === 'POST' && r.path === '/drive/v3/files').length === before6 + 1 && /Once/.test(made6), made6);
+  chromium.mode = '';
+
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED');

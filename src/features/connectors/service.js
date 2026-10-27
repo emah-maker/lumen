@@ -59,9 +59,13 @@ const MS_FILE_HOSTS = /(^|\.)(sharepoint\.com|sharepoint\.us|sharepoint\.cn|1drv
 const DOWNLOAD_MS = 60e3;
 const GOOGLE_SIGN_IN = 'https://accounts.google.com/ServiceLogin?service=mail&continue=https%3A%2F%2Fmail.google.com%2Fmail%2F';
 const provider = (id) => require(`./providers/${id}`); // loaded when a connector is first used (not at startup)
+// Chromium's own words for a request that never left this computer (refused before it was sent): one of these may go again by the other route.
+const NOT_SENT = /net::ERR_(BLOCKED_BY_CLIENT|BLOCKED_BY_ADMINISTRATOR|PROXY_CONNECTION_FAILED|TUNNEL_CONNECTION_FAILED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|ADDRESS_UNREACHABLE|CONNECTION_REFUSED|INTERNET_DISCONNECTED|NETWORK_ACCESS_DENIED|PROXY_AUTH_UNSUPPORTED|MANDATORY_PROXY_CONFIGURATION_FAILED)\b/;
+// What the network said, for the error a person reads ("net::ERR_PROXY_CONNECTION_FAILED"): a bare "couldn't reach" left nothing to go on.
+const why = (err) => { const m = String(err?.cause?.message || err?.message || '').replace(/\s+/g, ' ').trim().slice(0, 120); return m && m !== 'fetch failed' ? ` (${m})` : ''; };
 
 function create({
-  userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
+  userData, secrets, fetch = globalThis.fetch, fallbackFetch = null, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
   google = null, workspace = {}, microsoft = {}, mcp = null, alwaysList = () => [], openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
@@ -174,7 +178,18 @@ function create({
         let redirected = false;
         try {
           const payload = json !== undefined ? JSON.stringify(json) : body;
-          const send = () => (def.kind === 'session' ? sessionFetch || fetch : fetch)(url.href, { method, headers: h, body: payload, redirect: 'manual', signal: controller.signal });
+          const options = { method, headers: h, body: payload, redirect: 'manual', signal: controller.signal };
+          // A request Chromium could not make goes once more through Node's own network (fallbackFetch): something in the default session
+          // (an extension, a proxy setting) left Google Drive at "Couldn't reach Google Drive" with the network fine. A read may go again
+          // whatever failed; a write only when Chromium says it never left (a write must not be made twice). Never a refused redirect, a
+          // stop, or a session connector (its sign-in is the session's cookies).
+          const send = async () => {
+            if (def.kind === 'session') return (sessionFetch || fetch)(url.href, options);
+            try { return await fetch(url.href, options); } catch (err) {
+              if (!fallbackFetch || controller.signal.aborted || /redirect/i.test(String(err?.message)) || !(method === 'GET' || method === 'HEAD' || NOT_SENT.test(String(err?.message)))) throw err;
+              try { return await fallbackFetch(url.href, options, err); } catch (again) { again.firstTry = err; throw again; }
+            }
+          };
           const oauth = oauthOf(def);
           if (oauth) { // a Google or Microsoft connector: the shared sign-in's access token; one 401 (the token was refused: nothing was done) is tried again with a new one
             const auth = oauth();
@@ -197,7 +212,7 @@ function create({
           if (err instanceof ConnectorError) throw err;
           if (/redirect/i.test(String(err?.message))) redirected = true; // Electron's fetch throws when a redirect is refused (a sign-in page)
           else if (signal?.aborted) throw new ConnectorError('Stopped.', 'other');
-          else throw new ConnectorError(controller.signal.aborted ? `${def.name} took too long to answer.` : `Couldn’t reach ${def.name}. Check the connection.`, 'other');
+          else throw new ConnectorError(controller.signal.aborted ? `${def.name} took too long to answer.` : `Couldn’t reach ${def.name}. Check the connection.${why(err?.firstTry || err)}`, 'other');
         } finally {
           clearTimeout(timer);
           signal?.removeEventListener?.('abort', onAbort);
