@@ -278,7 +278,7 @@ async function connector() {
   const pending = agent.allowConnector(input, gate());
   await new Promise((r) => setTimeout(r, 20));
   const approval = events.find((e) => e.type === 'approval');
-  check('with Bypass permissions and Auto-allow on, a draft still shows a card with no Always, its fields and the fixed note', approval && approval.note === 'connector' && approval.noAlways === true && !events.some((e) => e.name === 'auto_allowed') && approval.fields?.list.map((f) => f.key).join() === 'to,cc,subject,body' && /Nothing is sent/.test(approval.fields.fixed), JSON.stringify(approval));
+  check('with Bypass permissions and Auto-allow on, a draft still shows a card (Always offered: a draft only adds), its fields and the fixed note', approval && approval.note === 'connector' && !approval.noAlways && approval.alwaysFor?.action === 'Make a draft' && !events.some((e) => e.name === 'auto_allowed') && approval.fields?.list.map((f) => f.key).join() === 'to,cc,subject,body' && /Nothing is sent/.test(approval.fields.fixed), JSON.stringify(approval));
   const n = g.made.length;
   agent.resolveApproval(approval.approvalId, { edits: { subject: 'What I wrote' } });
   await pending;

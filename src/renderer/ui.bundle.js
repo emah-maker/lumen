@@ -6288,10 +6288,10 @@ function showHelperCard(e) {
   if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields, alwaysFor } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
-  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined });
+  if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, alwaysFor, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined });
   if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true });
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways });
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle });
@@ -6398,7 +6398,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 
 
 
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, denyLabel, warn = '', app = false, note = '', fields = null }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, denyLabel, warn = '', app = false, note = '', fields = null, alwaysFor = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -6429,7 +6429,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: denyLabel ? String(denyLabel) : t('approval.deny') });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
-  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : t('approval.tool.always.title') });
+  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : note === 'connector' ? t('approval.connector.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : note === 'connector' ? t('approval.connector.always.title', { action: String(alwaysFor?.action || ''), app: String(alwaysFor?.app || '') }) : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -6440,7 +6440,9 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   allow.onclick = note === 'connector'
     ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])) } : true); }
     : () => answer(true);
-  if (always) always.onclick = () => answer('always');
+  if (always) always.onclick = note === 'connector'
+    ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])), always: true } : 'always'); }
+    : () => answer('always');
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target === card && note !== 'connector' && note !== 'close') { e.preventDefault(); answer(true); }
     else if (e.key === 'Escape' && !/^(INPUT|TEXTAREA)$/.test(e.target?.tagName || '')) { e.preventDefault(); answer(false); }

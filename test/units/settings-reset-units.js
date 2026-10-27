@@ -13,7 +13,7 @@ const KEPT = [
   'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy', 'newTabHiddenTiles', 'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces',
   'weatherHere', 'weatherLocation', 'homeWidgets', 'extensionPins', 'focusSites', 'focusSchedules', 'adblockAllow', 'projectsDir', 'tabSleepNever',
   'tabSleepSoon', 'maxSteps', 'aiSubagents', 'actingHelpers', 'aiSubagentModel', 'maxChatRuns', 'autoModel', 'autoCompact', 'autoExclude', 'imageGen',
-  'usageBars', 'aiGapLog', 'autoFallback', 'aiSignedInSites', 'aiSharedFiles', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar', 'aiEffort',
+  'usageBars', 'aiGapLog', 'autoFallback', 'aiSignedInSites', 'aiSharedFiles', 'connectorAlways', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar', 'aiEffort',
   'featureCardNever', 'featureOffersSeen', 'telegramChannel', 'telegramFiles', 'telegramSignedIn', 'bypassBackground',
   'aiDesktopControl', 'aiFilesInApps', 'aiWordControl', 'aiDesktopTerminals', 'aiDesktopApps', 'routineWebhooks', 'routineWebhookPort',
   'aiDeviceAccess', 'filesRemember', 'claudeCodeFullAccess', 'ccUserSettings', 'grokBuildFullAccess', 'codexSidebar', 'codexFullAccess',

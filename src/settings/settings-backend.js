@@ -174,6 +174,7 @@ const DEFAULTS = {
   aiEffort: {}, // [ai] reasoning effort per AI: { claudecode: 'high', openai: 'low', … }; no entry = the AI's own default (ai/effort.js)
   pinchZoom: true, // [zoom] a trackpad pinch magnifies the page in place, as in Chrome (settings-backend.js pinchZoom); Ctrl/Cmd +/- still change page zoom
   featureCardNever: false, // [offers] "Don't show again" on the New in Lumen card (features/feature-offers.js); Lumen records it itself
+  connectorAlways: [], // [connectors] "<app>:<action>" of actions that only add something (a task, an event, a draft) the user chose Always allow for; added from the card, removed in Settings → Apps and connections (features/connectors/always.js)
   featureOffersSeen: [], // [offers] features that ship off and were already offered after an update (features/feature-offers.js); Lumen records it itself
   telegramChannel: false, // [telegram] Settings → AI → Let agents use Lumen → Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
   telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
@@ -363,6 +364,7 @@ function validate(key, value) {
     case 'newTabHiddenTiles': return cleanHiddenTiles(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
     case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
+    case 'connectorAlways': return require('../features/connectors/always').cleanList(value);
     case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
@@ -959,6 +961,7 @@ function create(deps) {
     if (key === 'extensionPins') throw new Error('Pins are changed with prefs:extension-pin'); // [extensions]
     if (key === 'lastSeenVersion') throw new Error('Lumen records the version itself'); // [what's new]
     if (key === 'featureCardNever') throw new Error('Lumen records the offers itself'); // [offers]
+    if (key === 'connectorAlways') throw new Error('An action is always allowed from its approval card and removed in Settings → Apps and connections'); // [connectors]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
     if (key === 'aiDesktopApps') throw new Error('Apps are added from the AI\'s approval card and removed with settings:remove-desktop-app'); // [desktop apps]

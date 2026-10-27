@@ -282,6 +282,7 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
         setSending: call('connectors:set-sending'),
         sendLog: call('connectors:send-log'),
         setPaused: call('connectors:set-paused'),
+        removeAlways: call('connectors:always-remove'),
         sync: call('connectors:sync'),
         signIn: call('connectors:sign-in'),
       },

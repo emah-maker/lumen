@@ -157,13 +157,49 @@ async function main() {
     const postsBefore = () => fakes.seen.filter((r) => r.service === 'todoist' && r.method === 'POST').length;
     const denied = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } } }], answer: false });
     const card = denied.events.find((e) => e.type === 'approval');
-    check('add_task shows a card with what it will do, with auto-allow on, and no "Always allow"', card?.action === 'tool' && /Todoist/.test(card.title) && /Buy a stapler/.test(card.args) && /tomorrow 9am/.test(card.args) && card.noAlways === true && card.note === 'connector' && card.fields?.list?.map((f) => f.key).join() === 'content,due', JSON.stringify(card));
+    check('add_task shows a card with what it will do, with auto-allow on, and an "Always allow" because it only adds', card?.action === 'tool' && /Todoist/.test(card.title) && /Buy a stapler/.test(card.args) && /tomorrow 9am/.test(card.args) && !card.noAlways && card.alwaysFor?.app === 'Todoist' && card.noBypass === true && card.note === 'connector' && card.fields?.list?.map((f) => f.key).join() === 'content,due', JSON.stringify(card));
     check('deny: nothing is sent to Todoist, and the model is told', postsBefore() === 0 && denied.results[0]?.error && /did not allow/.test(denied.results[0].text), JSON.stringify({ posts: postsBefore(), r: denied.results }));
     const allowed = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } } }], answer: true });
     const card2 = allowed.events.find((e) => e.type === 'approval');
     check('allow: the task is added, and the card knows the chat had read connected data', postsBefore() === 1 && /Added: \d+\s+Buy a stapler/.test(allowed.results[1]?.text) && card2?.tainted === true, JSON.stringify({ posts: postsBefore(), r: allowed.results, card2 }));
-    const always = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'One' } } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'Two' } } }], answer: 'always' });
-    check('answering "always" doesn’t skip the next one: every write asks', always.events.filter((e) => e.type === 'approval').length === 2, JSON.stringify(always.events.filter((e) => e.type === 'approval')));
+    console.log('--- Always allow, for actions that only add');
+    const stored = () => app.evaluate(() => global.__connectors.alwaysList());
+    const grab = await run({ toolUses: [{ input: { app: 'github', action: 'comment', args: { repo: 'ada/notes', number: 7, body: 'x' } } }], answer: 'always' });
+    check('a write that changes things has no Always button, and answering "always" to it stores nothing', grab.events.find((e) => e.type === 'approval')?.noAlways === true && (await stored()).length === 0, JSON.stringify({ ev: grab.events.filter((e) => e.type === 'approval'), s: await stored() }));
+    const addsBefore = postsBefore();
+    const always = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'One' } } }], answer: 'always' });
+    const next = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Two' } } }], answer: false }); // (a new chat)
+    check('"always" on an add stores todoist:add_task, and the next same add runs with no card (a step says it was allowed)', always.events.filter((e) => e.type === 'approval').length === 1 && JSON.stringify(await stored()) === '["todoist:add_task"]' && next.events.filter((e) => e.type === 'approval').length === 0 && next.events.some((e) => e.type === 'tool' && e.name === 'auto_allowed' && /always allowed/.test(e.label)) && postsBefore() === addsBefore + 2, JSON.stringify({ cards: [always, next].map((r) => r.events.filter((e) => e.type === 'approval').length), steps: next.events.map((e) => e.name || e.type), s: await stored(), posts: postsBefore() - addsBefore }));
+    const twoAdds = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Three' } } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'Four' } } }], answer: false });
+    check('two always-allowed adds in one chat: neither asks (an add leaves the chat as it was)', twoAdds.events.filter((e) => e.type === 'approval').length === 0 && twoAdds.events.filter((e) => e.name === 'auto_allowed').length === 2 && postsBefore() === addsBefore + 4, JSON.stringify({ cards: twoAdds.events.filter((e) => e.type === 'approval').length, posts: postsBefore() - addsBefore }));
+    const taintedRun = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'After a read' } } }], answer: true });
+    const tcard = taintedRun.events.find((e) => e.type === 'approval');
+    check('a chat that read connected data still shows the card, with no Always button', tcard?.tainted === true && tcard.noAlways === true && !taintedRun.events.some((e) => e.name === 'auto_allowed'), JSON.stringify(taintedRun.events));
+    inSettings('setTimeout(() => location.reload(), 50); true').catch(() => {});
+    await new Promise((r) => setTimeout(r, 1500));
+    await waitFor(async () => { try { return (await inSettings('document.body?.dataset.ready === "1"')) === true; } catch { return false; } });
+    await inSettings('window.confirm = () => true; true'); // (the reload dropped the stub)
+    const settingsAlways = inSettings;
+    const row = await waitFor(() => settingsAlways("document.querySelector('#conn-todoist-always li')?.textContent || ''"));
+    check('settings: the Todoist page lists the always-allowed action with Ask again', /Add a task/.test(row) && /Ask again/.test(row), row);
+    await settingsAlways("document.querySelector('#conn-todoist-always li button').click(); true");
+    check('Ask again removes it, and the next add asks again', await waitFor(async () => (await stored()).length === 0) && (await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Asks again' } } }], answer: false })).events.some((e) => e.type === 'approval'), JSON.stringify(await stored()));
+    await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
+    await ui.waitForSelector('#sidebar', { state: 'visible' });
+    const realClick = async (extra) => {
+      await app.evaluate(() => { global.__answers = []; const a = global.__agent; a.__resolve = a.__resolve || a.resolveApproval; a.resolveApproval = (id, ok) => { global.__answers.push([id, ok]); }; });
+      await ui.evaluate((fields) => showApproval(9102, 'Todoist', { action: 'tool', title: 'Claude wants to: Use Todoist: Add a task', args: 'Add this task to Todoist:Buy', tainted: false, note: 'connector', alwaysFor: { action: 'Add a task', app: 'Todoist' }, ...(fields ? { fields: { fixed: 'Todoist', list: [{ key: 'content', label: 'Task', value: 'Buy milk', max: 500 }] } } : {}) }), extra);
+      const btn = await ui.evaluate(() => { const b = [...document.querySelectorAll('.approval-tool')].pop().querySelector('.approval-always'); b.click(); return { text: b.textContent, title: b.title }; }); // (a scripted click)
+      const scripted = await app.evaluate(() => global.__answers.length);
+      await ui.locator('.approval-tool').last().locator('.approval-always').click(); // (a real one)
+      const answers = await waitFor(() => app.evaluate(() => (global.__answers.length ? global.__answers : null)));
+      await app.evaluate(() => { global.__agent.resolveApproval = global.__agent.__resolve; });
+      return { btn, scripted, answers };
+    };
+    const noEdit = await realClick(false);
+    check('the card’s Always button: labelled, explains itself, ignores a scripted click, and a real click answers "always"', noEdit.btn.text === 'Always allow this action' && /Don.t ask again for Add a task in Todoist/.test(noEdit.btn.title) && /Settings/.test(noEdit.btn.title) && noEdit.scripted === 0 && noEdit.answers?.[0]?.[1] === 'always', JSON.stringify(noEdit));
+    const withEdit = await realClick(true);
+    check('with editable text, a real click on Always answers with the text and always', withEdit.scripted === 0 && withEdit.answers?.[0]?.[1]?.always === true && withEdit.answers[0][1].edits?.content === 'Buy milk', JSON.stringify(withEdit));
     const cardDom = await ui.evaluate(() => {
       showApproval(9101, 'Todoist', { action: 'tool', title: 'Claude wants to: Use Todoist: Add a task', args: 'Add this task to Todoist:\nBuy', tainted: false, noAlways: true, note: 'connector' });
       const c = [...document.querySelectorAll('.approval-tool')].pop();

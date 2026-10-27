@@ -34,6 +34,13 @@ function connToolsView(c, { M, C, say, after }) {
   return h('details', { class: 'conn-details', id: `conn-${c.id}-tools` }, h('summary', { text: `Tools (${c.mcp.tools.length})` }), h('p', { class: 'note', text: 'Tools the service marks read only run without asking. Ticked tools run without asking, until the AI has read a page in that chat. Everything else asks first.' }), h('ul', { class: 'mcp-tools' }, items));
 }
 
+// Actions that only add something (a task, an event, a draft) and were set to Always allow from their card: each with Ask again.
+// A chat that has read a web page still asks. `after` runs with the new list once one is removed.
+function connAlwaysView(c, { C, say, after }) {
+  const items = (c.always || []).map((a) => h('li', {}, h('span', { text: `${a.label} ` }), h('span', { class: 'note', text: '· always allowed ' }), h('button', { type: 'button', class: 'btn', text: 'Ask again', 'aria-label': `Ask again before: ${a.label}`, onclick: async (e) => { e.target.disabled = true; try { after(await C.removeAlways(a.key)); } catch (err) { e.target.disabled = false; say(connClean(err), 'error'); } } })));
+  return h('details', { class: 'conn-details', id: `conn-${c.id}-always`, open: true }, h('summary', { text: `Allowed without asking (${items.length})` }), h('p', { class: 'note', text: 'These only add something and skip the card. A chat that has read a web page still asks. Sends, edits and deletes always ask.' }), h('ul', { class: 'mcp-tools' }, items));
+}
+
 // What the AI sent (time, to, subject), newest first: loaded when the section is opened.
 function connSendLogView(c, C) {
   const body = h('div', { class: 'conn-send-log' });

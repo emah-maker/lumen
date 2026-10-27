@@ -250,6 +250,8 @@ async function buildApps(card) {
       gmailRows = [draftsSw, sendSw, logRow];
       options.push(draftsSw.row, sendSw.row, logRow);
     }
+    const alwaysHost = svc.connector && c0() && c0().kind !== 'mcp' ? h('div', { class: 'row stack' }) : null; // [connectors] actions set to Always allow from a card
+    if (alwaysHost) options.push(alwaysHost);
     let toolsHost = null;
     if (svc.connector && c0()?.kind === 'mcp') { toolsHost = h('div', { class: 'row stack' }); options.push(toolsHost); }
 
@@ -369,6 +371,7 @@ async function buildApps(card) {
         sendSw.input.checked = cc?.sending === 'on';
         logRow.hidden = cc?.sending !== 'on';
       }
+      if (alwaysHost) { alwaysHost.hidden = !cc?.always?.length; alwaysHost.replaceChildren(...(cc?.always?.length ? [connAlwaysView(cc, { C, say, after: (d) => { data = d; sync(); } })] : [])); }
       if (toolsHost) toolsHost.replaceChildren(...(cc?.mcp?.tools?.length ? [connToolsView(cc, { M: S.ai.mcpServers, C, say, after: (d) => { data = d; sync(); } })] : []));
       const link = page.link;
       if (link) { link.dataset.state = st.cls || ''; link.dataset.on = st.on ? '1' : ''; }

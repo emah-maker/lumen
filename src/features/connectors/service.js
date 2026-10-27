@@ -62,7 +62,7 @@ const provider = (id) => require(`./providers/${id}`); // loaded when a connecto
 
 function create({
   userData, secrets, fetch = globalThis.fetch, sessionFetch = null, endpoints = () => ({}), detectHosts = async () => [],
-  google = null, workspace = {}, microsoft = {}, mcp = null, openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
+  google = null, workspace = {}, microsoft = {}, mcp = null, alwaysList = () => [], openSignIn = () => {}, now = Date.now, onChange = () => {}, testLoopback = false, shared = {},
 }) {
   const file = path.join(userData, FILE);
   let googleSealed = ''; // the shared Google sign-in (Drive, Sheets, Docs, Calendar, Tasks, Contacts), sealed
@@ -280,6 +280,7 @@ function create({
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
       reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
       actions: Object.entries(def.actions).filter(([, a]) => !a.gated || sending === 'on').map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
+      always: Object.entries(def.actions).filter(([name, a]) => a.adds && !a.gated && alwaysList().includes(`${def.id}:${name}`)).map(([name, a]) => ({ key: `${def.id}:${name}`, label: a.label })), // [connectors] the adds the user chose Always allow for (Settings shows each with Ask again)
     };
   }
   const list = () => ({ categories: registry.CATEGORIES, connectors: registry.CONNECTORS.map(card) });

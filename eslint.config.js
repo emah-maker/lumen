@@ -53,7 +53,7 @@ module.exports = [
   { files: ['src/renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   { files: ['src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly' } } },
   // settings-apps.js (Settings → Apps and connections) is loaded before settings.js and uses its helpers (called later, from its builder).
-  { files: ['src/renderer/settings-apps.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', collapsible: 'readonly', linkRow: 'readonly', refreshValues: 'readonly', slots: 'readonly', isImeEnter: 'readonly', buildMcpServers: 'readonly', buildOne: 'readonly', connClean: 'readonly', connAbout: 'readonly', connToolsView: 'readonly', connSendLogView: 'readonly', connDetectChips: 'readonly' } } },
+  { files: ['src/renderer/settings-apps.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', collapsible: 'readonly', linkRow: 'readonly', refreshValues: 'readonly', slots: 'readonly', isImeEnter: 'readonly', buildMcpServers: 'readonly', buildOne: 'readonly', connClean: 'readonly', connAbout: 'readonly', connToolsView: 'readonly', connAlwaysView: 'readonly', connSendLogView: 'readonly', connDetectChips: 'readonly' } } },
   // newtab-widgets.js draws favicon tiles with newtab.js's tile() (loaded after it, called later).
   { files: ['src/renderer/newtab-widgets.js'], languageOptions: { globals: { tile: 'readonly' } } },
   // i18n.js (window.t) and tab-search.js (the speaker button) run before app.js and are used by it.

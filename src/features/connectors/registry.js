@@ -9,6 +9,9 @@
 //
 // A write action (write: true) always asks the user on a card showing exactly what it sends; `edit` names the text arguments the
 // user can change there before allowing it. Background tasks and routines are offered the reads only (toolDef({ readOnly })).
+// `adds: true` marks a write that only ADDS something new (a task, an event, a draft, a new file or page) and never changes, sends, deletes
+// or shares anything that exists: its card may offer "Always allow this action" (features/connectors/always.js; settings connectorAlways).
+// Never put it on a send (gated), an edit, an append, a move, a trash or a share: those ask every time.
 //
 // kind: 'session' (the user's signed-in Lumen session, read through the site's own JSON endpoints),
 //       'token'   (the user pastes an API token or secret address; encrypted at rest),
@@ -111,7 +114,7 @@ const CONNECTORS = [
       search: { label: 'Search mail', args: { query: str('Gmail search, e.g. from:prof newer_than:7d', { required: true, max: 300 }), max: int('how many, default 10', 1, 20) }, doc: 'Search your mail. Needs the full Google sign-in.' },
       message: { label: 'Read a message', args: { id: str('message id from search or unread', { required: true, max: 40 }) }, doc: 'The text of one message. Needs the full Google sign-in.' },
       create_draft: {
-        label: 'Make a draft', write: true, edit: ['to', 'cc', 'subject', 'body'],
+        label: 'Make a draft', write: true, adds: true, edit: ['to', 'cc', 'subject', 'body'],
         args: {
           to: str('addresses: a@x.org, Name <b@y.org>', { required: true, max: 2000, pattern: ADDRESSES, label: 'To' }),
           cc: str('copy to, same form', { max: 2000, pattern: ADDRESSES, label: 'Cc' }),
@@ -164,7 +167,7 @@ const CONNECTORS = [
     actions: {
       files: { label: 'Find files', args: { query: str('words in the name or text; empty: recent files'), folder_id: str('only inside this folder (id)', { max: 100, pattern: DRIVE_ID }), max: int('how many, default 15', 1, 50) }, doc: 'Search Drive, or list a folder or the most recent files.' },
       read: { label: 'Read a file', args: { id: str('file id from files', { required: true, max: 100, pattern: DRIVE_ID }) }, doc: 'The text of a Google Doc, Slide deck, Sheet (first tab) or a text file, with its link. Folders, PDFs and pictures give details only.' },
-      create_folder: { label: 'Make a folder', write: true, edit: ['name'], args: { name: str('the folder name', { required: true, max: 200, label: 'Folder name' }), parent_id: str('inside this folder (id); default My Drive', { max: 100, pattern: DRIVE_ID }) }, doc: 'Makes a folder. The user confirms first.' },
+      create_folder: { label: 'Make a folder', write: true, adds: true, edit: ['name'], args: { name: str('the folder name', { required: true, max: 200, label: 'Folder name' }), parent_id: str('inside this folder (id); default My Drive', { max: 100, pattern: DRIVE_ID }) }, doc: 'Makes a folder. The user confirms first.' },
       upload: { label: 'Upload a file', write: true, edit: ['name'], args: { file: str('ref (f_…) of a file the user attached to this chat', { max: 40, pattern: FILE_REF }), path: str('a file on this computer; only when the user allowed files on this computer', { max: 500 }), folder_id: str('into this folder (id); default My Drive', { max: 100, pattern: DRIVE_ID }), name: str('name in Drive; default the file’s own', { max: 200, label: 'Name in Drive' }) }, doc: 'Uploads ONE new local file (a chat attachment by file, or a path). The user confirms each file on a card.' },
       update: { label: 'Replace file contents', write: true, args: { id: str('the Drive file to replace (id)', { max: 100, pattern: DRIVE_ID }), folder_id: str('instead of id: replace the file of the same name in this folder (id)', { max: 100, pattern: DRIVE_ID }), file: str('ref (f_…) of an attached file', { max: 40, pattern: FILE_REF }), path: str('a file on this computer', { max: 500 }), files: text('attached refs, one per line (up to 25)', 1500, { label: 'Files' }), paths: text('paths on this computer, one per line (up to 25)', 8000, { label: 'Paths' }) }, doc: 'Replaces an EXISTING file’s content, keeping its id, name, sharing and link: id with ONE file or path; or folder_id with files/paths (up to 25), each replacing the file of exactly the same name there. One card lists every file; names with no match are reported and skipped. Not for Google Docs or Sheets (use the document tool). Local files are checked as for upload.' },
       rename: { label: 'Rename a file', write: true, edit: ['name'], args: { id: str('file or folder id', { required: true, max: 100, pattern: DRIVE_ID }), name: str('the new name', { required: true, max: 200, label: 'New name' }) }, doc: 'Renames a file or folder. The user confirms first.' },
@@ -186,7 +189,7 @@ const CONNECTORS = [
       tabs: { label: 'List the tabs', args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }) }, doc: 'The spreadsheet’s title and its tabs with their sizes.' },
       read: { label: 'Read cells', args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }), range: str('A1 range, e.g. Sheet1!A1:D20; default first tab A1:Z100', { max: 120 }) }, doc: 'Cell values as tab-separated rows.' },
       append: { label: 'Add rows', write: true, edit: ['rows'], args: { id: str('spreadsheet id or link', { required: true, max: 300, pattern: SHEET_ID }), rows: text('one row per line, cells separated by |', 20000, { required: true, label: 'Rows' }), range: str('tab to add to, e.g. Sheet1; default first tab', { max: 120 }) }, doc: 'Adds rows after the last one (as plain text, never as formulas). The user confirms first.' },
-      create: { label: 'Make a spreadsheet', write: true, edit: ['title'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }) }, doc: 'Makes an empty spreadsheet and gives its link. The user confirms first.' },
+      create: { label: 'Make a spreadsheet', write: true, adds: true, edit: ['title'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }) }, doc: 'Makes an empty spreadsheet and gives its link. The user confirms first.' },
     },
   },
   {
@@ -200,7 +203,7 @@ const CONNECTORS = [
     does: ['Make a new document (asks you first)', 'Add text to the end of a document (asks you first)'],
     actions: {
       read: { label: 'Read a document', args: { id: str('document id or link', { required: true, max: 300, pattern: DOC_ID }) }, doc: 'The text of one Google Doc, with its link.' },
-      create: { label: 'Make a document', write: true, edit: ['title', 'body'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }), body: text('the first text, plain', 20000, { label: 'Text' }) }, doc: 'Makes a document with that text and gives its link. The user confirms first.' },
+      create: { label: 'Make a document', write: true, adds: true, edit: ['title', 'body'], args: { title: str('the title', { required: true, max: 200, label: 'Title' }), body: text('the first text, plain', 20000, { label: 'Text' }) }, doc: 'Makes a document with that text and gives its link. The user confirms first.' },
       append: { label: 'Add text to a document', write: true, edit: ['text'], args: { id: str('document id or link', { required: true, max: 300, pattern: DOC_ID }), text: text('the text to add at the end, plain', 20000, { required: true, label: 'Text' }) }, doc: 'Adds text after the last line (plain text; existing text is untouched). The user confirms first.' },
     },
   },
@@ -216,7 +219,7 @@ const CONNECTORS = [
     actions: {
       events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
       event: { label: 'Read an event', args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }) }, doc: 'One event with its end time and notes.' },
-      create_event: { label: 'Add an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no guests. The user confirms first.' },
+      create_event: { label: 'Add an event', write: true, adds: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no guests. The user confirms first.' },
       update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
     },
   },
@@ -231,7 +234,7 @@ const CONNECTORS = [
     actions: {
       lists: { label: 'Task lists', args: {}, doc: 'Your task lists with their ids.' },
       tasks: { label: 'Your tasks', args: { list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }), done: str('yes: include done tasks', { enum: ['yes', 'no'] }) }, doc: 'Tasks in a list, with ids.' },
-      add_task: { label: 'Add a task', write: true, edit: ['title', 'due', 'notes'], args: { title: str('the task', { required: true, max: 500, label: 'Task' }), due: str('a date: 2026-11-03', { max: 10, pattern: DAY_ONLY, label: 'Due' }), notes: text('notes', 8000, { label: 'Notes' }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Adds a task. The user confirms first.' },
+      add_task: { label: 'Add a task', write: true, adds: true, edit: ['title', 'due', 'notes'], args: { title: str('the task', { required: true, max: 500, label: 'Task' }), due: str('a date: 2026-11-03', { max: 10, pattern: DAY_ONLY, label: 'Due' }), notes: text('notes', 8000, { label: 'Notes' }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Adds a task. The user confirms first.' },
       complete_task: { label: 'Mark a task done', write: true, args: { id: str('task id from tasks', { required: true, max: 200, pattern: EVENT_ID }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Ticks a task off. The user confirms first.' },
     },
   },
@@ -272,7 +275,7 @@ const CONNECTORS = [
     actions: {
       search: { label: 'Search Notion', args: { query: str('words to look for', { required: true, max: 200 }) }, doc: 'Pages and databases shared with the integration.' },
       page: { label: 'Read a page', args: { id: str('page id or address', { required: true, max: 200 }) }, doc: 'The text of one page.' },
-      create_page: { label: 'Add a page', write: true, edit: ['title', 'body'], args: { parent_id: str('the page to put it under: id or address', { required: true, max: 500, pattern: NOTION_ID }), title: str('the title', { required: true, max: 200 }), body: text('the text; # headings, - bullets', 20000) }, doc: 'Adds a page under a page shared with the integration. The user confirms first.' },
+      create_page: { label: 'Add a page', write: true, adds: true, edit: ['title', 'body'], args: { parent_id: str('the page to put it under: id or address', { required: true, max: 500, pattern: NOTION_ID }), title: str('the title', { required: true, max: 200 }), body: text('the text; # headings, - bullets', 20000) }, doc: 'Adds a page under a page shared with the integration. The user confirms first.' },
       append: { label: 'Add to a page', write: true, edit: ['body'], args: { page_id: str('page id or address', { required: true, max: 500, pattern: NOTION_ID }), body: text('the text to add; # headings, - bullets', 20000, { required: true }) }, doc: 'Adds text to the end of a page. The user confirms first.' },
     },
   },
@@ -286,7 +289,7 @@ const CONNECTORS = [
     actions: {
       tasks: { label: 'Your tasks', args: { filter: str('Todoist filter, default “today | overdue”', { max: 200 }), project_id: str('only this project', { max: 40, pattern: WORD }) }, doc: 'Tasks matching a Todoist filter, or one project’s tasks.' },
       projects: { label: 'Your projects', args: {}, doc: 'Your projects with their ids.' },
-      add_task: { label: 'Add a task', write: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
+      add_task: { label: 'Add a task', write: true, adds: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
     },
   },
   {
@@ -318,7 +321,7 @@ const CONNECTORS = [
       search: { label: 'Search mail', args: { query: str('words to look for', { required: true, max: 300 }), max: int('how many, default 10', 1, 20) }, doc: 'Search all your mail.' },
       message: { label: 'Read a message', args: { id: str('message id from unread or search', { required: true, max: 300, pattern: GRAPH_ID }) }, doc: 'The text of one message.' },
       create_draft: {
-        label: 'Make a draft', write: true, edit: ['to', 'cc', 'subject', 'body'],
+        label: 'Make a draft', write: true, adds: true, edit: ['to', 'cc', 'subject', 'body'],
         args: {
           to: str('addresses: a@x.org, Name <b@y.org>', { required: true, max: 2000, pattern: ADDRESSES, label: 'To' }),
           cc: str('copy to, same form', { max: 2000, pattern: ADDRESSES, label: 'Cc' }),
@@ -352,7 +355,7 @@ const CONNECTORS = [
     does: ['Add an event (asks you first)', 'Change an event (asks you first)'],
     actions: {
       events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
-      create_event: { label: 'Add an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no attendees. The user confirms first.' },
+      create_event: { label: 'Add an event', write: true, adds: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no attendees. The user confirms first.' },
       update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 300, pattern: GRAPH_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
     },
   },
