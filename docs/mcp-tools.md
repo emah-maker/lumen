@@ -46,6 +46,7 @@ Screenshot the visible part of the active tab (for visual layout, images, charts
 | `max_width` | integer |  | Output width in px (default 720, max 1600). Smaller is cheaper, and a default-size capture keeps Lumen's main process responsive (a 1024 px capture stalled it for about 30 ms); ask for a larger `max_width` or a `region` when you need the detail. |
 | `quality` | integer |  | JPEG quality 30–90 (default 60). |
 | `region` | object |  | Crop to this rectangle in page CSS pixels (not usable with click_at). |
+| `pdf` | boolean |  | Save the tab as a PDF instead (what Ctrl+P → Save as PDF makes, with backgrounds), in the Downloads folder (Settings → Downloads and files) under the page's title, never over another file (`Name (2).pdf`). Returns the path and page count. In a sidebar chat the PDF is also attached to that chat, so `upload_file` takes it by its ref (see [Uploading files](uploading-files.md)). Refused in plan mode and to helpers (`ai/page-pdf.js`). |
 | `region.x` | number | yes |  |
 | `region.y` | number | yes |  |
 | `region.width` | number | yes |  |

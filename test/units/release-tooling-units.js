@@ -256,7 +256,10 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
     const at = (rev, file) => { const r = g('show', `${rev}:${file}`); return r.status === 0 ? r.stdout : null; };
     const version = JSON.parse(at(sha, 'package.json')).version;
     const real = lib.ciSkipVerdict({ files, version, base: { changelog: at(`${sha}^`, 'CHANGELOG.md'), package: at(`${sha}^`, 'package.json'), lock: at(`${sha}^`, 'package-lock.json') }, head: { changelog: at(sha, 'CHANGELOG.md'), package: at(sha, 'package.json'), lock: at(sha, 'package-lock.json') }, baseCi: 'success' });
-    check(`skip-ci: the repo's own latest release commit (${version}, ${sha.slice(0, 8)}) is recognised as skippable`, real.skip === true, JSON.stringify(real));
+    // (A release that also carried a fix made during its checks, as 0.5.78 did, must run CI: the verdict names the extra file.)
+    const extra = files.filter((f) => !['CHANGELOG.md', 'package.json', 'package-lock.json'].includes(f));
+    if (!extra.length) check(`skip-ci: the repo's own latest release commit (${version}, ${sha.slice(0, 8)}) is recognised as skippable`, real.skip === true, JSON.stringify(real));
+    else check(`skip-ci: the repo's own latest release commit (${version}, ${sha.slice(0, 8)}) also changes ${extra[0]}, so it is not skippable and says why`, real.skip === false && real.reasons.some((r) => r.includes(extra[0])), JSON.stringify(real));
   } else console.log('SKIP  skip-ci: no release commit with history here (shallow clone)');
 }
 
