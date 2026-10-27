@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, Notification, clipboard, crashReporter, dialog: electronDialog, nativeTheme, net, safeStorage, screen, session, shell, components, systemPreferences } = require('electron');
 // The main process's ~4 MB of modules are compiled once and kept on disk (V8's code cache, keyed by each file's
 // contents): later launches skip most of the ~70 ms of parsing and compiling before the window can be made.
 try { require('module').enableCompileCache?.(require('path').join(require('os').tmpdir(), 'lumen-compile-cache')); } catch { /* compiled as before */ }
@@ -272,6 +272,22 @@ function logMainError(kind, value) {
 if (TEST) global.__logMainError = logMainError;
 process.on('uncaughtException', (err) => { console.error('[lumen] uncaught exception:', err); logMainError('uncaughtException', err); });
 process.on('unhandledRejection', (reason) => { console.error('[lumen] unhandled rejection:', reason); logMainError('unhandledRejection', reason); });
+// [exit log] Lumen closing by itself left nothing behind: a crash of its own process (in Chromium, not JavaScript) wrote no report, and a page,
+// GPU or helper process that died was logged only for the chat page. Crash reports now go to <userData>/diagnostics/crashes (kept on this
+// computer, never uploaded), every process that ends other than cleanly gets a main-errors.log line, and a start after a run that never quit
+// logs how it ended (features/exit-log.js).
+const crashDumpDir = () => path.join(app.getPath('userData'), 'diagnostics', 'crashes'); // (made first: Crashpad creates only the last folder, and without diagnostics it wrote nothing)
+try { fs.mkdirSync(crashDumpDir(), { recursive: true }); app.setPath('crashDumps', crashDumpDir()); crashReporter.start({ uploadToServer: false, compress: true }); } catch (err) { logMainError('crash-reporter', err); }
+let dumpPrune = null;
+function processGone(kind, details) {
+  if (!details || details.reason === 'clean-exit') return;
+  try { logMainError(kind, require('./features/exit-log').goneText(details)); } catch { /* diagnostics only */ }
+  clearTimeout(dumpPrune); // (a crash report is written a moment after the process goes)
+  dumpPrune = setTimeout(() => { try { require('./features/exit-log').prune(crashDumpDir()); } catch { /* diagnostics only */ } }, 10e3);
+  dumpPrune.unref?.();
+}
+app.on('child-process-gone', (_e, details) => processGone('child-process-gone', details));
+app.on('render-process-gone', (_e, _wc, details) => processGone('page-process-gone', details));
 
 let win;
 const ui = () => (win && !win.isDestroyed() ? win.webContents : null); // null once the window is gone
@@ -13403,6 +13419,9 @@ app.whenReady().then(async () => {
   // (its UI, ~0.5 MB of scripts) loads meanwhile, and its tabs come once both are ready (tabsGate).
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   crashRecovery.begin({ mode: settingsBackend.startupPlan().mode }); // (before the first window saves a session over the last run's)
+  if (crashRecovery.crashed()) { // [exit log] the last run never quit: say how it ended (a crash report it left is written by then)
+    try { const end = require('./features/exit-log').lastRunEnd({ startedAtMs: crashRecovery.lastStart(), dir: crashDumpDir() }); logMainError(`previous-run-${end.kind}`, end.text); } catch { /* diagnostics only */ }
+  }
   setAboutPanel();
   wireSchedulerPower();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
