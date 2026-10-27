@@ -1660,7 +1660,7 @@ function annotateChip(step) {
 const unknownLabel = (event) => { try { return window.stepLabels?.defaults?.generic(event.name, event.input || {}) || t('step.tool'); } catch { return t('step.tool'); } };
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
-  screenshot: () => t('tool.screenshot'),
+  screenshot: (i) => t(i.pdf === true ? 'tool.savePdf' : 'tool.screenshot'), // [save as pdf]
   navigate: (i) => t('tool.navigate', { url: window.stepLabels?.hostOf(i.url || '') ?? i.url }), // (the site, not the whole address)
   click: () => t('tool.click'),
   type_text: (i) => t('tool.type_text', { text: i.text }),

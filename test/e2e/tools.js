@@ -152,6 +152,17 @@ const path = require('path');
   const busy = await timed(`${fixture}busy`);
   check('navigate on a page that keeps mutating waits for it, up to the cap', busy.ms > 250 && busy.ms < 2500 && busy.out.includes('Busy'), `${busy.ms} ms ${String(busy.out).slice(0, 100)}`);
 
+  // [save as pdf] screenshot pdf:true prints the tab with Chromium's own printToPDF into the Downloads folder (a temp one here, never the real one).
+  const pdfDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'lumen-tools-pdf-'));
+  await app.evaluate((_e, dir) => global.__patchSettings({ downloadDir: dir }), pdfDir);
+  await run('navigate', { url: `${fixture}static` });
+  r = await run('screenshot', { pdf: true });
+  const pdfFile = path.join(pdfDir, 'Static.pdf');
+  check('screenshot pdf:true saves the tab as a real PDF in Downloads', fs.existsSync(pdfFile) && fs.readFileSync(pdfFile).subarray(0, 5).toString() === '%PDF-' && r.includes(pdfFile) && /1 page\b/.test(r), r);
+  r = await run('screenshot', { pdf: true });
+  check('a second save is "Static (2).pdf", the first is kept', fs.existsSync(path.join(pdfDir, 'Static (2).pdf')) && r.includes('Static (2).pdf'), r);
+  fs.rmSync(pdfDir, { recursive: true, force: true });
+
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');
   await app.close();
   server.close();

@@ -158,8 +158,8 @@ const TOOLS = [
   },
   {
     name: 'screenshot',
-    description: 'Screenshot the active tab or tab_id.',
-    input_schema: { type: 'object', properties: { tab_id: { type: 'integer' } } },
+    description: 'Screenshot this tab or tab_id; pdf:true saves a PDF.',
+    input_schema: { type: 'object', properties: { tab_id: { type: 'integer' }, pdf: { type: 'boolean' } } },
   },
   {
     name: 'video_overview',
@@ -250,7 +250,7 @@ const TOOLS = [
   },
   {
     name: 'read_tabs',
-    description: 'Read open tabs by id (from list_tabs): 3000 characters each (max_chars_each for more).',
+    description: 'Read open tabs by id (list_tabs): 3000 chars each (max_chars_each for more).',
     input_schema: {
       type: 'object',
       properties: {
@@ -370,7 +370,7 @@ const TOOLS = [
   },
   {
     name: 'upload_file',
-    description: "Fill a page's file upload: element_id (input, button, drop zone), or open (menu texts to click: [\"New\",\"File upload\"]), or neither. files: <attached_files> refs; paths: local files; none: user picks. Does not submit.",
+    description: "Fill a page's file upload: element_id (input, button, drop zone), or open (menu texts: [\"New\",\"File upload\"]), or neither. files: <attached_files> refs; paths: local files; none: user picks. Does not submit.",
     input_schema: {
       type: 'object',
       properties: {
@@ -394,7 +394,7 @@ const TOOLS = [
   },
   {
     name: 'list_files',
-    description: 'List a folder, newest first (folder: desktop (default), downloads, documents or a path; match: "*.png"). read: download or .eml text. find: file by name. For upload_file.',
+    description: 'List a folder, newest first (folder: desktop (default), downloads, documents or a path; match: "*.png"). read: download or .eml text. find: file by name.',
     input_schema: {
       type: 'object',
       properties: { folder: { type: 'string' }, match: { type: 'string' }, limit: { type: 'integer' }, read: { type: 'string' }, find: { type: 'string' } },
@@ -474,7 +474,7 @@ const TOOLS = [
   },
   {
     name: 'open_tab',
-    description: 'Open a URL or local .pdf path (or a file you wrote) in a background tab; show:true fronts it; keep:true if the user needs it after.',
+    description: 'Open a URL or local .pdf path (or a file you wrote) in a background tab; show:true fronts it; keep:true if the user needs it.',
     input_schema: {
       type: 'object',
       properties: { url: { type: 'string' }, show: { type: 'boolean' }, keep: { type: 'boolean' } },
@@ -693,13 +693,14 @@ const OTHER_PROJECT = slimTool(PROJECT_TOOL); // [project workspace]
 const HELPER_TOOL_DEFS = [...TOOLS, SEARCH_TOOL].filter((t) => subagents.isHelperTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
   delete properties.as_user;
+  delete properties.pdf; // [save as pdf] a helper only reads
   return { name: t.name, description: t.description, input_schema: { ...t.input_schema, properties } };
 });
 // What an acting helper is shown (acting-helpers.js ACT_TOOLS): its tab's tools, read_page in compact mode only, screenshot of its own tab only.
 let actDefs = null;
 const actHelperToolDefs = () => (actDefs ||= TOOLS.filter((t) => actingHelpers().isActTool(t.name)).map((t) => {
   const properties = { ...t.input_schema.properties };
-  if (t.name === 'screenshot') delete properties.tab_id;
+  if (t.name === 'screenshot') { delete properties.tab_id; delete properties.pdf; } // ([save as pdf] a helper never writes a file)
   if (t.name === 'read_page') for (const key of ['mode', 'extract', 'selector', 'elements', 'structured', 'text_offset', 'table']) delete properties[key];
   return { name: t.name, description: t.name === 'read_page' ? 'Read your tab as a compact outline: [id] per element to click or type into. since_last: only what changed.' : t.description, input_schema: { ...t.input_schema, properties } };
 }));
@@ -6898,6 +6899,14 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
   fullPageRun() { return taskScope.getStore()?.fullPage === true; }
   // The tab the screenshot tool looks at: the one named by tab_id; with none, the task's tab. A full-page chat run never has a default
   // (the user asks for a tab by name: list_tabs, then tab_id), and the chat page itself is never captured, however it is reached.
+  // [save as pdf] ai/page-pdf.js (loaded on first use): the tab printed to a PDF in Downloads and, in a chat, attached to it for upload_file.
+  savePdf(wc) {
+    const scope = taskScope.getStore();
+    if (scope?.helper) throw new Error('A helper cannot save files. Say what to save and the main chat will do it.');
+    const dir = this.browser.knownFolder?.('downloads');
+    const chatId = scope?.gate && !scope.gate.external ? scope.chatId : null;
+    return require('./page-pdf').savePagePdf(wc, { dir, uploads: this.uploads, chatId, onSaved: (file) => this.browser.noteFile?.(file, 'ai') });
+  }
   screenshotWc(input = {}) {
     const named = input?.tab_id !== undefined && input?.tab_id !== null;
     if (!named && this.fullPageRun()) throw new Error(FULL_PAGE_SHOT_NEEDS_TAB);

@@ -5315,7 +5315,7 @@ function annotateChip(step) {
 const unknownLabel = (event) => { try { return window.stepLabels?.defaults?.generic(event.name, event.input || {}) || t('step.tool'); } catch { return t('step.tool'); } };
 const TOOL_LABELS = {
   read_page: () => t('tool.read_page'),
-  screenshot: () => t('tool.screenshot'),
+  screenshot: (i) => t(i.pdf === true ? 'tool.savePdf' : 'tool.screenshot'),
   navigate: (i) => t('tool.navigate', { url: window.stepLabels?.hostOf(i.url || '') ?? i.url }),
   click: () => t('tool.click'),
   type_text: (i) => t('tool.type_text', { text: i.text }),
@@ -15800,6 +15800,7 @@ $('agent-stop')?.addEventListener('click', () => {
 
   function planToolError(name, input = {}) {
     if (name === 'word') return ['list', 'read'].includes(String(input?.action || '')) ? null : PLAN_REFUSAL;
+    if (name === 'screenshot' && input?.pdf === true) return PLAN_REFUSAL;
     if (name === 'desktop') return PLAN_DESKTOP_READS.has(String(input?.action || '')) ? null : PLAN_REFUSAL;
     return PLAN_TOOLS.has(name) ? null : PLAN_REFUSAL;
   }

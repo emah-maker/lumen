@@ -2379,6 +2379,7 @@
   "tool.reload": "Reloading the page",
   "tool.run_script": "Running a script on the page",
   "tool.screenshot": "Taking screenshot",
+  "tool.savePdf": "Saving the page as a PDF",
   "tool.scroll": "Scrolling {direction}",
   "tool.switch_tab": "Switching to tab {tab}",
   "tool.type_text": "Typing “{text}”",

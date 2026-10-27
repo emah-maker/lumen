@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **When Lumen closes by itself, it now leaves a record of why.** Before, a crash of Lumen's own process wrote nothing, and a page, GPU or helper process that died was logged only for the chat page, so "it just closed" could not be traced. Now crash reports are kept in diagnostics/crashes (on this computer only, never uploaded; the newest 10 are kept), every process that ends other than cleanly gets a line in diagnostics/main-errors.log (for example `GPU crashed, exit 34` after a graphics-driver reset), and the next start after a run that never quit logs how it ended: the computer restarted under it (power loss, a Windows crash), Lumen crashed (a crash report was written), or it was ended from outside (`features/exit-log.js`; tests in `test/units/exit-log-units.js` and `test/e2e/recovery.js`).
+- **The AI can save a page as a PDF.** It can now do Ctrl+P → Save as PDF itself: `screenshot` with `pdf: true` prints the tab (backgrounds included) to the Downloads folder under the page's title, never over another file, and attaches the PDF to the chat so `upload_file` can put it on a site. Before, a page with no download button (Banner's unofficial transcript) meant asking you to print it yourself. The step reads “Saving the page as a PDF”. Not while planning and not by helpers (`src/ai/page-pdf.js`, `test/units/page-pdf-units.js`, `test/e2e/tools.js`).
 
 ## 0.5.78 (2026-10-27)
 
