@@ -4695,7 +4695,7 @@ const CATEGORIES = [
     ['ai-approvals', 'Asking before it acts', { page: 'ai-links', more: 'approvals permission ask bypass auto-allow hands off act pages' }],
     ['ai-tabs', 'Tabs the AI opens', { page: 'ai-links', more: 'ai tabs group hide close finish front' }],
     ['ai-helpers', 'Helpers and research', { page: 'ai-links', more: 'helpers subagents parallel research tabs acting' }],
-    ['ai-chat', 'Chat box and voice', { page: 'ai-links', more: 'chat box voice input dictation microphone plan mode autocomplete one chat per tab sidebar' }],
+    ['ai-chat', 'Chat box and voice', { page: 'ai-links', more: 'chat box voice input dictation microphone plan mode autocomplete one chat per tab sidebar saved chats delete old chats automatically history clean up' }],
     ['ai-computer', 'Computer access', { page: 'ai-links', more: 'files computer apps terminals word full access command line cli desktop' }],
     ['ai-privacy', 'What the AI can see', { page: 'ai-links', more: 'sites ai off signed-in files apps couldn’t do list revoke' }],
     ['ai-agents', 'Let agents use Lumen', { page: 'ai-tools', more: 'agents mcp connect claude code codex grok antigravity telegram phone incoming' }],
@@ -5024,6 +5024,10 @@ async function buildAi(card) {
     toggle('replySuggestions', tr('settings.ai.replySuggestions', 'Suggest replies'), tr('settings.ai.replySuggestionsDesc', ''), undefined, { fallback: true }),
     toggle('chatAutocomplete', tr('settings.ai.autocomplete', 'Tab to finish what I’m typing'), tr('settings.ai.autocompleteDesc', ''), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),
+  );
+  slots.get('ai-chat').group(tr('settings.ai.groupSavedChats', 'Saved chats')).append(
+    select('chatAutoDeleteDays', tr('settings.ai.chatAutoDelete', 'Delete chats not in a project after'), tr('settings.ai.chatAutoDeleteDesc', 'A saved chat that is not in a project and that you haven’t used for this long is deleted for good, with its pictures and attached files. Pinned chats and chats open in a tab or still working are kept, and archived chats count like the rest. Counted from the last message, not from when the chat was started. Checked a few minutes after Lumen starts and then every hour.'),
+      [0, 1, 7, 14, 30, 60, 90, 180, 365].map((n) => [n, tr(`settings.ai.chatAutoDelete.${n}`, { 0: 'Never', 1: '1 day', 180: '6 months', 365: '1 year' }[n] || `${n} days`)]), { number: true }),
   );
   slots.get('ai-chat').group(tr('settings.ai.groupVoice', 'Voice input')).append(
     select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),

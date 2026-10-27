@@ -6255,7 +6255,8 @@ const runSlots = tabChatsLib.createRunSlots({
 scheduler.every('run-slots', 5000, () => { try { runSlots.sweep(); } catch { /* the sweep never breaks anything */ } }, { whenHidden: 15000 });
 const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
 const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
-onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); aiStatusSoon(); };
+let lastAutoDeleteDays = null; // [auto-delete chats] (null: not seen yet; the start-up sweep covers it)
+onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); { const was = lastAutoDeleteDays; lastAutoDeleteDays = Number(s.chatAutoDeleteDays) || 0; if (was !== null && lastAutoDeleteDays && lastAutoDeleteDays !== was) autoDeleteSoon(15000); } aiStatusSoon(); }; // ([auto-delete chats] a new number of days: a sweep soon)
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Each tab keeps its own answer, whatever chat it shows or shares: opening or closing the sidebar in one tab never opens or
@@ -12288,6 +12289,39 @@ function sweepTrash() { // chats hidden by a Lumen that quit inside the undo tim
   trashSwept = true;
   for (const t of chats().trashed()) if (!pendingDeletes.has(t.id) && Date.now() - t.at > UNDO_MS) finishDelete(t.id);
 }
+// [auto-delete chats] Settings → AI → Chat box and voice: chats in no project, not pinned and unused for chatAutoDeleteDays days are deleted
+// (features/chat-auto-delete.js picks them). A while after the first tab loads, then every hour, and soon after the setting changes. Only with
+// a chat list that can be trusted (read, not rebuilt: a rebuilt list has lost its projects and pins). Open, running and waiting chats stay.
+// Each one goes the way a deleted chat does once its Undo time is over (finishDelete: its pictures, uploads and engine homes too).
+const AUTO_DELETE_FIRST_MS = 3 * 60 * 1000;
+const AUTO_DELETE_EVERY_MS = 60 * 60 * 1000;
+function autoDeleteSweep() {
+  if (!app.isReady()) return [];
+  const days = Number(readSettings().chatAutoDeleteDays) || 0;
+  if (!days) return [];
+  const store = chats();
+  if (!store.usable() || !store.trusted()) return [];
+  const keep = new Set([chatId, ...chatBind.entries().map(([, c]) => c), ...chatRuns.keys(), ...pendingDeletes.keys()].filter(Boolean));
+  const ids = require('./features/chat-auto-delete').expiredChats({ chats: store.list(), days, projectIds: new Set(store.projects().map((p) => p.id)), keep, foreign: store.isForeign });
+  const gone = [];
+  for (const id of ids) {
+    if (!store.trash(id)) continue;
+    finishDelete(id);
+    if (store.has(id)) { store.restore(id); continue; } // (not erased: the index on disk can't be read right now; it comes back and waits for the next sweep)
+    unreadChats.delete(id);
+    approvedByChat.delete(id);
+    gone.push(id);
+  }
+  if (gone.length) pushAttention();
+  return gone;
+}
+let autoDeleteTimer = null;
+const autoDeleteSoon = (ms) => { clearTimeout(autoDeleteTimer); autoDeleteTimer = setTimeout(() => { autoDeleteTimer = null; try { autoDeleteSweep(); } catch (err) { console.error('[lumen] auto-delete chats:', err?.message || err); } }, ms); autoDeleteTimer.unref?.(); };
+firstTabLoaded.then(() => {
+  if (lastAutoDeleteDays === null) lastAutoDeleteDays = Number(readSettings().chatAutoDeleteDays) || 0;
+  autoDeleteSoon(AUTO_DELETE_FIRST_MS);
+  setInterval(() => autoDeleteSoon(0), AUTO_DELETE_EVERY_MS).unref?.();
+});
 ipcMain.handle('chats:delete', (event, id) => {
   id = String(id);
   warmChatLeft(id, { now: true }); // [warm per chat] (a message still running frees it when it ends)
@@ -12515,7 +12549,7 @@ ipcMain.handle('chats:export', async (_e, id, format) => {
 if (TEST) global.__chatFiles = () => fs.readdirSync(path.join(app.getPath('userData'), 'chats')).length;
 if (TEST) global.__chatPdf = (id) => { const out = chatMarkdown(String(id)); return out ? chatPdf(out) : null; };
 if (TEST) global.__projectFolders = { setDocuments: (dir) => { documentsOverride = dir || null; }, documents: () => documentsDir(), idle: async () => { await mirrorDebounce.flush(); await mirrorChain; }, pending: () => mirrorDebounce.pending(), mirrorFolderOf, mirrorSoon: mirrorChatSoon, workFolderInfo };
-if (TEST) global.__chats = { store: chats, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
+if (TEST) global.__chats = { store: chats, autoDelete: autoDeleteSweep, id: () => chatId, markdown: (id) => chatMarkdown(id)?.markdown ?? null };
 
 // ---------- pictures the AI made (features/gen-images.js) ----------
 // Saved one file each under <userData>/generated-images/<chat>/, encrypted with the keychain like the chat itself (no

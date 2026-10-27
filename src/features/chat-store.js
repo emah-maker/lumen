@@ -927,9 +927,11 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
+  // [auto-delete chats] A chat another writer on this profile added to the index: never deleted by anything automatic here.
+  const isForeign = (id) => foreign.has(id);
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
