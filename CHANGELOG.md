@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Google Drive (and the other connectors) connect when Lumen’s own network can’t make the request.** Drive stayed at “Couldn’t reach Google Drive” with the network fine, and Sign in with Google opened nothing (Google was already signed in for another app, so only Drive’s check ran, and failed). A request Chromium can’t make now goes once more by Node’s network, as Google sign-in already did: a read whatever failed, a write only when Chromium says it never left. The error now says what the network reported, and each time this happens Chromium’s error is written to diagnostics/main-errors.log so the cause can be found.
 - **Old chats can delete themselves.** Settings → AI → Chat box and voice → **Delete chats not in a project after** (Never by default; 1, 7, 14, 30, 60 or 90 days, 6 months or 1 year). A saved chat that is not in a project and that you haven't used for that long is deleted for good, with its pictures and attached files, as if you had deleted it yourself. Counted from the chat's last message, not from when it was started. Chats in a project, pinned chats, and chats open in a tab or still working are never deleted; archived chats count like the rest. Checked a few minutes after Lumen starts and every hour (`chatAutoDeleteDays`; tests in `test/units/chat-auto-delete-units.js`).
 
 ## 0.5.77 (2026-10-26)

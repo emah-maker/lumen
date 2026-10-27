@@ -8894,9 +8894,17 @@ let connectorsLive = null;
 // proxy), then Node's own when that one could not send the request at all. Something in the default session (an ad-block list, an extension, a
 // proxy setting) left "Sign in with Google" at "Couldn't reach Google" right after the user signed in, with the network fine. Only the sign-in
 // addresses take this path; a connector's own calls never go twice (a write must not be repeated).
+// Why Chromium could not make it is written to diagnostics/main-errors.log (the host and Chromium's error, never the address or a header):
+// the cause was never seen on the user's machine, and a fresh profile does not show it.
+function noteChromiumNet(url, err) {
+  let host = '';
+  try { host = new URL(url).host; } catch { /* not an address */ }
+  logMainError('connectorNetwork', `Chromium could not reach ${host}: ${String(err?.message || err).slice(0, 200)}`);
+}
 async function signInFetch(url, options = {}) {
   try { return await net.fetch(url, { ...options, credentials: 'omit' }); } catch (err) {
     if (options.signal?.aborted) throw err;
+    noteChromiumNet(url, err);
     try { return await globalThis.fetch(url, options); } catch (again) { again.firstTry = err; throw again; }
   }
 }
@@ -8908,6 +8916,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
   },
   fetch: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }), // a token goes in the header; no cookies
+  fallbackFetch: (url, options, first) => { noteChromiumNet(url, first); return globalThis.fetch(url, options); }, // (Node's network, when Chromium's could not make the request: service.js says when)
   sessionFetch: (url, options) => session.defaultSession.fetch(url, { ...options, credentials: 'include' }), // the user's signed-in Lumen session (Canvas)
   endpoints: () => (TEST && global.__connectorEndpoints) || {},
   testLoopback: TEST,
