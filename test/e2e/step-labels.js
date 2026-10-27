@@ -556,6 +556,23 @@ process.stdin.on('data', async (d) => {
   const visApp = await app.evaluate(() => global.__thumbsState.visible());
   await ui.evaluate(() => { window.stepUI.finalize(window.__slVisTurn.turn, { type: 'done' }); document.getElementById('sl-vis-b')?.remove(); delete window.__slVisTurn; });
   check('a Word or other program card reports itself on screen, even after a browser card finished in the same chat (its live picture runs)', visAfterBrowser === false && visApp === true, J({ visAfterBrowser, visApp }));
+  // The same card moving from a page to Word (a run that opened a site, then the document): it starts watching then, so Word's live picture runs.
+  await ui.evaluate(async () => {
+    const host = Object.assign(document.createElement('div'), { id: 'sl-vis-c' });
+    host.style.cssText = 'position:fixed;top:0;left:0;width:420px;z-index:99999';
+    document.body.append(host);
+    const opts = { messages: host, append: (n) => host.append(n), task: '' };
+    window.__slVisTurn = { turn: { cards: [], card: null, plain: null, working: null }, opts };
+    const row = window.stepUI.add(window.__slVisTurn.turn, { name: 'navigate', input: { url: 'https://example.com/' }, id: 'v3', label: 'Opening example.com' }, opts);
+    window.stepUI.done(window.__slVisTurn.turn, row, { id: 'v3', ok: true });
+    await new Promise((r) => setTimeout(r, 300));
+    window.stepUI.add(window.__slVisTurn.turn, { name: 'word', input: { action: 'insert' }, id: 'v4', label: 'Writing in Report.docx' }, opts);
+    window.stepUI.desktop(window.__slVisTurn.turn, { type: 'desktop_card', surface: 'app', word: true, id: 'word-vis-2', app: 'Word', doc: 'Report.docx', title: 'Report.docx', status: 'working', task: 'Writing in Report.docx', thumbnail: null }, opts);
+    await new Promise((r) => setTimeout(r, 300));
+  });
+  const visMoved = await app.evaluate(() => global.__thumbsState.visible());
+  const sameCard = await ui.evaluate(() => { const t = window.__slVisTurn.turn; const one = t.cards.length === 1; window.stepUI.finalize(t, { type: 'done' }); document.getElementById('sl-vis-c')?.remove(); delete window.__slVisTurn; return one; });
+  check('a card that moves from a page to Word reports itself on screen (Word’s live picture runs)', visMoved === true, J({ visMoved, sameCard }));
 
   // ---- Word work: the same card, with the document as its preview (Word's window, or a page of the paragraphs around the change when the window cannot be shown),
   // the document's name as the chip, the step in words, "Done" at the end. (A fake capture: a drawn picture stands in for Word's window.)
@@ -630,7 +647,7 @@ process.stdin.on('data', async (d) => {
     await ui.locator('#word-host').screenshot({ path: path.join(shotDir, 'word-cards-all.png') });
   }
   await ui.evaluate(() => document.getElementById('word-host')?.remove());
-  check('Word card: the same one card, titled Word with the document icon, the document name as its chip (a button), the step in words in the status bar and the step row', wordRun.sawA === true && wordRun.cards === 1 && wordRun.surface === 'app' && wordRun.title === 'Word' && wordRun.iconKind === 'word' && wordRun.chip === 'Report.docx' && wordRun.chipTag === 'BUTTON' && wordRun.chipVisible && /^Writing in Report.docx: adding a table of 3 rows after/.test(wordRun.status) && /^Writing in Report.docx: adding a table/.test(wordRun.step), J(wordRun));
+  check('Word card: the same one card, titled Word with the document icon, the document name as its chip (a button), the step in words in the status bar (what is done, without the document name the chip already shows) and in full in the step row', wordRun.sawA === true && wordRun.cards === 1 && wordRun.surface === 'app' && wordRun.title === 'Word' && wordRun.iconKind === 'word' && wordRun.chip === 'Report.docx' && wordRun.chipTag === 'BUTTON' && wordRun.chipVisible && /^Adding a table of 3 rows after “Results”/.test(wordRun.status) && !/Report.docx/.test(wordRun.status) && /^Writing in Report.docx: adding a table/.test(wordRun.step), J(wordRun));
   check('Word card: with no window picture it draws the page around the change (headings, a bullet, table rows, the changed lines marked), as text only', wordRun.pageShown && !wordRun.imgShown && wordRun.pageRows.length === 7 && wordRun.pageRows[0].startsWith('act-pg-h1:Report') && wordRun.pageRows[3].startsWith('act-pg-tr hl') && wordRun.hl === 2 && wordRun.pageImgs === 0 && !wordRun.xss && /Preview of Report.docx/.test(wordRun.pageAlt), J(wordRun));
   check('Word card: the chip, the picture (click and Enter) and the header each bring Word forward (they ask main for this card id), and the card offers Open', J(wordRun.opened) === '["word-1","word-1","word-1","word-1"]' && wordRun.open === 'Open', J([wordRun.opened, wordRun.open]));
   check('Word card: the picture is a button with a name (Show in Word) and a tab stop', wordRun.pic.role === 'button' && wordRun.pic.tab === 0 && wordRun.pic.label === 'Show in Word' && wordRun.pic.head === true, J(wordRun.pic));

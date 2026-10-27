@@ -52,7 +52,9 @@ While the AI works in Word, the chat's one live activity card is titled **Word**
 
 - the document's name as a chip (click it, the card's picture, or its header to bring Word to the front at the place that was changed, or, if nothing was changed yet, the place the AI last read; the picture is a button, so Enter or Space on it does the same) and, in the status line, what is being done ("Writing in Report.docx: adding a table of 3 rows after “Results”");
 - a live picture of Word's window, at the same pace and under the same rules as the card for other apps (about 8 a second while it changes, slower while still, nothing while the card is off screen, a call is running, or Word is minimized or hidden; the picture is held in memory only to be shown);
-- when Word's window cannot be shown (hidden, minimized, or the file route), a small page preview instead: the paragraphs around the last change, with the changed ones marked, updated after every change, and the lines being read while the AI reads;
+- when Word's window cannot be shown (hidden, minimized, or the file route), a small page preview instead: the paragraphs around the last change, with the changed ones marked (each new change glows in for a moment; not with reduced motion), updated after every change, and the lines being read while the AI reads;
+- from the first step on, never just the document's name: until the first picture or change arrives, the page preview shows the document's own paragraphs where the AI is. A card that started on a web page and moved to Word gets Word's live picture too;
+- in the status line, what is being done without the document's name again (the chip shows it): "Replacing 2 bullets under “Experience”", "Adding a table of 3 rows after “Results”"; the step row keeps the full label;
 - at the end, the last picture and "Done" with the answer.
 
 ## For developers
