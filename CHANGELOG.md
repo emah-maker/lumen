@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **Always allow for connector actions that only add something.** The approval card for adding a Todoist or Google task, a calendar event (Google or Outlook), a Notion page, a Google Doc, Sheet or Drive folder, or a Gmail or Outlook draft now has an **Always allow this action** button, per app and action. After that, that one action runs without a card (a small "Allowed automatically" step still shows in the chat). Sends, edits, appends, moves, copies, deletes, shares and uploads still ask every time, and so does any chat that has read a web page. Turn it off again with Ask again under the connector in Settings → Apps and connections.
+- **Always allow for connector actions that only add something.** The approval card for adding a Todoist or Google task, a calendar event (Google or Outlook), a Notion page, a Google Doc, Sheet or Drive folder, or a Gmail or Outlook draft now has an **Always allow this action** button, per app and action. After that, that one action runs without a card (a small "Allowed automatically" step still shows in the chat). Sends, edits, appends, moves, copies, deletes, shares and uploads still ask every time, and so does any chat that has read a web page or data from a connected app. Adds themselves don't count, so several always-allowed adds in one chat don't ask. Turn it off again with Ask again under the connector in Settings → Apps and connections.
 
 ## 0.5.76 (2026-10-26)
 

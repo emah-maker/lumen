@@ -5885,7 +5885,10 @@ ${prompt}` : prompt), historyImages: [] };
       (this.connectorEmits ||= new WeakMap()).set(input, emit); // runConnector logs the result as a step with its link
       if (sendFile) (this.connectorFiles ||= new WeakMap()).set(input, sendFile); // the file(s) the user allowed on the card, and only those
     }
-    if (holder) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; } // (connector data is web-like content: it taints the whole run, desktop acting calls included)
+    // (connector data is web-like content: it taints the whole run, desktop acting calls included. An add's answer is only the item it made,
+    // from the AI's own text, so it leaves the chat as it was: a second add in the same chat can still be always allowed.)
+    const addOnly = svc.isWrite(input) && connectors.get(input.app)?.actions?.[input.action]?.adds === true && !svc.isSend?.(input);
+    if (holder && !addOnly) { holder.tainted = true; holder.appOnly = false; holder.onlyFrom = null; }
     (this.connectorGrants ||= new WeakSet()).add(input); // execute() runs a connector call only after this
   }
 
