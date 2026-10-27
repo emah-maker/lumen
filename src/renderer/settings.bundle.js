@@ -2710,6 +2710,13 @@ function connToolsView(c, { M, C, say, after }) {
 }
 
 
+
+function connAlwaysView(c, { C, say, after }) {
+  const items = (c.always || []).map((a) => h('li', {}, h('span', { text: `${a.label} ` }), h('span', { class: 'note', text: '· always allowed ' }), h('button', { type: 'button', class: 'btn', text: 'Ask again', 'aria-label': `Ask again before: ${a.label}`, onclick: async (e) => { e.target.disabled = true; try { after(await C.removeAlways(a.key)); } catch (err) { e.target.disabled = false; say(connClean(err), 'error'); } } })));
+  return h('details', { class: 'conn-details', id: `conn-${c.id}-always`, open: true }, h('summary', { text: `Allowed without asking (${items.length})` }), h('p', { class: 'note', text: 'These only add something and skip the card. A chat that has read a web page still asks. Sends, edits and deletes always ask.' }), h('ul', { class: 'mcp-tools' }, items));
+}
+
+
 function connSendLogView(c, C) {
   const body = h('div', { class: 'conn-send-log' });
   const d = h('details', { class: 'conn-details', id: `conn-${c.id}-sendlog` }, h('summary', { text: 'Sent by the AI' }), body);
@@ -2988,6 +2995,8 @@ async function buildApps(card) {
       gmailRows = [draftsSw, sendSw, logRow];
       options.push(draftsSw.row, sendSw.row, logRow);
     }
+    const alwaysHost = svc.connector && c0() && c0().kind !== 'mcp' ? h('div', { class: 'row stack' }) : null;
+    if (alwaysHost) options.push(alwaysHost);
     let toolsHost = null;
     if (svc.connector && c0()?.kind === 'mcp') { toolsHost = h('div', { class: 'row stack' }); options.push(toolsHost); }
 
@@ -3107,6 +3116,7 @@ async function buildApps(card) {
         sendSw.input.checked = cc?.sending === 'on';
         logRow.hidden = cc?.sending !== 'on';
       }
+      if (alwaysHost) { alwaysHost.hidden = !cc?.always?.length; alwaysHost.replaceChildren(...(cc?.always?.length ? [connAlwaysView(cc, { C, say, after: (d) => { data = d; sync(); } })] : [])); }
       if (toolsHost) toolsHost.replaceChildren(...(cc?.mcp?.tools?.length ? [connToolsView(cc, { M: S.ai.mcpServers, C, say, after: (d) => { data = d; sync(); } })] : []));
       const link = page.link;
       if (link) { link.dataset.state = st.cls || ''; link.dataset.on = st.on ? '1' : ''; }

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Always allow for connector actions that only add something.** The approval card for adding a Todoist or Google task, a calendar event (Google or Outlook), a Notion page, a Google Doc, Sheet or Drive folder, or a Gmail or Outlook draft now has an **Always allow this action** button, per app and action. After that, that one action runs without a card (a small "Allowed automatically" step still shows in the chat). Sends, edits, appends, moves, copies, deletes, shares and uploads still ask every time, and so does any chat that has read a web page. Turn it off again with Ask again under the connector in Settings → Apps and connections.
+
 ## 0.5.76 (2026-10-26)
 
 - **An agent's window you bring up stays open for you.** Before, only a click or key in Claude Code's (or another agent's) window kept it once the agent was done; a window you were just reading closed about 20 seconds after its session ended. Now bringing it to the front (taskbar, the agent pill, Go to) makes it yours to keep, to read or type in.

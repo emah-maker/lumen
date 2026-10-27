@@ -9,6 +9,7 @@ const docEdit = lazy(() => require('./doc-edit'));
 const sendLib = lazy(() => require('../features/gmail-send')); // [connectors] Gmail sending's rules (typed permission, undo window, limits); loaded when a send is asked for
 const projectCtx = lazy(() => require('./project-context')); // [project workspace] the project_files tool's rules (a project's files and pinned pages); loaded when a project chat uses them
 const canvasPages = lazy(() => require('../features/connectors/canvas-pages')); // [connectors] Canvas read from its normal pages (the addresses, the course ids, the sign-in check)
+const connectorAlways = lazy(() => require('../features/connectors/always')); // [connectors] "Always allow" for actions that only add something (settings connectorAlways)
 const connectors = lazy(() => require('../features/connectors/registry')); // [connectors] the one `connector` tool for the services the user connected (features/connectors/); loaded on first use
 const { readPageText } = require('./page-text'); // the page text sent with a message, read without waiting for the load
 const frames = require('./frames'); // embedded frames (artifacts, embeds, widgets): read and acted on in their own isolated worlds
@@ -5859,15 +5860,21 @@ ${prompt}` : prompt), historyImages: [] };
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
+      const conAct = connectors.get(input.app)?.actions?.[input.action];
+      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good, until this chat reads a page
       let via = 'card';
       if (sending) {
         const verdict = sendLib.typedGrant({ typed: run?.chat?.typed || taskScope.getStore()?.chat?.typed || [], standing: (run?.chat || taskScope.getStore()?.chat)?.sendNoAsk === true, args: input.args, replyAddress: names?.replyAddress || '' });
         if (verdict.direct) { await this.sendUndoWindow(input, { emit, signal }); via = verdict.mode; }
       }
-      if (via === 'card') {
+      if (via === 'card' && always.skip) { // Always allowed: no card, but a step shows it
+        const id = `auto-allow-${++this.approvalSeq}`;
+        try { emit({ type: 'tool', id, name: 'auto_allowed', label: `Allowed automatically: ${title} (always allowed in Settings → Apps and connections)` }); emit({ type: 'tool_done', id, ok: true }); } catch { /* a closed view: the allow still stands */ }
+      } else if (via === 'card') {
         const warn = sending ? sendLib.warnings({ typed: (run?.chat || taskScope.getStore()?.chat)?.typed || [], args: input.args, replyAddress: names?.replyAddress || '', tainted: Boolean(holder?.tainted) }) : '';
-        const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: true, noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
+        const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: !always.offer, ...(always.offer ? { alwaysFor: { app: connectors.get(input.app)?.name || input.app, action: conAct.label } } : {}), noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
         if (!answer) throw new Error(sending ? 'The user cancelled, so the email was NOT sent. Ask them what to do instead.' : `The user did not allow that (${title}). Ask them what to do instead.`);
+        if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never after this chat read a page, never a send
         if (answer?.edits) { // the user changed the text on the card: that is what goes
           const next = connectors.applyEdits(input, answer.edits);
           if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);
@@ -6239,7 +6246,7 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks.
     if (action !== 'upload-pick' && action !== 'app' && !noBypass && this.bypassOn()) { // ('app': which program the AI may use is always the user's to answer, even with Bypass on)
@@ -6256,7 +6263,7 @@ ${out.text}${note}
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
       ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}), ...(detail ? { detail } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(alwaysFor ? { alwaysFor } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}), ...(detail ? { detail } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)
@@ -6292,7 +6299,7 @@ ${out.text}${note}
     const resolve = this.pendingApprovals.get(approvalId);
     if (!resolve) return;
     this.pendingApprovals.delete(approvalId);
-    resolve(ok === 'always' ? 'always' : ok && typeof ok === 'object' && ok.edits && typeof ok.edits === 'object' ? { edits: { ...ok.edits } } : Boolean(ok)); // 'always': an MCP tool card's "Always allow"; { edits }: a connector write's card, allowed with its text as the user left it
+    resolve(ok === 'always' ? 'always' : ok && typeof ok === 'object' && ok.edits && typeof ok.edits === 'object' ? { edits: { ...ok.edits }, ...(ok.always === true ? { always: true } : {}) } : Boolean(ok)); // 'always': an MCP tool card's "Always allow"; { edits }: a connector write's card, allowed with its text as the user left it
   }
 
   // ---- [uploads] upload_file (features/upload-files.js, docs/uploading-files.md)

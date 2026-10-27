@@ -8939,6 +8939,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     focusApp: () => focusWindow(),
   },
   mcp: mcpClient,
+  alwaysList: () => connectorAlwaysList(), // [connectors] Always allow for actions that only add something (features/connectors/always.js)
   openSignIn: connectorsOpen,
   // GitHub signed in once (the card's sign-in, features/github-auth.js) is one token for the card and this connector: it is read from the
   // card's encrypted secret each time, never copied into connectors.json. Disconnecting the connector signs the card out too.
@@ -8962,8 +8963,11 @@ const anyConnected = () => {
   }
   return connectedOnDisk;
 };
+const connectorAlwaysList = () => require('./features/connectors/always').cleanList(readSettings().connectorAlways) || [];
 const connectorsFacade = {
   hasAny: () => anyConnected(),
+  alwaysList: () => connectorAlwaysList(),
+  addAlways: (key) => { const cur = connectorAlwaysList(); if (!cur.includes(key) && require('./features/connectors/always').KEY.test(key)) writeSettings({ ...readSettings(), connectorAlways: [...cur, key].slice(0, 200) }); }, // (agent.js allowConnector: only from the card's Always, never in a tainted chat)
   defs: (opts) => (anyConnected() ? connectorsSvc().defs(opts) : []), // opts.readOnly: a background task or routine (no writes)
   isWrite: (input) => connectorsSvc().isWrite(input),
   describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
@@ -8981,6 +8985,7 @@ ipcMain.handle('connectors:allow-drafts', (_e, id) => connectorsSvc().allowDraft
 ipcMain.handle('connectors:set-sending', (_e, id, on) => connectorsSvc().setSending(String(id), on === true)); // Gmail: the Allow sending switch (Settings only; the AI can't turn it on)
 ipcMain.handle('connectors:send-log', () => connectorsSvc().sendLog()); // Settings' list of what the AI sent: time, to, subject
 ipcMain.handle('connectors:sync', (_e, id) => connectorsSvc().syncShared(String(id))); // a card's sign-in or token that the connector shares: make the connector match it
+ipcMain.handle('connectors:always-remove', (_e, key) => { const cur = connectorAlwaysList(); writeSettings({ ...readSettings(), connectorAlways: cur.filter((k) => k !== String(key)) }); return connectorsSvc().list(); }); // Settings → Apps and connections: "Ask again" for an action that was always allowed
 ipcMain.handle('connectors:set-paused', (_e, id, on) => connectorsSvc().setPaused(String(id), on === true)); // Apps and connections: "Let the AI use it" off keeps the sign-in (the new-tab card still works) and takes the connector away from the AI
 ipcMain.handle('connectors:sign-in', (_e, id) => {
   const url = connectorsSvc().signInUrl(String(id));
