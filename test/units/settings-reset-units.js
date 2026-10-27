@@ -15,7 +15,7 @@ const KEPT = [
   'tabSleepSoon', 'maxSteps', 'aiSubagents', 'actingHelpers', 'aiSubagentModel', 'maxChatRuns', 'autoModel', 'autoCompact', 'autoExclude', 'imageGen',
   'usageBars', 'aiGapLog', 'autoFallback', 'aiSignedInSites', 'aiSharedFiles', 'connectorAlways', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar', 'aiEffort',
   'featureCardNever', 'featureOffersSeen', 'telegramChannel', 'telegramFiles', 'telegramSignedIn', 'bypassBackground',
-  'aiDesktopControl', 'aiFilesInApps', 'aiWordControl', 'aiDesktopTerminals', 'aiDesktopApps', 'routineWebhooks', 'routineWebhookPort',
+  'aiDesktopControl', 'aiFilesInApps', 'aiWordControl', 'aiDesktopTerminals', 'aiDesktopApps', 'aiWordAlways', 'routineWebhooks', 'routineWebhookPort',
   'aiDeviceAccess', 'filesRemember', 'claudeCodeFullAccess', 'ccUserSettings', 'grokBuildFullAccess', 'codexSidebar', 'codexFullAccess',
   'antigravityFullAccess', 'grokTerminal', 'grokWarmup', 'grokKeepConnected', 'codexKeepConnected', 'grokKeepIdleMinutes', 'researchTabs',
   'groupAiTabs', 'hideAiTabs', 'agentsNoAsk', 'askBeforeActing', 'bypassPermissions', 'aiPreferFractions', 'aiInstructionsOn', 'aiInstructionsAbout',

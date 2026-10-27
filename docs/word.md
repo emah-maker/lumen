@@ -37,6 +37,7 @@ One tool, `word`, with these actions:
 
 - **Editing a document** asks once per document for the chat (**Allow**), with the document and the text shown.
 - **After the AI has read something from elsewhere** in the chat (a web page, an email, a connector, another document), every change asks again, with a warning: text it read could have been written to make it do that. Reading a file by path asks too.
+- **Always allow changes to this document** (on the edit cards of a saved document): the AI changes that document without a card in every chat, even after it read something from elsewhere; a step in the chat says "Allowed automatically". It is kept by the document's full path (`aiWordAlways`, `src/word/always.js`), only from a real click, and removed in Settings → AI → Privacy → Word documents the AI can change. A document that isn't saved yet never gets the button.
 - **Saving over a file, saving to a new path, creating a file** always asks, with the path shown, every time.
 - These cards are never answered by Bypass permissions or Auto-allow: they are yours to answer, like the cards for other apps.
 - **Hands-off mode** refuses everything that opens, changes or saves; listing and reading still work.

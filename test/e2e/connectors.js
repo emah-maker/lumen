@@ -198,6 +198,20 @@ async function main() {
     };
     const noEdit = await realClick(false);
     check('the card’s Always button: labelled, explains itself, ignores a scripted click, and a real click answers "always"', noEdit.btn.text === 'Always allow this action' && /Don.t ask again for Add a task in Todoist/.test(noEdit.btn.title) && /Settings/.test(noEdit.btn.title) && noEdit.scripted === 0 && noEdit.answers?.[0]?.[1] === 'always', JSON.stringify(noEdit));
+    // [word] an app card with its own Always ("Always allow changes to this document"): labelled, a real click only
+    await app.evaluate(() => { global.__answers = []; const a = global.__agent; a.__resolve = a.__resolve || a.resolveApproval; a.resolveApproval = (id, ok) => { global.__answers.push([id, ok]); }; });
+    const wordBtn = await ui.evaluate(() => {
+      showApproval(9103, 'The AI read content earlier in this chat. Allow it to change Report.docx?', { action: 'app', title: 'The AI read content earlier in this chat. Allow it to change Report.docx?', args: 'Document: Report.docx', detail: 'Allow only if you asked for it.', noAlways: false, allowLabel: 'Allow this change', alwaysLabel: 'Always allow changes to this document', alwaysTitle: 'Saving still asks.' });
+      const c = [...document.querySelectorAll('.approval-tool')].pop();
+      const b = c.querySelector('.approval-always');
+      b?.click(); // (a scripted click)
+      return { text: b?.textContent, title: b?.title, buttons: [...c.querySelectorAll('button')].map((x) => x.textContent) };
+    });
+    const wordScripted = await app.evaluate(() => global.__answers.length);
+    await ui.locator('.approval-tool').last().locator('.approval-always').click();
+    const wordAnswers = await waitFor(() => app.evaluate(() => (global.__answers.length ? global.__answers : null)));
+    await app.evaluate(() => { global.__agent.resolveApproval = global.__agent.__resolve; });
+    check('[word] the document card’s Always: its own label and hint, ignores a scripted click, a real click answers "always"', wordBtn.text === 'Always allow changes to this document' && wordBtn.title === 'Saving still asks.' && wordBtn.buttons.includes('Allow this change') && wordScripted === 0 && wordAnswers?.[0]?.[1] === 'always', JSON.stringify({ wordBtn, wordScripted, wordAnswers }));
     const withEdit = await realClick(true);
     check('with editable text, a real click on Always answers with the text and always', withEdit.scripted === 0 && withEdit.answers?.[0]?.[1]?.always === true && withEdit.answers[0][1].edits?.content === 'Buy milk', JSON.stringify(withEdit));
     const cardDom = await ui.evaluate(() => {

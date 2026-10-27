@@ -1585,7 +1585,7 @@ function resumeLive(live) {
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, helper: a.helper });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -1980,7 +1980,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, denyLabel: event.denyLabel, helper: event.helper });
+      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, alwaysLabel: event.alwaysLabel, alwaysTitle: event.alwaysTitle, denyLabel: event.denyLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -2633,11 +2633,11 @@ function showHelperCard(e) {
   if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, denyLabel, warn, note, fields, alwaysFor } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, alwaysLabel, alwaysTitle, denyLabel, warn, note, fields, alwaysFor } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, alwaysFor, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined }); // ([close guard] the AI closing a tab of the user's: its own sentence under the title)
-  if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No
+  if (action === 'app') return showToolApproval(approvalId, host, { title: openTitle, args, detail: cardDetail, noAlways, allowLabel, alwaysLabel, alwaysTitle, app: true }); // [desktop apps] Allow the AI to use <app>? Once / Always / No ([word] its own Always: "Always allow changes to this document")
   if (action === 'signin') return showSignInApproval(approvalId, host, { noAlways }); // [signed-in sites]
   if (action === 'file') return showFileApproval(approvalId, host, { title: openTitle }); // [screen context]
   // Grok Build asking to run a real terminal command (grok-build.js's PreToolUse gate): same card as
@@ -2743,7 +2743,7 @@ function showContentLossApproval(approvalId, host, { title: heading, detail: tex
 // would be sent. "Always allow" is per tool and isn't offered once the chat has read page content.
 // [connectors] A write in a connected service (note 'connector') with `fields`: where it goes, then its text in boxes the user can
 // edit; Allow sends what the boxes hold. Only a real click allows it (no Enter, no scripted click).
-function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, denyLabel, warn = '', app = false, note = '', fields = null, alwaysFor = null }) {
+function showToolApproval(approvalId, host, { title: heading, args, tainted, terminal = false, detail: ownDetail, noAlways = false, allowLabel, alwaysLabel = '', alwaysTitle = '', denyLabel, warn = '', app = false, note = '', fields = null, alwaysFor = null }) {
   const card = document.createElement('div');
   card.className = terminal ? 'approval approval-tool approval-terminal' : 'approval approval-tool';
   card.tabIndex = 0;
@@ -2774,7 +2774,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: denyLabel ? String(denyLabel) : t('approval.deny') });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
-  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : note === 'connector' ? t('approval.connector.always') : t('approval.tool.always'), title: app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : note === 'connector' ? t('approval.connector.always.title', { action: String(alwaysFor?.action || ''), app: String(alwaysFor?.app || '') }) : t('approval.tool.always.title') });
+  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: alwaysLabel ? String(alwaysLabel) : app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : note === 'connector' ? t('approval.connector.always') : t('approval.tool.always'), title: alwaysTitle ? String(alwaysTitle) : app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : note === 'connector' ? t('approval.connector.always.title', { action: String(alwaysFor?.action || ''), app: String(alwaysFor?.app || '') }) : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -2787,6 +2787,7 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
     : () => answer(true);
   if (always) always.onclick = note === 'connector'
     ? (e) => { if (e.isTrusted) answer(editing ? { edits: Object.fromEntries(boxes.map((b) => [b.key, b.box.value])), always: true } : 'always'); } // (a real click only, and the text as the user left it)
+    : alwaysLabel ? (e) => { if (e.isTrusted) answer('always'); } // ([word] "Always allow changes to this document" skips the card even after a page was read: a real click only)
     : () => answer('always');
   card.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target === card && note !== 'connector' && note !== 'close') { e.preventDefault(); answer(true); }

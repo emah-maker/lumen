@@ -9050,8 +9050,12 @@ ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsW
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
 // [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI → "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
+const wordAlways = () => require('./word/always').createWordAlways({ readSettings, writeSettings }); // (loaded on first use: not at startup)
+ipcMain.handle('settings:word-always', () => wordAlways().list());
+ipcMain.handle('settings:remove-word-always', (_e, key) => wordAlways().remove(String(key ?? '')));
+ipcMain.handle('settings:clear-word-always', () => wordAlways().clear());
 const wordLazy = () => (wordCtl ||= require('./word').createWord({
-  settings: { enabled: () => readSettings().aiWordControl !== false, filesInApps: () => readSettings().aiFilesInApps }, // (aiFilesInApps: app | auto | file)
+  settings: { enabled: () => readSettings().aiWordControl !== false, filesInApps: () => readSettings().aiFilesInApps, always: () => wordAlways().list(), addAlways: (key, name) => wordAlways().add(key, name) }, // (aiFilesInApps: app | auto | file; always: the documents whose changes never ask, src/word/always.js)
   checkFile: (p) => require('./features/device-access').checkedPath(p, 'file', { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }), // the AI's file rules: no credentials folders, no Lumen profile
   checkTarget: (p) => { const why = require('./features/device-access').blockedReason(p, { profile: app.getPath('userData'), home: TEST ? global.__homeDir : undefined }); if (why) throw new Error(why); },
   live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false), dpr: () => { try { return require('electron').screen?.getPrimaryDisplay?.().scaleFactor || 1; } catch { return 1; } } }, // the card's live picture of Word's window (word/card.js), the desktop card's own pacing
