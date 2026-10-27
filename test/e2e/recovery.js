@@ -54,6 +54,18 @@ const os = require('os');
   await app.evaluate(() => global.__agent.browser.activeTab().webContents.executeJavaScript("document.getElementById('retry').click()"));
   check('Reload brings the page back', await waitFor(async () => (await rawUrl()) === `${base}/crash`), await rawUrl());
 
+  // ---- [exit log] a process that dies is on record: a line in main-errors.log, and a real crash writes a crash report on this computer
+  const diag = path.join(profile, 'diagnostics');
+  const errLog = () => { try { return fs.readFileSync(path.join(diag, 'main-errors.log'), 'utf8'); } catch { return ''; } };
+  check('crash reports go to the diagnostics folder of the profile', (await app.evaluate(({ app: a }) => a.getPath('crashDumps'))) === path.join(diag, 'crashes'), await app.evaluate(({ app: a }) => a.getPath('crashDumps')));
+  check('the process of the crashed tab is logged in main-errors.log', await waitFor(async () => /\tpage-process-gone\trenderer \w+, exit/.test(errLog())), errLog().slice(-400));
+  const dumpCount = () => { const n = []; const walk = (d) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const e of es) { if (e.isDirectory()) walk(path.join(d, e.name)); else if (e.name.endsWith('.dmp')) n.push(e.name); } }; walk(path.join(diag, 'crashes')); return n.length; };
+  const dumpsBefore = dumpCount();
+  await open(`${base}/real-crash`);
+  await app.evaluate(async () => { const wc = global.__agent.browser.activeTab().webContents; if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); wc.debugger.sendCommand('Page.crash').catch(() => {}); });
+  check('a page that really crashes writes a crash report', await waitFor(async () => dumpCount() > dumpsBefore, 15000), `${dumpsBefore} -> ${dumpCount()}`);
+  check('it is logged as a crash', await waitFor(async () => /\tpage-process-gone\trenderer crashed, exit/.test(errLog())), errLog().slice(-400));
+
   // ---- a frozen tab still closes
   const frozenId = await open(`${base}/frozen`);
   await app.evaluate(() => {

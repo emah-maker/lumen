@@ -35,10 +35,12 @@ function createCrashRecovery(deps) {
   const file = () => (typeof deps.file === 'function' ? deps.file() : deps.file);
   let crashed = false;
   let kept = null; // the last run's session, kept aside until the offer is answered
+  let lastStart = null; // when the run that left the marker began (the marker's time): features/exit-log.js lastRunEnd
 
   // At start-up, before any window saves a session: was the marker left behind? Then write it for this run.
   function begin({ mode }) {
     try { crashed = fs.existsSync(file()); } catch { crashed = false; }
+    try { lastStart = crashed ? fs.statSync(file()).mtimeMs : null; } catch { lastStart = null; }
     const saved = deps.readSettings().session;
     if (decide({ crashed, mode, saved }).offer) kept = JSON.parse(JSON.stringify(saved));
     try { fs.writeFileSync(file(), String(process.pid)); } catch (err) { console.error('[lumen] could not write the crash marker:', err.message); }
@@ -57,7 +59,7 @@ function createCrashRecovery(deps) {
     return saved ? { saved, tabs: tabCount(saved) } : null;
   }
 
-  return { begin, end, take, crashed: () => crashed, pending: () => Boolean(kept) };
+  return { begin, end, take, crashed: () => crashed, lastStart: () => lastStart, pending: () => Boolean(kept) };
 }
 
 module.exports = { createCrashRecovery, decide, tabCount };

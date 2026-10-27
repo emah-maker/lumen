@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **When Lumen closes by itself, it now leaves a record of why.** Before, a crash of Lumen's own process wrote nothing, and a page, GPU or helper process that died was logged only for the chat page, so "it just closed" could not be traced. Now crash reports are kept in diagnostics/crashes (on this computer only, never uploaded; the newest 10 are kept), every process that ends other than cleanly gets a line in diagnostics/main-errors.log (for example `GPU crashed, exit 34` after a graphics-driver reset), and the next start after a run that never quit logs how it ended: the computer restarted under it (power loss, a Windows crash), Lumen crashed (a crash report was written), or it was ended from outside (`features/exit-log.js`; tests in `test/units/exit-log-units.js` and `test/e2e/recovery.js`).
+
 ## 0.5.78 (2026-10-27)
 
 - **Word: Always allow changes to a document.** The card that asks before the AI changes a Word document (also the one after it read a page, an email or a connector) now has **Always allow changes to this document**. That saved document is then changed without a card in every chat; a step says “Allowed automatically”. Saving to disk still asks every time, a document that isn’t saved yet never gets the button, and Settings → AI → Privacy → **Word documents the AI can change** lists each one with Remove (`aiWordAlways`).
