@@ -331,6 +331,22 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const e2 = [];
     card2.use({ signal: {}, emit: (e) => e2.push(e) }, doc, 'Reading Report.docx');
     check('card: Show in Word brings the card\'s document forward by its path (an unknown card id does nothing)', (await card2.open(e2[0].id)) === true && frames.some((a) => Array.isArray(a) && a[0] === 'show' && a[1].doc === doc.path) && (await card2.open('word-999')) === false);
+    // the card never shows just the document's name: before any picture, change or read, the document's own paragraphs where the AI is
+    const cardFirst = createWordCard({ host, live: null });
+    const eFirst = [];
+    const ctxFirst = { signal: {}, emit: (e) => eFirst.push(e) };
+    cardFirst.use(ctxFirst, doc, 'Writing in Report.docx');
+    await sleep(20);
+    const first = eFirst[eFirst.length - 1];
+    check('card: the first action shows the document at once (its paragraphs as the page), not just its name', eFirst.length === 2 && first.page?.lines?.length === 2 && first.page.lines[0].t === 'Report' && first.status === 'working', J(eFirst).slice(0, 300));
+    cardFirst.use(ctxFirst, doc, 'Writing in Report.docx');
+    await sleep(20);
+    check('card: and only once (a card that has a page does not ask again)', eFirst.length === 3, String(eFirst.length));
+    const cardBusy = createWordCard({ host: { ...host, peek: async () => { throw new Error('Word is busy'); } }, live: null });
+    const eBusy = [];
+    cardBusy.use({ signal: {}, emit: (e) => eBusy.push(e) }, doc, 'Writing in Report.docx');
+    await sleep(20);
+    check('card: a page that cannot be read leaves the card as it was (no error)', eBusy.length === 1);
     // a read: the card shows the page lines being read (no window picture), and "Show in Word" goes to where it read until something is changed
     const card4 = createWordCard({ host, live: null });
     const e4 = [];

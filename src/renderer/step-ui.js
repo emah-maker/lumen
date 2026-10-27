@@ -208,16 +208,16 @@
   }
   function refreshCard(turn, card) {
     const state = stateOf(turn, card);
-    if (card.el.dataset.state !== state || ((card.hadBrowser || card.app) && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on)
+    if (card.el.dataset.state !== state || (card.app && !card.hbApp) || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on; one that moved from a page to a program, too)
       card.el.dataset.state = state;
-      if (card.app) { card.hb = true; // (a program's window: its live picture runs only while a card is on screen)
+      if (card.app) { card.hb = true; card.hbApp = true; // (a program's window: its live picture runs only while a card is on screen)
         if (state === 'working' || state === 'approval') watch(card.el); else unwatch(card.el); } // (a card on screen keeps its thumbnail refreshing; one that finished does not)
       else if (card.hadBrowser) { card.hb = true; reportVisible(true); } // a browser card draws no picture of its tab (the page itself is the preview): main is told no card wants frames
     }
     const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.surface === 'tool' ? 'tool' : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
     card.helperLabel = state === 'helper' ? helperLabelOf(turn) : '';
-    const task = card.task || card.first;
+    const task = card.task || wordStep(card, card.first); // (a Word card: what it does, its document is in the chip)
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
     if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
     const steps = tr(card.count === 1 ? 'card.steps.one' : 'card.steps.other', { count: card.count });
@@ -311,8 +311,20 @@
     const title = card.surface === 'browser' && card.navigated ? String(card.tab?.title || '').trim() : '';
     return title ? tr('card.status.opened', { title: clip(title, 70) }) : '';
   }
+  // A Word card names its document in the chip under the title, so its status line says what is being done there, not the name again
+  // ("Writing in Report.docx: adding a table of 3 rows" -> "Adding a table of 3 rows"; "Formatting Report.docx: “x” as Heading 1" -> "Formatting “x” as Heading 1").
+  function wordStep(card, step) {
+    const doc = card.word?.doc;
+    if (!step || !doc || !(card.wordWork && !card.otherApp)) return step;
+    const at = step.indexOf(`${doc}: `);
+    if (at <= 0) return step;
+    const verb = step.slice(0, at).replace(/\s+in\s*$/, '').trim();
+    const rest = step.slice(at + doc.length + 2).trim();
+    if (!rest) return step;
+    return verb === 'Writing' ? rest.charAt(0).toUpperCase() + rest.slice(1) : `${verb} ${rest}`;
+  }
   function statusFor(card, state) {
-    const step = trimStep(card.latest);
+    const step = wordStep(card, trimStep(card.latest));
     if (state === 'stopped') return tr('card.status.stopped');
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
     if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
@@ -320,7 +332,7 @@
     if (state === 'helper') { const own = step && step !== card.stepAtHelper ? step.replace(/^Helper · /, '') : ''; // (the step that started the helper says nothing about what it does now)
       const what = own || card.helperLabel; return what ? tr('card.status.helper', { step: what }) : tr('card.status.helperIdle'); }
     if (!step) return tr('card.status.starting');
-    const site = card.surface === 'browser' && card.siteMode ? '' : siteOf(card);
+    const site = (card.surface === 'browser' && card.siteMode) || (card.wordWork && !card.otherApp) ? '' : siteOf(card); // (a Word card's title already says Word)
     return site && !step.toLowerCase().includes(site.toLowerCase()) ? tr('card.status.workingOn', { step, site }) : tr('card.status.working', { step });
   }
   function statusBar(card, state) {

@@ -80,7 +80,9 @@
 .act-pg-li { padding-left: 16px; position: relative; }
 .act-pg-li::before { content: '\2022'; position: absolute; left: 5px; }
 .act-pg-tr { font: 10.5px/1.35 var(--font, system-ui, sans-serif); border: 1px solid var(--border); background: color-mix(in srgb, var(--border) 18%, transparent); }
-.act-pg.hl { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); }
+.act-pg.hl { background: var(--accent-soft); box-shadow: inset 2px 0 0 var(--accent); animation: act-pg-in 900ms ease-out; } /* a change just made: it glows in, so a new edit is seen as it lands */
+@keyframes act-pg-in { from { background: color-mix(in srgb, var(--accent) 38%, transparent); } to { background: var(--accent-soft); } }
+@media (prefers-reduced-motion: reduce) { .act-pg.hl { animation: none; } }
 .act-wordchip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 8px 2px 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface, transparent); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .act-wordchip:hover { background: var(--accent-soft); }
 .act-wordchip svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }

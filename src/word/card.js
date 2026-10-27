@@ -93,7 +93,22 @@ function createWordCard(deps = {}) {
     if (com) { startLive(s); s.live?.kick({ fresh: Boolean(moved) }); } else if (s.live) { s.live.stop(); s.live = null; s.thumb = null; }
     s.com = com;
     emitFor(s, 'working');
+    if (com && !s.thumb && !s.page) firstPage(s);
     return s;
+  }
+
+  // A card with nothing to show yet (no picture of Word's window, no change, no read): the document's own paragraphs where the AI is, at once,
+  // so the card never shows just the document's name. A picture or a change that comes first wins.
+  async function firstPage(s) {
+    if (s.peeking || !deps.host?.peek) return;
+    s.peeking = true;
+    try {
+      const p = await deps.host.peek({ doc: s.doc?.path || s.doc?.name });
+      if (!s.ended && !s.thumb && !s.page && Array.isArray(p?.lines) && p.lines.length) {
+        s.page = { doc: p.doc || s.doc?.name || '', lines: p.lines.map((l) => ({ k: String(l.k || 'p'), t: String(l.t ?? ''), hl: l.hl === true })) };
+        emitFor(s, 'working');
+      }
+    } catch { /* the page preview is a courtesy */ } finally { s.peeking = false; }
   }
 
   // A change was made: the page around it, unless Word's own window is being shown right now.

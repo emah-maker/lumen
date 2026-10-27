@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The Word card shows the document changing, not just its name.** A run that opened a web page first (Drive, NUworks) and then worked in Word never told Lumen its card was on screen, so Word's live picture never ran; it does now. Until the first picture or change arrives, the card shows the document's own paragraphs instead of only its name, and each change glows in on the page preview. The status line says what is being done (“Replacing 2 bullets under “Experience””) instead of repeating the document name the chip already shows.
+
 - **Bypass permissions now answers the Word and other-app cards.** With Bypass on, the cards that asked before the AI reads a Word document after reading something else, changes it, saves it, or uses another program are allowed for you, each with an “Allowed” step in the chat, like every other card. The file picker still waits for you, and connector writes (sending an email, uploading to Drive) and memory saves still ask.
 - **Word: Always allow reading a document.** The card that asks to read a saved Word document after the AI read a page or an email now has **Always allow reading this document**. The AI then reads it without a card in every chat; changes still ask. Settings → AI → Privacy → **Word documents the AI can read or change** shows each one as Reading or Reading and changes.
 
