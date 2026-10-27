@@ -81,7 +81,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     let msg2;
     try { new Agent({ handsOff: () => true }).handsOffCheck('word', { action: 'read' }); msg2 = null; } catch (e) { msg2 = e.message; }
     check('hands-off: insert is refused with the reason, read goes through', /Hands-off mode/.test(msg) && msg2 === null, J([msg, msg2]));
-    check('approval: Word cards are "app" cards, which Bypass permissions never answers', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: true/.test(ag) && /action !== 'app' && !noBypass && this\.bypassOn\(\)/.test(ag));
+    check('approval: Word cards are "app" cards, which Bypass permissions never answers (Always only where src/word offers it)', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: card\.noAlways !== false/.test(ag) && /action !== 'app' && !noBypass && this\.bypassOn\(\)/.test(ag));
     check('hands: the tool is refused for outside agents and background runs (nobody to ask)', /gate\.external \|\| gate\.noAsk\) throw new Error\('Using Word needs the user/.test(ag));
     check('plan mode: only list and read run while planning', planMode.planToolError('word', { action: 'read' }) === null && planMode.planToolError('word', { action: 'list' }) === null && planMode.planToolError('word', { action: 'insert' }) !== null && planMode.planToolError('word', { action: 'save_as' }) !== null);
     check('step label: the agent describes a Word step in words', await agent.describeStep('word', { action: 'insert', doc: 'Report.docx', at: 'after', heading: 'Results', text: 'a\nb\nc' }) === 'Writing in Report.docx: adding 3 paragraphs after “Results”');
@@ -100,7 +100,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   }
 
   // ---- the controller with a fake COM host
-  const makeRig = ({ enabled = true, platform = 'win32', docs, installed = true, tainted = false, once = new Set(), answers = [], mode, openAdds = false } = {}) => {
+  const makeRig = ({ enabled = true, platform = 'win32', docs, installed = true, tainted = false, once = new Set(), answers = [], mode, openAdds = false, alwaysDocs = null } = {}) => {
     const store = { docs: docs || [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: false, paragraphs: 12, text: 'Intro\nResults\nbody' }], calls: [], cards: [], opened: [] };
     const host = {
       installed: () => installed,
@@ -127,7 +127,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       ask: async (card) => { store.cards.push(card); return queue.length ? queue.shift() : true; },
     };
     const files = { exists: new Set() };
-    const word = createWord({ settings: { enabled: () => state.enabled, filesInApps: () => mode }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
+    const word = createWord({ settings: { enabled: () => state.enabled, filesInApps: () => mode, ...(alwaysDocs ? { always: () => alwaysDocs, addAlways: (key, name) => alwaysDocs.push({ key, name, added: 1 }) } : {}) }, host, platform, fs: { ...fs, existsSync: (p) => files.exists.has(p) || fs.existsSync(p) }, checkFile: (p) => p, checkTarget: () => {} });
     return { word, store, ctx, state, once, files };
   };
 
@@ -175,6 +175,34 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const rr = makeRig({ tainted: true });
     await rr.word.run({ action: 'read' }, rr.ctx);
     check('taint: reading while tainted asks once too', rr.store.cards.length === 1 && /Allow it to read Report.docx/.test(rr.store.cards[0].title));
+  }
+
+  {
+    // "Always allow changes to this document": offered on the edit cards of a saved document, kept by its path, then no card in any chat
+    const kept = [];
+    const r = makeRig({ tainted: true, alwaysDocs: kept, answers: ['always'] });
+    const steps = [];
+    r.ctx.emit = (e) => steps.push(e);
+    await r.word.run({ action: 'insert', text: 'x' }, r.ctx);
+    const c = r.store.cards[0];
+    check('always: the tainted edit card of a saved document offers "Always allow changes to this document"', c && c.noAlways === false && c.alwaysLabel === 'Always allow changes to this document' && /Saving still asks/.test(c.alwaysTitle) && c.allowLabel === 'Allow this change', J(c));
+    check('always: choosing it keeps the document by its full path', kept.length === 1 && kept[0].key === `c:${B}docs${B}report.docx` && kept[0].name === 'Report.docx', J(kept));
+    await r.word.run({ action: 'insert', text: 'y' }, r.ctx);
+    await r.word.run({ action: 'replace', find: 'a', replace: 'b' }, r.ctx);
+    check('always: later edits, still after reading a page, ask nothing and go through', r.store.cards.length === 1 && r.store.calls.filter((x) => x[0] === 'insert').length === 2 && r.store.calls.some((x) => x[0] === 'replace'), J(r.store.cards.map((x) => x.title)));
+    check('always: the chat shows one "Allowed automatically" step for it', steps.filter((e) => e.type === 'tool' && /Allowed automatically: changes to Report.docx/.test(e.label)).length === 1, J(steps));
+    const other = makeRig({ alwaysDocs: kept });
+    await other.word.run({ action: 'insert', text: 'z' }, other.ctx);
+    check('always: a new chat edits it without a card too', other.store.cards.length === 0 && other.store.calls.some((x) => x[0] === 'insert'));
+    await other.word.run({ action: 'save' }, other.ctx).catch(() => {});
+    check('always: saving still asks', other.store.cards.length === 1 && /save/i.test(J(other.store.cards[0])), J(other.store.cards));
+    const once = makeRig({ tainted: true, alwaysDocs: [], answers: [true, true] });
+    await once.word.run({ action: 'insert', text: 'x' }, once.ctx);
+    await once.word.run({ action: 'insert', text: 'y' }, once.ctx);
+    check('always: "Allow this change" still covers one change only', once.store.cards.length === 2);
+    const unsaved = makeRig({ tainted: true, alwaysDocs: [], docs: [{ name: 'Document1', path: '', active: true, saved: false, tracking: false, paragraphs: 1, text: 'x' }] });
+    await unsaved.word.run({ action: 'insert', text: 'x' }, unsaved.ctx);
+    check('always: never offered for a document that isn’t saved (no path to keep it by)', unsaved.store.cards[0]?.noAlways === true && !unsaved.store.cards[0]?.alwaysLabel, J(unsaved.store.cards));
   }
 
   {

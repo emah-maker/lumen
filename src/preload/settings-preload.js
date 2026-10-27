@@ -229,6 +229,9 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       desktopApps: call('settings:desktop-apps'), // [desktop apps]
       removeDesktopApp: call('settings:remove-desktop-app'),
       clearDesktopApps: call('settings:clear-desktop-apps'),
+      wordAlways: call('settings:word-always'), // [word]
+      removeWordAlways: call('settings:remove-word-always'),
+      clearWordAlways: call('settings:clear-word-always'),
       aiGaps: call('settings:ai-gaps'), // [no handoff]
       clearAiGaps: call('settings:clear-ai-gaps'),
       sharedFiles: call('settings:shared-files'), // [screen context]

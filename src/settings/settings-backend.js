@@ -184,6 +184,7 @@ const DEFAULTS = {
   aiFilesInApps: 'auto', // [ai] app: the AI opens a file in the app that owns it (Word, Excel, PowerPoint...) and reads and edits it there; auto: it chooses; file: it reads and edits the file's own data and does not open apps (agent.js filesInApps, src/word/)
   aiWordControl: true, // [ai] the AI may work with Microsoft Word documents directly (src/word/): Word's own automation on Windows, .docx files without Word; every edit and save still asks first, and nothing starts until the AI first uses it
   aiDesktopTerminals: false, // [ai] ...and may also use terminals (cmd, PowerShell, Windows Terminal), which can run anything; off by default even with the switch above on
+  aiWordAlways: [], // [word] saved documents whose changes the AI makes without asking: [{ key, name, added }] (src/word/always.js clean); added only from the edit card (Always)
   aiDesktopApps: [], // [ai] programs the AI may always use: [{ app, name, added }] (src/desktop/policy.js clean); added only from its approval card (Always)
   routineWebhooks: false, // [routines] routine web links: a listener on 127.0.0.1 that starts a routine on POST /routines/<id>/run with its key (features/routine-webhooks.js)
   routineWebhookPort: 47821, // [routines] the port it listens on (1024-65535)
@@ -340,6 +341,7 @@ function validate(key, value) {
       return Array.isArray(value) ? value.map((u) => String(u).trim()).filter(webUrl).slice(0, 20) : null;
     case 'aiSharedFiles': return require('../features/shared-files').clean(value);
     case 'aiDesktopApps': return require('../desktop/policy').clean(value);
+    case 'aiWordAlways': return require('../word/always').clean(value);
     case 'aiSignedInSites': return require('../features/signed-in-sites').clean(value); // no sensitive hosts, valid hosts only
     case 'translateNever': return translate.cleanHosts(value);
     case 'translateConsent': return translate.cleanConsent(value);
@@ -966,6 +968,7 @@ function create(deps) {
     if (key === 'connectorAlways') throw new Error('An action is always allowed from its approval card and removed in Settings → Apps and connections'); // [connectors]
     if (key === 'featureOffersSeen') throw new Error('Lumen records the offers itself'); // [offers]
     if (key === 'aiSharedFiles') throw new Error('Shared files are added from the AI\'s approval card and removed with settings:remove-shared-file'); // [screen context]
+    if (key === 'aiWordAlways') throw new Error('A document is added from the AI’s edit card and removed with settings:remove-word-always'); // [word]
     if (key === 'aiDesktopApps') throw new Error('Apps are added from the AI\'s approval card and removed with settings:remove-desktop-app'); // [desktop apps]
     if (key === 'aiSignedInSites') throw new Error('Signed-in sites are added from the AI\'s approval card and removed with settings:remove-signed-in-site'); // [signed-in sites]
     const valid = validate(key, value);

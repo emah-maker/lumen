@@ -6264,7 +6264,7 @@ ${out.text}${note}
     emit(action === 'upload' || action === 'upload-pick' // [uploads] the files and field the card is about (see uploadFile)
       ? { type: 'approval', approvalId, host, action, title, upload }
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
-      ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel }
+      ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel, ...(upload?.alwaysLabel ? { alwaysLabel: upload.alwaysLabel, alwaysTitle: upload.alwaysTitle || '' } : {}) }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
       ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(alwaysFor ? { alwaysFor } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}), ...(detail ? { detail } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
@@ -6712,7 +6712,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
       emit: gate.emit, signal: gate.signal,
       tainted: () => { const h = taintHolder(gate.run); return Boolean(h?.tainted && !h.appOnly); }, // read a page, an email or a connector's answer: edits ask every time (document text is tracked per document, in src/word)
       once: { has: (key) => hosts.has(`app:${key}`), add: (key) => hosts.add(`app:${key}`) }, // Once: for this chat (the chat's approved set; never saved)
-      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: true, upload: { detail: card.detail, allowLabel: card.allowLabel } }), // ('app' cards are the user's to answer even with Bypass on)
+      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } }), // ('app' cards are the user's to answer even with Bypass on; Always only where src/word offers it: one saved document's changes)
     };
     return this.wordCtl().run(input, ctx);
   }
