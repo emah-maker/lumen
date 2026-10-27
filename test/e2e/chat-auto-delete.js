@@ -14,7 +14,8 @@ const DAY = 24 * 3600 * 1000;
 (async () => {
   let failures = 0;
   const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 400)}`}`); };
-  const profile = process.env.CLAUDE_BROWSER_PROFILE && process.env.CLAUDE_BROWSER_PROFILE !== '' ? fs.mkdtempSync(path.join(process.env.CLAUDE_BROWSER_PROFILE, 'autodelete-')) : fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-autodelete-'));
+  // The release runner names a profile folder it has not made yet.
+  const profile = process.env.CLAUDE_BROWSER_PROFILE && process.env.CLAUDE_BROWSER_PROFILE !== '' ? (fs.mkdirSync(process.env.CLAUDE_BROWSER_PROFILE, { recursive: true }), fs.mkdtempSync(path.join(process.env.CLAUDE_BROWSER_PROFILE, 'autodelete-'))) : fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-autodelete-'));
   const app = await electron.launch({
     args: [path.join(__dirname, '..', '..')],
     env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1' },
