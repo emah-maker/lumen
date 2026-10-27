@@ -217,7 +217,8 @@
     const kind = card.surface === 'browser' || card.surface === 'web' ? 'browser' : card.surface === 'app' ? (card.wordWork && !card.otherApp ? 'word' : 'terminal') : card.surface === 'tool' ? 'tool' : card.shellKind; // (Word work, alone, is a Word card) // the step being done: Browser, Computer (a command or a program), Files changed (a file written)
     if (card.icon.dataset.k !== kind) { card.icon.dataset.k = kind; card.icon.innerHTML = ICONS[kind]; card.title.textContent = tr(`card.${kind}`); }
     card.helperLabel = state === 'helper' ? helperLabelOf(turn) : '';
-    const task = card.task || wordStep(card, card.first); // (a Word card: what it does, its document is in the chip)
+    const wordOnly = card.wordWork && !card.otherApp && card.surface === 'app';
+    const task = card.task || (wordOnly ? '' : card.first); // (a Word card without the user's task: just its state; the step being done is in the status bar, its document in the chip, never said twice)
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
     if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
     const steps = tr(card.count === 1 ? 'card.steps.one' : 'card.steps.other', { count: card.count });
@@ -226,7 +227,7 @@
     // The button: a browser card opens its tab once it has one; a file card opens its file.
     let label = '';
     if (card.surface === 'browser' && card.tab && !card.siteMode) label = tr(card.shot.dataset.tabClosed ? 'card.reopenPage' : 'card.openPreview');
-    else if (card.surface === 'app' && card.app) label = tr('desktopcard.open');
+    else if (card.surface === 'app' && card.app) label = tr(card.wordWork && !card.otherApp ? 'wordcard.show' : 'desktopcard.open'); // (a Word card says where it goes)
     // (a files card has no button: each file in it is a link that opens it)
     card.btn.hidden = !label;
     const where = card.surface === 'app' && card.app ? (card.wordWork && !card.otherApp ? tr('card.word') : card.app.name || tr('desktopcard.app')) : ''; // (the program a click goes to)
@@ -316,6 +317,9 @@
   function wordStep(card, step) {
     const doc = card.word?.doc;
     if (!step || !doc || !(card.wordWork && !card.otherApp)) return step;
+    if (step === `Reading ${doc}` || step === `Saving ${doc}`) return `${step.slice(0, step.indexOf(' '))} the document`; // ("Reading the document")
+    if (step.startsWith(`Commenting in ${doc} `)) return `Commenting ${step.slice(`Commenting in ${doc} `.length)}`; // ("Commenting on “x”")
+    if (step.endsWith(` tracked changes in ${doc}`)) return step.slice(0, -(` in ${doc}`).length); // ("Turning on tracked changes")
     const at = step.indexOf(`${doc}: `);
     if (at <= 0) return step;
     const verb = step.slice(0, at).replace(/\s+in\s*$/, '').trim();
