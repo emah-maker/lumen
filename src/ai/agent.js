@@ -116,10 +116,10 @@ Answer style (the user turned on short, focused answers; follow this for every r
 - Keep any warning, cost, deadline or condition. After acting, say what changed or failed. Errors: cause, then fix.
 - Ambiguous: answer the likeliest reading; ask only if readings lead to different actions. At most one extra final line, never an offer. Requested detail overrides them.`;
 
-// Settings → AI → Prefer fractions (only when on): exact values as stacked LaTeX fractions (renderer/markdown.js also stacks a plain 3/4).
+// Settings → AI → Prefer fractions (only when on): exact values and algebraic fractions as stacked LaTeX (renderer/markdown.js also stacks a plain 3/4 and 2/(s−1)).
 const FRACTIONS_STYLE = `
 
-Fractions: exact values as LaTeX, $\\frac{4}{3}$, never 4/3 or 1.333; keep √, π; a decimal only in parentheses: (≈ 1.33). Measured data stays; a result near a simple ratio is ≈ that fraction; requested decimals stay.`;
+Fractions: exact values as LaTeX, $\\frac{4}{3}$, algebra too: $\\frac{2}{s-1}$, never 4/3 or 1.333; keep √, π; decimals only in parentheses. Measured data stays; near a simple ratio, ≈ it; requested decimals stay.`;
 
 const SYSTEM = `You are Claude, the assistant built into a web browser. You sit in a sidebar beside the user's tab and operate their browser with tools.
 

@@ -83,6 +83,17 @@ same('a subtraction before it', 'a-3/4');
 same('divide by zero', '1/0');
 becomes('after a code block it works again', '```\n3/4\n```\nthen 3/4', '```\n3/4\n```\nthen {frac{3}{4}}');
 becomes('two on one line, one in code', '`1/2` and 1/2', '`1/2` and {frac{1}{2}}');
+// algebraic fractions with a bracketed side (a Laplace answer the model wrote inline)
+becomes('a number over a bracket: 2/(s−1)', 'Y = 2/(s−1) + 1', 'Y = {frac{2}{s-1}} + 1');
+becomes('a term over a product of brackets, with a square', '6s/((s−1)(s²+1))', '{frac{6s}{(s-1)(s^{2}+1)}}');
+becomes('a bracket over a bracket, minus signs kept', '= 3/(s−1) + (−3s + 3)/(s²+1)', '= {frac{3}{s-1}} + {frac{-3s + 3}{s^{2}+1}}');
+becomes('a subtraction between two stays a subtraction', 'Y = 5/(s−1) − 3s/(s²+1)', 'Y = {frac{5}{s-1}} − {frac{3s}{s^{2}+1}}');
+becomes('a bracket over a term', '(x+1)/x', '{frac{x+1}{x}}');
+same('words with a slash', 'and/or, w/o, km/h');
+same('a path with a bracket', 'path a/b/(c)');
+same('in code', '`2/(s-1)`');
+same('a date beside a bracket', 'on 10/19 (Monday)');
+check('prompt: names algebraic fractions too', on.includes(`algebra too: $${B}frac{2}{s-1}$`));
 // existing math is untouched (liftMath ran first): its token is protected
 const rendered = md.render('Is $x = 3/4$ and 5/6?', { fractions: true });
 check('render: math the model wrote is not converted twice, the plain one is', (rendered.match(/data-tex="[^"]*"/g) || []).length >= 1 && /frac\{5\}\{6\}/.test(rendered) && /3\/4/.test(rendered), rendered);
