@@ -100,6 +100,8 @@ const v = document.getElementById('v'); v.srcObject = c.captureStream(10); v.pla
   check('list_tabs leaves the source tab out', !String(listed).includes('source.html') && !String(listed).includes('view-source'), listed);
   const sourcePageUrl = await tabUrl(sourceView);
   const allUrls = async () => (await Promise.all((await ids()).map(tabUrl))).join('\n');
+  // (a tab still loading would change its URL on its own and fail the checks below: wait for every tab to settle first)
+  await waitFor(() => app.evaluate(() => global.__tabsArray().every((t) => !global.__pageTools.tab(t.id)?.view.webContents.isLoading())));
   const urlsBefore = await allUrls();
   const navigated = await app.evaluate((_e, u) => global.__agent.execute('navigate', { url: u }).then(String, (e) => `threw: ${e.message}`), sourcePageUrl);
   check('the AI can\'t navigate to the source page', (await allUrls()) === urlsBefore, navigated);
