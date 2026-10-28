@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.80 (2026-10-28)
+
 - **Open with Lumen works again after Lumen moved.** Windows keeps the exe you picked in Open with and never updates it. Lumen moved from Program Files to its per-user folder, so Open with → Lumen (and double-clicking a .pptx you set to open in Lumen) started a Lumen.exe that no longer existed, and Windows dropped Lumen as that file type's default. At startup the installed Lumen now points that entry at itself when it names a Lumen.exe that is gone.
 
 - **Every AI can do what a Claude Code chat can.** Codex, Grok Build and Antigravity now get your saved skills and the tools of the MCP servers you added in Settings → AI, as the API models do (each call still asks first). `/compact` works on Codex, Grok Build and Antigravity: the same AI summarizes the earlier part of the chat instead of saying it can't. Antigravity can now see pictures you attach, and read a very long message, without full access: before, its own safety hook blocked it from opening them. What only some AIs can do (plan mode, background tasks) is listed in [docs/ai-engines.md](docs/ai-engines.md).

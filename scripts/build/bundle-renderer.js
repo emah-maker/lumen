@@ -23,7 +23,8 @@ function stripCssComments(css) {
     if (c === '/' && css[i + 1] === '*') { const end = css.indexOf('*/', i + 2); i = end === -1 ? css.length : end + 1; continue; }
     out += c;
   }
-  return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  // (indentation and blank lines go too: CSS has no line numbers to keep, unlike the scripts below)
+  return out.replace(/[ \t]+\n/g, '\n').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
 }
 
 // The scripts' comments are left out of ui.bundle.js and settings.bundle.js too (the source is comment-heavy: about 190 KB the window would
