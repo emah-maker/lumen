@@ -351,7 +351,12 @@ async function connectorRuns(check) {
   check('gmail settings: Save keeps the count and snippets choice and the sign-in, with the default size (4 wide, capped to the 3-column side area)', listed.count === 5 && listed.snippets === false && listed.w === 3 && listed.h === 4 && OA.decodeCreds(secrets.gmail).refresh === 'REFRESH-TOKEN-2', `${listed.w}x${listed.h}`);
   check('gmail settings: the widget in settings.json holds the Client ID only', !/GOCSPX|REFRESH-TOKEN|ACCESS-TOKEN|clientSecret/.test(JSON.stringify(settings)), JSON.stringify(settings).slice(0, 200));
 
-  // Disconnect and removal.
+  // Disconnect and removal. While the connectors (Drive, Calendar...) are signed in to the same account with the same client, the card gives
+  // nothing back to Google: it is one grant, and revoking the card's token would sign them out too.
+  const shared = createWidgets({ readSettings: () => settings, writeSettings: () => {}, fetch: fetchFake, getSecret: (n) => secrets[n] || null, setSecret: () => {}, onUpdate: () => {}, googleHeldElsewhere: (clientId, email) => clientId === CLIENT && email === OA.decodeCreds(secrets.gmail).email });
+  server.hits.length = 0;
+  await shared.gmailDisconnect();
+  check('gmail settings: Disconnect while the connectors use the same Google account asks Google to revoke nothing (it would sign them out)', !server.hits.some((h) => h.endsWith('/revoke')), server.hits.join(' '));
   server.hits.length = 0;
   await w.gmailDisconnect();
   check('gmail settings: Disconnect asks Google to revoke, forgets the refresh token and keeps the client for a quick reconnect', server.hits.some((h) => h.endsWith('/revoke')) && OA.decodeCreds(secrets.gmail).refresh === '' && OA.decodeCreds(secrets.gmail).clientId === CLIENT && w.state().connections.gmail === false, server.hits.join(','));

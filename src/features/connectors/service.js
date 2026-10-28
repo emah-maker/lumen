@@ -662,7 +662,8 @@ function create({
   }
 
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
-  return { setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  const googleHolds = (clientId, email) => { try { return Boolean(googleSealed) && googleAuth().holds?.(clientId, email) === true; } catch { return true; } }; // (unknown: kept, never revoked)
+  return { googleHolds, setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

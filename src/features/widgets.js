@@ -2388,9 +2388,11 @@ function createWidgets(deps) {
     googleNudge.unref?.();
     return true;
   }
-  // Best effort: tell Google the refresh token is no longer wanted.
+  // Best effort: tell Google the refresh token is no longer wanted. Not when the connectors (Drive, Calendar...) are signed in to the same
+  // account with the same client: Google keeps one grant for both, and revoking this token would sign them out too.
   function revokeGoogle(creds) {
     if (!creds?.refresh) return Promise.resolve(false);
+    try { if (deps.googleHeldElsewhere?.(creds.clientId, creds.email)) return Promise.resolve(false); } catch { return Promise.resolve(false); }
     return formPost(deps.endpoints?.().googleRevoke || ENDPOINTS.googleRevoke, new URLSearchParams({ token: creds.refresh }).toString()).then((r) => Boolean(r?.ok), () => false);
   }
   // Forget the sign-in (the client id and secret stay, so connecting again is one click).
