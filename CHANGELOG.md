@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.81 (2026-10-28)
+
 - Glassdoor in a dark theme is one whole light page instead of dark new sections over white cards: its dark mode is only half built, so Lumen tells it the system is light (other sites still follow the theme).
 - After a restart, the tab in front no longer shows as a blank "New Tab" with an empty address bar while its page is slow to answer (a sign-in page): it shows the title it was saved with and the address it is loading.
 
