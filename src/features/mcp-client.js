@@ -669,8 +669,13 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
       if (c.state === 'error' && Date.now() - (c.failedAt || 0) < RETRY_AFTER) return failed.push({ name: s.name, error: c.error });
       return c.start().catch((err) => failed.push({ name: s.name, error: err.message }));
     }));
+    return { defs: readyDefs(), failed };
+  }
+  // The tools of the servers that are running now, without starting any: what a CLI engine's run lists (features/ai-agents.js
+  // runTools asks synchronously; agent.js cliExternalReady starts the servers before the run, as tools() does for an API model).
+  function readyDefs() {
     const defs = [];
-    for (const s of enabled) {
+    for (const s of servers.filter((x) => x.enabled)) {
       const c = connections.get(s.id);
       if (c?.state !== 'ready') continue;
       for (const t of c.tools) {
@@ -681,7 +686,7 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
         });
       }
     }
-    return { defs, failed };
+    return defs;
   }
 
   async function call(exposed, args, { images = null } = {}) {
@@ -704,7 +709,7 @@ function create({ userData, version, secrets, fetchImpl = globalThis.fetch, open
     connections.clear();
   }
 
-  return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, isReadOnlyPreset, tools, call, stopAll };
+  return { list, save, remove, setEnabled, refresh, signIn, setAlwaysAllowed, lookupTool, isExternal, isAlwaysAllowed, isReadOnlyPreset, tools, readyDefs, call, stopAll };
 }
 
 // Settings → AI. The mcp: prefix puts these behind main.js's gate (PRIVILEGED_IPC): only

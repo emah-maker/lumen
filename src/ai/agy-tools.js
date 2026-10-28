@@ -4,7 +4,8 @@
 //
 // Lumen's own tools reach agy as qualified names (mcp_lumen_click, lumen__click, ...). The one built-in agy needs is a
 // READ of Lumen's own tool descriptor files (<home>/.gemini/antigravity-cli/mcp/lumen/<tool>.json): agy opens one with view_file
-// before it calls the tool (seen in a live run). Nothing else of agy's is allowed: no shell, no writes, no other file.
+// before it calls the tool (seen in a live run). The other is a view of the run's own files (ownFileOk: a picture the user attached,
+// a long message). Nothing else of agy's is allowed: no shell, no writes, no other file.
 const path = require('path');
 
 const AGY_LUMEN_PREFIX = /^(?:mcp[_-]{1,2})?lumen(?:__|_|\/|\.|:)([\w-]+)$/i; // mcp_lumen_click, mcp__lumen__click, lumen__click, lumen/click
@@ -37,13 +38,26 @@ function descriptorPathOk(args, home, required = true) {
   });
 }
 
+// [engine parity] Is every path of a view_file call one of the run's own files (`reads`: the pictures the user attached, and a long
+// message that went in a file: antigravity.js run)? Exact paths only: never a folder, never another file next to them.
+const AGY_VIEW = /^view_file$/i;
+function ownFileOk(name, args, reads) {
+  if (!AGY_VIEW.test(String(name || '')) || !Array.isArray(reads) || !reads.length) return false;
+  const paths = pathArgs(args);
+  if (!paths.length) return false;
+  const norm = (p) => { const r = path.resolve(p); return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const own = new Set(reads.map(norm));
+  return paths.every((p) => !/^[a-z][a-z0-9+.-]*:\/\//i.test(p) && !p.includes('\0') && own.has(norm(p)));
+}
+
 // One verdict for both sides, under the chat home `home`.
 // toolNames: Lumen's real tool names (the hook knows them); omitted by the stream check, which accepts any Lumen-qualified name.
-function agyAllowed({ name, args, home, toolNames = null, required = true }) {
+// reads: the run's own files agy may view (ownFileOk).
+function agyAllowed({ name, args, home, toolNames = null, required = true, reads = null }) {
   const n = String(name || '');
   const m = AGY_LUMEN_PREFIX.exec(n);
   if (m) return !toolNames || toolNames.includes(m[1]);
-  return AGY_READS.test(n) && descriptorPathOk(args, home, required);
+  return (AGY_READS.test(n) && descriptorPathOk(args, home, required)) || ownFileOk(n, args, reads);
 }
 
 
@@ -102,4 +116,4 @@ function helperRows(emit) {
   };
 }
 
-module.exports = { helperRows, helperLabel, AGY_LUMEN_PREFIX, AGY_READS, descriptorDir, descriptorPathOk, pathArgs, agyAllowed };
+module.exports = { helperRows, helperLabel, AGY_LUMEN_PREFIX, AGY_READS, descriptorDir, descriptorPathOk, pathArgs, agyAllowed, ownFileOk };

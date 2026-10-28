@@ -13235,6 +13235,8 @@ const aiAgents = setupAiAgents({
   projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
+  skillTools: (chat) => agent.cliSkillToolDefs(chat), // [engine parity] use_skill, to a run whose chat lists the user's skills
+  mcpServerTools: (chat) => agent.cliExternalToolDefs(chat), // [engine parity] the tools of the MCP servers the user added, where the chat's project allows them
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page
   maxWarmChats: () => perfMode.limits().maxWarmChats, // [warm per chat] idle warm Claude Code processes kept (Performance mode: fewer)

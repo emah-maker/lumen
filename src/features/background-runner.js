@@ -38,6 +38,7 @@ const CLAUDE_WORLD = 1001; // agent.js's isolated world: where page-scripts keep
 const RISKY_CLICK = /\b(buy|purchase|pay|checkout|check out|place (?:your |the )?order|order now|complete (?:order|purchase)|confirm (?:order|purchase|payment)|send|submit|post|publish|tweet|reply|delete|subscribe|sign up|register|book now|reserve|transfer|donate|apply)\b/i;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const isLocalEngine = bg.isCliModel;
+const checkEngine = (model) => isLocalEngine(model) || Boolean(bg.sidebarOnly(model)); // [engine parity] a CLI model, or one of a sidebar-only CLI (cliError says why)
 
 // The agent, made to work for a task. See the header for what it changes.
 class TaskAgent extends Agent {
@@ -184,7 +185,7 @@ function create(deps) {
     if (current && list.some((o) => o.id === current)) return current;
     return (list.find((o) => o.engine === 'api' && o.id !== 'auto') || list.find((o) => o.engine === 'api') || list[0])?.id || null;
   }
-  const cliError = (model) => { const p = bg.cliProblem(model, deps.cliStatus?.()); return p ? deps.t(p.key, p.params) : null; };
+  const cliError = (model) => { const only = bg.sidebarOnly(model); if (only) return deps.t('tasks.error.sidebarOnly', { name: only }); const p = bg.cliProblem(model, deps.cliStatus?.()); return p ? deps.t(p.key, p.params) : null; };
 
   // What the "Create" card shows before anything is made: the model, and the sites it may visit.
   function preview({ prompt = '', pageUrl = '', model } = {}) {
@@ -208,7 +209,7 @@ function create(deps) {
     if (!settings().enabled) throw new Error(deps.t('tasks.error.disabled'));
     if (confirmed !== true) throw new Error(deps.t('tasks.error.confirm'));
     if (!bg.fitsAnother(tasks)) throw new Error(deps.t('tasks.error.full'));
-    if (model && isLocalEngine(model) && cliError(model)) throw new Error(cliError(model)); // said now, not when it runs
+    if (model && checkEngine(model) && cliError(model)) throw new Error(cliError(model)); // said now, not when it runs
     const chosen = pickModel(model);
     if (!chosen) throw new Error(deps.t('tasks.error.noModel'));
     // The user's MCP tools reach API models only (a CLI run has Lumen's browser tools and nothing else).
@@ -468,7 +469,7 @@ function create(deps) {
     deliberate = true;
     const next = bg.applyEdit(task, { title: spec.title, prompt: spec.prompt, sites: [...(sites || task.allowedSites), ...(start ? [start] : [])] }, now());
     if (spec.model && spec.model !== task.model) {
-      if (isLocalEngine(spec.model) && cliError(spec.model)) throw new Error(cliError(spec.model));
+      if (checkEngine(spec.model) && cliError(spec.model)) throw new Error(cliError(spec.model));
       if (pickModel(spec.model) !== spec.model) throw new Error(deps.t('tasks.error.noModel'));
       next.model = spec.model;
       next.engine = bg.engineOfModel(spec.model);
@@ -651,7 +652,7 @@ function create(deps) {
     (async () => {
       try {
         if (deps.effectiveModel && deps.effectiveModel(task.model) !== task.model) throw new Error(deps.t('tasks.error.modelGone', { model: task.model }));
-        if (isLocalEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone
+        if (checkEngine(task.model) && cliError(task.model)) throw new Error(cliError(task.model)); // signed out, or the CLI is gone; [engine parity] or one that has no tasks
         const start = task.routine?.startUrl;
         if (start && deps.aiOff?.(start)) throw new Error(deps.t('tasks.error.aiOff', { host: bg.hostOfUrl(start) })); // a routine's start page with AI off: it doesn't run at all
         const agent = new TaskAgent(browserFor(rt), () => deps.getClient(), () => ({ adhdMode: false, model: task.model, pageContext: false, noMemory: true }), (p) => deps.getKey(p), { riskOf });

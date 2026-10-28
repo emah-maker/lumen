@@ -159,12 +159,19 @@ const notices = (events) => events.filter((e) => e.type === 'notice').map((e) =>
   }
 
   {
-    // Grok Build and Antigravity compact their own sessions.
+    // [engine parity] Grok Build, Antigravity and Codex: /compact summarizes the chat with the same CLI (test/units/engine-parity-units.js runs
+    // it); with the CLI not there it says so plainly, and a chat with one exchange has nothing to compact.
     const agent = newAgent(() => null);
     agent.messages = [];
     agent.messages.settings = { model: 'grokbuild:default' };
     const events = await runOn(agent, '/compact');
-    check('grok build: /compact says it compacts by itself', notices(events).some((n) => /Grok Build keeps this conversation in its own session/.test(n)), J(notices(events)));
+    check('grok build: /compact with Grok Build not there says so plainly', notices(events).some((n) => /Grok Build isn't available right now, so this chat can't be compacted/.test(n)), J(notices(events)));
+    const ready = newAgent(() => null);
+    ready.engines = { grokbuild: {}, lease: () => { throw new Error('no run expected'); } };
+    ready.messages = [];
+    ready.messages.settings = { model: 'grokbuild:default' };
+    const none = await runOn(ready, '/compact');
+    check('grok build: /compact on a chat with nothing before the last exchange says so, without running Grok Build', notices(none).some((n) => /Nothing to compact yet/.test(n)), J(notices(none)));
   }
 
   // ---- Claude Code: /compact and /context go to the chat's own CLI session as typed, without full access
