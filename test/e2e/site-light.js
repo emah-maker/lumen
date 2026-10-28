@@ -1,5 +1,5 @@
 // A site with a half-built dark mode (Glassdoor) is told the system is light in a dark theme, and gets one whole light page;
-// any other site still sees the dark theme (features/site-light.js). The hosts are mapped to a local server.
+// any other site still sees the dark theme (browser/chrome-identity.js LIGHT_SITES). The hosts are mapped to a local server.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
