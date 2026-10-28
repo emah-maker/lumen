@@ -6109,6 +6109,7 @@ ipcMain.on('chat:sidebar-state', (event, open) => {
 // Saves a chat left running into its own file (the open chat goes through saveChat).
 function saveChatOf(id, messages) {
   if (temporaryChats.has(id)) return; // [temporary chat] not kept
+  if (pendingDeletes.has(id)) return; // deleted, waiting out its Undo time: a late save would bring it back (the store un-trashes a chat it saves)
   if (id === chatId && messages === agent.messages) { saveChat(); return; }
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
@@ -6124,6 +6125,7 @@ function bumpChat(id) {
   try { if (id && !temporaryChats.has(id) && chats().touch(id)) pushAttention(); } catch { /* the list keeps its order */ }
 }
 const detachedSaves = new Map();
+const pendingDeletes = new Map(); // a deleted chat waiting out its Undo time (chats:delete): chat id -> timer
 function saveChatOfSoon(id, messages) {
   clearTimeout(detachedSaves.get(id));
   detachedSaves.set(id, setTimeout(() => { detachedSaves.delete(id); if (!chatRuns.get(id)?.deleted) saveChatOf(id, messages); }, 1000));
@@ -12297,7 +12299,6 @@ ipcMain.handle('chats:rename', (_e, id, title) => { const ok = chats().rename(St
 // erased with its pictures, uploads and engine homes. If Lumen quits inside that time the chat stays hidden and is erased
 // on the next start (or by the store after a day), after the index on disk is read again; no delete ever runs before the app is ready.
 const UNDO_MS = 8000;
-const pendingDeletes = new Map(); // chat id -> timer
 function finishDelete(id) {
   clearTimeout(pendingDeletes.get(id));
   pendingDeletes.delete(id);
@@ -12357,6 +12358,7 @@ ipcMain.handle('chats:delete', (event, id) => {
   grokChatLeft(id, { now: true }); // [keep connected] (read before the chat is removed)
   approvedByChat.delete(id);
   unreadChats.delete(id);
+  clearTimeout(detachedSaves.get(id)); detachedSaves.delete(id); // a save its last reply scheduled (saveChatOfSoon) is dropped too, also when that reply already ended
   const running = chatRuns.get(id); // deleting a chat that is still running stops it, and it isn't saved again
   if (running) {
     running.deleted = true;
