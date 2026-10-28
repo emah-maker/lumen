@@ -63,10 +63,7 @@ function countText(c, unit = 'messages') {
   return parts.join(' · ');
 }
 
-const clockOf = (ms, now) => {
-  const d = new Date(ms);
-  return d.toDateString() === new Date(now).toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-};
+const clockOf = (ms, now) => bars().clockOf(ms, now); // today's time, a weekday within six days, a date further out
 // "resets 3:40 PM, in 1 h 12 m" from a time; "resets Mon 12:00 AM" from the CLI's own words; '' when neither is known.
 function resetLine(source, now = Date.now()) {
   if (source && finite(source.resetsAt) && source.resetsAt > now) {

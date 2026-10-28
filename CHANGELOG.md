@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The usage bar now shows Codex's plan, whatever its length.** The bar above the chat box already followed the chat's model, but for Codex it only knew 5-hour and weekly windows, so a free plan, which Codex reports as one 30-day window, got no bar at all. Every window Codex reports is now shown, named by its length (5-hour, weekly, 30-day), with what is left in the tooltip ("Your Codex plan's 30-day limit is 29% used (71% left)") and a reset date for a reset weeks away instead of only a time of day. Settings → Usage and the AI status card name the same window. Grok Build and Antigravity still report no plan numbers, so they get no plan bar: Antigravity shows its quota limit and reset time once a run hits it, and nothing is guessed before that. Tests: `test/units/engine-usage-bar-units.js`, `test/e2e/engine-usage-bar.js`.
+
 ## 0.5.79 (2026-10-27)
 
 - **Prefer fractions covers algebra.** With Settings → AI → Prefer fractions on, the AI is told to write algebraic fractions as LaTeX too ($\frac{2}{s-1}$, not 2/(s−1)), and one it still writes inline with a bracketed side, like 2/(s−1), 6s/((s−1)(s²+1)) or (−3s + 3)/(s²+1), is drawn stacked. Words like and/or, units, dates, paths and code are left alone.

@@ -132,14 +132,20 @@
     const percent = bar.percent == null ? null : Math.round(bar.percent);
     let head = null;
     if (bar.kind === 'plan') {
-      const resets = bar.resetsAt ? clock(bar.resetsAt) : bar.resetsText;
+      // A reset weeks away (Codex's 30-day window) gets its date, not only a time of day (usage-bars.js clockOf).
+      const resets = bar.resetsAt ? (window.usageBars?.clockOf ? window.usageBars.clockOf(bar.resetsAt, Date.now()) : clock(bar.resetsAt)) : bar.resetsText;
+      // The second window by its own length: "week 12%" for the weekly one, "30-day 4%" for another.
+      const second = bar.weekly && bar.weekly.minutes != null && window.usageBars?.windowLabel ? window.usageBars.windowLabel(bar.weekly.minutes, 'week', { short: true }) : null;
+      const secondPercent = bar.weekly ? Math.round(bar.weekly.percent) : null;
       text.push(window.t('usage.plan', { percent }));
       if (resets) text.push(window.t('usage.resets', { time: resets }));
-      if (bar.weekly) text.push(window.t('usage.week', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.weekly) text.push(second && second !== window.t('usage.window.short.week') ? window.t('usage.window.other', { window: second, percent: secondPercent }) : window.t('usage.week', { percent: secondPercent }));
       if (bar.lumenPoints != null) text.push(window.t('usage.lumen', { points: pts(bar.lumenPoints) }));
-      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : window.t('usage.plan.title.other', { engine, percent }));
+      // Another engine's window is named by its length (Codex: 5-hour, weekly, or a free plan's 30-day), with what is left of it.
+      const windowName = bar.minutes != null && window.usageBars?.windowLabel ? window.usageBars.windowLabel(bar.minutes, '5h') : null;
+      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : windowName ? window.t('usage.plan.title.window', { engine, window: windowName, percent, left: 100 - percent }) : window.t('usage.plan.title.other', { engine, percent }));
       if (resets) title.push(window.t('usage.resets.title', { time: resets }));
-      if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.weekly) title.push(second && second !== window.t('usage.window.short.week') ? window.t('usage.window.other.title', { window: window.usageBars.windowLabel(bar.weekly.minutes, 'week'), percent: secondPercent }) : window.t('usage.week.title', { percent: secondPercent }));
       if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
       head = text[0];
     } else {
