@@ -2167,10 +2167,13 @@ function tabState() {
         };
       }
       const wc = t.view.webContents;
-      const url = realUrl(wc);
+      // A web page that hasn't arrived yet (the first answer is slow: a restored sign-in page after a restart) has no address of its own: the tab
+      // shows the one it is loading and the title it was saved with, never a blank "New Tab" with an empty address bar.
+      const pending = (!wc.getURL() || warmPending.has(wc)) && wc.isLoading() && isWebUrl(t.askedUrl || '') ? t.askedUrl : '';
+      const url = realUrl(wc) || pending;
       return {
         id: t.id,
-        title: (!warmPending.has(wc) && wc.getTitle()) || 'New Tab',
+        title: (!warmPending.has(wc) && wc.getTitle()) || (pending && (t.pendingTitle || pending.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))) || 'New Tab',
         url: settingsPage.isSettingsUrl(url) ? settingsPage.displayUrl(url) : chatPage.isChatUrl(url) ? chatPage.displayUrl() : pageTools.isInternal(url) ? pageTools.displayUrl(url) : url.startsWith(HISTORY_URL) ? 'lumen://history' : managerPageOf(url) ? `lumen://${managerPageOf(url)}` : slidesViewer.isViewerUrl(url) ? slidesViewer.displayUrl(url) : emlViewer.isViewerUrl(url) ? emlViewer.displayUrl(url) : fileTabs.isOfficeViewerUrl(url) ? fileTabs.officeUrlOf(url) || '' : pdfViewer.isViewerUrl(url) ? pdfViewer.displayUrl(url) : isInternal(url) ? '' : url, // [settings] lumen://settings/<section>; a deck in the slide viewer shows its file
         loading: wc.isLoading(),
         favicon: t.favicon || null,
@@ -5556,6 +5559,8 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
 }
 const popupPartition = new WeakMap(); // a popup's page -> the research session it belongs to (null: the profile's)
 const identified = new WeakSet();
+const siteLight = require('./features/site-light');
+const lightSchemes = new WeakMap(); // webContents -> its site-light update (main frame address)
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
   try {
@@ -5600,7 +5605,10 @@ function applyChromeIdentity(wc) {
     if (!details.isMainFrame || details.isSameDocument) return;
     const now = lang();
     if (now !== languages) { languages = now; identify(); }
+    lightScheme(details.url); // [site light] a half-built dark mode gets the light page (features/site-light.js)
   };
+  const lightScheme = siteLight.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors);
+  lightSchemes.set(wc, lightScheme);
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
   identify();
@@ -6929,6 +6937,8 @@ function restoreTabsFrom(saved) {
       const opened = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null });
       if (i === active) activeTabId = opened.id;
       tab = tabs.find((t) => t.id === opened.id);
+      if (saved.titles?.[i]) tab.pendingTitle = saved.titles[i]; // (shown until the page has its own: see the tab info's `pending`)
+      if (!tab.favicon && saved.favicons?.[i]) tab.favicon = saved.favicons[i];
     } else tab = addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
@@ -8661,6 +8671,7 @@ const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ 
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
+  for (const w of webContentsModule.getAllWebContents()) { const update = lightSchemes.get(w); if (update && !w.isDestroyed()) update(w.getURL()); } // [site light] the theme changed
   for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, () => paintBackgrounds(rec)); // (the not-yet-painted area matches the page in the new theme)
   if (process.platform === 'darwin') return;
   for (const rec of winRecs) if (rcAlive(rec)) { try { rec.win.setTitleBarOverlay(titleBarOverlay()); } catch {} }
