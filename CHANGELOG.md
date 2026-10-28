@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.82 (2026-10-28)
+
 - Windows installer: a fresh install shows Lumen's icon on its Desktop and Start menu shortcuts and in Installed apps from the start, not Electron's until Lumen first ran.
 ## 0.5.81 (2026-10-28)
 
