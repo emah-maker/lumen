@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Prefer fractions covers algebra.** With Settings → AI → Prefer fractions on, the AI is told to write algebraic fractions as LaTeX too ($\frac{2}{s-1}$, not 2/(s−1)), and one it still writes inline with a bracketed side, like 2/(s−1), 6s/((s−1)(s²+1)) or (−3s + 3)/(s²+1), is drawn stacked. Words like and/or, units, dates, paths and code are left alone.
+
 - **The Word card says each thing once.** Its subtitle is just Working or Done (the step is in the status line, the document in the chip), reading and saving read “Reading the document” and “Saving the document”, and its button says **Show in Word** instead of Open.
 
 - **The Word card shows the document changing, not just its name.** A run that opened a web page first (Drive, NUworks) and then worked in Word never told Lumen its card was on screen, so Word's live picture never ran; it does now. Until the first picture or change arrives, the card shows the document's own paragraphs instead of only its name, and each change glows in on the page preview. The status line says what is being done (“Replacing 2 bullets under “Experience””) instead of repeating the document name the chip already shows.

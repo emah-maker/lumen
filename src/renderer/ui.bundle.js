@@ -592,6 +592,46 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { isImeEnt
   const FRAC = /(^|[^\w./\\:@#$%&*+=~<>-])([-−]?)(\d{1,4})\/(\d{1,4})(?![\w/\\@%]|-\w|[.,:]\d)/g;
   const FRAC_NOT = new Set(['24/7', '24/365', '9/11', '3/11', '1/1']);
   const FRAC_LABEL = /\b(?:page|pages|pp?|slide|slides|step|steps|question|q|chapter|ch|section|sec|part|item|figure|fig|table|problem|vol|volume|no|number|episode|ep|lesson|unit|week|day|round|game|set|rank|score)\.?\s*#?\s*$/i;
+
+
+
+  const ALG_TERM = /(?:^|[\s([{=+*,;:≈<>])([-−]?(?:\d+(?:\.\d+)?)?(?:[A-Za-z](?:[²³]|\^\d)?){0,3}(?:[²³]|\^\d)?)$/;
+  const ALG_TERM_AFTER = /^([-−]?(?:\d+(?:\.\d+)?)?(?:[A-Za-z](?:[²³]|\^\d)?){0,3})(?![\w(/])/;
+  const algTex = (x) => x.trim().replace(/−/g, '-').replace(/²/g, '^{2}').replace(/³/g, '^{3}').replace(/·|×/g, (c) => (c === '×' ? '\\times ' : '\\cdot '));
+  const isMath = (x) => /[A-Za-z]/.test(x) && /^[\w\s+\-−*·×^²³().,]+$/.test(x);
+  function bracketEnd(text, at) {
+    for (let i = at, depth = 0; i < text.length && i - at <= 80; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')' && --depth === 0) return i;
+    }
+    return -1;
+  }
+  function bracketStart(text, at) {
+    for (let i = at, depth = 0; i >= 0 && at - i <= 80; i--) {
+      if (text[i] === ')') depth++;
+      else if (text[i] === '(' && --depth === 0) return i;
+    }
+    return -1;
+  }
+  function algebraFractions(part, maths) {
+    let out = '';
+    let from = 0;
+    for (let i = part.indexOf('/'); i !== -1; i = part.indexOf('/', i + 1)) {
+      if (i < from) continue;
+      let numStart; let num; let denEnd; let den;
+      if (part[i - 1] === ')') { numStart = bracketStart(part, i - 1); if (numStart < from) continue; num = part.slice(numStart + 1, i - 1); }
+      else { const m = ALG_TERM.exec(part.slice(from, i)); if (!m || !m[1] || /^[-−]$/.test(m[1])) continue; numStart = i - m[1].length; num = m[1]; }
+      if (part[i + 1] === '(') { denEnd = bracketEnd(part, i + 1); if (denEnd === -1) continue; den = part.slice(i + 2, denEnd); denEnd += 1; }
+      else if (part[i - 1] === ')') { const m = ALG_TERM_AFTER.exec(part.slice(i + 1)); if (!m || !m[1]) continue; den = m[1]; denEnd = i + 1 + m[1].length; }
+      else continue;
+      if (!(isMath(num) || isMath(den)) || !num.trim() || !den.trim() || /[\uE000\uE001]/.test(num + den)) continue;
+      maths.push({ tex: `\\frac{${algTex(num)}}{${algTex(den)}}`, display: 'inline' });
+      out += part.slice(from, numStart) + `${maths.length - 1}`;
+      from = denEnd;
+      i = denEnd - 1;
+    }
+    return out + part.slice(from);
+  }
   function fractionize(text, maths) {
     let fence = '';
     return String(text).split('\n').map((line) => {
@@ -600,7 +640,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { isImeEnt
       if (f) { fence = f[1]; return line; }
       return line.split(FRAC_PROTECT).map((part, k) => {
         if (k % 2) return part;
-        return part.replace(FRAC, (all, lead, sign, n, d, at) => {
+        return algebraFractions(part, maths).split(FRAC_PROTECT).map((rest, j) => (j % 2 ? rest : rest.replace(FRAC, (all, lead, sign, n, d, at) => {
           const num = Number(n);
           const den = Number(d);
           const before = part.slice(0, at + lead.length);
@@ -610,7 +650,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = { isImeEnt
           if (FRAC_LABEL.test(before)) return all;
           maths.push({ tex: `${sign ? '-' : ''}\\frac{${n}}{${d}}`, display: 'inline' });
           return `${lead}${maths.length - 1}`;
-        });
+        }))).join('');
       }).join('');
     }).join('\n');
   }
