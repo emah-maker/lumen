@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.79 (2026-10-27)
+
 - **The Word card says each thing once.** Its subtitle is just Working or Done (the step is in the status line, the document in the chip), reading and saving read “Reading the document” and “Saving the document”, and its button says **Show in Word** instead of Open.
 
 - **The Word card shows the document changing, not just its name.** A run that opened a web page first (Drive, NUworks) and then worked in Word never told Lumen its card was on screen, so Word's live picture never ran; it does now. Until the first picture or change arrives, the card shows the document's own paragraphs instead of only its name, and each change glows in on the page preview. The status line says what is being done (“Replacing 2 bullets under “Experience””) instead of repeating the document name the chip already shows.
