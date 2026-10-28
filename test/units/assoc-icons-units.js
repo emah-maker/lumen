@@ -24,6 +24,18 @@ assert.strictEqual(instance.appIcon(), ICO, 'appIcon() is the shipped assets/ico
 // The exe stays untouched, so the fix cannot be an icon resource: the build must keep skipping rcedit.
 assert.strictEqual(pkg.build.win.signAndEditExecutable, false, 'signAndEditExecutable stays false (Smart App Control)');
 
+// The installer's own shortcuts and its Installed apps entry use the shipped icon.ico, not the exe's: build/installer.nsh
+// remakes the Desktop and Start menu shortcuts with it (keeping the app ID), at the path the packaged app has it.
+const nsis = pkg.build.nsis;
+assert.strictEqual(nsis.include, 'build/installer.nsh');
+const nsh = fs.readFileSync(path.join(root, nsis.include), 'utf8');
+assert.ok(/!macro customInstall\b/.test(nsh), 'installer.nsh defines customInstall');
+for (const link of ['$newStartMenuLink', '$newDesktopLink']) assert.ok(nsh.includes(`lumenIconLink "${link}"`), `${link} is remade with Lumen's icon`);
+assert.ok(nsh.includes('"$INSTDIR\\resources\\app\\src\\assets\\icon.ico"'), 'the shortcut icon is the packaged icon.ico');
+assert.strictEqual(pkg.build.asar, false, 'icon.ico is a real file in resources\\app (Explorer cannot read one inside an asar)');
+assert.ok(nsh.includes('WinShell::SetLnkAUMI'), 'the remade shortcut keeps the app ID');
+for (const key of ['installerIcon', 'uninstallerIcon']) assert.strictEqual(nsis[key], 'src/assets/icon.ico', `nsis.${key} is Lumen's icon (Installed apps shows the uninstaller's)`);
+
 // Every file type the installer registers is covered, plus Lumen's own ProgID.
 const names = pkg.build.fileAssociations.map((a) => a.name);
 for (const n of names) assert.ok(instance.ASSOCIATION_PROG_IDS.includes(n), `ProgID "${n}" is fixed up at startup`);

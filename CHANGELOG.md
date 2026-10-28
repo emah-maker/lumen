@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Windows installer: a fresh install shows Lumen's icon on its Desktop and Start menu shortcuts and in Installed apps from the start, not Electron's until Lumen first ran.
 ## 0.5.81 (2026-10-28)
 
 - Glassdoor in a dark theme is one whole light page instead of dark new sections over white cards: its dark mode is only half built, so Lumen tells it the system is light (other sites still follow the theme).
