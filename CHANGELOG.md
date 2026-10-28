@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 ## 0.5.79 (2026-10-27)
+
 - **Prefer fractions covers algebra.** With Settings → AI → Prefer fractions on, the AI is told to write algebraic fractions as LaTeX too ($\frac{2}{s-1}$, not 2/(s−1)), and one it still writes inline with a bracketed side, like 2/(s−1), 6s/((s−1)(s²+1)) or (−3s + 3)/(s²+1), is drawn stacked. Words like and/or, units, dates, paths and code are left alone.
 
 - **A deleted chat stays deleted.** Deleting a chat within a second of its reply finishing let a delayed save bring it back, so its pictures and attached files were never erased. The delete now cancels that save.
