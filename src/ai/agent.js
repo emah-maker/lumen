@@ -611,6 +611,9 @@ const SKILL_TOOL = {
   eager_input_streaming: true,
 };
 const skillsBlockOf = (settings) => (typeof settings?.skillsList === 'string' && settings.skillsList.startsWith('<skills>') ? settings.skillsList : '');
+// [engine parity] The system prompt of a sidebar CLI chat (Claude Code, Grok Build, Antigravity, Codex) before its engine's note: the API chats'
+// own, skills list included, since its use_skill is an extra of the run's MCP session (cliSkillToolDefs). A background task has neither.
+const cliSystemFor = (settings) => systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : '');
 // [memory] memory is the sidebar chat's saved memory (Settings → AI → Instructions and memory): offered to its API chats only while the setting is on and
 // the chat is not temporary (memoryOffered). Not listed to MCP clients or the CLI engines; they still get the saved entries in their system prompt.
 const MEMORY_TOOL = { ...memoryLib.TOOL, eager_input_streaming: true };
@@ -1140,6 +1143,7 @@ const DESTINATION_TOOLS = new Set(['navigate', 'open_tab', 'read_urls', 'web_sea
 const SEARCH_HOST = 'html.duckduckgo.com';
 const PLAN_CLI_NOTICE = 'Plan mode works with API models (Claude, OpenAI, Gemini, Grok, OpenRouter). Claude Code, Codex, Grok Build and Antigravity have their own tools, so turn off Plan first or pick another model.'; // [plan mode]
 const SCHOLAR_HOST = 'api.openalex.org'; // stands for find_sources' databases on the approval card
+const CLI_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex' };
 // The card for a search that leaves the browser (web_search, find_sources): the words that will be sent. undefined for other tools.
 function searchCard(name, input, who) {
   const query = String(input?.query ?? input?.doi ?? '');
@@ -2667,6 +2671,7 @@ class Agent {
       if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
       const turnImages = retryText ? [] : screen.image ? [...images, screen.image] : images; // [screen context] the CLI engines take it as an attached picture
       const turnPrompt = retryText ?? (state + page + attached.block + note + this.cliWordNote(messages)); // [no handoff] the second try is the follow-up alone
+      await this.cliExternalReady(emit); // [engine parity] the user's MCP servers are up when the run lists its tools
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
@@ -2926,16 +2931,30 @@ class Agent {
 
   // ---- [context] /compact and /context (features/chat-compact.js). They are answered here for every AI and never
   // become messages of the chat: Claude Code runs them in the chat's own session (with or without full access, since
-  // neither grants a tool); an API chat is summarized by its own model; Grok Build and Antigravity compact their
-  // sessions themselves.
+  // neither grants a tool); an API chat is summarized by its own model. [engine parity] Grok Build, Antigravity and Codex have no
+  // /compact Lumen can send, so their chat is compacted the way an API chat is: the same CLI writes the summary (cliSummary), and
+  // the chat's CLI session, which still holds the old turns, is dropped (compactApi), so the next message starts one handed the summary.
   async commandTurn(messages, command, controller, emit) {
     const model = String(messages.settings.model);
     const signal = controller.signal;
     if (model.startsWith('claudecode:') && this.engines?.claudecode) return this.claudeCodeCommand(messages, command, signal, emit);
-    const engine = model.startsWith('grokbuild:') ? 'Grok Build' : model.startsWith('antigravity:') ? 'Antigravity' : model.startsWith('codex:') ? 'Codex' : null;
+    const kind = /^(grokbuild|antigravity|codex):/.exec(model)?.[1] || null;
+    const engine = kind ? CLI_NAMES[kind] : null;
     if (command.name === 'context') return this.contextReport(messages, emit, engine);
-    if (engine) { emit({ type: 'notice', text: `${engine} keeps this conversation in its own session and compacts it by itself when it fills up, so Lumen can't compact it from here. New chat starts fresh.` }); return; }
-    await this.compactApi(messages, command.args, signal, emit);
+    if (kind && !this.engines?.[kind]) { emit({ type: 'notice', text: `${engine} isn't available right now, so this chat can't be compacted. New chat starts fresh.` }); return; }
+    await this.compactApi(messages, command.args, signal, emit, { cli: kind });
+  }
+
+  // [engine parity] A summary written by a CLI engine (Grok Build, Antigravity, Codex) for compactApi: one fresh run of that engine in
+  // normal mode, outside the chat's own session and kept process (chatId: null), with the summary request as its message. -> the shape of
+  // an API reply ({ content, model, usage: null }); throws when the run failed or said nothing.
+  async cliSummary(kind, temp, signal) {
+    const prompt = temp[0].content.map((b) => b.text || '').join('\n');
+    const scope = taskScope.getStore();
+    const out = await this.cliHelperOnce(kind, { prompt, signal, emit: () => {}, own: false, settings: temp.settings, scope: scope ? { ...scope, chatId: null } : null });
+    if (out.stopped && signal.aborted) throw new Error('stopped');
+    if (out.failed || !out.text) throw new Error(out.error || `${CLI_NAMES[kind]} sent no summary`);
+    return { content: [{ type: 'text', text: out.text }], model: String(temp.settings.model), usage: null };
   }
 
   async claudeCodeCommand(messages, command, signal, emit) {
@@ -2998,7 +3017,7 @@ class Agent {
   // An API chat's /compact: the same model summarizes everything before the last exchange, and the summary takes
   // those turns' place (they stay on screen). `auto`: the history is near what one request may carry (runTask).
   // Nothing changes when the request fails or the summary is empty. True when the chat was compacted.
-  async compactApi(messages, instructions, signal, emit, { auto = false } = {}) {
+  async compactApi(messages, instructions, signal, emit, { auto = false, cli = null } = {}) { // cli: [engine parity] the CLI engine that writes the summary (cliSummary)
     const plan = compactLib.compactPlan(messages, 1);
     if (!plan) { if (!auto) emit({ type: 'notice', text: 'Nothing to compact yet: this chat has only one exchange.' }); return false; }
     const model = String(messages.settings.model);
@@ -3012,17 +3031,19 @@ class Agent {
     const quiet = () => {};
     let message;
     try {
-      message = providers.splitModel(model).provider === 'anthropic'
+      message = cli
+        ? await this.cliSummary(cli, temp, signal)
+        : providers.splitModel(model).provider === 'anthropic'
         ? await this.claudeTurn(temp, signal, quiet, this.contextBudget(model), true)
         : await this.otherTurn(temp, signal, quiet, this.contextBudget(model), true).catch((err) => { err.__provider = providers.splitModel(model).provider; err.__model = model; throw err; });
     } catch (err) {
       if (signal.aborted) throw err;
-      emit({ type: 'notice', text: `Couldn’t compact this chat (${describeError(err, this.browser.anthropicAuth?.()).text}). Nothing was changed.` });
+      emit({ type: 'notice', text: `Couldn’t compact this chat (${cli ? String(err?.message || err).slice(0, 200) : describeError(err, this.browser.anthropicAuth?.()).text}). Nothing was changed.` });
       return false;
     } finally {
       emit({ type: 'status', text: '' });
     }
-    recordUsage(messages, { model: message.model || model, usage: message.usage }, emit);
+    if (!cli) recordUsage(messages, { model: message.model || model, usage: message.usage }, emit); // (a CLI's own run counts its usage itself)
     const summary = (message.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
     if (!summary || summary === '(no reply)' || !compactLib.applySummary(messages, plan.cut, summary, items)) {
       emit({ type: 'notice', text: 'Couldn’t compact this chat: the model sent no summary. Nothing was changed.' });
@@ -3092,7 +3113,7 @@ class Agent {
     // guesses it before the message exists, and a kept CLI is switched to the real one in place (claude-code.js switchModel),
     // which would leave a stale name in a prompt that is fixed at spawn. A model the user picked is still named.
     const autoChosen = routed.auto || Boolean(settings.autoFrom);
-    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, workDir: projectFolders.workFolderOf(settings), userSettings: this.browser.ccUserSettings?.() === true, effort: this.effortFor('claudecode', settings), systemPrompt: systemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
+    return { routed, resume, spawn: { sessionId, resume, model: routed.model, maxTurns: stepLimit(this.browser.maxSteps?.()), fullAccess, workDir: projectFolders.workFolderOf(settings), userSettings: this.browser.ccUserSettings?.() === true, effort: this.effortFor('claudecode', settings), systemPrompt: cliSystemFor(settings) + claudeCodeNote(autoChosen ? 'default' : routed.model, new Date(), { fullAccess }) } };
   }
 
   // The user focused or started typing in the composer (renderer/chat-core.js, IPC agent:prewarm): the
@@ -3292,7 +3313,7 @@ class Agent {
     const picked = engineModel(settings.model);
     const known = (settings.gbShownFor === settings.model && settings.gbShown)
       || (picked !== 'default' ? picked : this.engines.grokbuild.statusCache?.value?.detail || null);
-    return systemFor(settings) + grokBuildNote(known, { fullAccess });
+    return cliSystemFor(settings) + grokBuildNote(known, { fullAccess });
   }
 
   // [keep connected] What the open chat's next Grok Build message will need from its kept process (features/grok-warm.js
@@ -3461,7 +3482,7 @@ class Agent {
       images: this.engineImages('Antigravity', picked, [...capHistoryImages(historyImages, images, emit, 'Antigravity'), ...images], emit),
       sessionId: settings.agySession || null,
       model: picked, // 'default' or one of `agy models`' slugs
-      systemPrompt: systemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
+      systemPrompt: cliSystemFor(settings) + antigravityNote(picked === 'default' ? null : picked, new Date(), { fullAccess }),
       fullAccess,
       workDir: projectFolders.workFolderOf(settings), // [work folder]
       effort: this.effortFor('antigravity', settings), // Settings → AI → AI providers
@@ -3530,7 +3551,7 @@ ${prompt}` : prompt), historyImages: [] };
     emit({ type: 'turn_start' });
     const engine = this.engineFor('codex');
     const startedAt = Date.now() - 2000; // (see enginePictures)
-    const systemText = systemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess });
+    const systemText = cliSystemFor(settings) + codexNote(picked === 'default' ? null : picked, new Date(), { fullAccess });
     // [context] The meter moves as soon as the message is sent: what the thread held before (a new thread: nothing) plus what Lumen sends now
     // (its instructions, the page and tab text, files and the handed-over chat: all in the prompt), by the usual 4 characters a token; Codex's own
     // figure replaces it while the reply streams and at its end (codexContext below).
@@ -6671,6 +6692,24 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     } catch { return ''; }
   }
   cliWordToolDefs(chat) { return chat?.cliWord === true ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []; }
+  // [engine parity] Two more extras of a CLI chat's run, as the API chats have them: use_skill when the chat's system prompt lists the user's
+  // skills (cliSystemFor), and the tools of the MCP servers the user added (Settings → AI → MCP servers) that are running, where the chat's
+  // project allows them. Their calls take the same approval path as an API chat's (allowExternal: a card per call unless always allowed).
+  cliSkillToolDefs(chat) { return skillsBlockOf(chat?.settings) && this.browser.skills ? [OTHER_SKILL] : []; }
+  cliExternalToolDefs(chat) {
+    try {
+      const ext = this.browser.externalTools;
+      if (!ext?.readyDefs || (chat && this.browser.projects?.allows?.(chat, 'mcp') === false)) return [];
+      return ext.readyDefs();
+    } catch { return []; }
+  }
+  // Starts the user's MCP servers before a CLI run lists its tools (a server that fails is said once, as for an API chat), for at most waitMs.
+  async cliExternalReady(emit, waitMs = 8000) {
+    if (!this.browser.externalTools?.readyDefs) return;
+    let timer;
+    await Promise.race([this.externalToolDefs(emit).catch(() => {}), new Promise((resolve) => { timer = setTimeout(resolve, waitMs); })]);
+    clearTimeout(timer);
+  }
   desktopOffered(messages) {
     try {
       if (this.browser.desktopAccess?.() === true) return true;

@@ -32,7 +32,8 @@ for (const model of ['openai:gpt-5.6', 'gemini:gemini-3-pro', 'ollama:llama3']) 
 }
 const src = read('src/ai/agent.js');
 check('engines: every path builds its prompt with systemFor (API, Claude Code, Grok Build, Antigravity, Codex, local)',
-  (src.match(/systemFor\(/g) || []).length >= 6 && /systemFor\(settings\) \+ grokBuildNote/.test(src) && /systemFor\(settings\) \+ antigravityNote/.test(src) && /systemFor\(settings\) \+ codexNote/.test(src) && /systemFor\(messages\.settings\)/.test(src) && /cliSystemPrompt = |function cliSystemPrompt/.test(src));
+  // ([engine parity] the sidebar CLIs go through cliSystemFor, which is systemFor plus the skills list)
+  (src.match(/systemFor\(/g) || []).length >= 6 && /const cliSystemFor = \(settings\) => systemFor\(settings\) \+/.test(src) && /cliSystemFor\(settings\) \+ claudeCodeNote/.test(src) && /cliSystemFor\(settings\) \+ grokBuildNote/.test(src) && /cliSystemFor\(settings\) \+ antigravityNote/.test(src) && /cliSystemFor\(settings\) \+ codexNote/.test(src) && /systemFor\(messages\.settings\)/.test(src) && /cliSystemPrompt = |function cliSystemPrompt/.test(src));
 const req = agentLib.requestFor({ model: 'claude-opus-5', preferFractions: true }, [{ role: 'user', content: 'hi' }]);
 check('API request: the system text carries it', JSON.stringify(req.system).includes('Fractions: exact values'));
 

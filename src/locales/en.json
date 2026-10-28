@@ -2124,6 +2124,7 @@
   "tasks.error.cliFailed": "{name} stopped before finishing.",
   "tasks.error.cliMissing": "{name} is not installed or not connected to Lumen. Pick another model, or set it up in Settings.",
   "tasks.error.cliSignedOut": "{name} is not signed in. Sign in to it once in a terminal, then try again.",
+  "tasks.error.sidebarOnly": "{name} answers in sidebar chats only, so it can't run a background task or routine. Pick Claude Code, Grok Build or an API model for it.",
   "tasks.error.confirm": "Confirm the task first.",
   "tasks.error.disabled": "Background tasks are turned off.",
   "tasks.error.full": "There are too many tasks: delete some first.",

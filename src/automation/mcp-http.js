@@ -64,7 +64,7 @@ function terminalCommand(msg) {
 // onTerminalApproval(tag, command) -> Promise<'once' | 'always' | 'deny'>, asked the first time a run
 // (by its Grok chat session, not this one message) calls run_terminal_command; 'always' is remembered
 // only for that chat session (chatSessionsAllowed, cleared when Lumen restarts), never persisted.
-// Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess, onCall }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
+// Resolves once listening, with open(tag, chatSessionId, { agy, fullAccess, onCall, reads }) -> { mcpUrl, mcpToken, hookUrl }, close(tag),
 // armed(tag), rearm(tag), bindChat(tag, chatSessionId), listed(tag), allowed(tag), denied(tag), port and stop().
 function startHttp({ tools, extraTools = null, callTool, enabled = () => true, onEvent = () => {}, onTerminalApproval = null, terminalEnabled = () => true, holdMs = 8000, terminalHoldMs = 20000, keepAliveMs = 120000 }) {
   const runs = new Map(); // tag -> { mcpToken, hookToken, chatSessionId, armed, allowed: [], sessions: Map(id -> session) }
@@ -113,7 +113,7 @@ function startHttp({ tools, extraTools = null, callTool, enabled = () => true, o
     if (run.fullAccess && run.onCall) { try { run.onCall(msg); } catch { /* a row is optional; the verdict below is not */ } } // [helpers] a subagent's call shows as a helper row (agy-tools.js helperRows)
     const m = AGY_LUMEN_PREFIX.exec(name);
     if (run.fullAccess && !m && !/^(?:mcp[_-]{1,2})?lumen/i.test(name)) return { decision: 'allow' };
-    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames(run) })) return { decision: 'allow' };
+    if (agyAllowed({ name, args: msg.toolCall.args, home: run.home, toolNames: toolNames(run), reads: run.reads })) return { decision: 'allow' };
     return { decision: 'deny', reason: `Only Lumen's browser tools are allowed here (${name.slice(0, 60) || 'unnamed tool'} is not one of them).` };
   }
 
@@ -202,8 +202,8 @@ function startHttp({ tools, extraTools = null, callTool, enabled = () => true, o
       port = server.address().port;
       resolve({
         port,
-        open(tag, chatSessionId = null, { agy = false, fullAccess = false, home = null, onCall = null } = {}) {
-          const run = { tag, chatSessionId, agy, home, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, waiters: new Set(), allowed: [], denied: [], session: null, onCall: typeof onCall === 'function' ? onCall : null };
+        open(tag, chatSessionId = null, { agy = false, fullAccess = false, home = null, onCall = null, reads = null } = {}) {
+          const run = { tag, chatSessionId, agy, home, reads: Array.isArray(reads) ? reads : null, fullAccess: fullAccess === true, mcpToken: crypto.randomBytes(24).toString('hex'), hookToken: crypto.randomBytes(24).toString('hex'), armed: false, waiters: new Set(), allowed: [], denied: [], session: null, onCall: typeof onCall === 'function' ? onCall : null };
           runs.set(tag, run);
           return { mcpUrl: `http://127.0.0.1:${port}/mcp`, mcpToken: run.mcpToken, hookUrl: `http://127.0.0.1:${port}/hook/${run.hookToken}` };
         },

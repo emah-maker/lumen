@@ -373,11 +373,12 @@ function setupAiAgents(deps) {
   // [project workspace] Likewise project_files, in a run whose chat is in a project with files or pinned pages, and the connector tool only where the project allows it.
   // [word] And the word tool, in a run whose chat is about a Word document (agent.js cliWordNote), so the model edits it in Word instead of writing scripts.
   // [cli helpers] The same runs are offered delegate where their engine has no subagent of its own that passes Lumen's approvals (agent.js cliHelperToolDefs).
+  // [engine parity] And use_skill where the chat lists the user's skills, and the tools of the MCP servers the user added (agent.js cliSkillToolDefs, cliExternalToolDefs).
   const runTools = (session) => {
     if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
     const owner = engineForSession(session);
     const chat = (owner?.activeOf ? owner.activeOf(session.engine) : owner?.active)?.scope?.chat || null;
-    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || [])];
+    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
   };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its
@@ -484,7 +485,8 @@ function setupAiAgents(deps) {
     if (takesTab && ('tab_id' in args || 'tabId' in args)) { const { tab_id: _a, tabId: _b, ...rest } = args; args = rest; } // (not part of the tool's own input)
     if (takesTab && tabArg !== undefined && !Number.isInteger(tabArg)) return refuse('tab_id must be an integer: a tab from list_tabs.');
     if (name === 'read_page' && !args.mode && !args.extract && !args.since_last && !args.elements && !args.text_offset && !args.element_offset) args = { ...args, mode: 'compact' };
-    const problem = deps.validateToolInput(name, args);
+    // [engine parity] A tool of an MCP server the user added (a run's own extra, agent.js cliExternalToolDefs) is checked by that server, as in an API chat.
+    const problem = engineRun && agent.isExternalTool?.(name) ? null : deps.validateToolInput(name, args);
     if (problem) return refuse(`Invalid input: ${problem}`);
     // An outside agent works in a window of its own, made on its first call that needs a tab (features/agent-windows.js):
     // its tools see that window's tabs and nothing else, so it cannot touch the user's tabs or the sidebar AI's.
