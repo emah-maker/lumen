@@ -53,7 +53,7 @@ check('readSample: real numbers from this process', ['heapMb', 'heapLimitMb', 'r
 
 // main.js: started after the window, loaded lazily, high heap logged, the last-run line carries the sample
 const main = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
-check('main: started at launch, loaded a minute later (not a startup module), high heap to main-errors.log', /startMemoryLog\(\);\r?\n  createWindow\(\);/.test(main) && /require\('\.\/features\/memory-log'\)\.createMemoryLog\(\{[^}]*onHigh: \(text\) => logMainError\('memory-high', text\)/.test(main) && /: 60e3\);/.test(main));
+check('main: started at launch, loaded a minute later (not a startup module), high heap to main-errors.log', /startMemoryLog\(\);\r?\n {2}createWindow\(\);/.test(main) && /require\('\.\/features\/memory-log'\)\.createMemoryLog\(\{[^}]*onHigh: \(text\) => logMainError\('memory-high', text\)/.test(main) && /: 60e3\);/.test(main));
 check('main: the "how the last run ended" line ends with the last memory sample', /end\.text \+ require\('\.\/features\/memory-log'\)\.lastLine\(/.test(main));
 
 fs.rmSync(dir, { recursive: true, force: true });
