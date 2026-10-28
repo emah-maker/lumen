@@ -966,11 +966,25 @@ const engineOf = (id) => {
   return !v || v === 'auto' || v.endsWith(':__more') ? '' : providerOf(v);
 };
 
+
 const clockOf = (ms, now) => {
   const d = new Date(ms);
-  const sameDay = d.toDateString() === new Date(now).toDateString();
-  return sameDay ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === new Date(now).toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (ms - now < 6 * 86400000) return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 };
+
+
+const near = (m, target) => Math.abs(m - target) <= target * 0.2;
+function windowLabel(minutes, fallback = '5h', { short = false } = {}) {
+  const m = finite(minutes) && minutes > 0 ? minutes : null;
+  const key = m == null ? fallback : near(m, 300) ? '5h' : near(m, 10080) ? 'week' : near(m, 1440) ? 'day' : null;
+  if (key === '5h') return short ? tr('usage.window.short.5h', '5-hour') : tr('usage.bar.window.5h', '5-hour limit');
+  if (key === 'week') return short ? tr('usage.window.short.week', 'week') : tr('usage.bar.window.week', 'weekly limit');
+  if (key === 'day') return short ? tr('usage.window.short.day', 'day') : tr('usage.bar.window.day', 'daily limit');
+  const span = m < 2880 ? tr('usage.window.hours', '{n}-hour', { n: Math.round(m / 60) }) : tr('usage.window.days', '{n}-day', { n: Math.round(m / 1440) });
+  return short ? span : tr('usage.bar.window.span', '{span} limit', { span });
+}
 
 function resetText(w, now = Date.now()) {
   if (w && finite(w.resetsAt) && w.resetsAt > now) return tr('usage.resets', 'resets {time}', { time: clockOf(w.resetsAt, now) });
@@ -990,8 +1004,8 @@ function windowsOf(bar, now = Date.now()) {
     out.push({ key, label, percent: p, level: levelOf(p), reset: resetText(source, now), resetsAt: finite(source.resetsAt) ? source.resetsAt : null });
   };
   if (bar.kind === 'plan') {
-    add('5h', tr('usage.bar.window.5h', '5-hour limit'), bar.percent, { resetsAt: bar.resetsAt, resetsText: bar.resetsText });
-    if (bar.weekly) add('week', tr('usage.bar.window.week', 'weekly limit'), bar.weekly.percent, { resetsText: bar.weekly.resetsText, resetsAt: bar.weekly.resetsAt });
+    add('5h', windowLabel(bar.minutes, '5h'), bar.percent, { resetsAt: bar.resetsAt, resetsText: bar.resetsText });
+    if (bar.weekly) add('week', windowLabel(bar.weekly.minutes, 'week'), bar.weekly.percent, { resetsText: bar.weekly.resetsText, resetsAt: bar.weekly.resetsAt });
   } else if (bar.kind === 'limit') {
     add('limit', tr('usage.bar.window.limit', 'limit reached'), 100, { resetsAt: bar.resetsAt });
   } else if (bar.kind === 'budget') {
@@ -1021,7 +1035,7 @@ function describe(bar, { cooling = null, now = Date.now(), name = '' } = {}) {
   const percent = out ? 100 : tight.percent;
   const level = out ? 'high' : tight.level;
   const rounded = Math.round(percent);
-  const lines = windows.filter((w) => w.key !== 'limit').map((w) => `${w.label}: ${tr('usage.bar.used', '{percent}% used', { percent: Math.round(w.percent) })}${w.reset ? `, ${w.reset}` : ''}`);
+  const lines = windows.filter((w) => w.key !== 'limit').map((w) => `${w.label}: ${tr('usage.bar.used', '{percent}% used', { percent: Math.round(w.percent) })}${w.reset ? `, ${w.reset}` : ''}${w.percent < HIGH_AT ? `, ${tr('usage.bar.left', '{percent}% left', { percent: 100 - Math.round(w.percent) })}` : ''}`);
   const when = hold ? resetText({ resetsAt: hold.until }, now) : (windows.find((w) => w.key === 'limit') || {}).reset || (tight && tight.percent >= HIGH_AT ? tight.reset : '');
   if (out) lines.unshift(`${tr('usage.bar.out.title', 'Out of usage')}${when ? `, ${when}` : ''}`);
   const text = out ? tr('usage.bar.out', 'out') : `${rounded}%`;
@@ -1100,7 +1114,7 @@ function load(force = false) {
   return inflight;
 }
 
-const api = { engineOf, levelOf, windowsOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
+const api = { engineOf, levelOf, windowsOf, windowLabel, clockOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else {
   root.usageBars = { ...api, state: () => state, load, touch: () => load(false) };
@@ -1177,10 +1191,7 @@ function countText(c, unit = 'messages') {
   return parts.join(' · ');
 }
 
-const clockOf = (ms, now) => {
-  const d = new Date(ms);
-  return d.toDateString() === new Date(now).toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-};
+const clockOf = (ms, now) => bars().clockOf(ms, now);
 
 function resetLine(source, now = Date.now()) {
   if (source && finite(source.resetsAt) && source.resetsAt > now) {
@@ -13467,14 +13478,20 @@ $('agent-stop')?.addEventListener('click', () => {
     const percent = bar.percent == null ? null : Math.round(bar.percent);
     let head = null;
     if (bar.kind === 'plan') {
-      const resets = bar.resetsAt ? clock(bar.resetsAt) : bar.resetsText;
+
+      const resets = bar.resetsAt ? (window.usageBars?.clockOf ? window.usageBars.clockOf(bar.resetsAt, Date.now()) : clock(bar.resetsAt)) : bar.resetsText;
+
+      const second = bar.weekly && bar.weekly.minutes != null && window.usageBars?.windowLabel ? window.usageBars.windowLabel(bar.weekly.minutes, 'week', { short: true }) : null;
+      const secondPercent = bar.weekly ? Math.round(bar.weekly.percent) : null;
       text.push(window.t('usage.plan', { percent }));
       if (resets) text.push(window.t('usage.resets', { time: resets }));
-      if (bar.weekly) text.push(window.t('usage.week', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.weekly) text.push(second && second !== window.t('usage.window.short.week') ? window.t('usage.window.other', { window: second, percent: secondPercent }) : window.t('usage.week', { percent: secondPercent }));
       if (bar.lumenPoints != null) text.push(window.t('usage.lumen', { points: pts(bar.lumenPoints) }));
-      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : window.t('usage.plan.title.other', { engine, percent }));
+
+      const windowName = bar.minutes != null && window.usageBars?.windowLabel ? window.usageBars.windowLabel(bar.minutes, '5h') : null;
+      title.push(key === 'claudecode' ? window.t('usage.plan.title', { percent }) : windowName ? window.t('usage.plan.title.window', { engine, window: windowName, percent, left: 100 - percent }) : window.t('usage.plan.title.other', { engine, percent }));
       if (resets) title.push(window.t('usage.resets.title', { time: resets }));
-      if (bar.weekly) title.push(window.t('usage.week.title', { percent: Math.round(bar.weekly.percent) }));
+      if (bar.weekly) title.push(second && second !== window.t('usage.window.short.week') ? window.t('usage.window.other.title', { window: window.usageBars.windowLabel(bar.weekly.minutes, 'week'), percent: secondPercent }) : window.t('usage.week.title', { percent: secondPercent }));
       if (bar.lumenPoints != null) title.push(window.t('usage.share.title', { points: pts(bar.lumenPoints) }));
       head = text[0];
     } else {

@@ -36,6 +36,12 @@ function layoutFor({ width = 0, height = 0 } = {}) {
   return { mode: detail ? 'detail' : rows ? 'rows' : 'dots', inline, live: rows && height >= THRESHOLDS.live.minHeight, sub: !rows && height >= THRESHOLDS.sub.minHeight };
 }
 
+// A plan window's name from its length (Codex reports it; Claude's meter is the 5-hour one): "5-hour limit", "30-day limit" …
+function windowName(minutes) {
+  const m = Number.isFinite(minutes) && minutes > 0 ? minutes : 300;
+  const near = (t) => Math.abs(m - t) <= t * 0.2;
+  return near(300) ? '5-hour limit' : near(10080) ? 'weekly limit' : near(1440) ? 'daily limit' : m < 2880 ? `${Math.round(m / 60)}-hour limit` : `${Math.round(m / 1440)}-day limit`;
+}
 const int = (v, max = 1e6) => (Number.isFinite(v) && v >= 0 ? Math.min(Math.floor(v), max) : 0);
 const str = (v, max) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max) : '');
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -88,7 +94,7 @@ function describe(id, raw, now) {
     if (active && lim.kind === 'limit') notes.push(`${str(lim.model, 40) || 'One model'} limit reached${whenText ? `, ${lim.exact ? 'resets' : 'paused until about'} ${whenText}` : ''}`);
     const reading = id === 'claudecode' ? raw.meter : id === 'codex' ? raw.codexMeter : null;
     const m = reading && Number(reading.resetsAt) > now && Number.isFinite(reading.percent) ? reading : null;
-    if (m) { const p = Math.max(0, Math.min(100, m.percent)); meterBar = { percent: Math.round(p), level: p >= 100 ? 'high' : p >= 80 ? 'warn' : 'ok' }; notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the 5-hour limit used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
+    if (m) { const p = Math.max(0, Math.min(100, m.percent)); meterBar = { percent: Math.round(p), level: p >= 100 ? 'high' : p >= 80 ? 'warn' : 'ok' }; notes.push(`${Math.round(Math.max(0, Math.min(100, m.percent)))}% of the ${windowName(m.minutes)} used, resets ${clockText(m.resetsAt, now)}`); fact = `${Math.round(Math.max(0, Math.min(100, m.percent)))}% used`; }
     const t = raw.today && raw.today[id];
     if (t && money(t.costUSD)) { notes.push(`${money(t.costUSD)} today`); if (!fact) fact = money(t.costUSD); }
     else if (t && int(t.tokens) > 0) { notes.push(`${tokenText(int(t.tokens, 1e12))} tokens today`); if (!fact) fact = `${tokenText(int(t.tokens, 1e12))} tok`; } // no price known (Antigravity, a model not in the table): the count is still real

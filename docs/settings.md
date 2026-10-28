@@ -431,12 +431,14 @@ Settings → Usage has the same sections for each AI. What each one can show, an
 | AI | Plan limits | Rate limits | Lumen counted |
 |---|---|---|---|
 | Claude Code | 5-hour and weekly windows from `claude -p /usage` and each turn's `rate_limit_event` | — | yes, with cost at API prices |
-| Codex CLI | 5-hour and weekly windows from Codex's own session logs (ChatGPT sign-in) | — | tokens (Codex reports no price) |
+| Codex CLI | every window Codex's own session logs report (ChatGPT sign-in), named by its length: 5-hour and weekly on a paid plan, a single 30-day window on the free plan | — | tokens (Codex reports no price) |
 | Grok Build | none published; Grok's limit-reached message and its reset time when it names one | — | yes |
 | Antigravity | none published; the quota message with its reset time ("Resets in 110h") when a run hits it | — | tokens (no price) |
 | Claude (API key) | none (an API key has no plan balance) | `anthropic-ratelimit-*` headers of the last reply | yes, estimated from the price table |
 | OpenAI, Grok (API key) | none | `x-ratelimit-*` headers of the last reply | tokens; cost where the price table knows the model |
 | Gemini | none | none sent by its OpenAI-compatible endpoint | tokens; cost where the price table knows the model |
 | OpenRouter | none | `x-ratelimit-*` when sent | yes (OpenRouter reports each request's cost) |
+
+**The bar above the chat box** follows the chat's model: a Claude Code model shows Claude's 5-hour reading, a Codex model Codex's own windows, and so on. For Codex it is the shortest window still running ("Plan 29% · resets Nov 20, 10:22 PM", with "week 12%" or the next window beside it); the tooltip names the window and what is left ("Your Codex plan's 30-day limit is 29% used (71% left)"), and a click opens the same numbers with the time left. A reset more than six days away shows its date, not a weekday. Grok Build and Antigravity publish no plan numbers, so their bar is never a plan percentage: Antigravity's is the limit line once a run hits its quota (with the reset time it named) and nothing before that; Grok's is its limit message, a budget you set, or the chat's context fill. An engine with no reading shows no bar. Code: `src/features/usage.js` (`barFor`, `codexSummary`), `src/ai/codex-usage.js` (`windowsOf`), `src/renderer/usage-bars.js` (`windowLabel`, `clockOf`), `src/renderer/chat-extras.js`; tests `test/units/engine-usage-bar-units.js` and `test/e2e/engine-usage-bar.js`.
 
 Nothing is requested for this: rate limits are read from responses Lumen already received, plan windows from commands and logs it already read, and the rest is Lumen's own log (35 days, `usage.json`). A cost shows only when the provider reported it or the model is in the price table (`src/features/chat-usage.js`); otherwise the count says "no price known".
