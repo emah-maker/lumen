@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **The usage bar now shows Codex's plan, whatever its length.** The bar above the chat box already followed the chat's model, but for Codex it only knew 5-hour and weekly windows, so a free plan, which Codex reports as one 30-day window, got no bar at all. Every window Codex reports is now shown, named by its length (5-hour, weekly, 30-day), with what is left in the tooltip ("Your Codex plan's 30-day limit is 29% used (71% left)") and a reset date for a reset weeks away instead of only a time of day. Settings → Usage and the AI status card name the same window. Grok Build and Antigravity still report no plan numbers, so they get no plan bar: Antigravity shows its quota limit and reset time once a run hits it, and nothing is guessed before that. Tests: `test/units/engine-usage-bar-units.js`, `test/e2e/engine-usage-bar.js`.
+- **A close that leaves no trace now shows whether Lumen ran out of memory.** Every 5 minutes Lumen writes how much memory its own process uses to `diagnostics/memory.jsonl` (kept under 256 KB, never sent anywhere). If its JavaScript heap passes 70% of its limit, `main-errors.log` says so once. When Lumen starts after closing without quitting, the line that says how the last run ended includes the last memory sample (`src/features/memory-log.js`).
 
 ## 0.5.79 (2026-10-27)
 
