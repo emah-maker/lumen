@@ -260,6 +260,28 @@ async function main() {
   const unticked = await fails(() => s2.connect('drive'));
   check('a permission unticked on Google’s page: not connected, told to leave every box ticked, and the new grant is given back', /every permission/.test(unticked) && !s2.hasAny() && g2.revoked.includes('RT1'), `${unticked} ${JSON.stringify(g2.revoked)}`);
   g2.drop = '';
+  // Google keeps one grant per account and client: revoking any of its tokens ends all of them, the Gmail card's too.
+  const gmailCard = (email) => () => ({ ...BUILTIN, refresh: 'CARD-RT', email });
+  const gCard = fakeGoogle();
+  const sCard = mk(gCard, { own: gmailCard('ada@example.com') });
+  gCard.drop = SCOPES.drive[0];
+  await fails(() => sCard.connect('drive'));
+  check('shared grant: an unticked permission gives nothing back while the Gmail card is signed in to the same account (it would sign the card out)', !gCard.revoked.length, JSON.stringify(gCard.revoked));
+  gCard.drop = '';
+  await sCard.connect('drive');
+  check('shared grant: the connectors say they hold that account and client, not another account or client', sCard.googleHolds(BUILTIN.clientId, 'ada@example.com') && sCard.googleHolds(BUILTIN.clientId, 'ADA@example.com') && !sCard.googleHolds(BUILTIN.clientId, 'bob@example.com') && !sCard.googleHolds('other-client.apps.googleusercontent.com', 'ada@example.com'));
+  await sCard.disconnect('drive');
+  check('shared grant: disconnecting the last Google connector forgets it here but gives nothing back while the Gmail card uses the same account', !gCard.revoked.length && !sCard.hasAny() && !sCard.googleHolds(BUILTIN.clientId, 'ada@example.com'), JSON.stringify(gCard.revoked));
+  const gBob = fakeGoogle();
+  const sBob = mk(gBob, { own: gmailCard('bob@example.com') });
+  await sBob.connect('drive');
+  await sBob.disconnect('drive');
+  check('shared grant: with the Gmail card on another account, the last disconnect still gives the grant back', gBob.revoked.length === 1, JSON.stringify(gBob.revoked));
+  const gFail = fakeGoogle();
+  gFail.driveMode = 'disabled';
+  const sFail = mk(gFail, { own: gmailCard('ada@example.com') });
+  await fails(() => sFail.connect('drive'));
+  check('shared grant: a Drive check that fails right after signing in gives nothing back while the Gmail card uses the same account', !gFail.revoked.length, JSON.stringify(gFail.revoked));
   const noClient = mk(fakeGoogle(), { builtin: () => null });
   check('a build with no Google client says what to do instead of opening a page', /no Google sign-in set up in this build/.test(await fails(() => noClient.connect('drive'))), '');
   const g3 = fakeGoogle();

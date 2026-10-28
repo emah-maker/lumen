@@ -9885,6 +9885,7 @@ function cardFetch(url, options, { renew = false } = {}) {
 }
 const widgets = createWidgets({
   readSettings, writeSettings,
+  googleHeldElsewhere: (clientId, email) => connectorsSvc().googleHolds(clientId, email), // [connectors] the Gmail card never revokes the grant Drive, Calendar... use (one grant per account and client)
   fetch: (url, options) => net.fetch(TEST && global.__widgetFetchMap ? global.__widgetFetchMap(url) : url, options), // (tests map Spotify's picture hosts, which cannot be reached on https without a port, to a local server)
   resizeThumb: (bytes) => resizeArt(bytes, 128, 75), // a row's or tile's picture in a card: 128 px (rows draw 28, Home tiles 112), about 4 KB
   freshFetch: cardFetch, // a request the browser's session fails at once (net::ERR_FAILED) is sent again through this

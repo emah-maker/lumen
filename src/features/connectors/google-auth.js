@@ -32,6 +32,9 @@ const JOIN_MS = 15e3; // (signIn: a repeat this soon joins the sign-in already o
 const why = (err) => { const m = String(err?.cause?.message || err?.message || '').replace(/\s+/g,' ').trim().slice(0, 120); return m && m !== 'fetch failed' ? ` (${m})` : ''; };
 
 const scopeList = (s) => String(s || '').split(/\s+/).filter(Boolean);
+// Google keeps ONE grant per Google account and client: revoking any refresh token of it ends every token of it. So Lumen gives a token
+// back only when no other part of Lumen signed in to that account with that client (the Gmail card shares Lumen's built-in client).
+const sameGrant = (a, clientId, email) => Boolean(a?.refresh && a.clientId && a.clientId === clientId && (!email || !a.email || String(a.email).toLowerCase() === String(email).toLowerCase()));
 const covers = (granted, wanted) => { const have = new Set(scopeList(granted)); return wanted.every((w) => have.has(w)); };
 
 function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, own = () => null, endpoints = () => ({}), now = Date.now, focusApp = () => {}, signInMs, canKeepSecrets = () => true }) {
@@ -113,13 +116,14 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
       const other = old?.refresh && old.email && email && old.email.toLowerCase() !== email.toLowerCase();
       const scope = t.scope || want.join(' ');
       if (!covers(scope, scopes)) {
-        // (nothing new is kept: an unticked permission leaves the sign-in as it was; a token that is not the stored one goes back to Google)
-        if (t.refresh && t.refresh !== old?.refresh) await revokeToken(t.refresh);
+        // (nothing new is kept: an unticked permission leaves the sign-in as it was. The new token goes back to Google only when nothing in
+        // Lumen shares its grant: the same account's stored sign-in, or the Gmail card's, would end with it)
+        if (t.refresh && t.refresh !== old?.refresh && !sharedBy(c.clientId, email, old)) await revokeToken(t.refresh);
         throw new Error('Google didn’t give Lumen every permission it asked for. Press Connect again and leave all the boxes ticked.');
       }
       save({ clientId: c.clientId, clientSecret: c.clientSecret, refresh: t.refresh, email, scope });
       session.invalidate();
-      if (other || (old?.refresh && old.refresh !== t.refresh && old.clientId !== c.clientId)) await revokeToken(old.refresh);
+      if ((other || (old?.refresh && old.refresh !== t.refresh && old.clientId !== c.clientId)) && !sameGrant(own(), old.clientId, old.email)) await revokeToken(old.refresh); // (the Gmail card on that old grant keeps it)
       return { email, scope };
     } finally {
       if (flow === mine) flow = null;
@@ -127,6 +131,11 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
     }
   }
 
+  // Whether another sign-in in Lumen is on the grant of (clientId, email): the stored one (unless it is `except`'s own), or the Gmail card's.
+  // An unknown email counts as the same account: revoking a grant that may be shared would end both.
+  function sharedBy(clientId, email, stored) {
+    return sameGrant(stored, clientId, email) || sameGrant(own(), clientId, email);
+  }
   async function revokeToken(token) {
     if (!token) return false;
     try { return (await formPost(ep('googleRevoke'), new URLSearchParams({ token }).toString())).ok; } catch { return false; }
@@ -138,7 +147,10 @@ function create({ getBlob, setBlob, fetch, openExternal, builtin = () => null, o
     invalidate: () => session.invalidate(),
     has: (scopes) => { const c = creds(); return Boolean(c?.refresh) && covers(c.scope, scopes); },
     status: () => { const c = creds(); return { connected: Boolean(c?.refresh), email: c?.email || '', scope: c?.scope || '' }; },
-    async revoke() { const c = creds(); flow?.cancel(); save(null); session.invalidate(); return revokeToken(c?.refresh); },
+    // Forgets the sign-in here; gives it back to Google only when the Gmail card isn't signed in to the same account with the same client.
+    async revoke() { const c = creds(); flow?.cancel(); save(null); session.invalidate(); return c && sameGrant(own(), c.clientId, c.email) ? false : revokeToken(c?.refresh); },
+    // Whether this sign-in is on the grant of (clientId, email) (widgets.js asks before the Gmail card gives its token back).
+    holds: (clientId, email) => sameGrant(creds(), clientId, email),
     cancel: () => { if (flow) { flow.userCancelled = true; flow.cancel(); } },
   };
 }
