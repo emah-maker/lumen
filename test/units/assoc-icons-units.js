@@ -106,5 +106,24 @@ const open = (exe) => `"${exe}" "%1"`;
     assert.ok(fs.existsSync(value), `${value} exists`);
     assert.ok(!/\.exe/i.test(value));
   }
+  // "Open with" → Lumen still naming a Lumen.exe that is gone (Program Files, before the per-user install): pointed at this exe.
+  {
+    const KEY = 'HKCU\\Software\\Classes\\Applications\\Lumen.exe\\shell\\open\\command';
+    const reg = (command) => { const calls = []; return { calls, run: async (args) => { calls.push(args); if (args[0] === 'query') return command === null ? null : `\r\n${args[1]}\r\n    (Default)    REG_SZ    ${command}\r\n`; return 'ok'; } }; };
+    const old = reg('"C:\\Program Files\\Lumen\\Lumen.exe" "%1"');
+    assert.strictEqual(await instance.fixOpenWith(EXE, old.run, () => false), true, 'a command naming a Lumen.exe that is gone is repaired');
+    const add = old.calls.find((a) => a[0] === 'add');
+    assert.deepStrictEqual(add, ['add', KEY, '/ve', '/t', 'REG_SZ', '/d', `"${EXE}" "%1"`, '/f'], 'it now runs this exe with the file');
+    const kept = reg('"D:\\Apps\\Lumen\\Lumen.exe" "%1"');
+    assert.strictEqual(await instance.fixOpenWith(EXE, kept.run, () => true), false, 'another Lumen.exe that still exists is left alone');
+    assert.ok(!kept.calls.some((a) => a[0] === 'add'));
+    const same = reg(`"${EXE}" "%1"`);
+    assert.strictEqual(await instance.fixOpenWith(EXE, same.run, () => false), false, 'already this exe: nothing written');
+    const none = reg(null);
+    assert.strictEqual(await instance.fixOpenWith(EXE, none.run, () => false), false, 'never chosen in Open with: nothing added');
+    assert.ok(!none.calls.some((a) => a[0] === 'add'));
+    const other = reg('"C:\\Tools\\viewer.exe" "%1"');
+    assert.strictEqual(await instance.fixOpenWith(EXE, other.run, () => false), false, 'a command that is not a Lumen.exe is never touched');
+  }
   console.log('assoc-icons-units: ok');
 })().catch((e) => { console.error(e); process.exit(1); });
