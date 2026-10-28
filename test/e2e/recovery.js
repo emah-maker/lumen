@@ -20,7 +20,7 @@ const os = require('os');
   }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-recovery-'));
-  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile };
+  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_MEMLOG_SOON: '1' }; // ([memory log] its first sample half a second after start, not a minute)
   const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env });
   const ui = await app.firstWindow();
   const errors = [];
@@ -65,6 +65,10 @@ const os = require('os');
   await app.evaluate(async () => { const wc = global.__agent.browser.activeTab().webContents; if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); wc.debugger.sendCommand('Page.crash').catch(() => {}); });
   check('a page that really crashes writes a crash report', await waitFor(async () => dumpCount() > dumpsBefore, 15000), `${dumpsBefore} -> ${dumpCount()}`);
   check('it is logged as a crash', await waitFor(async () => /\tpage-process-gone\trenderer crashed, exit/.test(errLog())), errLog().slice(-400));
+  // [memory log] Lumen's own memory goes to diagnostics/memory.jsonl from the start of the run
+  const memFile = path.join(diag, 'memory.jsonl');
+  const memLast = () => { try { return JSON.parse(fs.readFileSync(memFile, 'utf8').trim().split('\n').pop()); } catch { return null; } };
+  check('Lumen\'s own memory is sampled to diagnostics/memory.jsonl (heap, its limit, RSS, the run\'s age)', await waitFor(async () => { const s = memLast(); return Boolean(s) && s.heapMb > 0 && s.heapLimitMb > s.heapMb && s.rssMb > 0 && Number.isInteger(s.upMin); }, 10000), JSON.stringify(memLast()));
 
   // ---- a frozen tab still closes
   const frozenId = await open(`${base}/frozen`);

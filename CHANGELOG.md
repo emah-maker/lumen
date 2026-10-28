@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A close that leaves no trace now shows whether Lumen ran out of memory.** Every 5 minutes Lumen writes how much memory its own process uses to `diagnostics/memory.jsonl` (kept under 256 KB, never sent anywhere). If its JavaScript heap passes 70% of its limit, `main-errors.log` says so once. When Lumen starts after closing without quitting, the line that says how the last run ended includes the last memory sample (`src/features/memory-log.js`).
+
 ## 0.5.79 (2026-10-27)
 
 - **Prefer fractions covers algebra.** With Settings → AI → Prefer fractions on, the AI is told to write algebraic fractions as LaTeX too ($\frac{2}{s-1}$, not 2/(s−1)), and one it still writes inline with a bracketed side, like 2/(s−1), 6s/((s−1)(s²+1)) or (−3s + 3)/(s²+1), is drawn stacked. Words like and/or, units, dates, paths and code are left alone.

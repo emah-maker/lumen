@@ -270,6 +270,19 @@ function logMainError(kind, value) {
   } catch { /* the log is best effort and must never throw out of an error handler */ }
 }
 if (TEST) global.__logMainError = logMainError;
+// [memory log] Lumen's own memory every few minutes to diagnostics/memory.jsonl (features/memory-log.js), so a close that left no trace shows
+// whether the heap was climbing; a heap past 70% of its limit is said once in main-errors.log. Loaded a minute after start, not at startup.
+let memoryLog = null;
+function startMemoryLog() {
+  const t = setTimeout(() => {
+    try {
+      memoryLog ||= require('./features/memory-log').createMemoryLog({ dir: () => path.join(app.getPath('userData'), 'diagnostics'), version: app.getVersion(), onHigh: (text) => logMainError('memory-high', text) });
+      memoryLog.start();
+    } catch { /* diagnostics only */ }
+  }, TEST && process.env.LUMEN_MEMLOG_SOON === '1' ? 500 : 60e3);
+  t.unref?.();
+}
+if (TEST) global.__memoryLog = () => memoryLog;
 process.on('uncaughtException', (err) => { console.error('[lumen] uncaught exception:', err); logMainError('uncaughtException', err); });
 process.on('unhandledRejection', (reason) => { console.error('[lumen] unhandled rejection:', reason); logMainError('unhandledRejection', reason); });
 // [exit log] Lumen closing by itself left nothing behind: a crash of its own process (in Chromium, not JavaScript) wrote no report, and a page,
@@ -13422,10 +13435,11 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(path.join(__dirname, 'assets', 'icon.png'));
   crashRecovery.begin({ mode: settingsBackend.startupPlan().mode }); // (before the first window saves a session over the last run's)
   if (crashRecovery.crashed()) { // [exit log] the last run never quit: say how it ended (a crash report it left is written by then)
-    try { const end = require('./features/exit-log').lastRunEnd({ startedAtMs: crashRecovery.lastStart(), dir: crashDumpDir() }); logMainError(`previous-run-${end.kind}`, end.text); } catch { /* diagnostics only */ }
+    try { const end = require('./features/exit-log').lastRunEnd({ startedAtMs: crashRecovery.lastStart(), dir: crashDumpDir() }); logMainError(`previous-run-${end.kind}`, end.text + require('./features/memory-log').lastLine(path.join(app.getPath('userData'), 'diagnostics'))); } catch { /* diagnostics only */ } // ([memory log] with the memory it was using last)
   }
   setAboutPanel();
   wireSchedulerPower();
+  startMemoryLog();
   createWindow(); // (first: the ad blocker's and extensions' code loads while the window's UI does)
   const extending = setupExtensions().catch((err) => console.error('Extension support failed to start:', err));
   // The filter lists' engine loads in one ~0.4 s block of the main process (and the library's code ~0.15 s before it), during which the window's
