@@ -5559,7 +5559,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
 }
 const popupPartition = new WeakMap(); // a popup's page -> the research session it belongs to (null: the profile's)
 const identified = new WeakSet();
-const siteLight = require('./features/site-light');
+
 const lightSchemes = new WeakMap(); // webContents -> its site-light update (main frame address)
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
@@ -5605,9 +5605,14 @@ function applyChromeIdentity(wc) {
     if (!details.isMainFrame || details.isSameDocument) return;
     const now = lang();
     if (now !== languages) { languages = now; identify(); }
-    lightScheme(details.url); // [site light] a half-built dark mode gets the light page (features/site-light.js)
+    lightScheme(details.url); // [site light] a half-built dark mode gets the light page (browser/chrome-identity.js LIGHT_SITES)
   };
-  const lightScheme = siteLight.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors);
+  let lightUpdate = null; // (made on first need: once made it also clears the override when the theme turns light)
+  const lightScheme = (url) => {
+    if (!lightUpdate && !nativeTheme.shouldUseDarkColors) return;
+    lightUpdate ||= CHROME_IDENTITY.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors);
+    lightUpdate(url);
+  };
   lightSchemes.set(wc, lightScheme);
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
