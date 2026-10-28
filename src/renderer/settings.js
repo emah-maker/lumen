@@ -3168,15 +3168,17 @@ function grokUsageRows(u, refresh) {
 function codexUsageRows(u) {
   const c = u.codex;
   if (!c) return [];
-  const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const when = (t) => (window.usageBars?.clockOf ? window.usageBars.clockOf(t, Date.now()) : new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })); // a date for a reset weeks away
   const rows = [row('Codex CLI', 'Read from Codex’s own session logs on this computer (numbers only, never your prompts). Codex doesn’t report a price, so there is no dollar figure.')];
   if (c.reached) rows.push(row('Codex limit reached', c.reached.resetsAt ? `Resets ${when(c.reached.resetsAt)}.` : 'Codex didn’t say when it resets.'));
   const plan = c.planType ? ` (${c.planType[0].toUpperCase()}${c.planType.slice(1)} plan)` : '';
   const win = (label, w) => (w ? (w.expired ? row(label, 'Reset since the last reading; the next Codex reply shows the new one.') : meterRow(label, w.percent, w.resetsAt ? `Resets ${when(w.resetsAt)}` : null)) : null);
-  const five = win(`Codex 5-hour limit${plan}`, c.fiveHour);
-  const week = win('Codex weekly limit', c.weekly);
-  rows.push(...[five, week].filter(Boolean));
-  if (!five && !week) rows.push(row('Codex plan limits', c.note || 'Codex hasn’t reported its plan limits yet.'));
+  // Every window Codex reported, named by its length (5-hour, weekly, or a free plan's single 30-day one); the plan on the first.
+  const label = (w, fallback) => `Codex ${window.usageBars?.windowLabel ? window.usageBars.windowLabel(w.minutes, fallback) : fallback === 'week' ? 'weekly limit' : '5-hour limit'}`;
+  const list = Array.isArray(c.windows) ? c.windows.filter(Boolean) : [c.fiveHour, c.weekly].filter(Boolean);
+  const shown = list.map((w, i) => win(`${label(w, i ? 'week' : '5h')}${i ? '' : plan}`, w)).filter(Boolean);
+  rows.push(...shown);
+  if (!shown.length) rows.push(row('Codex plan limits', c.note || 'Codex hasn’t reported its plan limits yet.'));
   else if (c.readAt) rows.push(row('', `As of ${when(c.readAt)}, the last Codex reply on this computer. Limits are shared with Codex on other devices and in the cloud.`));
   const line = (label, w) => `${label}: ${w.sessions} session${w.sessions === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens (${tokens(w.cached)} cached, ${tokens(w.output)} output)`;
   rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));

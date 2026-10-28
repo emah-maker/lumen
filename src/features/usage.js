@@ -91,7 +91,7 @@ function periodEnd(kind, now) {
 function codexSummary(scan, now, { installed = null } = {}) {
   const codexUsage = require('../ai/codex-usage');
   const limits = scan?.limits || null;
-  const { fiveHour, weekly } = codexUsage.windowsOf(limits);
+  const { fiveHour, weekly, all } = codexUsage.windowsOf(limits);
   const win = (w) => (w ? { percent: w.percent, minutes: w.minutes, resetsAt: w.resetsAt, expired: Boolean(w.expired || (w.resetsAt != null && w.resetsAt <= now)) } : null);
   const reached = codexUsage.limitReached(limits, now);
   const has = Boolean(scan && (scan.sessions || limits));
@@ -100,6 +100,7 @@ function codexSummary(scan, now, { installed = null } = {}) {
     hasLimits: Boolean(limits),
     planType: limits?.planType || null,
     fiveHour: win(fiveHour), weekly: win(weekly), reached,
+    windows: all.map(win), // every window, shortest first: what the bar shows (a free plan's one 30-day window is neither of the two above)
     readAt: limits?.at || null,
     sessions: scan?.sessions || 0,
     today: scan?.today || null, week: scan?.week || null,
@@ -166,10 +167,12 @@ function barFor(engine, s) {
     const c = s.codex;
     if (!c) return null;
     if (c.reached) return { engine, kind: 'limit', percent: 100, level: 'high', resetsAt: c.reached.resetsAt || null, message: 'Codex plan limit reached', windows: null };
-    const w = c.fiveHour && !c.fiveHour.expired ? c.fiveHour : c.weekly && !c.weekly.expired ? c.weekly : null;
+    // The shortest window still running is the bar; the next one is the second number. `minutes` names each (5-hour, weekly, 30-day …).
+    const live = (Array.isArray(c.windows) ? c.windows : [c.fiveHour, c.weekly]).filter((w) => w && !w.expired && Number.isFinite(w.percent));
+    const [w, next] = live;
     if (!w) return null;
-    const wk = c.weekly && !c.weekly.expired ? c.weekly : null;
-    return { engine, kind: 'plan', percent: Math.max(0, Math.min(100, w.percent)), level: levelOf(w.percent), resetsAt: w.resetsAt || null, resetsText: null, weekly: wk && wk !== w ? { percent: Math.max(0, Math.min(100, wk.percent)), resetsText: null, resetsAt: wk.resetsAt || null } : null, lumenPoints: null };
+    const pct = (p) => Math.max(0, Math.min(100, p));
+    return { engine, kind: 'plan', percent: pct(w.percent), level: levelOf(w.percent), minutes: w.minutes ?? null, resetsAt: w.resetsAt || null, resetsText: null, weekly: next ? { percent: pct(next.percent), minutes: next.minutes ?? null, resetsText: null, resetsAt: next.resetsAt || null } : null, lumenPoints: null };
   }
   const { limit, windows, budget, rate } = ownOf(engine, s);
   if (limit) return { engine, kind: 'limit', percent: 100, level: 'high', resetsAt: limit.resetsAt || null, message: limit.text || '', model: limit.model || null, windows };
@@ -186,6 +189,11 @@ function barFor(engine, s) {
   // Amber from 10 points below the model's own auto-compaction threshold (100 when it isn't known).
   const compactAt = compactPercent || 100;
   return { engine, kind: 'context', percent: contextPercent, level: contextPercent == null ? 'ok' : levelOf(contextPercent, Math.max(1, compactAt - 10), Infinity), ...context, tokens: today.tokens, costUSD: today.costUSD, turns: today.turns, windows };
+}
+// The AI status card's Codex reading: the shortest window still running (as the bar), with its length. null without one.
+function codexMeterOf(cx) {
+  const w = (cx?.windows || [cx?.fiveHour]).find((x) => x && !x.expired && Number.isFinite(x.percent));
+  return w ? { percent: w.percent, resetsAt: w.resetsAt, minutes: w.minutes ?? null } : null;
 }
 // What one engine owns in summary(): its limit-reached state, Lumen's rolling windows, its budget and its newest rate-limit reading.
 // Grok's live in `grok` (kept as they were); every other engine's are in the summary's per-engine maps.
@@ -512,7 +520,7 @@ function createUsage(deps) {
     const agy = agyLimitNow(now);
     const rate = {};
     for (const k of Object.keys(rates)) { const v = PU.rateView(rates[k], now); if (v?.tightest) rate[k] = { percent: v.tightest.percent, label: v.tightest.label, resetsAt: v.tightest.resetsAt }; }
-    return { agyLimit: agy ? { resetsAt: agy.resetsAt } : null, rate, codexLimit, codexMeter: cx?.fiveHour && !cx.fiveHour.expired ? { percent: cx.fiveHour.percent, resetsAt: cx.fiveHour.resetsAt } : null, meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt } : null, grokLimit: g ? { resetsAt: g.resetsAt } : null, today };
+    return { agyLimit: agy ? { resetsAt: agy.resetsAt } : null, rate, codexLimit, codexMeter: codexMeterOf(cx), meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt } : null, grokLimit: g ? { resetsAt: g.resetsAt } : null, today };
   }
 
   function clear() { records = []; codexSnap = null; codexAt = 0; rates = {}; agyLimit = null; save(); }

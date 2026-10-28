@@ -280,14 +280,17 @@ function contextOf(stats, { startedAt = 0 } = {}) {
 }
 
 const DEFAULT_WINDOWS = { five: 300, week: 10080 };
-// The 5-hour and weekly windows out of a limits reading, whichever of primary / secondary each is (by window_minutes).
+// The 5-hour and weekly windows out of a limits reading, whichever of primary / secondary each is (by window_minutes), and
+// `all`: every window, shortest first (one of unknown length last). A plan can have other lengths: a free plan reports a single
+// 30-day window (window_minutes 43200), which is neither, so the bar reads `all`, never only these two.
 function windowsOf(limits) {
-  if (!limits) return { fiveHour: null, weekly: null };
+  if (!limits) return { fiveHour: null, weekly: null, other: [], all: [] };
   const list = [limits.primary, limits.secondary].filter(Boolean);
   const near = (w, minutes) => w.minutes != null && Math.abs(w.minutes - minutes) <= minutes * 0.2;
   const fiveHour = list.find((w) => near(w, DEFAULT_WINDOWS.five)) || (list[0] && list[0].minutes == null ? list[0] : null);
   const weekly = list.find((w) => near(w, DEFAULT_WINDOWS.week)) || (list.length > 1 && list[1].minutes == null ? list[1] : null);
-  return { fiveHour: fiveHour || null, weekly: weekly || null, other: list.filter((w) => w !== fiveHour && w !== weekly) };
+  const all = [...list].sort((a, b) => (a.minutes ?? Infinity) - (b.minutes ?? Infinity));
+  return { fiveHour: fiveHour || null, weekly: weekly || null, other: list.filter((w) => w !== fiveHour && w !== weekly), all };
 }
 
 // The limit-reached state from a reading: { resetsAt (ms | null) } while a window at 100% hasn't reset, else null.
