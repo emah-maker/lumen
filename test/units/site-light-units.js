@@ -1,6 +1,6 @@
-// Sites with a half-built dark mode get the light page in a dark theme (features/site-light.js).
+// Sites with a half-built dark mode get the light page in a dark theme (browser/chrome-identity.js).
 const assert = require('assert');
-const { LIGHT_SITES, isLightSite, schemeFor, watcher } = require('../../src/features/site-light');
+const { LIGHT_SITES, isLightSite, schemeFor, watcher } = require('../../src/browser/chrome-identity');
 
 assert.ok(LIGHT_SITES.includes('glassdoor.com'));
 assert.strictEqual(isLightSite('https://www.glassdoor.com/Reviews/index.htm'), true, 'www. is the site');
