@@ -128,7 +128,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Lumen",
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "include": "build/installer.nsh",
+      "installerIcon": "src/assets/icon.ico",
+      "uninstallerIcon": "src/assets/icon.ico"
     },
     "portable": {
       "artifactName": "Lumen ${version} Portable.exe"
