@@ -64,6 +64,20 @@ async function fixAssociationIcons(exe, icon, run) {
   return changed;
 }
 
+// "Open with" → Lumen: Windows keeps the exe it was pointed at under Applications\Lumen.exe\shell\open\command and never updates it. After Lumen
+// moved (Program Files to the per-user folder, or a reinstall elsewhere) that path is gone: double-clicking a file the user opens with Lumen
+// (a .pptx, a .docx) did nothing, and Windows dropped Lumen as that type's default. When the command names a Lumen.exe that no longer exists,
+// it is pointed at this one. A command that names a Lumen.exe that still exists (another install the user keeps) is left alone.
+// Resolves to true when it changed the command. run: `reg` (null on failure); exists: fs.existsSync; both injectable for tests.
+async function fixOpenWith(exe, run, exists = fs.existsSync) {
+  const key = `HKCU\\Software\\Classes\\Applications\\${path.win32.basename(exe)}\\shell\\open\\command`;
+  const command = regDefault(await run(['query', key, '/ve']));
+  if (!command) return false; // (never chosen in "Open with": nothing to repair, and nothing is added)
+  const named = (/^\s*"([^"]+)"/.exec(command) || /^\s*(\S+)/.exec(command))?.[1] || '';
+  if (!named || path.win32.resolve(named).toLowerCase() === path.win32.resolve(exe).toLowerCase() || !/\\lumen\.exe$/i.test(named) || exists(named)) return false;
+  return (await run(['add', key, '/ve', '/t', 'REG_SZ', '/d', `"${exe}" "%1"`, '/f'])) !== null;
+}
+
 // Tell Explorer to redraw file icons (SHChangeNotify(SHCNE_ASSOCCHANGED)); without it the old icon stays until the
 // icon cache is rebuilt. Called only after fixAssociationIcons changed something, so once per update.
 function notifyAssociationsChanged(execFile = require('../ai/cli-utils').execFile) {
@@ -77,7 +91,7 @@ function fixAssociationIconsAtStartup(app) {
   const { execFile } = require('../ai/cli-utils');
   const run = (args) => new Promise((resolve) => execFile('reg.exe', args, { windowsHide: true, timeout: 5000 }, (err, out) => resolve(err ? null : String(out))));
   return fixAssociationIcons(process.execPath, appIcon(), run)
-    .then((changed) => { if (changed.length) notifyAssociationsChanged(); return changed; })
+    .then(async (changed) => { const moved = await fixOpenWith(process.execPath, run).catch(() => false); if (changed.length || moved) notifyAssociationsChanged(); return moved ? [...changed, 'OpenWith'] : changed; })
     .catch(() => []);
 }
 
@@ -288,4 +302,4 @@ function tellStuck() {
   try { require('electron').dialog.showErrorBox('Lumen did not start', message); } catch {}
 }
 
-module.exports = { isInstalledExe, appIcon, ASSOCIATION_PROG_IDS, fixAssociationIcons, fixAssociationIconsAtStartup, notifyAssociationsChanged, regDefault, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };
+module.exports = { isInstalledExe, appIcon, ASSOCIATION_PROG_IDS, fixAssociationIcons, fixOpenWith, fixAssociationIconsAtStartup, notifyAssociationsChanged, regDefault, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };
