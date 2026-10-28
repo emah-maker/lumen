@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Every AI can do what a Claude Code chat can.** Codex, Grok Build and Antigravity now get your saved skills and the tools of the MCP servers you added in Settings → AI, as the API models do (each call still asks first). `/compact` works on Codex, Grok Build and Antigravity: the same AI summarizes the earlier part of the chat instead of saying it can't. Antigravity can now see pictures you attach, and read a very long message, without full access: before, its own safety hook blocked it from opening them. What only some AIs can do (plan mode, background tasks) is listed in [docs/ai-engines.md](docs/ai-engines.md).
+- **Background tasks no longer offer Antigravity.** It was listed as a model for a task, and the task then failed with an unrelated error. A task saved on Codex or Antigravity now says plainly that they answer in sidebar chats only and to pick Claude Code, Grok Build or an API model.
+
 ## 0.5.79 (2026-10-27)
 
 - **Prefer fractions covers algebra.** With Settings → AI → Prefer fractions on, the AI is told to write algebraic fractions as LaTeX too ($\frac{2}{s-1}$, not 2/(s−1)), and one it still writes inline with a bracketed side, like 2/(s−1), 6s/((s−1)(s²+1)) or (−3s + 3)/(s²+1), is drawn stacked. Words like and/or, units, dates, paths and code are left alone.

@@ -58,13 +58,17 @@ const backgroundStepLimit = (setting) => (Number.isInteger(setting) && setting >
 const CLI_ENGINES = { claudecode: 'Claude Code', grokbuild: 'Grok Build' }; // (Antigravity and Codex are for sidebar chats only: a background task has nobody to answer its approvals)
 const engineOfModel = (model) => /^claudecode:/.test(String(model)) ? 'claudecode' : /^grokbuild:/.test(String(model)) ? 'grokbuild' : 'api';
 const isCliModel = (model) => engineOfModel(model) !== 'api';
+// [engine parity] The CLI engines that answer in sidebar chats only: their name for a model of theirs, else null. A task on one is refused with
+// that said (tasks.error.sidebarOnly), never run as if it were an API model.
+const SIDEBAR_ONLY = { codex: 'Codex', antigravity: 'Antigravity' };
+const sidebarOnly = (model) => SIDEBAR_ONLY[/^([a-z]+):/.exec(String(model || ''))?.[1]] || null;
 // The provider or engine key of a picker id ('openai:gpt-5.6' -> 'openai', a bare Claude id -> 'anthropic'), when it has an Auto of its own.
 const providerKeyOf = (id) => { const p = /^([a-z][a-z0-9]*):/.exec(String(id))?.[1] || 'anthropic'; return autoModel.SCOPES.includes(p) ? p : null; };
 
 // The models a task may use, from the picker's options: every connected API model (chat-only ones can't
 // act, so no) and each CLI model. A CLI model of a CLI that is not signed in is listed but not available.
 function taskModels(options) {
-  const list = (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !/^codex:/.test(o.id) && !/chat only/i.test(o.label || '')).map((o) => {
+  const list = (options || []).filter((o) => o && o.id && o.id !== 'openrouter:__more' && !sidebarOnly(o.id) && !/chat only/i.test(o.label || '')).map((o) => {
     const engine = engineOfModel(o.id);
     return { id: o.id, label: o.label || o.id, group: o.group || '', engine, available: engine === 'api' || o.signedIn !== false };
   });
@@ -572,7 +576,7 @@ function createTaskStore({ file, encrypt, decrypt, available = () => true, limit
 module.exports = {
   LIMITS, STATUSES, ACTIVE, OCCUPYING, TRANSITIONS, canTransition, DEFAULT_SETTINGS, TIMEOUT_CHOICES, APPROVAL_WAIT_CHOICES, normalizeSettings, backgroundStepLimit,
   progressOf, queueInfo, resumable, resumeInfo, taskPrompt, chooseResult, applyEdit, addVisit, notifyPlan, approvalExpired, newlyInterrupted, unseenCount,
-  CLI_ENGINES, engineOfModel, isCliModel, taskModels, cliProblem, cliStates, cliMaxTurns, cliTaskUsage, cliUsageReport,
+  CLI_ENGINES, engineOfModel, isCliModel, sidebarOnly, taskModels, cliProblem, cliStates, cliMaxTurns, cliTaskUsage, cliUsageReport,
   hostOfUrl, hostFromToken, hostsInText, withWww, allowedSitesFor,
   normalizeSchedule, isRecurring, nextRunAt, isDue, planStarts,
   normalizePageText, digest, parseCondition, watchDecision, parseVerdict,

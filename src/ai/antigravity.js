@@ -59,7 +59,8 @@
 //   3. That the OS keyring sign-in survives the HOME move (the docs say credentials live in the keyring) and what a signed-out run says.
 //   4. That hooks.json in ~/.gemini/config is loaded, and that a hook's "allow" skips the permission prompt.
 //   5. The system prompt: there is no flag, so it rides at the top of the first message (see promptFor).
-//   6. Images: no documented way, so they are written to files in the working folder and named in the prompt.
+//   6. Images: no documented way, so they are written to files in the working folder and named in the prompt. agy opens them with view_file,
+//      which the hook and the stream check allow for exactly those files (agy-tools.js ownFileOk), as for a long message's file.
 //   7. settings.json keys toolPermission and trustedWorkspaces (from a third-party reference, not Google's docs).
 //   8. The stream-json event shapes (from the headless docs; parsed defensively).
 //   9. [helpers] That the PreToolUse hook also fires for a subagent's tool calls, with the subagent's own conversationId (agy's embedded hooks.md
@@ -356,7 +357,7 @@ const LUMEN_NAME = /lumen/i;
 const ACTING_NAME = /(command|terminal|shell|bash|exec|run_|write|edit|replace|delete|remove|create|move|rename|file|url|browser)/i;
 // args: the step's tool parameters; home: the chat's home. A call agy-tools.js allows (a read of Lumen's own descriptor folder)
 // is never flagged; a read with no path in the stream is left to the hook gate, which checks it.
-const offToolOf = (name, args = null, home = null) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NAME.test(String(name)) && !agyAllowed({ name, args, home, required: false }) ? String(name).slice(0, 80) : null);
+const offToolOf = (name, args = null, home = null, reads = null) => (name && !LUMEN_NAME.test(String(name)) && ACTING_NAME.test(String(name)) && !agyAllowed({ name, args, home, required: false, reads }) ? String(name).slice(0, 80) : null);
 
 // The only variables of Lumen's environment the agy child gets: what a process needs to start and reach the network, plus
 // the API-key sign-in settings. Everything else of the user's shell environment stays behind.
@@ -551,8 +552,8 @@ class AntigravityEngine {
     const tag = crypto.randomBytes(18).toString('hex');
     const rows = fullAccess ? helperRows(emit) : null; // [helpers] what a subagent does, from the hook (agy-tools.js helperRows)
     rows?.parent(sessionId);
-    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home, onCall: rows ? (m) => rows.call(m) : null });
-    const files = []; // everything written for this run, removed after it
+    const files = []; // everything written for this run, removed after it; [engine parity] also the only files agy may view (agy-tools.js ownFileOk)
+    const gateRun = gate.open(tag, sessionId || tag, { agy: true, fullAccess, home, onCall: rows ? (m) => rows.call(m) : null, reads: files });
     let mcpFile = null;
     let mcpText = null; // what this run wrote there: removed afterwards only if no newer run of the chat has replaced it
     try {
@@ -578,7 +579,7 @@ class AntigravityEngine {
       }
       // [work folder] the chosen folder (when it is there) is the working folder; agy's permission gate and sandbox are as before
       if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
-      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort, workDir }), folder: fullAccess ? folder : workDir || folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess, rows });
+      return await this.attempt({ bin, gate, gateRun, tag, home, argv: this.argsFor({ prompt: text, conversation: sessionId, model, fullAccess, effort, workDir }), folder: fullAccess ? folder : workDir || folder, sessionId, resume, model, signal, emit, runAgent, scope, fullAccess, rows, reads: files });
     } finally {
       await Promise.all(files.map((f) => fs.promises.rm(f, { force: true }).catch(() => {})));
       // The run's token file. A newer message of the same chat ("Send now") may have written its own already: that one stays.
@@ -587,7 +588,7 @@ class AntigravityEngine {
     }
   }
 
-  async attempt({ bin, gate, gateRun, tag, home = this.home, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false, rows = null }) {
+  async attempt({ bin, gate, gateRun, tag, home = this.home, argv, folder, sessionId, resume, model, signal, emit, runAgent, scope = null, fullAccess = false, rows = null, reads = null }) {
     if (signal.aborted) { gate.close(tag); return { text: '', sessionId, stopped: true }; }
     try { this.onFresh?.({ sessionId, resume }); } catch { /* optional */ }
     emit({ type: 'status', text: 'Starting Antigravity…' });
@@ -629,7 +630,7 @@ class AntigravityEngine {
         const tool = su.tool_name || su.tool_info?.name || null;
         if (rows && su.state === 'DONE' && (su.subagent_info || /^invoke_subagent$/i.test(String(tool || '')))) rows.finish(typeof su.subagent_info?.conversation_id === 'string' ? su.subagent_info.conversation_id : null);
         if (tool || su.step_type === 'tool') {
-          const bad = this.watch && !fullAccess ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home) : null; // [full access] agy's own tools are expected
+          const bad = this.watch && !fullAccess ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home, reads) : null; // [full access] agy's own tools are expected
           if (bad) { offTool = bad; this.kill(child); return; }
         } else if (su.step_type === 'agent_response' && su.text_delta) {
           // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
