@@ -5561,6 +5561,10 @@ const popupPartition = new WeakMap(); // a popup's page -> the research session 
 const identified = new WeakSet();
 
 const lightSchemes = new WeakMap(); // webContents -> its site-light update (main frame address)
+const HALF_DARK = require('./browser/half-dark');
+let halfDarkStore = null;
+const halfDark = () => (halfDarkStore ||= HALF_DARK.createStore({ file: path.join(app.getPath('userData'), 'half-dark-sites.json') })); // the sites found with a half-built dark mode
+if (TEST) global.__halfDark = { ...HALF_DARK, store: halfDark }; // (tests read and measure with it)
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
   try {
@@ -5605,15 +5609,38 @@ function applyChromeIdentity(wc) {
     if (!details.isMainFrame || details.isSameDocument) return;
     const now = lang();
     if (now !== languages) { languages = now; identify(); }
-    lightScheme(details.url); // [site light] a half-built dark mode gets the light page (browser/chrome-identity.js LIGHT_SITES)
+    lightScheme(details.url); // [site light] a half-built dark mode gets the light page (browser/half-dark.js)
   };
   let lightUpdate = null; // (made on first need: once made it also clears the override when the theme turns light)
   const lightScheme = (url) => {
     if (!lightUpdate && !nativeTheme.shouldUseDarkColors) return;
-    lightUpdate ||= CHROME_IDENTITY.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors);
+    lightUpdate ||= CHROME_IDENTITY.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors, (u) => halfDark().isLight(u));
     lightUpdate(url);
   };
   lightSchemes.set(wc, lightScheme);
+  // [half dark] In a dark theme a page is measured a moment after it loads, and again later (a page that draws its content late): when much of its
+  // text can't be read, it is told light and measured again, and the site is kept only when that reads far better (browser/half-dark.js).
+  let measuring = false;
+  const measure = async () => {
+    const url = wc.isDestroyed() ? '' : wc.getURL();
+    if (measuring || !url || !nativeTheme.shouldUseDarkColors || !halfDark().worthTrying(url)) return;
+    measuring = true;
+    try {
+      const probe = () => wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: HALF_DARK.PROBE }]).catch(() => null);
+      const before = await probe();
+      if (TEST) (global.__halfDarkLog ||= []).push({ url, before });
+      if (!HALF_DARK.halfDark(before) || wc.isDestroyed() || wc.getURL() !== url) return;
+      halfDark().try(url);
+      lightScheme(url);
+      await new Promise((r) => { const t = setTimeout(r, 700); t.unref?.(); });
+      const still = !wc.isDestroyed() && wc.getURL() === url;
+      const after = still ? await probe() : null;
+      if (TEST) (global.__halfDarkLog ||= []).push({ url, before, after });
+      if (still && HALF_DARK.lightIsBetter(before, after)) halfDark().keep(url);
+      else { halfDark().drop(url, { measured: still }); if (!wc.isDestroyed()) lightScheme(wc.getURL()); }
+    } finally { measuring = false; }
+  };
+  wc.on('did-finish-load', () => { for (const ms of [1200, 4500]) { const t = setTimeout(measure, ms); t.unref?.(); } });
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
   identify();
