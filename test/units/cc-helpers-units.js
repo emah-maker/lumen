@@ -137,6 +137,39 @@ const followUpTurn = (rec, text) => {
   result(rec, text, { origin: { kind: 'task-notification' } });
 };
 
+// ---- [agents card] every subagent, background or not, as snapshots the chat's Agents rows draw
+function agentsCard() {
+  const t = new HelperTracker();
+  let r = t.feed({ type: 'system', subtype: 'task_started', task_id: 'A1', tool_use_id: 'ag1', description: 'Re-review 3.3 deck', task_type: 'local_agent', is_backgrounded: true }, 1000);
+  check('agents: a background agent starts working, once', r.agents.length === 1 && r.agents[0].state === 'working' && r.agents[0].desc === 'Re-review 3.3 deck' && r.agents[0].background === true && r.agents[0].startedAt === 1000, JSON.stringify(r.agents));
+  r = t.feed({ type: 'system', subtype: 'task_started', task_id: 'F1', tool_use_id: 'ag2', description: 'Check the math', task_type: 'local_agent', is_backgrounded: false }, 1100);
+  check('agents: one the reply waits on is an agent too (not a background helper)', r.agents.length === 1 && r.agents[0].background === false && r.started.length === 0, JSON.stringify(r));
+  r = t.feed({ type: 'system', subtype: 'task_started', task_id: 'B1', tool_use_id: 'sh1', description: 'npm test', task_type: 'local_bash', is_backgrounded: true });
+  check('agents: a background shell task is not an agent', r.agents.length === 0 && r.started.length === 1);
+  r = t.feed({ type: 'system', subtype: 'task_progress', task_id: 'A1', description: 'Re-review 3.3 deck', usage: { tool_uses: 3, total_tokens: 5000, duration_ms: 9000 }, last_tool_name: 'Read' });
+  check('agents: progress gives its tool calls', r.agents.length === 1 && r.agents[0].tools === 3 && r.agents[0].tokens === 5000, JSON.stringify(r.agents));
+  const ag = t.agentOf({ type: 'assistant', parent_tool_use_id: 'ag1' });
+  check('agents: its own lines are known (background and waited-on alike)', ag?.id === 'A1' && t.agentOf({ type: 'assistant', parent_tool_use_id: 'ag2' })?.id === 'F1' && !t.agentOf({ type: 'assistant', parent_tool_use_id: 'sh1' }));
+  let snap = t.stepOf(ag, 'Reading slide 4');
+  check('agents: a step it takes is what it does now', snap.last === 'Reading slide 4' && snap.tools === 3, JSON.stringify(snap));
+  for (let i = 0; i < 3; i++) snap = t.stepOf(ag, 'Searching');
+  check('agents: steps seen count when the CLI says fewer', snap.tools === 4, JSON.stringify(snap));
+  r = t.feed({ type: 'system', subtype: 'task_progress', task_id: 'A1', summary: 'Checking the worked examples', usage: { tool_uses: 6 } });
+  check("agents: the CLI's own summary of its progress replaces the last step", r.agents[0].last === 'Checking the worked examples' && r.agents[0].tools === 6, JSON.stringify(r.agents));
+  r = t.feed({ type: 'system', subtype: 'task_notification', task_id: 'A1', status: 'completed', summary: 'Rated 9/10: fix slide 7' }, 5000);
+  check('agents: it ends done, with its summary and end time', r.agents.length === 1 && r.agents[0].state === 'done' && r.agents[0].summary === 'Rated 9/10: fix slide 7' && r.agents[0].endedAt === 5000, JSON.stringify(r.agents));
+  r = t.feed({ type: 'system', subtype: 'task_notification', task_id: 'A1', status: 'completed' });
+  check('agents: a second notification for it says nothing', r.agents.length === 0);
+  const dropped = t.dropForeground();
+  check('agents: the waited-on one ends with its turn', dropped.length === 1 && dropped[0].id === 'F1' && dropped[0].state === 'done', JSON.stringify(dropped));
+  t.feed({ type: 'system', subtype: 'task_started', task_id: 'A2', tool_use_id: 'ag3', description: 'Unit 2', task_type: 'local_agent', is_backgrounded: true });
+  const all = t.endAll('stopped');
+  check('agents: the process ending stops a working agent (and says so as an agent)', all.some((x) => x.agent?.id === 'A2' && x.agent.state === 'stopped'), JSON.stringify(all.map((x) => x.agent)));
+  t.feed({ type: 'system', subtype: 'task_started', task_id: 'A3', tool_use_id: 'ag4', description: 'Unit 3', task_type: 'local_agent', is_backgrounded: true });
+  r = t.feed({ type: 'system', subtype: 'task_notification', task_id: 'A3', status: 'failed', summary: 'Could not read the PDF' });
+  check('agents: a failed one says failed', r.agents[0]?.state === 'failed' && r.agents[0].summary === 'Could not read the PDF', JSON.stringify(r.agents));
+}
+
 async function engine() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-helpers-'));
   let tokens = 0;
@@ -319,6 +352,7 @@ async function engine() {
 
 (async () => {
   tracker();
+  agentsCard();
   await engine();
   console.log(failures ? `\n${failures} check(s) FAILED` : '\nall cc-helpers checks passed');
   process.exit(failures ? 1 : 0);

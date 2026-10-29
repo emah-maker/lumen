@@ -187,6 +187,9 @@
     }
     const tools = Array.isArray(item.tools) ? item.tools : [];
     if (tools.length && item.cards && window.stepUI) out.push(...window.stepUI.restoreNodes(item)); // [step labels] cards for the browser and the shell, readable lines, details on demand
+    const agentsNode = item.agents && window.agentsCard ? window.agentsCard.restore(item.agents) : null; // [agents card] the reply's agents, as they ended
+    const actCard = agentsNode ? [...out].reverse().find((n) => n.classList?.contains('act-card')) : null; // (one card per message: inside its activity card)
+    if (agentsNode && actCard) window.agentsCard.into(actCard, agentsNode); else if (agentsNode) out.push(agentsNode);
     else if (item.steps || tools.length) {
       const count = item.steps || tools.length;
       const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });

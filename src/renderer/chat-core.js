@@ -468,7 +468,7 @@ function loadStepUI() {
   const head = document.head;
   head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
   const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => window.stepUI?.init(messages));
+  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
   return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);
@@ -1584,6 +1584,7 @@ function resumeLive(live) {
   if (!turn.userBubble && lastUser) { turn.userBubble = lastUser; setMark(lastUser, live.partial ? 'read' : 'sent'); } // (a chat opened mid-run: its last message)
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
+  if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-card')]; const last = cards[cards.length - 1]?._card; if (last) window.stepUI?.carryOn({ cards: [last] }, turn); } // [background helpers] a follow-up drawn again: it goes on in the card of the reply before it (step-ui.js carryOn)
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
@@ -1809,15 +1810,17 @@ window.assistant.onEvent((event) => {
   if (event.type === 'followup_start') {
     if (running || forOtherChat(event.chatId)) return;
     if (event.chatId && !shownChatId) nameChat(event.chatId);
+    const prev = finishedRun?.turn || null;
     beginTurn();
     runId = event.runId;
+    window.stepUI?.carryOn(prev, turn); // (its steps go on in the card of the reply before, not a second card under it)
     return;
   }
   // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.
   // [background helpers] So do a helper's steps and its state, long after: a helper Claude Code ran in the background reports on the card of the reply
   // that started it ("Helper working" until it ends). Its own steps are flagged; a Lumen call it makes carries only the run's id.
   const late = finishedTurn(event.runId);
-  if (late && /^(card_files|thumb|helper|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
+  if (late && /^(card_files|thumb|helper|agent|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1964,6 +1967,9 @@ window.assistant.onEvent((event) => {
     case 'helper': // [background helpers] a helper Claude Code runs in the background starts, progresses or ends (step-ui.js helper)
       window.stepUI?.helper(turn, event);
       break;
+    case 'agent': // [agents card] a subagent the reply started: its row on the reply's Agents card (agents-card.js)
+      agentEvent(turn, event);
+      break;
     case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
       showHelperCard(event);
       break;
@@ -2091,12 +2097,27 @@ window.assistant.onEvent((event) => {
   }
 });
 
+// [agents card] An agent's state, on the card of the reply that started it. One card per message: the agents are a part of that reply's activity
+// card (under its status line); only a reply with no card at all gets them as a card of their own, above the working line while it runs.
+function agentEvent(t, event) {
+  window.stepUI?.liveCard?.(t); // (a carried reply drawn again: its card as it is on screen now)
+  const place = (node) => {
+    const card = t.cards?.[t.cards.length - 1]?.el;
+    if (card?.isConnected) { window.agentsCard.into(card, node); return; }
+    if (t === turn && turn.working?.isConnected) { appendToTurn(node); return; }
+    if (t.text?.isConnected) t.text.after(node); else append(node);
+  };
+  const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); }; // (the card counts what runs at once: [at once])
+  if (window.agentsCard) show(); else loadStepUI().then(show);
+}
+
 // [background helpers] An event for the card of a reply that has ended (see onEvent): a thumbnail, files, a helper's state, a step it did.
 function lateCardEvent(t, event) {
   switch (event.type) {
     case 'card_files': window.stepUI?.filesMade(t, event.files); break;
     case 'thumb': window.stepUI?.thumb(t, event); break;
     case 'helper': window.stepUI?.helper(t, event); break;
+    case 'agent': agentEvent(t, event); break;
     case 'tool': {
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;

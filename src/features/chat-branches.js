@@ -52,6 +52,13 @@ function cleanMeta(raw) {
   }
   if (Array.isArray(raw.touched)) { const ids = [...new Set(raw.touched.filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9))].slice(0, 24); if (ids.length) out.touched = ids; } // [activity cards] the tabs the turn used
   if (raw.cards === true) out.cards = true;
+  if (Array.isArray(raw.agents)) { // [agents card] the subagents the reply started, as they last stood
+    const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+    const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);
+    const agents = raw.agents.filter((a) => a && typeof a.id === 'string' && /^[\w-]{1,64}$/.test(a.id) && ['working', 'done', 'failed', 'stopped'].includes(a.state)).slice(0, 12)
+      .map((a) => ({ id: a.id, desc: str(a.desc, 160), background: a.background === true, state: a.state, startedAt: num(a.startedAt), ...(num(a.endedAt) ? { endedAt: num(a.endedAt) } : {}), tools: num(a.tools), last: str(a.last, 160), ...(a.summary ? { summary: str(a.summary, 600) } : {}) }));
+    if (agents.length) out.agents = agents;
+  }
   if (Array.isArray(raw.written)) { const paths = [...new Set(raw.written.filter((p) => typeof p === 'string' && p && p.length <= 500 && !p.includes('\0')))].slice(0, MAX_WRITTEN); if (paths.length) out.written = paths; } // [activity cards] the files the AI wrote in the turn (paths only; main checks them again when the chat is opened and when one is clicked)
   if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };

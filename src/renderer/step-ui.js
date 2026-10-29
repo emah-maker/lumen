@@ -206,7 +206,35 @@
     if (card.stopped) return 'stopped';
     return 'completed';
   }
+  // [at once] What runs at this moment in a card: the reply's own steps still running, and each agent at work (agents-card.js; their own steps are
+  // theirs, not counted again). [{ text, who }]: who is '' for the reply itself.
+  function nowList(card) {
+    const turn = card.turnRef;
+    const out = [];
+    for (const row of card.list.querySelectorAll('.step.running:not([data-helper])')) out.push({ text: trimStep(row.firstChild?.textContent || ''), who: '' });
+    for (const row of turn?.agents?.card?.rows?.values?.() || []) if (row._a?.state === 'working') out.push({ text: row._a.last || tr('agents.starting'), who: row._a.desc || tr('agents.unnamed') });
+    return out;
+  }
+  // Two things or more at once: the status line counts them, and what the reply itself runs meanwhile is a pill each under it (an agent has its
+  // own row in the card's Agents list, never said twice).
+  function renderMany(card, all) {
+    let box = card.el.querySelector(':scope > .act-many');
+    const list = all.length >= 2 ? all.filter((x) => !x.who) : [];
+    if (!list.length) { if (box) box.hidden = true; return; }
+    if (!box) { box = el('div', { className: 'act-many' }); box.setAttribute('role', 'list'); card.status.after(box); }
+    box.hidden = false;
+    const key = JSON.stringify(list);
+    if (box.dataset.key === key) return;
+    box.dataset.key = key;
+    box.replaceChildren(...list.map((x) => {
+      const pill = el('span', { className: 'act-pill', title: x.text });
+      pill.setAttribute('role', 'listitem');
+      pill.append(el('span', { className: 'act-dot' }), el('span', { className: 'act-pill-text', textContent: x.text }));
+      return pill;
+    }));
+  }
   function refreshCard(turn, card) {
+    if (turn) card.turnRef = turn;
     const state = stateOf(turn, card);
     if (card.el.dataset.state !== state || (card.app && !card.hbApp) || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on; one that moved from a page to a program, too)
       card.el.dataset.state = state;
@@ -245,6 +273,7 @@
     refreshTabs(card, state);
     cardChip(card);
     statusBar(card, state); // (the screen reader hears it, throttled; a change of state at once)
+    renderMany(card, state === 'working' || state === 'helper' ? nowList(card) : []);
   }
   // ---- the tabs this turn opened or used: chips (tab-ref.js) in the order they were first touched, each marked open or closed
   // (a closed one reopens from its chip, an open one switches to it); folded by default, the head says how many.
@@ -333,6 +362,7 @@
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
     if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
     if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
+    if (state === 'working' || state === 'helper') { const many = nowList(card).length; if (many >= 2) return tr('card.status.many', { count: many }); }
     if (state === 'helper') { const own = step && step !== card.stepAtHelper ? step.replace(/^Helper · /, '') : ''; // (the step that started the helper says nothing about what it does now)
       const what = own || card.helperLabel; return what ? tr('card.status.helper', { step: what }) : tr('card.status.helperIdle'); }
     if (!step) return tr('card.status.starting');
@@ -715,15 +745,15 @@
     const row = makeRow(label, running, data);
     const own = isNote(event.name) ? null : surfaceFor(event.name, data.input);
     // The first step of a turn starts its card whatever it is (a web search, a page read, any tool); a step with no surface of its own after that joins the card.
-    const surface = own || (isNote(event.name) || turn.card?.el.isConnected ? null : window.stepLabels.weakSurfaceOf(event.name));
+    const surface = own || (isNote(event.name) || liveCard(turn) ? null : window.stepLabels.weakSurfaceOf(event.name));
     const info = SL().groupInfo(event.name, data.input, label);
     window.tabRef?.forStep(row, event.name, data.input, null); // [tab chips] a step that names a tab
     const tail = (e) => !turn.working || e.nextElementSibling === turn.working || !e.nextElementSibling;
     if (isNote(event.name)) {
       addNote(turn, row, opts);
     } else if (surface) {
-      let card = turn.card;
-      if (!card || !card.el.isConnected) {
+      let card = liveCard(turn);
+      if (!card) {
         card = makeCard(turn, surface, { append: (n) => opts.append(n) });
         turn.card = card;
         for (const n of turn.noteRows || []) card.list.append(n); // (approvals that came before the first step)
@@ -743,7 +773,7 @@
       touchTabs(card, window.tabMarker ? window.tabMarker.stepTabs(event.name, data.input) : []);
       refreshCard(turn, card);
       row._card = card;
-    } else if (turn.card?.el.isConnected) {
+    } else if (liveCard(turn)) {
       // A step that is on no surface of its own (a web search, a tool): in the turn's card, in order, not in a row of its own under it.
       const card = turn.card;
       if (card.ended && !opts.late) { card.ended = false; card.stopped = false; } // (a late step, a helper's, does not undo the Done of the reply that started it)
@@ -839,6 +869,34 @@
     return true;
   }
   function refreshAll(turn) { for (const card of turn?.cards || []) refreshCard(turn, card); }
+  // [background helpers] Claude Code began a turn of its own on a helper's result while the reply before it still shows its card (its helpers
+  // work on, or it is simply the newest card in the chat): the new turn's steps go on in that card instead of a second card under it, and the
+  // two turns share the helpers, so the card says Working until the last of them is done. A card that something newer was drawn after is left.
+  // The card a turn's steps go in now. A carried turn's card can be drawn again under it (main re-sends the chat when the follow-up starts, and the
+  // reply before is drawn from what was saved): the newest card in the chat is that card, and the turn goes on in it.
+  function liveCard(turn) {
+    if (turn.card?.el.isConnected) return turn.card;
+    if (!turn.carried) return null;
+    const root = turn.working?.parentElement || document.getElementById('messages');
+    const all = root ? root.querySelectorAll(':scope > .act-card') : [];
+    const last = all[all.length - 1];
+    if (!last?._card) return null;
+    turn.card = last._card;
+    turn.cards = [last._card];
+    return last._card;
+  }
+  function carryOn(prev, turn) {
+    const card = prev?.cards?.[prev.cards.length - 1];
+    if (!card || !turn || turn.card || !card.el.isConnected) return false;
+    const cards = card.el.parentElement ? [...card.el.parentElement.querySelectorAll(':scope > .act-card, :scope > .helper-card, :scope > .approval')] : [];
+    if (cards[cards.length - 1] !== card.el) return false;
+    turn.card = card;
+    turn.cards = [card];
+    turn.carried = true;
+    turn.helpers = (prev.helpers ||= new Map());
+    turn.agents = (prev.agents ||= { card: null }); // ([agents card] one card for both turns' agents too)
+    return true;
+  }
 
   // A thumbnail of the tab the AI works in: { data (base64 jpeg), url, title, tabId }.
   function thumb(turn, event) {
@@ -959,5 +1017,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard };
 })();
