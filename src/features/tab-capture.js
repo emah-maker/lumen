@@ -15,13 +15,62 @@ function cssClip(rect, zoom) {
   return { x: rect.x / z, y: rect.y / z, width: Math.max(1, rect.width / z), height: Math.max(1, rect.height / z), scale: 1 };
 }
 
+// A page that is not drawn (its window was hidden after it had been shown, or its view taken out of the window) answers no capture at all:
+// Page.captureScreenshot, capturePage() and the screencast all wait for a frame that never comes. The AI's screenshot then hung until the MCP
+// client gave up after 60 s, and every later capture of that tab waited behind it. A healthy capture takes 10-50 ms (a heavy page a few hundred),
+// so one still waiting after CAPTURE_MS asks the page itself: a page that answers at once is alive but not drawn, and the capture fails with
+// NOT_DRAWN. A page that does not answer is busy (a script running for seconds, an alert()): its capture keeps waiting, asked again every
+// CAPTURE_MS, and comes back once the page draws again. A tab whose window is known to be hidden fails at once.
+const CAPTURE_MS = 2500;
+const PING_MS = 500;
+const NOT_DRAWN = "Could not take a screenshot of this tab: it is not being drawn right now (its window is hidden or closed). Use read_page or find instead.";
+class NotDrawn extends Error { constructor() { super(NOT_DRAWN); this.notDrawn = true; } }
+function pageAnswers(wc) {
+  let timer;
+  let ping;
+  try { ping = wc.executeJavaScript('1', false).then(() => true, () => true); } catch { return Promise.resolve(true); } // (gone: nothing to wait for)
+  return Promise.race([ping, new Promise((resolve) => { timer = setTimeout(resolve, PING_MS, false); timer.unref?.(); })]).finally(() => clearTimeout(timer));
+}
+function inTime(wc, promise, ms = CAPTURE_MS) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let timer = null;
+    const finish = (fn, value) => { if (done) return; done = true; clearTimeout(timer); fn(value); };
+    promise.then((v) => finish(resolve, v), (e) => finish(reject, e));
+    const ask = async () => {
+      if (done) return;
+      if (wc.isDestroyed?.() || await pageAnswers(wc)) finish(reject, new NotDrawn());
+      else if (!done) { timer = setTimeout(ask, ms); timer.unref?.(); }
+    };
+    timer = setTimeout(ask, ms);
+    timer.unref?.();
+  });
+}
+// True when the tab's window was hidden after it had been shown: nothing of it can be pictured until it is shown again. (A window never shown yet
+// still draws, as a hidden test run's or a background task's does; so does a minimized one.)
+let shownWins = null; // the windows that have been on screen
+function windowHidden(wc) {
+  try {
+    if (!shownWins) {
+      shownWins = new WeakSet();
+      const { app, BrowserWindow } = require('electron');
+      const note = (w) => { if (w.isVisible()) shownWins.add(w); else w.once('show', () => shownWins.add(w)); };
+      for (const w of BrowserWindow.getAllWindows()) note(w);
+      app.on('browser-window-created', (_e, w) => note(w));
+    }
+    const win = wc.getOwnerBrowserWindow?.();
+    return Boolean(win) && !win.isDestroyed() && shownWins.has(win) && !win.isVisible() && !win.isMinimized();
+  } catch { return false; }
+}
+
 // Page.captureScreenshot with a clip lays the page out at the picture's size for the moment of the capture and puts the old size back after. Two in
 // flight on one page each saved "the size before", and the later restore put the first one's size back: the page stayed small in its tab's corner.
-// So the captures of one page run one after the other.
+// So the captures of one page run one after the other. A capture that never answers on a page that is not drawn (inTime) holds the queue no
+// longer than CAPTURE_MS or so; on a busy page the next one waits, as it would for the page anyway.
 const chains = new WeakMap(); // wc -> the last capture's promise
 function oneAtATime(wc, task) {
   const run = (chains.get(wc) || Promise.resolve()).then(task, task);
-  const tail = run.catch(() => {});
+  const tail = inTime(wc, run).catch(() => {});
   chains.set(wc, tail);
   return run;
 }
@@ -34,7 +83,7 @@ async function viaDevToolsNow(wc, rect) {
   try {
     const params = { format: 'png', fromSurface: true };
     if (rect) params.clip = cssClip(rect, wc.getZoomFactor?.() || 1);
-    const shot = await dbg.sendCommand('Page.captureScreenshot', params);
+    const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', params));
     return nativeImage().createFromBuffer(Buffer.from(shot.data, 'base64'));
   } finally {
     if (attachedHere) { try { dbg.detach(); } catch {} }
@@ -42,11 +91,12 @@ async function viaDevToolsNow(wc, rect) {
 }
 
 async function captureTab(wc, rect = null) {
+  if (windowHidden(wc)) throw new NotDrawn();
   let image = null;
-  try { image = rect ? await wc.capturePage(rect) : await wc.capturePage(); } catch {}
+  try { image = await inTime(wc, rect ? wc.capturePage(rect) : wc.capturePage()); } catch (err) { if (err?.notDrawn) throw err; } // (the other way would wait just as long)
   if (image && !image.isEmpty()) return image;
   let fallback = null;
-  try { fallback = await viaDevTools(wc, rect); } catch {}
+  try { fallback = await viaDevTools(wc, rect); } catch (err) { if (err?.notDrawn) throw err; }
   if (fallback && !fallback.isEmpty()) return fallback;
   throw new Error('Could not take a screenshot of this tab right now. Use read_page or find instead.');
 }
@@ -238,7 +288,7 @@ async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000, state = nu
     if (frame && frame.length * 0.75 <= (lowRes ? Math.max(maxBytes, 90000) : 260000)) { if (state && lowRes) state.small = true; return frame; } // (small: the compositor scaled it to the card's small size)
     maxBytes = lowRes ? Math.max(maxBytes, 90000) : 260000; // (a sharp frame is the page's own pixels: about 60-200 KB, a few per second)
     for (const q of lowRes ? [38, 28, 20] : [66, 52, 40, 30]) {
-      const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } });
+      const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } }));
       if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
     }
   } catch { /* try the screenshot path */ } finally {
@@ -393,12 +443,15 @@ function jpegSize(base64) {
   } catch { /* not a JPEG */ }
   return null;
 }
+// Answers null when the protocol can't be used (the caller falls back to captureTab); throws NOT_DRAWN for a page that is not drawn (no fallback
+// would answer either).
 async function captureJpegNow(wc, { maxWidth, quality }) {
+  if (windowHidden(wc)) throw new NotDrawn();
   const dbg = wc.debugger;
   let attachedHere = false;
   try {
     if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
-    const m = await dbg.sendCommand('Page.getLayoutMetrics');
+    const m = await inTime(wc, dbg.sendCommand('Page.getLayoutMetrics'));
     const v = m.cssVisualViewport;
     if (!(v?.clientWidth > 0 && v?.clientHeight > 0)) return null;
     const scale = Math.min(maxWidth / v.clientWidth, 2); // (never magnified past 2x: a narrow view is not blown up to the full width)
@@ -412,13 +465,14 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
       const size = frame ? jpegSize(frame) : null;
       if (size) return { data: frame, ...size };
     }
-    const shot = await dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } });
+    const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } }));
     return shot?.data ? { data: shot.data, width, height } : null;
-  } catch {
+  } catch (err) {
+    if (err?.notDrawn) throw err;
     return null;
   } finally {
     if (attachedHere) { try { dbg.detach(); } catch {} }
   }
 }
 
-module.exports = { checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { CAPTURE_MS, NOT_DRAWN, inTime, checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
