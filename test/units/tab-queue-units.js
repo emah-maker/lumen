@@ -15,9 +15,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const job = (name, ms) => async () => { running++; if (running > 1) overlap = true; log.push(`start ${name}`); await sleep(ms); log.push(`end ${name}`); running--; return name; };
     const out = await Promise.all([q.run(1, job('a', 30)), q.run(1, job('b', 5)), q.run(1, job('c', 5))]);
     check('same tab: calls run one after another, in the order they came', out.join() === 'a,b,c' && !overlap && log.join() === 'start a,end a,start b,end b,start c,end c', log.join());
-    const t0 = Date.now();
-    await Promise.all([q.run(1, job('x', 60)), q.run(2, job('y', 60)), q.run(3, job('z', 60))]);
-    check('different tabs: side by side, not queued', Date.now() - t0 < 150, `${Date.now() - t0} ms`);
+    // (measured as how many ran at once, not wall-clock time: a busy CI machine's timers made a 3 x 60 ms run take 160 ms)
+    let peak = 0;
+    const tabJob = (ms) => async () => { running++; peak = Math.max(peak, running); await sleep(ms); running--; };
+    await Promise.all([q.run(1, tabJob(60)), q.run(2, tabJob(60)), q.run(3, tabJob(60))]);
+    check('different tabs: side by side, not queued', peak === 3, `at most ${peak} at once`);
     check('no tab: no queue', (await q.run(null, async () => 7)) === 7, 'no result');
   }
   // A failed call does not hold up the next one, and its error reaches its own caller.
