@@ -25,7 +25,9 @@ const vcal = (name, events, color) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${name 
 module.exports = async function calendarMultiUnits(check) {
   const t0 = Date.now();
   const base = new Date(); base.setHours(0, 0, 0, 0);
-  const day = (n, h = 0) => base.getTime() + n * DAY + h * HOUR + 12 * 60e3; // local midnight + n days + h hours (+12 min so nothing sits on a boundary)
+  // local midnight n calendar days on + h hours (+12 min so nothing sits on a boundary). Calendar days, not n x 24 h: across a clock change
+  // (a 25-hour day) n x 24 h landed at 23:12 the day before, while the feed, written in UTC, said the next day.
+  const day = (n, h = 0) => { const d = new Date(base); d.setDate(d.getDate() + n); return d.getTime() + h * HOUR + 12 * 60e3; };
 
   // ---- cleaning ----
   check('colors: #rgb and #rrggbb become lower-case #rrggbb, anything else is empty', CS.cleanColor('#ABC') === '#aabbcc' && CS.cleanColor(' #A1b2C3 ') === '#a1b2c3' && CS.cleanColor('red') === '' && CS.cleanColor('url(x)') === '' && CS.cleanColor(5) === '', '');
