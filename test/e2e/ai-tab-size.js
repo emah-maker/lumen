@@ -167,6 +167,30 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     check('the page in front gets no resize event during the AI screenshots', shotRun.resizes === 0, JSON.stringify(shotRun));
     check('...and its innerWidth/innerHeight never change', shotRun.sizes.length === 1 && shotRun.sizes[0] === area.iw + 'x' + area.ih, JSON.stringify([shotRun.sizes, area]));
 
+    // 3c. the live card streams the tab in front (a page that keeps painting) while the AI takes screenshots of it: the screenshot's one screencast frame
+    // shares the page's only screencast with the card, and stopped it, so the card stood still on one frame after every AI screenshot. Frames must keep
+    // coming after the screenshots, and the screenshots stay full size.
+    const live = await app.evaluate(async ({ webContents }, tid) => {
+      const wc = webContents.fromId(global.__notifyClick.contentsOf(tid));
+      await wc.executeJavaScript(`(() => { const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:0;top:0;width:60px;height:60px;z-index:9'; document.body.appendChild(d); let n = 0; (function f() { d.style.background = 'hsl(' + (n++ * 7 % 360) + ',80%,50%)'; requestAnimationFrame(f); })(); return true; })()`);
+      const cap = global.__tabCapture;
+      const st = { frames: 0 };
+      const handle = await cap.streamThumb(wc, { fps: 15, onFrame: () => { st.frames++; } });
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      await wait(800);
+      const before = st.frames;
+      const shots = [];
+      for (let i = 0; i < 3; i++) { const s = await cap.captureJpeg(wc, { maxWidth: 720, quality: 60 }); shots.push(s ? s.width : null); await wait(200); }
+      const atShots = st.frames;
+      await wait(1000);
+      const after = st.frames - atShots;
+      handle?.stop();
+      return { streaming: Boolean(handle), before, after, shots };
+    }, front);
+    check('(set up) the live card streams the tab in front', live.streaming && live.before > 3, JSON.stringify(live));
+    check('the AI screenshots of a tab the card streams come back 720 px wide', live.shots.every((w) => w === 720), JSON.stringify(live));
+    check('the card keeps getting frames after the AI screenshots (it stood still on one frame)', live.after >= 5, JSON.stringify(live));
+
     // 4. an AI task in a tab behind the user's tab, with the live card streaming at 15 fps (a view nobody sees draws no frames, so the card polls it with
     // clipped screenshots) while the AI takes screenshots and reads the page in parallel; then the user switches to that tab. The page's innerWidth and
     // innerHeight are sampled all along and must equal the tab area's, and the page must fill its view (a probe in the bottom-right corner).
