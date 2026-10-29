@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.84 (2026-10-29)
+
 - The AI's screenshots no longer hang: a screenshot of a tab whose window is hidden waited a full minute and then failed, and held up every later screenshot of that tab. It now says at once that the tab can't be pictured (or gives up within 2.5 seconds), and the AI moves on.
 
 ## 0.5.83 (2026-10-28)
