@@ -241,32 +241,21 @@ function identityPatch() {
 const IDENTITY_SCRIPT = `(${identityPatch})();`;
 
 // ---------- the theme a page is told: sites with a half-built dark mode ----------
-// Sites whose dark mode is only half built: in a dark theme Lumen tells them the system is light (prefers-color-scheme: light),
-// so they draw one whole light page instead of dark new sections over light old cards. Glassdoor switches its left column and
-// newer panels to dark and leaves its review and job cards white, with light text on some of them. Chrome shows the same
-// half-dark page; Lumen just fixes it for these hosts. Every other site keeps following the theme.
-// Applied over the tab's own debugger session in main.js applyChromeIdentity, with the rest of what a page is told here.
+// In a dark theme a site whose dark mode is only half built is told the system is light (prefers-color-scheme: light), so it draws one whole light
+// page instead of dark new sections over light old cards. Which sites those are is found by measuring the page (browser/half-dark.js); every other
+// site keeps following the theme. Applied over the tab's own debugger session in main.js applyChromeIdentity, with the rest of what a page is told here.
 
-const LIGHT_SITES = ['glassdoor.com', 'glassdoor.co.uk', 'glassdoor.ca', 'glassdoor.com.au', 'glassdoor.co.in', 'glassdoor.de', 'glassdoor.fr'];
-
-// The host is one of the sites or a subdomain of one (www.glassdoor.com, not notglassdoor.com).
-function isLightSite(url, sites = LIGHT_SITES) {
-  let host;
-  try { host = new URL(url).hostname.toLowerCase(); } catch { return false; }
-  return sites.some((s) => host === s || host.endsWith(`.${s}`));
-}
-
-// What the page should be told for `url` in the current theme: 'light' to override, '' for the page's own (the theme's).
-function schemeFor(url, dark, sites = LIGHT_SITES) {
-  return dark && isLightSite(url, sites) ? 'light' : '';
+// What the page should be told for `url` in the current theme: 'light' to override, '' for the page's own (the theme's). `isLight(url)`: a half-dark site.
+function schemeFor(url, dark, isLight) {
+  return dark && isLight(url) ? 'light' : '';
 }
 
 // Keeps one tab's override in step with its address and the theme. `send` is the debugger's sendCommand; `dark()` the theme.
-// Returns update(url): call it when a main-frame navigation starts (and when the theme changes, with the tab's address).
-function watcher(send, dark, sites = LIGHT_SITES) {
+// Returns update(url): call it when a main-frame navigation starts, when the theme changes, and when a site is found half dark (with the tab's address).
+function watcher(send, dark, isLight) {
   let current = '';
   return (url) => {
-    const want = schemeFor(url, dark(), sites);
+    const want = schemeFor(url, dark(), isLight);
     if (want === current) return Promise.resolve(false);
     current = want;
     return send('Emulation.setEmulatedMedia', { features: want ? [{ name: 'prefers-color-scheme', value: want }] : [] }).then(() => true, () => false);
@@ -278,5 +267,5 @@ module.exports = {
   languageList, acceptLanguageHeader, chromeBrands, userAgent, windowsPlatformVersion, uaMetadata,
   lowEntropyHeaders, highEntropyHeaders, requestedHints, withHints, languageLast, HIGH_ENTROPY,
   IDENTITY_SCRIPT,
-  LIGHT_SITES, isLightSite, schemeFor, watcher, // (the theme a page is told)
+  schemeFor, watcher, // (the theme a page is told)
 };
