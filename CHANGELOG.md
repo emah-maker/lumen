@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.83 (2026-10-28)
+
 - "Are you a person?" checks work: the ad blocker no longer blocks PerimeterX (Skyscanner's Press & Hold) and DataDome, so holding the button lets you through instead of asking again forever, and these sites ask less often.
 ## 0.5.82 (2026-10-28)
 
