@@ -146,10 +146,16 @@ async function captureThumb(wc, opts = {}) {
   return null;
 }
 function viaProtocol(wc, opts) { return oneAtATime(wc, () => viaProtocolNow(wc, opts)); }
+// The live card's screencast on a page (streamThumb), while it runs on the engine's frames: { params, paused }. A page has one screencast, so a single
+// frame taken meanwhile (screencastFrame) pauses the stream, and starts it again with its own size and quality when done: it used to stop it, and
+// the card stood still on one frame after every AI screenshot.
+const liveStreams = new WeakMap();
 // One frame from the DevTools screencast, scaled to maxWidth x maxHeight by the compositor (a GPU copy at the small size, no layout change and no
 // big bitmap on the main process). Answers base64 JPEG, or null (no frame in time, or someone else's screencast runs on this page).
 function screencastFrame(wc, { quality, maxWidth, maxHeight, timeoutMs = 600 }) {
   const dbg = wc.debugger;
+  const live = liveStreams.get(wc);
+  if (live) live.paused++;
   return new Promise((resolve) => {
     let done = false;
     let timer = null;
@@ -158,12 +164,18 @@ function screencastFrame(wc, { quality, maxWidth, maxHeight, timeoutMs = 600 }) 
       done = true;
       clearTimeout(timer);
       try { dbg.removeListener('message', onMessage); } catch { /* gone */ }
-      dbg.sendCommand('Page.stopScreencast').catch(() => {});
+      if (live) live.paused--;
+      if (live && liveStreams.get(wc) === live) { if (!live.paused) dbg.sendCommand('Page.startScreencast', live.params).catch(() => {}); } // (another frame still taken: that one starts it)
+      else dbg.sendCommand('Page.stopScreencast').catch(() => {});
       resolve(data);
     };
     const onMessage = (_event, method, params) => {
       if (method !== 'Page.screencastFrame' || !params) return;
       dbg.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      if (live && typeof params.data === 'string') { // (a frame of the card's stream, still on its way at its small size: the next one)
+        const size = jpegSize(params.data);
+        if (size && size.width < maxWidth - 2 && size.height < maxHeight - 2) return;
+      }
       finish(typeof params.data === 'string' ? params.data : null);
     };
     timer = setTimeout(() => finish(null), timeoutMs);
@@ -201,6 +213,8 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
   let last = 0;
   let gotFirst = false;
   let pollTimer = null;
+  const live = { params: null, paused: 0 };
+  const unlist = () => { if (liveStreams.get(wc) === live) liveStreams.delete(wc); };
   const ack = (sessionId) => { dbg.sendCommand('Page.screencastFrameAck', { sessionId }).catch(() => {}); };
   const release = () => {
     timer = null;
@@ -211,7 +225,7 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
     if (!ended) { try { onFrame(f.data); } catch { /* the listener's own */ } ack(f.sessionId); }
   };
   const onMessage = (_event, method, params) => {
-    if (ended || method !== 'Page.screencastFrame' || !params || typeof params.data !== 'string') return;
+    if (ended || live.paused || method !== 'Page.screencastFrame' || !params || typeof params.data !== 'string') return; // (paused: the frame is screencastFrame's)
     gotFirst = true;
     if (held) ack(held.sessionId); // (never two: the engine waits for each acknowledgement)
     held = params;
@@ -222,6 +236,7 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
     if (ended) return;
     if (flush && held) release();
     ended = true;
+    unlist();
     clearTimeout(timer);
     clearTimeout(pollTimer);
     held = null;
@@ -229,15 +244,18 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
     dbg.sendCommand('Page.stopScreencast').catch(() => {});
     if (attachedHere) { try { dbg.detach(); } catch { /* gone */ } }
   };
-  const onDetach = () => { if (ended) return; ended = true; clearTimeout(timer); clearTimeout(pollTimer); held = null; try { dbg.removeListener('message', onMessage); } catch { /* gone */ } onEnd(); };
+  const onDetach = () => { if (ended) return; ended = true; unlist(); clearTimeout(timer); clearTimeout(pollTimer); held = null; try { dbg.removeListener('message', onMessage); } catch { /* gone */ } onEnd(); };
   dbg.on('message', onMessage);
   dbg.on('detach', onDetach);
+  live.params = { format: 'jpeg', quality, maxWidth: outW, maxHeight: Math.round(outW * h / w), everyNthFrame: 1 };
+  liveStreams.set(wc, live);
   try {
-    await dbg.sendCommand('Page.startScreencast', { format: 'jpeg', quality, maxWidth: outW, maxHeight: Math.round(outW * h / w), everyNthFrame: 1 });
+    await dbg.sendCommand('Page.startScreencast', live.params);
   } catch { finish(false); return null; }
   for (let waited = 0; !gotFirst && !ended && waited < firstMs; waited += 25) await new Promise((r) => { const t = setTimeout(r, 25); t.unref?.(); });
   if (!gotFirst && !ended) { // nothing is drawn for this view: poll it
     dbg.removeListener('message', onMessage);
+    unlist();
     dbg.sendCommand('Page.stopScreencast').catch(() => {});
     // The whole width of the page, 16:10 from its top, as the screencast shows it: a clip of only its left 800 px showed a wide page's top-left corner,
     // blown up to the card's width (the sidebar and half a list). Scale 1 always: a smaller scale lays the live page out at the clip's size (see viaProtocolNow).
