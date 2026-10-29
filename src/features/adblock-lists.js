@@ -96,4 +96,18 @@ async function buildEngineOrFallback(Engine, fetchImpl = fetch) {
   }
 }
 
-module.exports = { CDN, CORE, SOURCE, optionalLists, fetchSources, buildEngine, buildEngineOrFallback };
+// "Are you a person?" checks (PerimeterX's Press & Hold, DataDome) must be able to run: the privacy lists block their scripts
+// and the endpoint the result is sent to (PerimeterX's .../api/v2/collector, a site's own /<app id>/init.js), so a person who
+// held the button was never let through and the page asked again, forever (Skyscanner). Added to every engine (features/adblock.js
+// ENGINE_PATCH). The first-party rule covers PerimeterX's own path shape only: an 8-character app id, then init.js, xhr/ or captcha/.
+const HUMAN_CHECK_EXCEPTIONS = [
+  '@@||px-cloud.net^',
+  '@@||perimeterx.net^',
+  '@@||px-cdn.net^',
+  '@@||pxchk.net^',
+  '@@||datadome.co^',
+  '@@||captcha-delivery.com^',
+  '@@/^https?:\\/\\/[^/]+\\/[A-Za-z0-9]{8}\\/(?:init\\.js|xhr\\/|captcha\\/)/$script,xhr,1p',
+];
+
+module.exports = { CDN, CORE, SOURCE, HUMAN_CHECK_EXCEPTIONS, optionalLists, fetchSources, buildEngine, buildEngineOrFallback };
