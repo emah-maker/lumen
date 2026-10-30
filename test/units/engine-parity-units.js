@@ -84,7 +84,7 @@ const J = JSON.stringify;
     const withSkills = { model: 'grokbuild:default', skillsList: skills };
     check('skills: a CLI chat\'s system prompt lists the user\'s skills (Grok Build)', agent.grokBuildSystem(withSkills, false).includes('- weekly-report'), 'x');
     check('skills: and without skills nothing is added (the Grok prompt budget is unchanged)', !agent.grokBuildSystem({ model: 'grokbuild:default' }, false).includes('<skills>'), 'x');
-    check('skills: use_skill is an extra of the run only when the chat lists skills', agent.cliSkillToolDefs({ settings: withSkills }).map((t) => t.name).join() === 'use_skill' && agent.cliSkillToolDefs({ settings: { model: 'codex:default' } }).length === 0 && agent.cliSkillToolDefs(null).length === 0, 'x');
+    check('skills: use_skill (and [review loop] review_round with it) is an extra of the run only when the chat lists skills', agent.cliSkillToolDefs({ settings: withSkills }).map((t) => t.name).join() === 'use_skill,review_round' && agent.cliSkillToolDefs({ settings: { model: 'codex:default' } }).length === 0 && agent.cliSkillToolDefs(null).length === 0, 'x');
     check('skills: a call through MCP returns the skill\'s instructions', (await agent.execute('use_skill', { name: 'weekly-report' })) === 'Do the report like this.', 'x');
     const none = new Agent({ maxSteps: () => 0 }, () => null, () => ({ model: 'codex:default' }), () => null);
     check('skills: no skills feature, no tool', none.cliSkillToolDefs({ settings: withSkills }).length === 0, 'x');
