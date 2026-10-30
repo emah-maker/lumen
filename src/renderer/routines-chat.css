@@ -2,11 +2,11 @@
    reply, and the "Make this a routine?" offer above the composer. The dialog sits on the shortcut sheet's frame (styles.css). */
 
 .rc-card { width: min(460px, 100%); }
-.rc-form { display: flex; flex-direction: column; gap: 10px; }
-.rc-field { display: flex; flex-direction: column; gap: 4px; }
+.rc-form { display: flex; flex-direction: column; gap: var(--sp-5); }
+.rc-field { display: flex; flex-direction: column; gap: var(--sp-2); }
 .rc-field label { font-size: var(--fs-sm); font-weight: 500; color: var(--muted); }
 .rc-field input, .rc-field textarea {
-  box-sizing: border-box; width: 100%; padding: 6px 10px; border: 1px solid transparent; border-radius: var(--r-md); background: var(--field); color: var(--text);
+  box-sizing: border-box; width: 100%; padding: var(--sp-3) var(--sp-5); border: 1px solid transparent; border-radius: var(--r-md); background: var(--field); color: var(--text);
   font: inherit; font-size: var(--fs-md); outline: none;
 }
 .rc-field textarea { min-height: 72px; resize: vertical; }
@@ -17,7 +17,7 @@
 .rc-error { margin: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .rc-error[hidden], .rc-saved[hidden], .rc-offer[hidden] { display: none; }
 .rc-saved { margin: 0; font-size: var(--fs-md); line-height: 1.45; }
-.rc-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.rc-actions { display: flex; justify-content: flex-end; gap: var(--sp-4); margin-top: var(--sp-8); }
 .rc-actions .btn[hidden] { display: none; }
 
 /* "Schedule this": in the row of small buttons under a reply, left of Read aloud (chat-page-tools.css) */
@@ -31,10 +31,10 @@
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
 .msg.assistant .reply-routine:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .msg.assistant .reply-routine:is(:hover, :focus-visible)::after {
-  content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: var(--r-sm);
+  content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
   background: var(--card, var(--field)); color: var(--text); font-size: var(--fs-sm); box-shadow: 0 0 0 0.5px var(--border); pointer-events: none;
 }
 
 /* the offer: one quiet line at the top of the composer; it never takes focus */
-.rc-offer { flex-basis: 100%; order: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 6px; font-size: var(--fs-sm); color: var(--text); }
+.rc-offer { flex-basis: 100%; order: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); padding: 0 0 var(--sp-3); font-size: var(--fs-sm); color: var(--text); }
 .rc-offer-text { flex: 1 1 auto; min-width: 0; }

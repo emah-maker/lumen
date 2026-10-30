@@ -5,23 +5,23 @@
 .cv-grip:hover, .cv.resizing .cv-grip, .cv-grip:focus-visible { background: var(--accent-soft); outline: none; }
 .cv.resizing { user-select: none; }
 .cv.resizing .cv-frame { pointer-events: none; }
-.cv-head { flex: none; display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--hairline); }
+.cv-head { flex: none; display: flex; align-items: center; gap: var(--sp-3); height: 40px; padding: 0 var(--sp-4) 0 var(--sp-6); border-bottom: 1px solid var(--hairline); }
 .cv-title { font: 500 11px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
 .cv-spacer { flex: 1; }
-.cv-tabs { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--field); }
+.cv-tabs { display: flex; gap: var(--sp-1); padding: var(--sp-1); border-radius: 8px; background: var(--field); }
 .cv-tabs[hidden] { display: none; }
-.cv-tab, .cv-btn { height: 24px; padding: 0 10px; border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.cv-tab, .cv-btn { height: 24px; padding: 0 var(--sp-5); border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
 .cv-tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .cv-tab:hover, .cv-btn:hover, .cv-tab:focus-visible, .cv-btn:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
-.cv-close { font-size: 16px; line-height: 1; padding: 0 8px; }
-.cv-code { flex: 1; min-height: 0; margin: 0; padding: 12px 14px; overflow: auto; background: var(--field); font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
+.cv-close { font-size: 16px; line-height: 1; padding: 0 var(--sp-4); }
+.cv-code { flex: 1; min-height: 0; margin: 0; padding: var(--sp-6); overflow: auto; background: var(--field); font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
 .cv-code[hidden], .cv-preview[hidden] { display: none; }
 .cv-preview { flex: 1; min-height: 0; display: flex; background: #fff; }
 .cv[data-mode="image"] .cv-btn:not(.cv-close) { display: none; }
-.cv[data-mode="image"] .cv-preview { display: block; overflow: auto; padding: 16px; box-sizing: border-box; background: var(--field); }
+.cv[data-mode="image"] .cv-preview { display: block; overflow: auto; padding: var(--sp-8); box-sizing: border-box; background: var(--field); }
 .cv-image { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--hairline, rgba(127,127,127,.3)); }
 .cv-frame { flex: 1; width: 100%; border: 0; background: #fff; }
-.code-canvas { margin-right: 2px; }
+.code-canvas { margin-right: var(--sp-1); }
 @media (max-width: 900px) {
   .cv { position: absolute; right: 0; top: 0; bottom: 0; max-width: 100%; z-index: 5; box-shadow: -8px 0 24px rgba(0,0,0,.18); }
 }

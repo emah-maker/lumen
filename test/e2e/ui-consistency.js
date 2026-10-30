@@ -31,7 +31,7 @@ const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
 const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
-const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.src.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'readinglist.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css', 'eml.html': 'tokens.css' };
+const PAGES = { 'index.src.html': 'tokens.css', 'chat-page.html': 'tokens.css', 'settings.src.html': 'tokens.css', 'bookmarks.html': 'tokens.css', 'readinglist.html': 'tokens.css', 'downloads.html': 'tokens.css', 'history.html': 'tokens.css', 'private.html': 'tokens.css', 'error.html': 'tokens.css', 'unloaded.html': 'tokens.css', 'pdfviewer.html': '/tokens.css', 'eml.html': 'tokens.css', 'cert-error.html': 'tokens.css', 'focus-block.html': 'tokens.css', 'https-only.html': 'tokens.css', 'safe-browsing.html': 'tokens.css', 'mission.html': 'tokens.css' };
 const SCALE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24]); // tiny hairline radii, the scale, and the two large ones for tiles
 // A line that only defines a custom property, or draws one of the decorative palettes.
 const DECORATIVE = /^\s*(\.(bg|wi|ic|accent|swatch)[\w-]*[\s,{.:]|\.effect-options)/;
@@ -67,6 +67,26 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
   check('--faint (3:1) is never used as a text colour in the refactored stylesheets', faintText.length === 0, faintText.slice(0, 6).join(' | '));
   const usesTokens = SCALED.filter((f) => /var\(--r-/.test(read(f)));
   check('radius tokens are used across the app (chrome, menus, settings, viewers)', ['styles.css', 'extras.css', 'picker.css', 'managers.css', 'settings.css', 'pdfviewer.css'].every((f) => usesTokens.includes(f)), usesTokens.join());
+
+  // Spacing: paddings, margins and gaps sit on the 2 px scale (tokens.css --sp-*). A bare px value inside calc()/min()/max()/clamp() is geometry
+  // (an icon's room, a border), values above 48 px are page layout, and a line that says "off-scale:" in a comment explains its exception.
+  const SPACE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32, 40, 48]);
+  const SPACED = [...SCALED, ...POPUPS, 'tokens.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'chat-projects.css', 'chat-project-page.css', 'chat-page-tools.css', 'chat-image-viewer.css', 'chat-canvas.css', 'desktop-card.css', 'notes.css', 'external-apps.css', 'command-bar.css', 'files-picker.css', 'routines-chat.css', 'settings-preview.css', 'history.html', 'downloads.html', 'bookmarks.html'];
+  const offScale = [];
+  for (const f of SPACED) {
+    for (const { text, n } of lines(f)) {
+      if (/off-scale:/.test(text)) continue;
+      const code = text.replace(/\/\*.*?\*\//g, '');
+      for (const m of code.matchAll(/(?<![\w-])(?:padding|margin)(?:-[a-z]+)?\s*:\s*([^;}"]+)|(?<![\w-])(?:row-|column-)?gap\s*:\s*([^;}"]+)/g)) {
+        const v = (m[1] || m[2]).replace(/(calc|min|max|clamp)\([^;]*\)/g, '');
+        for (const px of v.matchAll(/(\d+(?:\.\d+)?)px/g)) { const x = Number(px[1]); if (x <= 48 && !SPACE_PX.has(x)) offScale.push(`${f}:${n} ${m[0].trim().slice(0, 50)}`); }
+      }
+    }
+  }
+  check('paddings, margins and gaps sit on the spacing scale (2 4 6 8 10 12 16 20 24 28 32 40 48)', offScale.length === 0, `${offScale.length}: ${offScale.slice(0, 8).join(' | ')}`);
+  const spaceTokens = ['step-ui.css', 'chat-actions.css', 'styles.css', 'settings.css', 'chat-page.css', 'managers.css'].filter((f) => !/var\(--sp-\d+\)/.test(read(f)));
+  check('the spacing tokens are used in the chat, its cards, the chrome, Settings and the manager pages', spaceTokens.length === 0, spaceTokens.join());
+  check('tokens.css defines the spacing scale', ['--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5', '--sp-6', '--sp-8', '--sp-10', '--sp-12', '--sp-14', '--sp-16', '--sp-20', '--sp-24'].every((t) => new RegExp(`${t}:`).test(read('tokens.css'))), 'missing --sp-*');
 }
 
 // ---------- 2. the running app ----------

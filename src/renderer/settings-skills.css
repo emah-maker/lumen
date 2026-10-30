@@ -1,55 +1,55 @@
 /* Settings → Skills (renderer/settings-skills.js) */
-.skills-section { padding: 4px 16px 12px; }
-.skills-toolbar { flex-wrap: wrap; padding: 10px 0 6px; }
+.skills-section { padding: var(--sp-2) var(--sp-8) var(--sp-6); }
+.skills-toolbar { flex-wrap: wrap; padding: var(--sp-5) 0 var(--sp-3); }
 .skills-toolbar .note { flex: 1 1 200px; }
-.skills-search { padding: 4px 0 8px; }
+.skills-search { padding: var(--sp-2) 0 var(--sp-4); }
 .skills-search input { width: 100%; }
 /* The list measures its own width (not the window's: Settings can be a 450 px tab beside the AI sidebar): five buttons beside the name need ~390 px,
    so below ~640 px they go on a line of their own under the name and description instead of crushing them. */
 .skills-list { container-type: inline-size; }
-.skill-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.skill-row { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) 0; }
 .skill-row + .skill-row { border-top: 1px solid var(--hairline); }
-.skill-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.skill-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .skill-title { font-weight: 500; overflow-wrap: anywhere; }
 .skill-slash { color: var(--muted); font-weight: 400; font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; }
-.skill-source { display: inline-block; margin-left: 8px; padding: 0 6px; white-space: nowrap; border-radius: var(--r-pill); font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); }
-.skill-actions { display: flex; flex: none; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.skill-source { display: inline-block; margin-left: var(--sp-4); padding: 0 var(--sp-3); white-space: nowrap; border-radius: var(--r-pill); font-size: 11px; font-weight: 400; color: var(--muted); background: var(--field); }
+.skill-actions { display: flex; flex: none; flex-wrap: wrap; gap: var(--sp-3); justify-content: flex-end; }
 @container (max-width: 640px) {
-  .skill-row { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 0; }
+  .skill-row { flex-direction: column; align-items: stretch; gap: var(--sp-4); padding: var(--sp-5) 0; }
   .skill-text { flex: none; }
   .skill-actions { justify-content: flex-start; }
 }
-.skills-empty { padding: 8px 0; }
+.skills-empty { padding: var(--sp-4) 0; }
 
-.skills-editor { padding: 6px 0 4px; display: flex; flex-direction: column; gap: 12px; }
+.skills-editor { padding: var(--sp-3) 0 var(--sp-2); display: flex; flex-direction: column; gap: var(--sp-6); }
 .skills-editor[hidden], .skills-list[hidden], .skills-toolbar[hidden] { display: none; }
 .skills-heading { margin: 0; font-size: 14px; font-weight: 600; }
-.skills-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.skills-field { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .skills-label { color: var(--muted); font-size: 12px; font-weight: 500; }
 .skills-field input[type="text"], .skills-field select { width: 100%; }
-.skills-slash-field { display: flex; align-items: center; gap: 6px; }
+.skills-slash-field { display: flex; align-items: center; gap: var(--sp-3); }
 .skills-slash-field .skills-slash { color: var(--muted); font-size: 15px; }
-.skills-meta { display: flex; justify-content: flex-end; margin-top: -8px; }
-.skills-vars { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.skills-var { height: 24px; padding: 0 8px; font: 11.5px ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
-.skills-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.skills-meta { display: flex; justify-content: flex-end; margin-top: calc(-1 * var(--sp-4)); }
+.skills-vars { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.skills-var { height: 24px; padding: 0 var(--sp-4); font: 11.5px ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
+.skills-checks { display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-8); }
 .skills-check { display: inline-flex; align-items: center; }
-.skills-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.skills-two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-6); }
 @media (max-width: 640px) { .skills-two { grid-template-columns: 1fr; } } /* (the editor is a form: it follows the window; a 450 px tab beside the sidebar is under 640) */
 .skill-preview { max-height: 14em; margin: 0; }
 
-.skills-review { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: 20px; border: none; border-radius: var(--r-xl); color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 24px 64px -16px rgb(0 0 0 / 0.5); overflow: auto; }
+.skills-review { width: min(640px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: var(--sp-10); border: none; border-radius: var(--r-xl); color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 24px 64px -16px rgb(0 0 0 / 0.5); overflow: auto; }
 .skills-review::backdrop { background: rgb(0 0 0 / 0.35); }
-.skills-review h3 { margin: 0 0 6px; font-size: 15px; }
-.skills-review-item { padding: 10px 0; border-top: 1px solid var(--hairline); }
-.skills-review-item p { margin: 4px 0; }
-.skills-review-prompt { max-height: 16em; margin: 6px 0 0; }
-.skills-rejected { margin: 6px 0; }
+.skills-review h3 { margin: 0 0 var(--sp-3); font-size: 15px; }
+.skills-review-item { padding: var(--sp-5) 0; border-top: 1px solid var(--hairline); }
+.skills-review-item p { margin: var(--sp-2) 0; }
+.skills-review-prompt { max-height: 16em; margin: var(--sp-3) 0 0; }
+.skills-rejected { margin: var(--sp-3) 0; }
 /* SKILL.md: the switches above the list, Claude Code's read-only skills, and the "Update the skill" diff */
-.skills-switches { margin-bottom: 8px; }
-.skills-cc { margin-top: 12px; }
+.skills-switches { margin-bottom: var(--sp-4); }
+.skills-cc { margin-top: var(--sp-6); }
 .skills-ignored { font-size: 12px; }
 .skills-diff { max-height: 50vh; overflow: auto; white-space: pre-wrap; }
-.skills-diff .diff-line { padding: 0 4px; }
+.skills-diff .diff-line { padding: 0 var(--sp-2); }
 .skills-diff .diff-add { background: rgb(40 160 70 / 0.16); }
 .skills-diff .diff-del { background: color-mix(in srgb, var(--danger) 16%, transparent); text-decoration: line-through; }

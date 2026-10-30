@@ -1,8 +1,8 @@
 /* Other apps using Lumen (features/external-apps.js): one pill per app that is working or paused, in the toolbar (renderer/app.js). */
-.external-pills { display: flex; flex: none; align-items: center; gap: 6px; margin-right: 6px; }
+.external-pills { display: flex; flex: none; align-items: center; gap: var(--sp-3); margin-right: var(--sp-3); }
 .external-pills[hidden] { display: none; }
 .external-pill {
-  display: flex; position: relative; flex: none; align-items: center; gap: 8px; height: 28px; padding: 0 4px 0 10px;
+  display: flex; position: relative; flex: none; align-items: center; gap: var(--sp-4); height: 28px; padding: 0 var(--sp-2) 0 var(--sp-5);
   border-radius: var(--r-xl); color: var(--text); font-size: 12px; font-weight: 500; white-space: nowrap;
   background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border); animation: pill-in var(--t-snappy) var(--spring-snappy);
 }
@@ -10,7 +10,7 @@
 .external-pill.paused .agent-dot { background: var(--warning-fill); }
 .external-pill.paused .agent-dot::after { display: none; }
 .external-pill button {
-  -webkit-app-region: no-drag; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text);
+  -webkit-app-region: no-drag; height: 22px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-lg); background: var(--field); color: var(--text);
   font-size: 12px; font-weight: 500; cursor: pointer; transition: background-color var(--t-fast) ease-out;
 }
 .external-pill button:hover { background: var(--hover); }
@@ -19,23 +19,23 @@
 @media (prefers-reduced-motion: reduce) { .external-pill { animation: none; } }
 /* "<app> wants to use Lumen": a toolbar pill like the update prompt (extras.css .update-pill), not a bar across the window. */
 .external-ask { max-width: 46vw; } /* (more room than the update pill: the app's name is the point) */
-.external-ask .external-ask-btn { flex: none; height: 22px; padding: 0 10px; border: none; border-radius: var(--r-lg); background: transparent; color: var(--text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+.external-ask .external-ask-btn { flex: none; height: 22px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-lg); background: transparent; color: var(--text); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
 .external-ask .external-ask-btn:hover { background: var(--hover); }
 .external-ask .external-ask-btn.primary { background: var(--accent-soft); color: var(--accent-text); }
 .external-ask .external-ask-btn.primary:hover { box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-soft); }
 .external-ask .external-ask-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .external-ask .external-ask-text { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; }
-.toolbar-end:is([data-compact="1"], [data-compact="2"], [data-compact="3"], [data-compact="4"]) .external-ask { gap: 6px; padding-left: 8px; }
+.toolbar-end:is([data-compact="1"], [data-compact="2"], [data-compact="3"], [data-compact="4"]) .external-ask { gap: var(--sp-3); padding-left: var(--sp-4); }
 /* A compact toolbar keeps the app's name in quotes (which app is asking is the point) and clips the rest of the sentence; the title has it all. */
 .toolbar-end:is([data-compact="1"], [data-compact="2"], [data-compact="3"], [data-compact="4"]) .external-ask .ea-rest { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .toolbar-end:is([data-compact="1"], [data-compact="2"], [data-compact="3"], [data-compact="4"]) .external-ask .ea-name::before { content: "“"; }
 .toolbar-end:is([data-compact="1"], [data-compact="2"], [data-compact="3"], [data-compact="4"]) .external-ask .ea-name::after { content: "”"; }
 /* The last compact steps: the app's name is cut short before the buttons are. */
 .toolbar-end[data-compact="4"] .external-ask .external-ask-text { max-width: 7ch; } /* (the name still shows first, with an ellipsis; a longer one is in the tooltip) */
-.external-btn-icon { margin-right: 5px; font-size: 10px; }
+.external-btn-icon { margin-right: var(--sp-2); font-size: 10px; }
 .external-pill[data-state="paused"] .external-resume { background: var(--accent); color: var(--on-accent, #fff); }
 .external-toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; padding: 8px 14px; border-radius: var(--r-xl);
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; padding: var(--sp-4) var(--sp-6); border-radius: var(--r-xl);
   background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 6px 20px rgba(0, 0, 0, .25); font-size: 13px; font-weight: 500;
 }
 /* "<client> is working" goes to its window when clicked (app.js send('show')) */

@@ -12,42 +12,42 @@
     @media (prefers-color-scheme: dark) { :root { --stage: #111113; --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.4); } }
     html, body { margin: 0; background: var(--stage); color: var(--text); }
     body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
-    header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--hairline); }
+    header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8); background: var(--bg); border-bottom: 1px solid var(--hairline); }
     #name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 600; }
-    #pager { display: flex; align-items: center; gap: 4px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #pager { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
     #slideCount { min-width: 5ch; } /* room for "/ 1234" before the count is known, so it arriving does not move the toolbar */
-    #slideNumber { width: 4ch; box-sizing: content-box; padding: 3px 6px; font: inherit; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); background: var(--field); border: 0; border-radius: var(--r-sm); }
+    #slideNumber { width: 4ch; box-sizing: content-box; padding: var(--sp-2) var(--sp-3); font: inherit; text-align: center; font-variant-numeric: tabular-nums; color: var(--text); background: var(--field); border: 0; border-radius: var(--r-sm); }
     #slideNumber:focus-visible { outline: none; box-shadow: var(--focus-ring); }
     #slideNumber:disabled { opacity: 0.4; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     button[aria-pressed="true"] { background: var(--hover); color: var(--accent-text); }
-    button { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: 4px 10px; cursor: default; transition: background var(--t-fast); }
+    button { font: inherit; color: var(--text); background: var(--field); border: 0; border-radius: 6px; padding: var(--sp-2) var(--sp-5); cursor: default; transition: background var(--t-fast); }
     button:hover { background: var(--hover); }
     button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
     button[disabled] { opacity: 0.4; }
-    #notes { padding: 8px 16px; color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--hairline); }
+    #notes { padding: var(--sp-4) var(--sp-8); color: var(--muted); background: var(--bg); border-bottom: 1px solid var(--hairline); }
     #notes:empty { display: none; }
-    main { display: flex; flex-direction: column; align-items: center; gap: 28px; padding: 28px 16px 64px; }
+    main { display: flex; flex-direction: column; align-items: center; gap: var(--sp-14); padding: var(--sp-14) var(--sp-8) 64px; }
     body.thumbs-open main { margin-left: 184px; }
 
     /* The slide chooser: small previews down the left, drawn when they come near the view (the same drawing as the slides, scaled down). */
-    #thumbs { position: fixed; left: 0; bottom: 0; top: var(--hdr, 45px); z-index: 1; display: none; width: 184px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 24px; background: var(--bg); border-right: 1px solid var(--hairline); }
+    #thumbs { position: fixed; left: 0; bottom: 0; top: var(--hdr, 45px); z-index: 1; display: none; width: 184px; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-6) var(--sp-6) var(--sp-12); background: var(--bg); border-right: 1px solid var(--hairline); }
     body.thumbs-open #thumbs { display: block; }
-    .thumb { display: block; width: 100%; margin: 0 0 12px; padding: 4px; background: transparent; border-radius: var(--r-md); text-align: center; }
+    .thumb { display: block; width: 100%; margin: 0 0 var(--sp-6); padding: var(--sp-2); background: transparent; border-radius: var(--r-md); text-align: center; }
     .thumb:hover { background: var(--hover); }
     .thumb .tslide { position: relative; overflow: hidden; background: var(--paper); border-radius: var(--r-xs); box-shadow: var(--shadow); outline: 2px solid transparent; outline-offset: 2px; pointer-events: none; }
     .thumb.current .tslide { outline-color: var(--accent); }
     .thumb.current .tnum { color: var(--accent-text); font-weight: 600; }
     .thumb.hidden-slide .tslide { opacity: 0.6; }
-    .thumb .tnum { display: block; margin-top: 4px; color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+    .thumb .tnum { display: block; margin-top: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
     .frame { width: min(1100px, 100%); }
     .slide { position: relative; overflow: hidden; background: #fff; box-shadow: var(--shadow); border-radius: 4px; outline: 2px solid transparent; outline-offset: 3px; transition: outline-color var(--t-base); }
     .frame.current .slide { outline-color: var(--accent); }
-    .caption { display: flex; gap: 8px; justify-content: center; margin-top: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-    .caption .tag { padding: 0 6px; border-radius: 4px; background: var(--field); }
+    .caption { display: flex; gap: var(--sp-4); justify-content: center; margin-top: var(--sp-4); color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .caption .tag { padding: 0 var(--sp-3); border-radius: 4px; background: var(--field); }
     .frame.hidden-slide .slide { opacity: 0.6; }
     .message { margin: 18vh auto 0; max-width: 520px; text-align: center; color: var(--muted); font-size: 14px; }
-    .message strong { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+    .message strong { display: block; color: var(--text); font-size: 17px; margin-bottom: var(--sp-3); }
 
     /* One slide's drawing: 1 CSS px = 1 point, scaled to the frame by transform. Colors here are the deck's, not the theme's. */
     .stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; color: #000; background: #fff; background-size: cover; background-position: center; }

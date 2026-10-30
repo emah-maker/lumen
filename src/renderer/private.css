@@ -12,19 +12,19 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 button { font: inherit; color: inherit; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--p-accent); outline-offset: 1px; }
 
-#strip { height: 36px; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; background: var(--p-strip); -webkit-app-region: drag; }
+#strip { height: 36px; display: flex; align-items: flex-end; gap: var(--sp-1); padding: 0 var(--sp-4); background: var(--p-strip); -webkit-app-region: drag; }
 body.mac #strip { padding-left: 80px; }
-body.mac.fullscreen #strip { padding-left: 8px; }
+body.mac.fullscreen #strip { padding-left: var(--sp-4); }
 /* Windows / Linux: the caption buttons sit over the strip's right end (titleBarOverlay). */
 body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px); }
 #strip > *:not(#drag-space) { -webkit-app-region: no-drag; }
 #drag-space { flex: 1 0 24px; align-self: stretch; }
 
-#badge { align-self: center; display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px 3px 7px; border-radius: var(--r-lg); background: var(--p-badge); color: var(--on-accent); font-weight: 600; font-size: 12px; margin-right: 6px; flex: none; }
+#badge { align-self: center; display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5) var(--sp-2) var(--sp-4); border-radius: var(--r-lg); background: var(--p-badge); color: var(--on-accent); font-weight: 600; font-size: 12px; margin-right: var(--sp-3); flex: none; }
 #badge svg { width: 15px; height: 15px; stroke-width: 1.7; }
 
-#tabs { display: flex; gap: 2px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
-.tab { position: relative; display: flex; align-items: center; gap: 7px; height: 30px; flex: 0 1 220px; min-width: 44px; padding: 0 6px 0 10px; border-radius: 8px 8px 0 0; background: var(--p-tab); color: var(--p-tab-text); cursor: default; }
+#tabs { display: flex; gap: var(--sp-1); min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.tab { position: relative; display: flex; align-items: center; gap: var(--sp-4); height: 30px; flex: 0 1 220px; min-width: 44px; padding: 0 var(--sp-3) 0 var(--sp-5); border-radius: 8px 8px 0 0; background: var(--p-tab); color: var(--p-tab-text); cursor: default; }
 .tab:hover { background: var(--p-tab-hover); }
 .tab.active { background: var(--p-raised); color: var(--on-accent); }
 .tab:not(.active) + .tab:not(.active):not(:hover)::before { content: ""; position: absolute; left: -2px; top: 8px; bottom: 8px; width: 1px; background: var(--p-line); }
@@ -43,12 +43,12 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 /* Narrow tabs: the icon stays, the active tab keeps its ×. */
 .tab.narrow .title { display: none; }
 .tab.narrow:not(.active) .close { display: none; }
-.tab.narrow { justify-content: center; padding: 0 4px; }
+.tab.narrow { justify-content: center; padding: 0 var(--sp-2); }
 
-#new-tab { align-self: center; display: grid; place-items: center; border: 0; background: transparent; color: var(--p-tab-text); width: 28px; height: 28px; border-radius: var(--r-sm); cursor: pointer; flex: none; margin-left: 2px; }
+#new-tab { align-self: center; display: grid; place-items: center; border: 0; background: transparent; color: var(--p-tab-text); width: 28px; height: 28px; border-radius: var(--r-sm); cursor: pointer; flex: none; margin-left: var(--sp-1); }
 #new-tab:hover { background: var(--p-raised); color: var(--on-accent); }
 
-#toolbar { height: 42px; display: flex; align-items: center; gap: 2px; padding: 0 8px; background: var(--p-raised); border-bottom: 1px solid var(--p-line); }
+#toolbar { height: 42px; display: flex; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-4); background: var(--p-raised); border-bottom: 1px solid var(--p-line); }
 #toolbar > button, #find button { display: grid; place-items: center; border: 0; background: transparent; color: var(--p-text); width: 30px; height: 30px; border-radius: var(--r-sm); cursor: pointer; flex: none; }
 #toolbar > button:hover:not(:disabled), #find button:hover { background: var(--p-line); }
 #toolbar > button:disabled { opacity: 0.35; cursor: default; }
@@ -56,23 +56,23 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 #reload.loading .stop-icon { display: block; }
 #reload.loading .reload-icon { display: none; }
 
-#address-form { flex: 1; min-width: 120px; display: flex; align-items: center; height: 30px; margin: 0 4px; border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); padding: 0 6px 0 10px; }
+#address-form { flex: 1; min-width: 120px; display: flex; align-items: center; height: 30px; margin: 0 var(--sp-2); border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); padding: 0 var(--sp-3) 0 var(--sp-5); }
 #address-form:focus-within { border-color: var(--p-accent); }
-#address { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0 6px; background: transparent; color: var(--on-accent); font: inherit; outline: none; user-select: text; }
+#address { flex: 1; min-width: 0; height: 100%; border: 0; padding: 0 var(--sp-3); background: transparent; color: var(--on-accent); font: inherit; outline: none; user-select: text; }
 #address::placeholder { color: var(--p-muted); }
-.security { flex: none; display: none; align-items: center; gap: 4px; color: var(--p-muted); font-size: 12px; white-space: nowrap; }
+.security { flex: none; display: none; align-items: center; gap: var(--sp-2); color: var(--p-muted); font-size: 12px; white-space: nowrap; }
 .security svg { width: 13px; height: 13px; }
 .security.secure, .security.insecure, .security.broken, .security.mixed, .security.local { display: inline-flex; }
 .security.insecure, .security.broken { color: var(--p-warn); }
-#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: var(--r-lg); padding: 1px 8px; font-size: 11px; cursor: pointer; color: var(--p-muted); }
+#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: var(--r-lg); padding: 1px var(--sp-4); font-size: 11px; cursor: pointer; color: var(--p-muted); }
 #zoom:hover { color: var(--on-accent); border-color: var(--p-accent); }
 
-#find { display: flex; align-items: center; gap: 2px; height: 30px; margin-right: 4px; padding: 0 2px 0 8px; border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); }
+#find { display: flex; align-items: center; gap: var(--sp-1); height: 30px; margin-right: var(--sp-2); padding: 0 var(--sp-1) 0 var(--sp-4); border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); }
 #find[hidden] { display: none; }
 #find:focus-within { border-color: var(--p-accent); }
 #find-text { width: 160px; border: 0; background: transparent; color: var(--on-accent); font: inherit; outline: none; user-select: text; }
 #find-text::placeholder { color: var(--p-muted); }
-#find-count { min-width: 42px; text-align: right; padding-right: 4px; color: var(--p-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#find-count { min-width: 42px; text-align: right; padding-right: var(--sp-2); color: var(--p-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 #find.none #find-count { color: var(--p-warn); }
 #find button { width: 24px; height: 24px; }
 #find button svg { width: 13px; height: 13px; }

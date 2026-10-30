@@ -46,6 +46,7 @@
         if (at >= 0) set(n.style, 'order', String(at));
         set(n, 'draggable', mode !== 'none' && eff.order.includes(n.id));
       }
+      set(list, 'hidden', inBar.size === 0); // (an empty list would still take a toolbar gap)
       document.documentElement.classList.toggle('pref-no-extensions', shown && mode === 'none');
       const badged = all.filter((n) => n.querySelector('.badge')).map((n) => n.id);
       const attention = shown && core.needsAttention(lay, badged);
