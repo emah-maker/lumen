@@ -119,6 +119,8 @@ process.stdin.on('data', (d) => {
     c = await waitFor(async () => { const x = await card(); return x?.rounds.length === 3 ? x : null; }, 8000);
     check('the track reads 6.5 → 8 → 9.2, the last one checked, no fixes left', Boolean(c) && c.rounds.map((x) => x.score).join(' ') === '6.5 8 9.2' && c.rounds[2].met && !c.rounds[1].met && c.fixes.length === 0 && /meets the bar of 9, after 3 rounds/.test(c.aria), JSON.stringify(c));
     check('still one card for the message', c?.n === 1, JSON.stringify(c));
+    const rows = await ui.evaluate(() => [...[...document.querySelectorAll('#messages .act-card')].pop().querySelectorAll('.act-list .step')].map((r) => r.firstChild?.textContent || ''));
+    check('its steps read plainly: the skill by name, each round with its score', rows.some((x) => x === 'Using the review skill') && rows.some((x) => /^Reviewer, round 3: 9\.2\/10 \(bar 9\)$/.test(x)) && !rows.some((x) => /review round/i.test(x) && !/^Reviewer/.test(x)), JSON.stringify(rows));
     const bad = await call('review_round', { round: 4, score: 11.5, bar: 9 });
     check('a score past 10 is refused', bad.isError && /0 to 10/.test(bad.text), JSON.stringify(bad));
     const r5 = await call('review_round', { round: 5, score: 7, bar: 9 });

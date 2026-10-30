@@ -4097,6 +4097,7 @@
   "step.plan": "Updating the plan",
   "step.subagent": "Running a helper",
   "step.skill": "Using the {name} skill",
+  "step.reviewRound": "Reviewer, round {round}: {score}/10 (bar {bar})",
   "step.mcp": "Using {server}",
   "step.using": "Using {name}",
   "step.group.pages": "Read {count} pages",

@@ -196,6 +196,8 @@
       if (n === 'TodoWrite') return t('step.plan');
       if (n === 'Task' || n === 'Agent') return t('step.subagent');
       if (n === 'Skill') return t('step.skill', { name: clip(i.skill || i.command, 40) });
+      if (/^(mcp__lumen__)?use_skill$/.test(n) && typeof i.name === 'string' && i.name.trim()) return t('step.skill', { name: clip(i.name, 40) }); // [skills] Lumen's own skills, by name
+      if (/^(mcp__lumen__)?review_round$/.test(n) && Number.isFinite(Number(i.score))) return t('step.reviewRound', { round: Number(i.round) || 1, score: Number(i.score), bar: Number(i.bar) || 9 }); // [review loop]
       const mcp = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(n);
       if (mcp && mcp[1] !== 'lumen') return clip(t('step.mcp', { server: mcp[1].replace(/_/g, ' ') })); // (the server, never the tool's own name)
       return '';
