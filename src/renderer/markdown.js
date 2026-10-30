@@ -597,12 +597,75 @@
     }).join('\n');
   }
 
+
+  // ---------- written-out formulas ----------
+  // A formula the model typed out instead of writing LaTeX, a bracket over a bracket: (C_Mg₂Pb − C₀) / (C_Mg₂Pb − C_α), (81 − 45)/(81 − C_α).
+  // Drawn as a stacked \frac whatever the Prefer fractions setting says (a bracket divided by a bracket is never prose), with C_α, Mg₂ and
+  // Greek letters as math; a subscripted name and "=" just before it (W_α = …) go into the same formula. Left alone: a side with no
+  // operator in it ("(yes) / (no)", "(a)/(b)"), anything but letters, digits and operators inside, and a side over 80 characters.
+  const GREEK = { α: 'alpha', β: 'beta', γ: 'gamma', δ: 'delta', ε: 'epsilon', ζ: 'zeta', η: 'eta', θ: 'theta', κ: 'kappa', λ: 'lambda', μ: 'mu', ν: 'nu', ξ: 'xi', π: 'pi', ρ: 'rho', σ: 'sigma', τ: 'tau', φ: 'phi', χ: 'chi', ψ: 'psi', ω: 'omega', Δ: 'Delta', Γ: 'Gamma', Θ: 'Theta', Λ: 'Lambda', Σ: 'Sigma', Φ: 'Phi', Ψ: 'Psi', Ω: 'Omega' };
+  const SUBS = '₀₁₂₃₄₅₆₇₈₉';
+  const SUPS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  const NAME = '[A-Za-z0-9' + Object.keys(GREEK).join('') + SUBS + ']';
+  const FORMULA_SIDE = new RegExp('^[\\s+\\-−*·×^().,' + NAME.slice(1, -1) + SUPS + '_]+$');
+  const SUB_NAME = new RegExp('_(' + NAME + '+)', 'g');
+  const LEAD_NAME = new RegExp('([A-Za-z' + Object.keys(GREEK).join('') + ']' + '(?:_' + NAME + '+|[' + SUBS + ']+))\\s*=\\s*$');
+  function nameTex(t) { // a run of letters and subscript digits: Mg₂Pb -> \mathrm{Mg_{2}Pb}, α -> \alpha, 0 -> 0
+    const one = t.replace(/[₀-₉]+/g, (d) => '_{' + [...d].map((c) => SUBS.indexOf(c)).join('') + '}').replace(/[α-ωΑ-Ω]/g, (c) => (GREEK[c] ? '\\' + GREEK[c] + ' ' : c)).trim();
+    return /[A-Za-z]{2}/.test(t) ? '\\mathrm{' + one + '}' : one;
+  }
+  function formulaTex(x) {
+    return x.trim()
+      .replace(SUB_NAME, (_m, n) => '_{' + nameTex(n) + '}')
+      .replace(/[A-Za-z]{2,}[₀-₉][A-Za-z₀-₉]*|[A-Za-z][₀-₉]+[A-Za-z₀-₉]*/g, (n) => nameTex(n))
+      .replace(/[α-ωΑ-Ω]/g, (c) => (GREEK[c] ? '\\' + GREEK[c] + ' ' : c))
+      .replace(/[⁰-⁹²³¹]+/g, (d) => '^{' + [...d].map((c) => ('⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c))).join('') + '}')
+      .replace(/−/g, '-').replace(/×/g, '\\times ').replace(/·/g, '\\cdot ').replace(/\s+/g, ' ');
+  }
+  const isFormulaSide = (x) => x.trim() && x.length <= 80 && FORMULA_SIDE.test(x) && /[+\-−*·×]/.test(x.replace(/^\s*[-−]/, '')) && /[A-Za-z0-9]/.test(x);
+  function formulaFractions(part, maths) {
+    let out = '';
+    let from = 0;
+    for (let i = part.indexOf('/'); i !== -1; i = part.indexOf('/', i + 1)) {
+      if (i < from) continue;
+      let a = i - 1; while (a >= from && part[a] === ' ') a--;
+      let b = i + 1; while (b < part.length && part[b] === ' ') b++;
+      if (part[a] !== ')' || part[b] !== '(') continue;
+      const numStart = bracketStart(part, a);
+      const denEnd = bracketEnd(part, b);
+      if (numStart < from || denEnd === -1) continue;
+      const num = part.slice(numStart + 1, a);
+      const den = part.slice(b + 1, denEnd);
+      if (!isFormulaSide(num) || !isFormulaSide(den) || /[]/.test(num + den)) continue;
+      let start = numStart;
+      let lead = '';
+      const named = LEAD_NAME.exec(part.slice(from, numStart));
+      if (named) { start = numStart - named[0].length; lead = formulaTex(named[1]) + ' = '; }
+      maths.push({ tex: lead + '\\frac{' + formulaTex(num) + '}{' + formulaTex(den) + '}', display: 'inline' });
+      out += part.slice(from, start) + '' + (maths.length - 1) + '';
+      from = denEnd + 1;
+      i = denEnd;
+    }
+    return out + part.slice(from);
+  }
+  function stackFormulas(text, maths) {
+    if (!/\)\s*\/\s*\(/.test(text)) return text;
+    let fence = '';
+    return String(text).split('\n').map((line) => {
+      const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      if (fence) { if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = ''; return line; }
+      if (f) { fence = f[1]; return line; }
+      return line.split(FRAC_PROTECT).map((part, k) => (k % 2 ? part : formulaFractions(part, maths))).join('');
+    }).join('\n');
+  }
+
   // opts.fractions: stack plain a/b (default: the Prefer fractions setting, window.lumenPreferFractions, kept by ui-prefs.js).
   function render(source, opts) {
     const lifted = liftMath(liftRawSvg(String(source ?? '')), { closeOpen: true });
     const { maths } = lifted;
     const stack = opts && 'fractions' in opts ? opts.fractions === true : typeof window !== 'undefined' && window.lumenPreferFractions === true;
-    const text = stack ? fractionize(lifted.text, maths) : lifted.text;
+    const formulas = stackFormulas(lifted.text, maths);
+    const text = stack ? fractionize(formulas, maths) : formulas;
     return dropMath(renderText(text, maths), maths);
   }
 
@@ -863,5 +926,5 @@
     window.markdownPlainText = plainOf;
     window.markdownPlainScripts = plainScripts;
   }
-  if (typeof module !== 'undefined' && module.exports) module.exports = { render, fractionize, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
+  if (typeof module !== 'undefined' && module.exports) module.exports = { render, fractionize, stackFormulas, stableLength, liftRawSvg, liftMath, inMath, openMath, plainScripts };
 })();
