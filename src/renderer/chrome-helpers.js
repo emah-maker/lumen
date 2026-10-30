@@ -20,15 +20,40 @@
     return /^(localhost|\[[0-9a-f:]+\]|(\d{1,3}\.){3}\d{1,3}|([a-z0-9-]+\.)+[a-z][a-z0-9-]*|[a-z0-9-]+(?=:\d))(:\d+)?([/?#].*)?$/i.test(s);
   }
 
-  // The row the address bar's Enter goes to before an arrow key moves it (Chrome's default match): the first row when it is a
-  // page from history and what was typed is plain words. -1 means what was typed: it is an address, the field already holds an
-  // inline completion (Enter goes to that), or the first row is only "search for ...", which Enter does anyway.
-  function defaultSuggestion(typed, items, { completed = false } = {}) {
-    if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return ['history', 'site'].includes(items[0].kind) ? 0 : -1;
+  // The address bar, as in Chrome. The list's first row is always what is in the field (a search for the text as typed, the URL,
+  // or the site completed in place) and is where Enter goes until an arrow key picks another row. Nothing typed is ever replaced
+  // by a guess: a page that only matches the words is a row to pick, never what Enter opens.
+
+  // What a row puts in the field when the arrow keys reach it.
+  const rowValue = (item) => (item.kind === 'search' ? item.title : item.go);
+
+  // Whether a completion that has just arrived may go into the field (Chrome's rules): only while typing forward with the caret
+  // at the end, the field still holding exactly the text the completion was asked for. Never after Backspace or Delete (they
+  // take the completion away), a paste, a drop, undo, or mid-composition (an IME).
+  function mayInlineComplete({ value, typed, selectionStart, selectionEnd, inputType = '', composing = false }) {
+    if (composing || value !== typed || !String(typed).trim() || /\s/.test(typed)) return false;
+    if (selectionStart !== value.length || selectionEnd !== value.length) return false;
+    return !/^(delete|insertFromPaste|insertFromDrop|insertReplacementText|historyUndo|historyRedo)/.test(inputType);
   }
 
-  const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
+  // Typing the next letter of a completion that is showing keeps it showing at once (the field does not flicker back to the bare
+  // text until the next list arrives): the completion for the longer text, or null when the letter doesn't match it.
+  function extendInline(inline, value, inputType = '', caretAtEnd = true) {
+    if (!inline || !caretAtEnd || !/^insertText$/.test(inputType) || /\s/.test(value)) return null;
+    if (value.length >= inline.text.length || !inline.text.toLowerCase().startsWith(value.toLowerCase())) return null;
+    return { text: value + inline.text.slice(value.length), url: inline.url };
+  }
+
+  // What Enter does: { item } for a row the arrow keys picked (while the field still shows it), else { go } with exactly what the
+  // field shows: the completed site while its completion is still there, otherwise the text itself (main.js searches it or opens it).
+  function enterAction({ value, inline, items, selected }) {
+    const item = items && selected > 0 ? items[selected] : null;
+    if (item && value === rowValue(item)) return { item };
+    if (inline && value === inline.text) return { go: inline.url };
+    return { go: String(value || '').trim() };
+  }
+
+  const api = { isLoopbackUrl, looksLikeAddress, rowValue, mayInlineComplete, extendInline, enterAction };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.chromeHelpers = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -41,11 +41,12 @@ const path = require('path');
   check('Escape hides dropdown', hidden, 'still visible');
   await ui.keyboard.press('Escape');
 
-  // Pick with mouse-equivalent: Google seed site via typing 'you'.
+  // A built-in suggestion (never typed here) is a row to pick, never completed in place, as in Chrome (test/e2e/omnibox-chrome.js).
   await ui.click('#address');
   await ui.keyboard.type('you', { delay: 60 });
   await ui.waitForTimeout(300);
-  check('seed site completion', (await ui.inputValue('#address')) === 'youtube.com', await ui.inputValue('#address'));
+  check('seed site is not completed in place', (await ui.inputValue('#address')) === 'you', await ui.inputValue('#address'));
+  check('…but it is a row to pick', (await ui.evaluate(() => globalThis.eval('suggest').items.map((i) => i.go))).some((u) => /youtube\.com/.test(u)), JSON.stringify(await ui.evaluate(() => globalThis.eval('suggest').items)));
   await ui.keyboard.press('Escape');
   await ui.keyboard.press('Escape');
 

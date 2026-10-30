@@ -57,17 +57,17 @@ function fakeFirefoxProfile() {
   // GitHub is already a default favorite, so 2 of the 3 web bookmarks are new.
   check('Chrome import adds web bookmarks from all folders (deduped)', result.bookmarks === 2 && result.history === 2, JSON.stringify(result));
   const settings = await ui.evaluate(() => window.assistant.getSettings());
-  const suggestions = await ui.evaluate(() => window.browser.suggest('news.yc'));
+  const suggestions = await ui.evaluate(() => window.browser.suggest('news.yc').then((r) => r.rows));
   check('imported history feeds address-bar suggestions', suggestions.some((s) => s.url === 'https://news.ycombinator.com/'), JSON.stringify(suggestions));
-  const captcha = await ui.evaluate(() => window.browser.suggest('google.com/sorry'));
-  check('CAPTCHA and hidden pages are not imported', !captcha.some((s) => s.url.includes('/sorry/')) && !(await ui.evaluate(() => window.browser.suggest('hidden.example'))).length, JSON.stringify(captcha));
+  const captcha = await ui.evaluate(() => window.browser.suggest('google.com/sorry').then((r) => r.rows));
+  check('CAPTCHA and hidden pages are not imported', !captcha.some((s) => s.url.includes('/sorry/')) && !(await ui.evaluate(() => window.browser.suggest('hidden.example').then((r) => r.rows))).length, JSON.stringify(captcha));
   const again = await app.evaluate((_e, dir) => global.__importBrowser('chrome', dir), chrome);
   check('importing twice adds no duplicates', again.bookmarks === 0 && again.history === 0, JSON.stringify(again));
 
   const firefox = fakeFirefoxProfile();
   const ff = await app.evaluate((_e, dir) => global.__importBrowser('firefox', dir), firefox);
   check('Firefox import reads places.sqlite', ff.bookmarks === 1 && ff.history === 1, JSON.stringify(ff));
-  const ffDate = await ui.evaluate(async () => (await window.browser.suggest('rust-lang'))[0]?.url);
+  const ffDate = await ui.evaluate(async () => (await window.browser.suggest('rust-lang').then((r) => r.rows))[0]?.url);
   check('Firefox history is searchable', ffDate === 'https://www.rust-lang.org/', ffDate);
   // Wait for the page itself rather than a fixed delay (the old 600 ms wait was flaky).
   const nt = await app.evaluate(async () => {

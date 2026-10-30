@@ -2,7 +2,7 @@
 // Back / Forward history list, and the strings the chrome fixes added.
 const fs = require('fs');
 const path = require('path');
-const { isLoopbackUrl, looksLikeAddress, defaultSuggestion } = require('../../src/renderer/chrome-helpers');
+const { isLoopbackUrl, looksLikeAddress, enterAction } = require('../../src/renderer/chrome-helpers');
 const navHistory = require('../../src/browser/nav-history');
 
 let failures = 0;
@@ -34,15 +34,15 @@ const EN = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'l
 for (const key of ['menu.linkCopied', 'menu.newTabPage', 'bookmark.addedNote', 'bookmark.removedNote', 'security.local']) check(`string: ${key}`, typeof EN[key] === 'string' && EN[key].length > 0, key);
 check('string: the selection item no longer names one assistant', !/claude/i.test(EN['menu.askAboutSelection']), EN['menu.askAboutSelection']);
 
-// ---- the omnibox's default match (Chrome: the top row is pre-selected, Enter goes to it)
+// ---- the omnibox's default match (Chrome: the first row is what the field holds; Enter goes to exactly that)
 const hist = (n) => ({ kind: 'history', title: 'Page ' + n, detail: n + '.example', go: 'https://' + n + '.example/' });
 const searchRow = { kind: 'search', title: 'alp', detail: 'Search', go: 'https://s/?q=alp' };
-check('default match: plain words with a page from history first select that page', defaultSuggestion('alp', [hist('alpha'), searchRow]) === 0, '');
-check('default match: an inline completion already in the field is what Enter takes (-1)', defaultSuggestion('alp', [hist('alpha'), searchRow], { completed: true }) === -1, '');
-check('default match: a search row first needs no pre-selection (Enter searches the typed text anyway)', defaultSuggestion('two words', [searchRow, hist('a')]) === -1, '');
-check('default match: no rows, no selection', defaultSuggestion('x', []) === -1 && defaultSuggestion('x', null) === -1, '');
+check('default match: plain words with a page from history first are searched, not sent to that page', enterAction({ value: 'alp', inline: null, items: [searchRow, hist('alpha')], selected: 0 }).go === 'alp', '');
+check('default match: an inline completion still in the field is what Enter takes', enterAction({ value: 'alpha.example', inline: { text: 'alpha.example', url: 'https://alpha.example/' }, items: [searchRow], selected: 0 }).go === 'https://alpha.example/', '');
+check('default match: two words with a page from history are searched exactly as typed', enterAction({ value: 'two words', inline: null, items: [searchRow, hist('a')], selected: 0 }).go === 'two words', '');
+check('default match: no rows, Enter takes the text', enterAction({ value: 'x', inline: null, items: [], selected: 0 }).go === 'x' && enterAction({ value: 'x', inline: null, items: null, selected: 0 }).go === 'x', '');
 for (const typed of ['localhost:3000', 'localhost', 'example.com', 'example.com/path?q=1', 'https://a.example/x', 'http://127.0.0.1:8080', '192.168.1.5', '[::1]:5173', 'intranet:8080', 'lumen://settings', 'about:blank', 'file:///c:/x.html', 'sub.domain.co.uk']) {
-  check('default match: typing ' + typed + ' keeps what was typed (an exact URL is never replaced)', looksLikeAddress(typed) && defaultSuggestion(typed, [hist('alpha'), searchRow]) === -1, typed);
+  check('default match: typing ' + typed + ' keeps what was typed (an exact URL is never replaced)', looksLikeAddress(typed) && enterAction({ value: typed, inline: null, items: [hist('alpha'), searchRow], selected: 0 }).go === typed, typed);
 }
 for (const typed of ['alp', 'github', 'weather today', 'what is 3.5', 'c++', 'node.js tips', '']) {
   check('default match: ' + (typed || '(empty)') + ' is not an address', !looksLikeAddress(typed), typed);
@@ -106,8 +106,8 @@ check('warning pages: certificate, HTTPS-only and Safe Browsing wording is in en
   const sug = read('renderer/suggest.html') + read('renderer/suggest.js');
   check('suggestions: hover is lighter than the keyboard selection', /--hover: rgba\(0, 0, 0, 0\.05\)/.test(sug) && /li:hover \{ background: var\(--hover\)/.test(sug) && /li\.selected, li\.selected:hover \{ background: var\(--selected\)/.test(sug), '');
   check('suggestions: a never-visited seed site has a globe, an open tab its own icon, and the typed match is bold', /site: GLOBE, tab: TAB/.test(sug) && /createElement\('b'\)/.test(sug), '');
-  check('suggestions: a Switch to tab row is never pre-selected (Enter still navigates); a history or seed row is', defaultSuggestion('page', [{ kind: 'tab' }, { kind: 'search' }]) === -1 && defaultSuggestion('page', [{ kind: 'site' }]) === 0 && defaultSuggestion('page', [{ kind: 'history' }, { kind: 'tab' }]) === 0, '');
-  check('suggestions: matching open tabs are added after the top row, not in place of a History row', read('renderer/app.js').includes('visited.splice(Math.min(1, visited.length), 0, ...tabRows)') && !read('renderer/app.js').includes('visited[at] = row'), '');
+  check('suggestions: a Switch to tab row or a history row is never what Enter takes until an arrow key picks it', enterAction({ value: 'page', inline: null, items: [{ kind: 'search', title: 'page' }, { kind: 'tab', go: 'https://t/' }], selected: 0 }).go === 'page' && enterAction({ value: 'https://t/', inline: null, items: [{ kind: 'search', title: 'page' }, { kind: 'tab', go: 'https://t/' }], selected: 1 }).item?.kind === 'tab', '');
+  check('suggestions: matching open tabs are added after the top rows, not in place of a History row', read('renderer/app.js').includes('items: [first, ...(first === search ? [] : [search]), ...tabRows, ...visited]') && !read('renderer/app.js').includes('visited[at] = row'), '');
   const idx = read('renderer/index.html');
   check('address bar: a combobox with a polite live region for the suggestion count', /id="address"[^>]*role="combobox"[^>]*aria-expanded="false"/.test(idx) && /id="suggest-live"[^>]*aria-live="polite"/.test(idx), '');
   check('downloads: failed rows give a reason and the toolbar button turns red until the panel opens', ['connect', 'lost', 'stopped', 'save'].every((k) => EN['dlpanel.failed.' + k]) && /\.download-btn\.failed \{ color: var\(--danger\)/.test(read('renderer/styles.css')) && /downloads\.toast\.failed/.test(dlSrc), '');
