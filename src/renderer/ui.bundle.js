@@ -7184,6 +7184,7 @@ async function sendComposer({ now = false } = {}) {
 
 
 async function askOnNewTopic(text, images, tabs) {
+  if (window.lumenAutoNewChat === false) return false;
   if (running || images.length || tabs?.ids?.length || !text || !window.chatTopic || !window.chatList?.openChat) return false;
   if (!messages.querySelector('.msg.assistant:not(.streaming)')) return false;
   const said = [...messages.querySelectorAll('.msg.user, .msg.assistant')].map((el) => el.textContent);
@@ -16758,6 +16759,7 @@ $('agent-stop')?.addEventListener('click', () => {
     if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); }
     if ('preferFractions' in p) window.lumenPreferFractions = p.preferFractions === true;
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false;
+    if ('autoNewChat' in p) window.lumenAutoNewChat = p.autoNewChat !== false;
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true;
   };
 
