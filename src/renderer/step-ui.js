@@ -363,7 +363,8 @@
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
     if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
     if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
-    if (state === 'working' || state === 'helper') { const many = nowList(card).length; if (many >= 2) return tr('card.status.many', { count: many }); }
+    if (state === 'working' || state === 'helper') { const all = nowList(card); // (with the reply's newest step named, so the scrolled-out pill still says what is new)
+      if (all.length >= 2) { const now = all.filter((x) => !x.who).at(-1)?.text; return now ? tr('card.status.manyNow', { count: all.length, step: now }) : tr('card.status.many', { count: all.length }); } }
     if (state === 'helper') { const own = step && step !== card.stepAtHelper ? step.replace(/^Helper · /, '') : ''; // (the step that started the helper says nothing about what it does now)
       const what = own || card.helperLabel; return what ? tr('card.status.helper', { step: what }) : tr('card.status.helperIdle'); }
     if (!step) return tr('card.status.starting');

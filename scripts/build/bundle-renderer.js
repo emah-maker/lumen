@@ -16,15 +16,18 @@ const STYLE = /[ \t]*<link rel="stylesheet" href="([^"]+)" \/>(?:<!--.*?-->)?[ \
 // The stylesheets' comments are left out of ui.bundle.css and settings.bundle.css (about 30 KB the window would load and parse on every start; the
 // source files keep them). A string is copied as it is, so a "/*" inside content: "…" or a url("…") is never taken for a comment.
 function stripCssComments(css) {
+  // (indentation and blank lines go too, and the spaces after a colon or semicolon and around a brace: CSS has no line numbers to keep, unlike the
+  // scripts below. Only the text between strings is squeezed; a combinator, a comma and the spaces in calc() are left as written)
+  const squeeze = (t) => t.replace(/[ \t]+\n/g, '\n').replace(/^[ \t]+/gm, '').replace(/([:;]) +/g, '$1').replace(/ *([{}]) */g, '$1');
   let out = '';
+  let code = '';
   for (let i = 0; i < css.length; i++) {
     const c = css[i];
-    if (c === '"' || c === "'") { const end = css.indexOf(c, i + 1); const stop = end === -1 ? css.length : end + 1; out += css.slice(i, stop); i = stop - 1; continue; }
+    if (c === '"' || c === "'") { const end = css.indexOf(c, i + 1); const stop = end === -1 ? css.length : end + 1; out += squeeze(code) + css.slice(i, stop); code = ''; i = stop - 1; continue; }
     if (c === '/' && css[i + 1] === '*') { const end = css.indexOf('*/', i + 2); i = end === -1 ? css.length : end + 1; continue; }
-    out += c;
+    code += c;
   }
-  // (indentation and blank lines go too: CSS has no line numbers to keep, unlike the scripts below)
-  return out.replace(/[ \t]+\n/g, '\n').replace(/^[ \t]+/gm, '').replace(/\n{2,}/g, '\n');
+  return (out + squeeze(code)).replace(/\n{2,}/g, '\n');
 }
 
 // The scripts' comments are left out of ui.bundle.js and settings.bundle.js too (the source is comment-heavy: about 190 KB the window would

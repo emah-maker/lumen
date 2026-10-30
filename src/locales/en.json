@@ -4187,6 +4187,7 @@
   "card.review.aria": "Review: round {round} scored {score} out of 10, the bar is {bar}",
   "card.review.ariaMet": "Review: {score} out of 10 meets the bar of {bar}, after {rounds} rounds",
   "card.status.many": "{count} things at once",
+  "card.status.manyNow": "{count} things at once · {step}",
   "card.status.helper": "Helper working: {step}",
   "card.status.helperIdle": "Helper working…",
   "card.site.reading": "Reading {site}",
