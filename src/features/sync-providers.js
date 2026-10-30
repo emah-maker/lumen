@@ -59,7 +59,7 @@ const SETTING_KEYS = [
   'theme', 'accentColor', 'newTabBackground', 'newTabShuffle', 'newTabWidgetGlass', 'newTabEffect', 'newTabEffectColor', 'newTabEffectAmount',
   'newTabEffectSpeed', 'newTabEffectSize', 'newTabEffectInteract', 'newTabClock', 'newTabClockSize', 'newTabClockStyle', 'newTabClockHours',
   'newTabClockSeconds', 'newTabClockDate', 'newTabClockCard', 'newTabClockShadow', 'newTabGreetingFont', 'newTabSearchWidth', 'newTabName',
-  'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy', 'newTabMusicReactive', 'newTabWidgetsPacked', 'forceDarkWebsites',
+  'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy', 'newTabWidgetsPacked', 'forceDarkWebsites',
   'defaultZoom', 'fontSize', 'showBookmarkButton', 'showAiOffButton', 'compactTabs', 'startup', 'startupPages',
   'sendDoNotTrack', 'sendGpc', 'stripTrackingParams', 'blockTrackingPings', 'httpsOnly', 'adblock', 'adblockAllow', 'spellcheck',
   'spellcheckLanguages', 'languages', 'reduceMotion', 'minimumFontSize', 'focusRings', 'pdfViewer', 'pinchZoom', 'askWhereToSave',

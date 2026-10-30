@@ -406,7 +406,7 @@ function verifyChecksums(manifest, actual) {
 // held back; the second is every other suite with a wall-clock budget (a latency, a frame rate, "no main-process task over N ms").
 const PERF_SENSITIVE = [
   'perf-budget', 'step-labels', 'overlay-first-perf', 'page-load-stall', 'igpu-perf',
-  'tab-switch-perf', 'chat-tab-speed', 'chat-save-stall', 'desktop-apps', 'music-react', 'project-folders', 'pptx-shapes', 'tools', 'files-ai', 'gpu-health', 'video-frames',
+  'tab-switch-perf', 'chat-tab-speed', 'chat-save-stall', 'desktop-apps', 'project-folders', 'pptx-shapes', 'tools', 'files-ai', 'gpu-health', 'video-frames',
 ];
 const isPerfSensitive = (name) => PERF_SENSITIVE.includes(name);
 

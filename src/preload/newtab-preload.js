@@ -9,9 +9,7 @@ if (location.protocol === 'file:' && /\/renderer\/newtab\.html$/.test(location.p
     askAi: (o) => ipcRenderer.invoke('newtab-ai:ask', o),
     // The OS picker for pictures (main opens it) -> { images: [{ name, type, data }], problems: [{ code, name }] }
     pickImages: () => ipcRenderer.invoke('newtab-ai:pick'),
-    // Music-reactive home screen (Settings): which tab's sound to analyse -> { key, id } | { key: null }; main answers only while the setting is on
     // The tiles the user removed: { favorites: [url], frequent: [host] } -> true when saved
     setHiddenTiles: (hidden) => ipcRenderer.invoke('newtab-tiles:set', hidden),
-    musicSource: (have) => ipcRenderer.invoke('newtab-music:source', have),
   });
 }

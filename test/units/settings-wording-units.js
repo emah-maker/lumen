@@ -35,7 +35,7 @@ const iEnd = agents.indexOf("agents.group(tr('settings.ai.groupOtherTools'");
 check('Let agents use Lumen holds the connect switch, Connect an AI agent and Let other apps use Lumen; Connectors left for Apps and connections', iEnd > 0 && ['mcpToggle', "subpage('connect-agents'", "subpage('external-apps'"].every((k) => { const at = agents.indexOf(k); return at >= 0 && at < iEnd; }) && !/subpage\('connectors'/.test(settings) && /\['apps', 'Services'\]/.test(settings));
 check('the automation tools (CDP) row sits in its own Advanced page and says how it differs', /\['automation', 'Remote control for developers', \{ page: 'advanced-links'/.test(settings) && /separate, lower-level way in/i.test(settings));
 const system = settings.slice(settings.indexOf('function buildSystem'));
-check('Advanced has one Performance and graphics page: acceleration, Performance mode, Visual effects and the music-reactive switch', (() => { const end = system.indexOf("buildUnloading"); const body = system.slice(0, end); return body.indexOf('groupGraphics') > 0 && ['hardwareAcceleration', 'performanceMode', 'graphicsMode', 'musicReactiveRow()'].every((k) => body.includes(k)); })());
+check('Advanced has one Performance and graphics page: acceleration, Performance mode and Visual effects', (() => { const end = system.indexOf("buildUnloading"); const body = system.slice(0, end); return body.indexOf('groupGraphics') > 0 && ['hardwareAcceleration', 'performanceMode', 'graphicsMode'].every((k) => body.includes(k)); })());
 check('Reduce motion stays in Appearance (Accessibility)', /function buildAccessibility[\s\S]*?toggle\('reduceMotion'/.test(settings));
 
 // #33 rows with a description (and a control) or gone
