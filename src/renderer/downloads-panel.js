@@ -179,7 +179,7 @@
   // (the list at its full, uncapped-by-the-window size): the clipped height would shrink the view,
   // which would shrink the card again, and so on.
   function reportHeight() {
-    const natural = card.getBoundingClientRect().height - list.clientHeight + Math.min(list.scrollHeight, 452);
+    const natural = card.offsetHeight - list.clientHeight + Math.min(list.scrollHeight, 452); // (offsetHeight: the layout height; the opening animation scales the box)
     api.setHeight(Math.ceil(natural) + 6 + 24);
   }
   new ResizeObserver(reportHeight).observe(card);
