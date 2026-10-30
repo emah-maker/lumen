@@ -4174,7 +4174,7 @@ function loadStepUI() {
   const head = document.head;
   head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
   const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => window.stepUI?.init(messages));
+  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
   return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);
@@ -5290,6 +5290,7 @@ function resumeLive(live) {
   if (!turn.userBubble && lastUser) { turn.userBubble = lastUser; setMark(lastUser, live.partial ? 'read' : 'sent'); }
   if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.status, live.queued.runNow);
   runId = live.runId;
+  if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-card')]; const last = cards[cards.length - 1]?._card; if (last) window.stepUI?.carryOn({ cards: [last] }, turn); }
   if (live.target) { agentTarget = live.target; renderWorkingIn(); }
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
 
@@ -5515,15 +5516,17 @@ window.assistant.onEvent((event) => {
   if (event.type === 'followup_start') {
     if (running || forOtherChat(event.chatId)) return;
     if (event.chatId && !shownChatId) nameChat(event.chatId);
+    const prev = finishedRun?.turn || null;
     beginTurn();
     runId = event.runId;
+    window.stepUI?.carryOn(prev, turn);
     return;
   }
 
 
 
   const late = finishedTurn(event.runId);
-  if (late && /^(card_files|thumb|helper|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
+  if (late && /^(card_files|thumb|helper|agent|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId);
 
@@ -5670,6 +5673,9 @@ window.assistant.onEvent((event) => {
     case 'helper':
       window.stepUI?.helper(turn, event);
       break;
+    case 'agent':
+      agentEvent(turn, event);
+      break;
     case 'helper_card':
       showHelperCard(event);
       break;
@@ -5798,11 +5804,26 @@ window.assistant.onEvent((event) => {
 });
 
 
+
+function agentEvent(t, event) {
+  window.stepUI?.liveCard?.(t);
+  const place = (node) => {
+    const card = t.cards?.[t.cards.length - 1]?.el;
+    if (card?.isConnected) { window.agentsCard.into(card, node); return; }
+    if (t === turn && turn.working?.isConnected) { appendToTurn(node); return; }
+    if (t.text?.isConnected) t.text.after(node); else append(node);
+  };
+  const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); };
+  if (window.agentsCard) show(); else loadStepUI().then(show);
+}
+
+
 function lateCardEvent(t, event) {
   switch (event.type) {
     case 'card_files': window.stepUI?.filesMade(t, event.files); break;
     case 'thumb': window.stepUI?.thumb(t, event); break;
     case 'helper': window.stepUI?.helper(t, event); break;
+    case 'agent': agentEvent(t, event); break;
     case 'tool': {
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;
@@ -7372,6 +7393,9 @@ function startChat() {
     }
     const tools = Array.isArray(item.tools) ? item.tools : [];
     if (tools.length && item.cards && window.stepUI) out.push(...window.stepUI.restoreNodes(item));
+    const agentsNode = item.agents && window.agentsCard ? window.agentsCard.restore(item.agents) : null;
+    const actCard = agentsNode ? [...out].reverse().find((n) => n.classList?.contains('act-card')) : null;
+    if (agentsNode && actCard) window.agentsCard.into(actCard, agentsNode); else if (agentsNode) out.push(agentsNode);
     else if (item.steps || tools.length) {
       const count = item.steps || tools.length;
       const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });

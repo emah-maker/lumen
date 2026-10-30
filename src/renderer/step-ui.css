@@ -19,8 +19,9 @@
 /* ---- the activity card: Browser, Terminal, Files */
 .act-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; color: var(--text); animation: rise var(--t-smooth) var(--spring-smooth); }
 /* The whole card is as wide as its preview (the picture's shown width, set as --act-w by step-ui.js capSize, plus the card's padding and border), left-aligned
-   like the preview; a narrow sidebar shrinks it. What is inside never pushes it wider: long names are cut with an ellipsis. */
-.act-card[data-surface="browser"], .act-card[data-surface="app"] { max-width: calc(var(--act-w, 340px) + 26px); min-width: 0; box-sizing: border-box; }
+   like the preview; a narrow sidebar shrinks it. What is inside never pushes it wider: long names are cut with an ellipsis. Every card has that width,
+   a Computer or Files card with no preview too, so a Browser card and a Computer card one under the other line up. */
+.act-card { max-width: calc(var(--act-w, 340px) + 26px); min-width: 0; box-sizing: border-box; }
 .act-card > * { min-width: 0; }
 .act-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .act-icon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
@@ -151,3 +152,48 @@
 .act-shot:not([hidden]), .act-shot2:not([hidden]) { animation: act-shot-in var(--t-smooth, 240ms) var(--spring-smooth, ease-out); }
 .pref-lite .act-shot, .pref-lite .act-shot2 { animation: none; }
 @media (prefers-reduced-motion: reduce) { .act-shot:not([hidden]), .act-shot2:not([hidden]) { animation: none; } }
+
+/* ---- [agents card] the subagents a reply started (renderer/agents-card.js): a row each, with a live clock, its tool calls and what it does now.
+   As wide as the activity cards, so the two line up. */
+.agents-card { margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); display: flex; flex-direction: column; gap: 10px; color: var(--text); max-width: calc(var(--act-w, 340px) + 26px); min-width: 0; box-sizing: border-box; animation: rise var(--t-smooth) var(--spring-smooth); }
+.ag-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ag-icon { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
+.ag-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.agents-card[data-state="working"] .ag-icon { animation: step-ring 1.6s var(--ease-out) infinite; }
+.ag-titles { min-width: 0; flex: 1; }
+.ag-title { font-weight: 600; font-size: 13px; }
+.ag-sub { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ag-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 7px 10px; border-radius: 8px; background: var(--bg); font-size: 12px; }
+.ag-row[tabindex="0"] { cursor: pointer; }
+.ag-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ag-dot { flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--muted); }
+.ag-row[data-state="working"] .ag-dot { background: var(--accent); animation: act-pulse 1.1s ease-in-out infinite; }
+.ag-row[data-state="done"] .ag-dot { width: 4px; height: 8px; margin: 2px 3px 0 3px; border-radius: 0; background: none; border: solid var(--accent); border-width: 0 1.8px 1.8px 0; transform: rotate(45deg); } /* a check mark: done */
+.ag-row[data-state="failed"] .ag-dot { background: var(--danger); }
+.ag-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ag-line { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ag-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-bg { flex: none; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 10.5px; line-height: 16px; }
+.ag-bg[hidden] { display: none; }
+.ag-now { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-row[data-state="working"] .ag-now { color: var(--text); }
+.ag-row:not([data-state="working"]) .ag-now { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ag-row.open .ag-now { display: block; -webkit-line-clamp: unset; }
+.ag-meta { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11px; }
+.ag-tools:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .agents-card, .agents-card[data-state="working"] .ag-icon, .ag-row[data-state="working"] .ag-dot { animation: none; } }
+/* Inside an activity card (one card per message): no card of its own, a small heading over the rows. */
+.agents-card.in-card { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; max-width: none; gap: 6px; animation: none; }
+.agents-card.in-card .ag-icon { display: none; }
+.agents-card.in-card .ag-head { gap: 6px; }
+.agents-card.in-card .ag-titles { display: flex; align-items: baseline; gap: 6px; }
+.agents-card.in-card .ag-title { font-size: 12px; }
+
+/* [at once] Two things or more running in one card: a pill each under the status line (step-ui.js renderMany). */
+.act-many { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.act-many[hidden] { display: none; }
+.act-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); font-size: 11.5px; color: var(--text); }
+.act-pill .act-dot { width: 6px; height: 6px; background: var(--accent); animation: act-pulse 1.1s ease-in-out infinite; }
+.act-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .act-pill .act-dot { animation: none; } }
