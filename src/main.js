@@ -76,6 +76,7 @@ const cliJson = require('./ai/cli-json');
 cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings → AI too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
+const omnibox = require('./browser/omnibox');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
 const windowClose = lazy(() => require('./features/window-close')); // [window close] the last-tab rule and the window-events.jsonl breadcrumb
@@ -323,8 +324,8 @@ const UI_ONLY_IPC = new Set([
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
-  'nav:go', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'address:touched',
+  'nav:go', 'nav:go-com', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
@@ -1892,7 +1893,7 @@ function loadHistory() {
       for (const h of saved) {
         const now = history.get(h.url);
         if (!now) history.set(h.url, h);
-        else { now.visits += h.visits || 0; now.last = Math.max(now.last, h.last || 0); now.title = now.title || h.title; }
+        else { now.visits += h.visits || 0; now.last = Math.max(now.last, h.last || 0); now.title = now.title || h.title; if (h.typed) now.typed = (now.typed || 0) + h.typed; }
       }
       historyVersion++;
       if (process.platform === 'darwin' && Menu.getApplicationMenu()) Menu.setApplicationMenu(macMenu()); // its History menu lists the recent pages
@@ -1918,10 +1919,19 @@ function saveHistorySoon() {
 
 const isCaptchaPage = (url) => /^https?:\/\/(www\.)?google\.[a-z.]+\/sorry\//i.test(url);
 
+// A site typed into the address bar (or picked from its list) and the time: the visit that follows counts as typed, which is
+// what lets the address bar complete that site in place later (omnibox.inlineCompletion), as in Chrome.
+let typedNav = null;
+function noteTypedNav(target) {
+  const site = omnibox.siteOf(target);
+  typedNav = site ? { site, at: Date.now() } : null;
+}
+
 function recordVisit(url, title) {
   if (!isWebUrl(url) || isCaptchaPage(url) || !importer.isWorthImporting(url)) return; // same filter as imports
   const entry = history.get(url) || { url, title: '', visits: 0, last: 0 };
   entry.visits += 1;
+  if (typedNav && Date.now() - typedNav.at < 60000 && omnibox.siteOf(url) === typedNav.site) { entry.typed = (entry.typed || 0) + 1; typedNav = null; }
   entry.last = Date.now();
   if (title) entry.title = title;
   history.set(url, entry);
@@ -1940,7 +1950,7 @@ function updateTitle(url, title) {
 const bareUrl = (url) => url.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '');
 
 function suggestions(query) {
-  const q = query.trim().toLowerCase();
+  const q = String(query).trim().toLowerCase();
   if (!q) return [];
   const candidates = new Map(SEED_SITES.map(([url, title]) => [url, { url, title, visits: 0, last: 0 }]));
   for (const entry of history.values()) candidates.set(entry.url, entry);
@@ -10797,11 +10807,13 @@ function goFromAddress(text) {
   const source = /^\s*view-source:(https?:\/\/\S+)\s*$/i.exec(String(text)); // typed view-source:<url>
   if (source) { pageTools.viewSource(source[1], { wc }); wc.focus(); return; }
   const target = resolveInput(text);
+  if (omnibox.classify(text, readSettings().searchEngine).kind === 'url') noteTypedNav(target); // (a search is not a typed visit to the engine's site)
   if (leaveNewTabFor(current, target)) { activeTab()?.webContents.focus(); return; } // (a new-tab page: the page loads in the warm view)
   wc.loadURL(target).catch(() => {});
   wc.focus();
 }
 ipcMain.on('nav:go', (_e, text) => goFromAddress(text));
+ipcMain.on('nav:go-com', (_e, text) => goFromAddress(omnibox.ctrlEnterInput(text))); // Ctrl+Enter in the address bar
 function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }
@@ -10834,7 +10846,21 @@ ipcMain.on('nav:history-menu', (e, direction, point) => {
 if (TEST) global.__navHistoryMenu = (direction) => navHistoryTemplate(direction).map((i) => ({ label: i.label || '---', click: i.click }));
 ipcMain.on('nav:reload', reloadActive);
 
-ipcMain.handle('suggest:query', async (_e, query) => { if (/^\s*(lumen:\/\/)?settings\b/i.test(String(query))) prepareSettings(); /* [settings intent] */ await historyReady; return suggestions(query); }); // (a query in the first moments waits for the past pages)
+// The address bar's list for what is typed: History rows, the top row (where Enter goes: the URL, or a search for the text exactly
+// as typed) and the inline completion, only ever from a site typed before (browser/omnibox.js).
+ipcMain.handle('suggest:query', async (_e, query) => {
+  const typed = String(query ?? '');
+  if (/^\s*(lumen:\/\/)?settings\b/i.test(typed)) prepareSettings(); // [settings intent]
+  await historyReady; // (a query in the first moments waits for the past pages)
+  return { rows: suggestions(typed), top: omnibox.classify(typed, readSettings().searchEngine), inline: omnibox.inlineCompletion(typed, [...history.values()]) };
+});
+// Shift+Delete on a History row in the address bar's list: that page leaves History.
+ipcMain.handle('suggest:remove', async (_e, url) => {
+  await historyReady;
+  if (typeof url !== 'string' || !history.delete(url)) return false;
+  saveHistorySoon();
+  return true;
+});
 ipcMain.on('suggest:show', (_e, rect, payload) => showSuggestions(rect, payload));
 ipcMain.on('suggest:hide', hideSuggestions);
 ipcMain.on('app-menu', (_e, point) => showAppMenu(point));

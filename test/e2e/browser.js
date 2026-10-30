@@ -278,11 +278,11 @@ const PAGE = `<!doctype html><html><head><title>Browser fixture</title></head><b
   await run('navigate', { url: base + '/oauth/authorize?client_id=abc123&state=xyz&code=secret' });
   await run('navigate', { url: base + '/docs/page?ref=zebra42' });
   await new Promise((r) => setTimeout(r, 300));
-  const oauth = await ui.evaluate(() => window.browser.suggest('client_id'));
-  const oauthByPath = await ui.evaluate(() => window.browser.suggest('127.0.0.1'));
+  const oauth = await ui.evaluate(() => window.browser.suggest('client_id').then((r) => r.rows));
+  const oauthByPath = await ui.evaluate(() => window.browser.suggest('127.0.0.1').then((r) => r.rows));
   check('sign-in/token URLs are not recorded', !oauthByPath.some((s) => s.url.includes('/oauth/')), JSON.stringify(oauthByPath));
-  check('suggestions ignore the query string', oauth.length === 0 && !(await ui.evaluate(() => window.browser.suggest('zebra42'))).length, JSON.stringify(oauth));
-  check('suggestions still match the path', (await ui.evaluate(() => window.browser.suggest('127.0.0.1:'))).length >= 0 && oauthByPath.some((s) => s.url.includes('/docs/page')), JSON.stringify(oauthByPath));
+  check('suggestions ignore the query string', oauth.length === 0 && !(await ui.evaluate(() => window.browser.suggest('zebra42').then((r) => r.rows))).length, JSON.stringify(oauth));
+  check('suggestions still match the path', (await ui.evaluate(() => window.browser.suggest('127.0.0.1:').then((r) => r.rows))).length >= 0 && oauthByPath.some((s) => s.url.includes('/docs/page')), JSON.stringify(oauthByPath));
 
   check('no UI errors', errors.length === 0, errors.join('; '));
   console.log(failures ? `${failures} FAILED` : 'ALL PASSED');

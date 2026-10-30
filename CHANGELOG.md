@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The address bar types and searches like Chrome, Edge and Firefox. Words are searched exactly as you typed them: Enter no longer opens a History page that only matches them (typing "tube" used to open YouTube). A site is completed in place only if you typed it into the address bar before, never from a page you only clicked to or a built-in suggestion; Backspace or Delete removes the completion, and Enter goes to exactly what the field shows. The first row of the list is always what you typed, the arrow keys move through the rows, Escape puts your text back, Shift+Delete removes a History row, and Ctrl+Enter opens www.<text>.com. Spellcheck and autocorrect stay off in the field.
 - A review skill: ask for work held to a standard ("keep improving it until it is 9/10", "have a separate reviewer rate it") and the AI works in rounds, with a fresh, strict reviewer agent scoring each round against the bar until it is met (at most 5 rounds). You can also start it with /review. The card shows the scores round by round (6.5 → 8 → 9.2 ✓) and what the reviewer still wants fixed.
 - The card says which skill the AI is working by.
 - One card per message: when Claude Code goes on by itself after a background agent finishes, its next steps continue in the same card instead of opening a second one under it. Browser and Computer cards are also the same width now.

@@ -179,6 +179,8 @@ Right-click a tab → **Open in split view** to show it next to the tab you are 
 | New chat in the sidebar (opens it if closed) | `Ctrl+Shift+K` |
 | On the full-page chat: fold or open the chat list / new chat | `Ctrl+Shift+S` / `Ctrl+Shift+O` |
 | Ask the AI from the address bar | type, then `Alt+Enter` |
+| Open www.<text>.com from the address bar | type, then `Ctrl+Enter` |
+| Remove a History suggestion from the address bar's list | arrow to it, then `Shift+Delete` |
 | `Ctrl+Enter`, in the box you are typing in | Send it now: asks the AI on the new-tab page; in the sidebar chat, stops a running reply and sends yours |
 | Meeting helper | `Ctrl+Shift+E` |
 | AI activity: everything the AI is doing (`lumen://tasks`) | `Ctrl+Shift+X` |
