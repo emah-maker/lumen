@@ -3076,6 +3076,8 @@
   "settings.ai.agentsNoAskDesc": "On: a connected agent asks you before it clicks, types or opens a site in its own Lumen window. Off: it acts without asking, so it keeps working while Lumen is in the background. Sites where you turned AI off and tabs you keep the AI off are still out of reach either way.",
   "settings.ai.handsOff": "Let the AI act on my pages",
   "settings.ai.handsOffDesc": "On: the AI can click, type and navigate in your tabs. Off: it can read pages you share but won’t click, type or navigate in them; it works in tabs it opens itself. The Automation server follows the same rule (Settings → Advanced). A command-line AI with full access is not limited.",
+  "settings.ai.autoNewChat": "Start a new chat for a new topic",
+  "settings.ai.autoNewChatDesc": "A message about something else moves to a new chat by itself, with Keep in last chat to undo. Off: every message stays in the open chat.",
   "settings.ai.sidebarNewChat": "Sidebar button starts a new chat",
   "settings.ai.sidebarNewChatDesc": "Opening the sidebar starts an empty chat, unless a chat is running in this tab. Earlier chats are in History.",
   "settings.ai.autocomplete": "Tab to finish what I’m typing",

@@ -3413,8 +3413,9 @@ async function sendComposer({ now = false } = {}) {
 // A typed message with nothing in common with the open chat (renderer/chat-topic.js) starts a new
 // chat, as the New chat button would; the last one stays in the chat list. The notice it leaves has
 // a way back: the message moves to the last chat and is asked there. The sidebar only (it has the
-// chat list), and never for images or "@" tabs, which are hard to judge by their words.
+// chat list), and never for images or "@" tabs, which are hard to judge by their words. Off in Settings (autoNewChat): never.
 async function askOnNewTopic(text, images, tabs) {
+  if (window.lumenAutoNewChat === false) return false; // Settings → AI → "Start a new chat for a new topic" (autoNewChat) is off
   if (running || images.length || tabs?.ids?.length || !text || !window.chatTopic || !window.chatList?.openChat) return false;
   if (!messages.querySelector('.msg.assistant:not(.streaming)')) return false;
   const said = [...messages.querySelectorAll('.msg.user, .msg.assistant')].map((el) => el.textContent);
