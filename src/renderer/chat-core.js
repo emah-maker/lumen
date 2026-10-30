@@ -541,7 +541,7 @@ window.addEventListener('beforeunload', () => saveDraft());
 // (or a chat opened from the list) leaves each chat as it was and one chat's pictures never go along into another. Not kept across a restart.
 const viewStash = new Map(); // chat id ('new': not named yet) -> { attachments, chips, fromBottom, open }
 const STASH_MAX = 60;
-let pendingView = null; // { fromBottom, open } of the chat just shown, applied as soon as it is drawn
+let pendingView = null; // { fromBottom, atTop, open } of the chat just shown, applied as soon as it is drawn
 const stashKey = (id) => (id ? String(id) : 'new');
 const foldables = () => [...messages.querySelectorAll('details, .step[data-more]')].reverse(); // (counted from the end: older parts drawn later don't shift them)
 function stashView(id) {
@@ -549,6 +549,7 @@ function stashView(id) {
   if (!lazyItems && !pendingView && messages.clientHeight > 0 && messages.querySelector('.msg')) { // (a chat not drawn yet, or the view hidden, has no position to keep)
     const fromBottom = Math.round(messages.scrollHeight - messages.scrollTop - messages.clientHeight);
     if (fromBottom > 48) kept.fromBottom = fromBottom;
+    if (fromBottom > 48 && messages.scrollTop <= 4) kept.atTop = true; // (the top is kept as the top: cards drawn after it is shown would otherwise move it down)
     const open = [];
     foldables().forEach((el, i) => { if (el.tagName === 'DETAILS' ? el.open : el.getAttribute('aria-expanded') === 'true') open.push(i); });
     if (open.length) kept.open = open;
@@ -574,7 +575,7 @@ function takeStash() {
   viewStash.delete(key);
   if (kept.attachments?.length) attachments = [...kept.attachments, ...attachments].slice(0, MAX_ATTACH);
   if (kept.chips) window.tabsAsk?.restore?.(kept.chips);
-  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, open: kept.open || null };
+  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, atTop: Boolean(kept.atTop), open: kept.open || null };
 }
 // True when nothing is left to do. A position deeper than what is drawn yet waits for the older parts (drawEarlier calls this after each).
 // The cards of a chat still running are built as its events replay, a moment after the chat is shown: each is opened when it appears.
@@ -599,8 +600,8 @@ function applyView() {
   if (viewHidden() || !messages.clientHeight) return false; // (shown later: the composer's resize asks again)
   if (p.open) { pendingOpen = { idx: p.open, until: Date.now() + 4000 }; p.open = null; reopenCards(); }
   if (p.fromBottom > 0) {
-    const want = messages.scrollHeight - messages.clientHeight - p.fromBottom;
-    if (want < 0) { messages.scrollTop = 0; return false; }
+    const want = p.atTop ? 0 : messages.scrollHeight - messages.clientHeight - p.fromBottom;
+    if (want < 0 || (p.atTop && messages.scrollHeight <= messages.clientHeight)) { messages.scrollTop = 0; return false; } // (not drawn yet: asked again once it is)
     stuck = false;
     messages.scrollTop = want;
     jump.hidden = false;
