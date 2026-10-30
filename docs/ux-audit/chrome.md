@@ -91,6 +91,10 @@ Tests: `test/units/chrome-ux-units.js` (default match, address check, sentence-c
    `example.com/path`, an IP, `host:port`, `lumen://`), when the field already holds an inline completion (Enter goes to that
    host as before), or when the first row is only "search for ...": Enter on typed text still goes exactly where it did.
    Logic and tests: `chrome-helpers.js` `looksLikeAddress` / `defaultSuggestion`.
+   **Replaced (2026-10-29):** Chrome does not do this, and it sent searches to pages that only matched the words. The first
+   row is now always what is in the field (the search for the text as typed, the URL, or a site completed in place, which only
+   a site typed before gets) and Enter goes to exactly that. Logic: `browser/omnibox.js`, `chrome-helpers.js` `enterAction`;
+   tests: `test/units/omnibox-units.js`, `test/e2e/omnibox-chrome.js`.
 7. **Private windows said "Not secure" for localhost. FIXED.** The private window's address-bar chip uses the same rule as a
    normal window: an `http` address on this computer shows the neutral "i" chip, "This page is on your own computer".
 8. **The AI button was a plain circle until a model was connected. FIXED.** With nothing connected it shows an accent-colored
