@@ -206,12 +206,12 @@
     if (card.stopped) return 'stopped';
     return 'completed';
   }
-  // [at once] What runs at this moment in a card: the reply's own steps still running, and each agent at work (agents-card.js; their own steps are
+  // [at once] What runs at this moment in a card: the reply's own steps still running (an 'Allowed automatically' note is not one), and each agent at work (agents-card.js; their own steps are
   // theirs, not counted again). [{ text, who }]: who is '' for the reply itself.
   function nowList(card) {
     const turn = card.turnRef;
     const out = [];
-    for (const row of card.list.querySelectorAll('.step.running:not([data-helper])')) out.push({ text: trimStep(row.firstChild?.textContent || ''), who: '' });
+    for (const row of card.list.querySelectorAll('.step.running:not([data-helper]):not(.step-note)')) out.push({ text: trimStep(row.firstChild?.textContent || ''), who: '' });
     for (const row of turn?.agents?.card?.rows?.values?.() || []) if (row._a?.state === 'working') out.push({ text: row._a.last || tr('agents.starting'), who: row._a.desc || tr('agents.unnamed') });
     return out;
   }
