@@ -8884,12 +8884,37 @@ function startChat() {
 
 
 
-  function defaultSuggestion(typed, items, { completed = false } = {}) {
-    if (!items || !items.length || completed || looksLikeAddress(typed)) return -1;
-    return ['history', 'site'].includes(items[0].kind) ? 0 : -1;
+
+
+  const rowValue = (item) => (item.kind === 'search' ? item.title : item.go);
+
+
+
+
+  function mayInlineComplete({ value, typed, selectionStart, selectionEnd, inputType = '', composing = false }) {
+    if (composing || value !== typed || !String(typed).trim() || /\s/.test(typed)) return false;
+    if (selectionStart !== value.length || selectionEnd !== value.length) return false;
+    return !/^(delete|insertFromPaste|insertFromDrop|insertReplacementText|historyUndo|historyRedo)/.test(inputType);
   }
 
-  const api = { isLoopbackUrl, looksLikeAddress, defaultSuggestion };
+
+
+  function extendInline(inline, value, inputType = '', caretAtEnd = true) {
+    if (!inline || !caretAtEnd || !/^insertText$/.test(inputType) || /\s/.test(value)) return null;
+    if (value.length >= inline.text.length || !inline.text.toLowerCase().startsWith(value.toLowerCase())) return null;
+    return { text: value + inline.text.slice(value.length), url: inline.url };
+  }
+
+
+
+  function enterAction({ value, inline, items, selected }) {
+    const item = items && selected > 0 ? items[selected] : null;
+    if (item && value === rowValue(item)) return { item };
+    if (inline && value === inline.text) return { go: inline.url };
+    return { go: String(value || '').trim() };
+  }
+
+  const api = { isLoopbackUrl, looksLikeAddress, rowValue, mayInlineComplete, extendInline, enterAction };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.chromeHelpers = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -10982,8 +11007,11 @@ window.browser.onFocusAddress(() => { window.browser.addressTouched?.(); address
 
 
 
-let suggest = { items: [], selected: -1, typed: '' };
+
+
+let suggest = { items: [], selected: 0, typed: '', shown: '', inline: null };
 let suggestSeq = 0;
+let lastTyped = '';
 let searchEngine = { label: 'Google', url: 'https://www.google.com/search?q=%s' };
 const searchUrl = (text) => searchEngine.url.replace('%s', encodeURIComponent(text));
 
@@ -11031,7 +11059,7 @@ let shownSuggestions = { id: 0, items: [] };
 
 function hideSuggestions() {
   suggestSeq++;
-  suggest = { items: [], selected: -1, typed: '' };
+  suggest = { items: [], selected: 0, typed: '', shown: '', inline: null };
   window.browser.hideSuggestions();
   announceSuggestions();
 }
@@ -11044,42 +11072,63 @@ function matchOpenTabs(text) {
   return state.tabs.filter((x) => x.id !== state.activeId && /^https?:/i.test(x.url || '') && ((x.title || '').toLowerCase().includes(q) || prettyUrl(x.url).split(/[?#]/)[0].toLowerCase().includes(q))).slice(0, 3);
 }
 
-async function updateSuggestions(typed, deleting) {
+
+
+
+async function updateSuggestions(typed, inputType = '', composing = false) {
   const seq = ++suggestSeq;
   const text = typed.trim();
   if (!text) return hideSuggestions();
-  const history = await window.browser.suggest(text);
+  const { rows = [], top, inline: offered } = (await window.browser.suggest(typed)) || {};
   if (seq !== suggestSeq || document.activeElement !== address) return;
 
-  if (!deleting && history.length && !/\s/.test(typed)) {
-    const bare = history[0].url.replace(/^https?:\/\/(www\.)?/i, '');
-    const completion = typed.includes('/') ? bare.replace(/\/$/, '') : bare.split('/')[0];
-    if (completion.toLowerCase().startsWith(typed.toLowerCase()) && completion.length > typed.length) {
-      address.value = typed + completion.slice(typed.length);
-      address.setSelectionRange(typed.length, address.value.length);
-    }
+  let inline = null;
+  const helpers = window.chromeHelpers;
+  if (offered && offered.text.toLowerCase().startsWith(typed.toLowerCase()) && helpers.mayInlineComplete({ value: address.value, typed, selectionStart: address.selectionStart, selectionEnd: address.selectionEnd, inputType, composing })) {
+    address.value = typed + offered.text.slice(typed.length);
+    address.setSelectionRange(typed.length, address.value.length);
+    inline = { text: address.value, url: offered.url };
+  } else if (suggest.inline && address.value === suggest.inline.text && address.value.toLowerCase().startsWith(typed.toLowerCase())) {
+    inline = suggest.inline;
   }
 
-  const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
-  const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+  const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: top?.kind === 'search' ? top.url : searchUrl(text) };
+  const first = inline ? { kind: 'site', title: prettyUrl(inline.url).replace(/\/$/, ''), detail: '', go: inline.url }
+    : top?.kind === 'url' ? { kind: 'site', title: text, detail: '', go: top.url } : search;
+  const same = (url) => url.replace(/\/$/, '') === first.go.replace(/\/$/, '');
+  const visited = rows.filter((h) => !same(h.url)).map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
 
 
   const tabRows = matchOpenTabs(text).slice(0, 2).map((tab) => ({ kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') }));
-  visited.splice(Math.min(1, visited.length), 0, ...tabRows);
-  const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
-
-  suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
+  suggest = { items: [first, ...(first === search ? [] : [search]), ...tabRows, ...visited], selected: 0, typed, shown: address.value, inline };
   renderSuggestions();
 }
+
 
 function moveSelection(step) {
   const count = suggest.items.length;
   if (!count) return;
-  suggest.selected = ((suggest.selected + 1 + step + count + 1) % (count + 1)) - 1;
+  suggest.selected = (suggest.selected + step + count) % count;
   const item = suggest.items[suggest.selected];
-  address.value = !item ? suggest.typed : item.kind === 'search' ? item.title : item.go;
+  if (suggest.selected === 0) {
+    address.value = suggest.shown;
+    if (suggest.inline) address.setSelectionRange(suggest.typed.length, address.value.length);
+  } else address.value = window.chromeHelpers.rowValue(item);
   renderSuggestions();
   announceSuggestions(true);
+}
+
+
+async function removeSelectedSuggestion() {
+  const item = suggest.items[suggest.selected];
+  if (!item || item.kind !== 'history' || !window.browser.removeSuggestion) return;
+  const typed = suggest.typed;
+  await window.browser.removeSuggestion(item.go);
+  if (document.activeElement !== address) return;
+  address.value = typed;
+  address.setSelectionRange(typed.length, typed.length);
+  lastTyped = typed;
+  updateSuggestions(typed, 'deleteContent');
 }
 
 
@@ -11129,7 +11178,21 @@ window.browser.onSuggestionPicked(({ index, listId }) => {
 address.addEventListener('input', (e) => {
   addressDirty = true;
   draftShowing = false;
-  updateSuggestions(address.value, e.inputType?.startsWith('delete'));
+  const inputType = e.inputType || '';
+
+
+  const atEnd = address.selectionStart === address.value.length && address.selectionEnd === address.value.length;
+  const kept = e.isComposing ? null : window.chromeHelpers.extendInline(suggest.inline, address.value, inputType, atEnd);
+  const typed = address.value;
+  suggest.selected = 0;
+  suggest.inline = null;
+  if (kept) {
+    address.value = kept.text;
+    address.setSelectionRange(typed.length, kept.text.length);
+    suggest.inline = kept;
+  }
+  lastTyped = typed;
+  updateSuggestions(typed, inputType, Boolean(e.isComposing));
 });
 address.addEventListener('focus', () => {
 
@@ -11182,13 +11245,29 @@ address.addEventListener('keydown', (e) => {
     if (text) { showSidebar(true); askInNewChat(text); }
     dropAddressDraft();
     addressDirty = false;
+  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !isImeEnter(e)) {
+
+    e.preventDefault();
+    const typed = suggest.inline && address.value === suggest.inline.text ? suggest.typed : address.value;
+    if (!typed.trim()) return;
+    hideSuggestions();
+    dropAddressDraft();
+    addressDirty = false;
+    window.browser.goWithCom(typed);
+    address.blur();
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!suggest.items.length) return;
     e.preventDefault();
+    if (suggest.typed !== lastTyped) return;
     moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+  } else if (e.key === 'Delete' && e.shiftKey && suggest.items[suggest.selected]?.kind === 'history') {
+    e.preventDefault();
+    removeSelectedSuggestion();
   } else if (e.key === 'Escape') {
     if (suggest.items.length) {
+
       address.value = suggest.typed;
+      address.setSelectionRange(suggest.typed.length, suggest.typed.length);
       hideSuggestions();
       return;
     }
@@ -11202,8 +11281,8 @@ address.addEventListener('keydown', (e) => {
 
 $('omnibox').addEventListener('submit', (e) => {
   e.preventDefault();
-  const item = suggest.items[suggest.selected];
-  chooseSuggestion(item, address.value.trim());
+  const act = window.chromeHelpers.enterAction({ value: address.value, inline: suggest.inline, items: suggest.items, selected: suggest.selected });
+  chooseSuggestion(act.item, act.go);
 });
 
 $('back').onclick = () => window.browser.back();

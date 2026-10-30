@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('browser', {
   openDownloadsMenu: (point) => ipcRenderer.send('downloads:menu', point),
   warmDownloads: () => ipcRenderer.send('downloads:warm'), // the pointer or the keyboard reached the button: the panel's page loads ahead of the click
   go: (text) => ipcRenderer.send('nav:go', text),
+  goWithCom: (text) => ipcRenderer.send('nav:go-com', text), // Ctrl+Enter: www. and .com around the text
   back: () => ipcRenderer.send('nav:back'),
   forward: () => ipcRenderer.send('nav:forward'),
   reload: () => ipcRenderer.send('nav:reload'),
@@ -112,6 +113,7 @@ contextBridge.exposeInMainWorld('browser', {
   openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
   onActionsOverflowPick: on('actions:overflow-pick'),
   suggest: (query) => ipcRenderer.invoke('suggest:query', query),
+  removeSuggestion: (url) => ipcRenderer.invoke('suggest:remove', url), // Shift+Delete on a History row
   showSuggestions: (rect, payload) => ipcRenderer.send('suggest:show', rect, payload),
   hideSuggestions: () => ipcRenderer.send('suggest:hide'),
   addressTouched: () => ipcRenderer.send('address:touched'),

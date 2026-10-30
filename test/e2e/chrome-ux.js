@@ -112,7 +112,7 @@ const os = require('os');
   check('an address of numbers (127.0.0.1) keeps the globe: no "1" tile', Boolean(ipIcon) && !ipIcon.mono, JSON.stringify(ipIcon));
   const aiBtn = await ui.evaluate(() => { const b = document.getElementById('toggle-sidebar'); return { who: b.dataset.assistant, title: b.title, label: b.getAttribute('aria-label'), setup: b.classList.contains('needs-setup') }; });
   check('the toolbar AI button names what it is for (set up, or the model)', aiBtn.who === 'AI' ? aiBtn.setup && /^Set up AI \(/.test(aiBtn.title) && aiBtn.label === 'Set up AI' : !aiBtn.setup && aiBtn.label === aiBtn.who, JSON.stringify(aiBtn));
-  // the omnibox: plain words with a history page first pre-select it; an address typed in full is left alone
+  // the omnibox (as in Chrome): plain words are searched even when a history page matches them; an address typed in full is left alone
   await app.evaluate((_e, id) => global.__agent.browser.switchTab(id), b);
   // (the strip's own update for the switch rewrites the address field when it lands: typing before it does leaves 'bage', not 'page')
   await waitFor(() => ui.evaluate(() => document.getElementById('address').value.endsWith('/b')));
@@ -121,16 +121,19 @@ const os = require('os');
   await ui.keyboard.press('Control+A');
   await ui.keyboard.type('page');
   const pre = await waitFor(async () => { const s = await ui.evaluate('({ selected: suggest.selected, typed: suggest.typed, kinds: suggest.items.map((i) => i.kind) })'); return s.typed === 'page' && s.kinds.length && s; }); // (not an earlier keystroke's list: 'p', 'pa' and 'pag' arrive first)
-  check('typing plain words pre-selects the first row when it is a page from history ', pre && pre.kinds[0] === 'history' && pre.selected === 0, JSON.stringify(pre));
+  check('typing plain words: the first row, selected, is the search for them; the matching history page is a row below it', pre && pre.kinds[0] === 'search' && pre.kinds.includes('history') && pre.selected === 0, JSON.stringify(pre));
+  await app.evaluate(() => { const wc = global.__agent.browser.activeTab().webContents; global.__uxNavs = []; wc.on('did-start-navigation', (d, url) => global.__uxNavs.push(d?.url || url)); });
   await ui.keyboard.press('Enter');
-  const went = await waitFor(async () => { const u = await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()); return u.startsWith(base) && !/google/.test(u) && u; });
-  check('Enter goes to that page, not to a web search', Boolean(went), await app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL()));
+  const went = await waitFor(async () => (await app.evaluate(() => global.__uxNavs.slice())).pop());
+  check('Enter searches the words, not that page', went === 'https://www.google.com/search?q=page', went);
+  await app.evaluate(async (_e, u) => { const wc = global.__agent.browser.activeTab().webContents; wc.stop(); await wc.loadURL(u).catch(() => {}); }, `${base}/b`);
+  await waitFor(() => ui.evaluate(() => document.getElementById('address').value.endsWith('/b')));
   await ui.evaluate(() => document.getElementById('address').focus());
   await ui.keyboard.press('Control+A');
   await ui.keyboard.type(`${base}/n1`);
   await sleep(500);
-  const exact = await ui.evaluate("({ selected: suggest.selected, value: document.getElementById('address').value })");
-  check('typing a full address pre-selects nothing, so Enter goes to exactly what was typed', exact.selected === -1 && exact.value === `${base}/n1`, JSON.stringify(exact));
+  const exact = await ui.evaluate("({ selected: suggest.selected, first: suggest.items[0] && suggest.items[0].go, value: document.getElementById('address').value })");
+  check('typing a full address: the first row, selected, is exactly that address', exact.selected === 0 && exact.first === `${base}/n1` && exact.value === `${base}/n1`, JSON.stringify(exact));
   await ui.keyboard.press('Escape');
   await ui.keyboard.press('Escape');
 

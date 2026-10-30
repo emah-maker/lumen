@@ -2085,8 +2085,11 @@ window.browser.onFocusAddress(() => { window.browser.addressTouched?.(); address
 
 // ---------- address bar suggestions (history + inline completion) ----------
 
-let suggest = { items: [], selected: -1, typed: '' };
+// items[0] is always what the field holds (chromeHelpers): selected 0 until an arrow key moves. typed: the text the list is for
+// (without a completion); shown: the field's value when the list arrived (with one); inline: the completion in the field, if any.
+let suggest = { items: [], selected: 0, typed: '', shown: '', inline: null };
 let suggestSeq = 0;
+let lastTyped = ''; // what the latest edit left in the field (an arrow key only moves through a list made for it)
 let searchEngine = { label: 'Google', url: 'https://www.google.com/search?q=%s' };
 const searchUrl = (text) => searchEngine.url.replace('%s', encodeURIComponent(text));
 
@@ -2134,7 +2137,7 @@ let shownSuggestions = { id: 0, items: [] };
 
 function hideSuggestions() {
   suggestSeq++;
-  suggest = { items: [], selected: -1, typed: '' };
+  suggest = { items: [], selected: 0, typed: '', shown: '', inline: null };
   window.browser.hideSuggestions();
   announceSuggestions();
 }
@@ -2147,42 +2150,63 @@ function matchOpenTabs(text) {
   return state.tabs.filter((x) => x.id !== state.activeId && /^https?:/i.test(x.url || '') && ((x.title || '').toLowerCase().includes(q) || prettyUrl(x.url).split(/[?#]/)[0].toLowerCase().includes(q))).slice(0, 3);
 }
 
-async function updateSuggestions(typed, deleting) {
+// The list for what the last edit left in the field (inputType, composing: that edit). As in Chrome the first row is the field itself:
+// a search for the text exactly as typed, the URL it is, or the site completed in place (main.js offers a completion only for a
+// site typed here before). History pages and open tabs that match come after it, to pick with the arrow keys or the mouse.
+async function updateSuggestions(typed, inputType = '', composing = false) {
   const seq = ++suggestSeq;
   const text = typed.trim();
   if (!text) return hideSuggestions();
-  const history = await window.browser.suggest(text);
+  const { rows = [], top, inline: offered } = (await window.browser.suggest(typed)) || {};
   if (seq !== suggestSeq || document.activeElement !== address) return;
 
-  if (!deleting && history.length && !/\s/.test(typed)) {
-    const bare = history[0].url.replace(/^https?:\/\/(www\.)?/i, '');
-    const completion = typed.includes('/') ? bare.replace(/\/$/, '') : bare.split('/')[0];
-    if (completion.toLowerCase().startsWith(typed.toLowerCase()) && completion.length > typed.length) {
-      address.value = typed + completion.slice(typed.length);
-      address.setSelectionRange(typed.length, address.value.length);
-    }
+  let inline = null;
+  const helpers = window.chromeHelpers;
+  if (offered && offered.text.toLowerCase().startsWith(typed.toLowerCase()) && helpers.mayInlineComplete({ value: address.value, typed, selectionStart: address.selectionStart, selectionEnd: address.selectionEnd, inputType, composing })) {
+    address.value = typed + offered.text.slice(typed.length);
+    address.setSelectionRange(typed.length, address.value.length);
+    inline = { text: address.value, url: offered.url };
+  } else if (suggest.inline && address.value === suggest.inline.text && address.value.toLowerCase().startsWith(typed.toLowerCase())) {
+    inline = suggest.inline; // kept showing while the letters were typed (extendInline): the list catches up to it
   }
 
-  const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: searchUrl(text) };
-  const visited = history.map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
-  // Open tabs that match are extra "Switch to tab" rows after the top row: never pre-selected and never in place of a History row, so Enter
-  // still goes where it always did; an arrow key or a click picks one.
+  const search = { kind: 'search', title: text, detail: t('address.searchWith', { engine: searchEngine.label }), go: top?.kind === 'search' ? top.url : searchUrl(text) };
+  const first = inline ? { kind: 'site', title: prettyUrl(inline.url).replace(/\/$/, ''), detail: '', go: inline.url }
+    : top?.kind === 'url' ? { kind: 'site', title: text, detail: '', go: top.url } : search;
+  const same = (url) => url.replace(/\/$/, '') === first.go.replace(/\/$/, '');
+  const visited = rows.filter((h) => !same(h.url)).map((h) => ({ kind: h.seed ? 'site' : 'history', title: h.title || prettyUrl(h.url), detail: prettyUrl(h.url), go: h.url }));
+  // Open tabs that match are "Switch to tab" rows near the top: an arrow key or a click picks one. An address or a completed site
+  // still offers the search for the text, second, as Chrome does.
   const tabRows = matchOpenTabs(text).slice(0, 2).map((tab) => ({ kind: 'tab', title: tab.title || prettyUrl(tab.url), detail: prettyUrl(tab.url), go: tab.url, tabId: tab.id, badge: t('address.switchToTab') }));
-  visited.splice(Math.min(1, visited.length), 0, ...tabRows);
-  const items = /\s/.test(text) || !visited.length ? [search, ...visited] : [...visited, search];
-  // The top page from history is pre-selected (Enter goes to it, as in Chrome), unless what is typed is an address or was completed in place.
-  suggest = { items, selected: window.chromeHelpers.defaultSuggestion(typed, items, { completed: address.value !== typed }), typed };
+  suggest = { items: [first, ...(first === search ? [] : [search]), ...tabRows, ...visited], selected: 0, typed, shown: address.value, inline };
   renderSuggestions();
 }
 
+// Up / Down: through the rows and round again. Row 0 puts back what the field held (the typed text, its completion selected).
 function moveSelection(step) {
   const count = suggest.items.length;
   if (!count) return;
-  suggest.selected = ((suggest.selected + 1 + step + count + 1) % (count + 1)) - 1; // -1 = what the user typed
+  suggest.selected = (suggest.selected + step + count) % count;
   const item = suggest.items[suggest.selected];
-  address.value = !item ? suggest.typed : item.kind === 'search' ? item.title : item.go;
+  if (suggest.selected === 0) {
+    address.value = suggest.shown;
+    if (suggest.inline) address.setSelectionRange(suggest.typed.length, address.value.length);
+  } else address.value = window.chromeHelpers.rowValue(item);
   renderSuggestions();
   announceSuggestions(true);
+}
+
+// Shift+Delete on a History row: it leaves History (as in Chrome), and the list is made again for what was typed.
+async function removeSelectedSuggestion() {
+  const item = suggest.items[suggest.selected];
+  if (!item || item.kind !== 'history' || !window.browser.removeSuggestion) return;
+  const typed = suggest.typed;
+  await window.browser.removeSuggestion(item.go);
+  if (document.activeElement !== address) return;
+  address.value = typed;
+  address.setSelectionRange(typed.length, typed.length);
+  lastTyped = typed;
+  updateSuggestions(typed, 'deleteContent');
 }
 
 // Remember the unsent text in the address bar for tab `id` (see addressDrafts). Only an edit counts: the field
@@ -2232,7 +2256,21 @@ window.browser.onSuggestionPicked(({ index, listId }) => {
 address.addEventListener('input', (e) => {
   addressDirty = true;
   draftShowing = false;
-  updateSuggestions(address.value, e.inputType?.startsWith('delete'));
+  const inputType = e.inputType || '';
+  // The list on screen is for the text before this edit: until the new one arrives, Enter goes to what the field shows, not to a
+  // row of the old list. The next letter of a completion that is showing keeps it showing (chromeHelpers.extendInline).
+  const atEnd = address.selectionStart === address.value.length && address.selectionEnd === address.value.length;
+  const kept = e.isComposing ? null : window.chromeHelpers.extendInline(suggest.inline, address.value, inputType, atEnd);
+  const typed = address.value;
+  suggest.selected = 0;
+  suggest.inline = null;
+  if (kept) {
+    address.value = kept.text;
+    address.setSelectionRange(typed.length, kept.text.length);
+    suggest.inline = kept;
+  }
+  lastTyped = typed;
+  updateSuggestions(typed, inputType, Boolean(e.isComposing));
 });
 address.addEventListener('focus', () => {
   // Focus coming back while you type (a loading page briefly took it) must not select the typed
@@ -2285,13 +2323,29 @@ address.addEventListener('keydown', (e) => {
     if (text) { showSidebar(true); askInNewChat(text); }
     dropAddressDraft();
     addressDirty = false;
+  } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !isImeEnter(e)) {
+    // Ctrl+Enter: www. and .com around what was typed (not around a completion), as in Chrome (main.js 'nav:go-com').
+    e.preventDefault();
+    const typed = suggest.inline && address.value === suggest.inline.text ? suggest.typed : address.value;
+    if (!typed.trim()) return;
+    hideSuggestions();
+    dropAddressDraft();
+    addressDirty = false;
+    window.browser.goWithCom(typed);
+    address.blur();
   } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     if (!suggest.items.length) return;
     e.preventDefault();
+    if (suggest.typed !== lastTyped) return; // the list is still for an earlier keystroke: its rows are about to change
     moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+  } else if (e.key === 'Delete' && e.shiftKey && suggest.items[suggest.selected]?.kind === 'history') {
+    e.preventDefault();
+    removeSelectedSuggestion();
   } else if (e.key === 'Escape') {
     if (suggest.items.length) {
+      // What was typed comes back, without the completion or the row the arrow keys reached.
       address.value = suggest.typed;
+      address.setSelectionRange(suggest.typed.length, suggest.typed.length);
       hideSuggestions();
       return;
     }
@@ -2305,8 +2359,8 @@ address.addEventListener('keydown', (e) => {
 // and never reaches here.
 $('omnibox').addEventListener('submit', (e) => {
   e.preventDefault();
-  const item = suggest.items[suggest.selected];
-  chooseSuggestion(item, address.value.trim());
+  const act = window.chromeHelpers.enterAction({ value: address.value, inline: suggest.inline, items: suggest.items, selected: suggest.selected });
+  chooseSuggestion(act.item, act.go);
 });
 
 $('back').onclick = () => window.browser.back();
