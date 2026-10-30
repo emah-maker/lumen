@@ -2319,10 +2319,8 @@ function renderWidgets(list) {
     updateFoot(card, w);
     setRefreshing(card, w);
     card.dataset.colors = ['calendar', 'match', 'accent', 'mono'].includes(w.colors) ? w.colors : 'calendar';
-    if (w.react === true && (w.type === 'spotify' || w.type === 'applemusic')) card.dataset.mreact = '1'; else delete card.dataset.mreact; // [look] "React to music" (newtab-music-react.js)
     return card;
   });
-  window.musicCardsChanged?.();
   for (const [id, s] of shownWidgets) if (!valid.some((w) => w.id === id)) { s.el.remove(); shownWidgets.delete(id); }
   // Cards are never reordered in the DOM (moving a frame would reload it): new ones go at the end.
   for (const card of cards) if (card.parentNode !== box) box.append(card);

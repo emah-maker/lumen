@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Removed "React to music": the new-tab page and music cards no longer listen to the PC's sound.
 - The live Browser card in a chat keeps moving while the AI takes screenshots: each screenshot stopped its stream, so the card froze on one frame until the next step. AI screenshots of a tab the card is showing also come back at full size every time.
 - In a dark theme, any site whose dark mode is only half done (dark sections next to white cards, or text you can't read) now gets its light page automatically. Lumen checks the page itself instead of keeping a list of sites, switches only when the light page really reads better, and remembers the site for next time. Sites with a proper dark mode stay dark.
 

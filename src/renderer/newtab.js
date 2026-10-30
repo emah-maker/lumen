@@ -48,7 +48,6 @@ function lookOf(l) {
     effect: EFFECTS.includes(look.effect) ? look.effect : 'none', still: look.still === true || look.softwareGfx === true, lite: look.lite === true, light: look.lightGfx === true || look.softwareGfx === true, soft: look.softwareGfx === true, // [igpu] Graphics: Light; software drawing: still too, no blur, no shadows (settings-backend.js [igpu])
     effectStyle: effectStyleOf(look.effectStyle),
     reduceMotion: look.still === true, // (the setting itself: `still` above also stands for software drawing)
-    musicReactive: look.musicReactive === true, // [look] Music-reactive home screen: off unless switched on (newtab-music-react.js)
     accent: { light: hex(look.accent?.light), dark: hex(look.accent?.dark) },
     clock: look.clock !== false,
     clockSize: window.WidgetSystem.cleanClockSize(look.clockSize) || 'm',
@@ -92,7 +91,6 @@ function applyLook(look) {
   document.body.classList.toggle('calm', look.still || look.lite); // [widgets] no sliding with Reduce motion or Performance mode
   document.body.classList.toggle('still', look.still); // [widgets] no sliding or other motion with Reduce motion
   applyEffect(look);
-  applyMusicReactive(look);
   window.applyWidgetColors?.(); // [widgets] cards set to Match screen follow the accent, background and theme
 }
 // [look] The accent's tokens (features/theme-colors.js) in the shades the page is drawn in: the system's on Plain, light on a light
@@ -119,16 +117,6 @@ function applyEffect(look) {
   effectScript.onload = () => window.setBackdropEffect?.(currentLook.effect, currentLook);
   document.head.append(effectScript);
 }
-// [look] Music-reactive home screen: its three scripts are loaded the first time the setting is on, never otherwise.
-let musicScripts = 0;
-function applyMusicReactive(look) {
-  if (window.setMusicReactive) { window.setMusicReactive(look); return; }
-  if (!(look.musicReactive || document.querySelector('.w-card[data-mreact="1"]')) || musicScripts) return; // (the home screen, or a music card that reacts: either starts it)
-  musicScripts = 1;
-  const load = (src, next) => { const s = document.createElement('script'); s.src = src; s.onload = next; document.head.append(s); };
-  load('../features/music-react.js', () => load('music-field-canvas.js', () => load('newtab-music-react.js', () => window.setMusicReactive?.(currentLook))));
-}
-window.musicCardsChanged = () => applyMusicReactive(currentLook); // (newtab-widgets.js says when the cards change; the driver replaces this once loaded)
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
 window.widgetLook = () => {
